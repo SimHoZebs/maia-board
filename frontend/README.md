@@ -133,6 +133,12 @@ and the pinned upstream revision linked below. Fallback Maia entries expire afte
 one-second minimum. Other failures require Retry failed. Terminal positions are
 determined from full chess.js history, synthesized locally, and never sent to Maia.
 
+Behind the memory caches sits the server evaluation cache (`PUT/GET
+/evaluations/:hash`, 5000 oldest-first rows). Fresh inference writes through;
+degraded Maia answers never persist. Cached rows pass the same response
+validation as live ones before display, and a corrupt or unexpected row falls
+back to live inference instead of failing the position.
+
 `reviewMetrics.ts` defines `maia-board-review-v1`. Canonical White scores become
 winning chances using the [Lichess formula](https://lichess.org/page/accuracy).
 Mate scores preserve the winning side and ignore distance for accuracy. Loss is

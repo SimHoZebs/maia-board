@@ -67,7 +67,7 @@ function isModel(value: unknown): value is MaiaModel {
   return value === '79m' || value === '5m';
 }
 
-function parseMoveResponse(value: unknown): MoveResponse {
+export function parseMoveResponse(value: unknown): MoveResponse {
   if (!isRecord(value) || typeof value.move !== 'string' || !isModel(value.model_used) || typeof value.degraded !== 'boolean') {
     throw new MaiaApiError('unknown', 'Maia returned an incomplete response.');
   }

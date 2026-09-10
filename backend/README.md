@@ -61,6 +61,17 @@ WAL mode, `DB_PATH` (default `./maia-board.db`, `/data/maia-board.db` in the
 managed deployment). Results derive from moves; only history and the marker
 persist. Back up with `VACUUM INTO` against a copy of the database file.
 
+## Evaluation cache
+
+Analysis results live in the same database because the access pattern is
+exact-key lookup, not document queries — a separate document store would add
+ops burden for no query benefit. `PUT /evaluations/:hash` stores
+`{engine, key, value}` under a client hash (`sf` or `maia` only, JSON object
+values, short keys); `GET /evaluations/:hash` returns the row or
+`404 not_found`; `GET /evaluations/stats` reports row count and bytes. Rows
+evict oldest-first past 5000. The key format stays client-owned so policy,
+model, or rating changes miss naturally instead of poisoning results.
+
 ## Local checks
 
 ```sh

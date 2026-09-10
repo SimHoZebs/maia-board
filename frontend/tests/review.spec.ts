@@ -7,10 +7,24 @@ import { KEYS } from '../src/storage';
 
 async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6') {
   const requests: { engine: string; moves: string[]; initial_fen: string; elo_maia?: number }[] = [];
+  const evaluations = new Map<string, { engine: string; value: unknown }>();
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.route('http://maia.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
+    if (path.startsWith('/evaluations/')) {
+      const hash = path.slice('/evaluations/'.length);
+      if (route.request().method() === 'PUT') {
+        const put = route.request().postDataJSON();
+        evaluations.set(hash, { engine: put.engine, value: put.value });
+        await route.fulfill({ json: { key_hash: hash, engine: put.engine, created_at: 'now' } });
+        return;
+      }
+      const hit = evaluations.get(hash);
+      if (hit) await route.fulfill({ json: { key_hash: hash, engine: hit.engine, value: hit.value, created_at: 'now' } });
+      else await route.fulfill({ status: 404, json: { code: 'not_found', message: 'missing' } });
+      return;
+    }
     if (path === '/move' || path === '/evaluate') {
       const payload = route.request().postDataJSON(); requests.push({ engine: path, ...payload });
       const game = replay(payload.moves, payload.initial_fen);
@@ -38,7 +52,7 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6') {
   });
   await page.goto('http://maia.test/analyze');
   await page.locator('#analysis-pgn').fill(pgn); await page.locator('#load-analysis').click();
-  return { requests, errors };
+  return { requests, errors, evaluations };
 }
 const lines = (page: Page) => page.locator('#board svg.cg-shapes line');
 async function atStart(page: Page) {
@@ -95,6 +109,19 @@ test('blunder and mistake destinations carry board badges', async ({ page }) => 
   await page.locator('#analysis-next').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
   await expect(page.locator('#board').getByText('??', { exact: true })).toBeVisible();
+});
+test('server-cached positions skip inference after reload', async ({ page }) => {
+  const app = await bootReview(page);
+  await expect(page.locator('.selected-evaluation')).toContainText('depth 16');
+  await expect.poll(() => app.evaluations.size).toBeGreaterThanOrEqual(3);
+  const calls = app.requests.length;
+  await page.reload();
+  await page.locator('#analysis-pgn').fill('1. e4 e5 2. Nf3 Nc6');
+  await page.locator('#load-analysis').click();
+  await expect(page.locator('.selected-evaluation')).toContainText('depth 16');
+  await expect(page.locator('.candidate-list li')).not.toHaveCount(0);
+  expect(app.requests).toHaveLength(calls);
+  expect(app.errors).toEqual([]);
 });
 test('mixed arrow sources retain their own endpoints', async ({ page }, info) => {
   await bootReview(page);

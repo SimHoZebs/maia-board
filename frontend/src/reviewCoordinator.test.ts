@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { loadLine } from './domain';
-import { ReviewCoordinator, reviewKey, type ReviewNode } from './reviewCoordinator';
+import { cacheHash, ReviewCoordinator, reviewKey, type ReviewNode } from './reviewCoordinator';
 import { SEARCH_POLICY } from './reviewMetrics';
 const settings = { eloMaia: 1600, eloUser: 1600, model: '79m' as const };
 const line = loadLine('', '1. e4 e5 2. Nf3');
@@ -10,9 +10,15 @@ const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve()
 it('deduplicates in-flight requests and coalesces stale foreground positions', async () => {
   const releases: (() => void)[] = [];
   const requests: string[] = [];
-  const fetcher = vi.fn(async (url, init) => { requests.push(`${url}:${JSON.parse(init!.body as string).moves.length}`); await new Promise<void>(resolve => releases.push(resolve)); return Response.json(body(String(url))); }) as typeof fetch;
+  const fetcher = vi.fn(async (url, init) => {
+    if (!init?.body) return Response.json({ code: 'not_found', message: 'missing' }, { status: 404 });
+    requests.push(`${url}:${JSON.parse(init.body as string).moves.length}`);
+    await new Promise<void>(resolve => releases.push(resolve));
+    return Response.json(body(String(url)));
+  }) as typeof fetch;
   const coordinator = new ReviewCoordinator(fetcher);
   coordinator.foregroundAt([nodes[0]], settings); coordinator.foregroundAt([nodes[0]], settings);
+  await flush();
   expect(requests).toHaveLength(2);
   coordinator.foregroundAt([nodes[1]], settings); coordinator.foregroundAt([nodes[3], nodes[2]], settings);
   releases.splice(0).forEach(resolve => resolve()); await flush();
@@ -48,16 +54,22 @@ it('bounds busy retries and requires explicit retry after failure', async () => 
     const fetcher = vi.fn(async () => Response.json({ message: 'Busy' }, { status: 503, headers: { 'Retry-After': '1' } })) as typeof fetch;
     const coordinator = new ReviewCoordinator(fetcher);
     coordinator.foregroundAt([nodes[0]], settings); await vi.runAllTimersAsync(); await flush();
-    expect(fetcher).toHaveBeenCalledTimes(6);
-    coordinator.foregroundAt([nodes[0]], settings); await flush(); expect(fetcher).toHaveBeenCalledTimes(6);
+    // One server-cache probe plus three live attempts per engine lane.
+    expect(fetcher).toHaveBeenCalledTimes(8);
+    coordinator.foregroundAt([nodes[0]], settings); await flush(); expect(fetcher).toHaveBeenCalledTimes(8);
     expect(coordinator.error('sf', nodes[0], settings)).toBe('Busy'); coordinator.suspend();
   } finally { vi.useRealTimers(); }
 });
 it('prioritizes interactive navigation over the next batch node and cancels the remaining snapshot', async () => {
   const requests: string[] = [], releases: (() => void)[] = [];
-  const fetcher = vi.fn(async (url, init) => { requests.push(`${url}:${JSON.parse(init!.body as string).moves.length}`); await new Promise<void>(resolve => releases.push(resolve)); return Response.json(body(String(url))); }) as typeof fetch;
+  const fetcher = vi.fn(async (url, init) => {
+    if (!init?.body) return Response.json({ code: 'not_found', message: 'missing' }, { status: 404 });
+    requests.push(`${url}:${JSON.parse(init.body as string).moves.length}`);
+    await new Promise<void>(resolve => releases.push(resolve));
+    return Response.json(body(String(url)));
+  }) as typeof fetch;
   const coordinator = new ReviewCoordinator(fetcher);
-  coordinator.startBatch(nodes, settings); expect(requests).toEqual(['/evaluate:0', '/move:0']);
+  coordinator.startBatch(nodes, settings); await flush(); expect(requests).toEqual(['/evaluate:0', '/move:0']);
   coordinator.foregroundAt([nodes[3], nodes[2]], settings);
   releases.splice(0).forEach(resolve => resolve()); await flush();
   expect(requests.slice(2)).toEqual(['/evaluate:3', '/move:3']);
@@ -75,6 +87,58 @@ it('never exposes old rating results under a new key and expires fallback respon
   const now = Date.now(); const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 30_001);
   expect(coordinator.result('maia', nodes[0], settings)).toBeUndefined();
   expect(coordinator.result('sf', nodes[0], settings)).toBeDefined(); clock.mockRestore();
+});
+it('hashes cache keys deterministically to short hex', () => {
+  expect(cacheHash('a')).toBe(cacheHash('a'));
+  expect(cacheHash('a')).toMatch(/^[0-9a-f]{16}$/);
+  expect(cacheHash('a')).not.toBe(cacheHash('b'));
+});
+it('serves repeated positions from the server cache without re-inference', async () => {
+  const seen: string[] = [];
+  const stored = new Map<string, { engine: string; value: unknown }>();
+  const evaluation = { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4', score: { type: 'cp', value: 0 }, lines: [{ move: 'e2e4', score: { type: 'cp', value: 0 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: -20 }, depth: 12 }] };
+  const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+    seen.push(`${String(url).split('?')[0]}:${init?.method ?? 'GET'}`);
+    if (String(url).startsWith('/evaluations/')) {
+      if (init?.method === 'PUT') {
+        const put = JSON.parse(init.body as string);
+        stored.set(String(url).split('/').pop()!, { engine: put.engine, value: put.value });
+        return Response.json({ key_hash: 'x', engine: put.engine, created_at: 'now' });
+      }
+      const hit = stored.get(String(url).split('/').pop()!);
+      if (hit) return Response.json({ key_hash: 'x', engine: hit.engine, value: hit.value, created_at: 'now' });
+      return Response.json({ code: 'not_found', message: 'missing' }, { status: 404 });
+    }
+    return Response.json(body(String(url)));
+  }) as unknown as typeof fetch;
+  const live = (calls: string[]) => calls.filter(call => call === '/move:POST' || call === '/evaluate:POST');
+  const first = new ReviewCoordinator(fetcher);
+  first.foregroundAt([nodes[0]], settings); await flush();
+  expect(first.result('sf', nodes[0], settings)).toMatchObject({ depth: 12 });
+  expect(first.result('maia', nodes[0], settings)).toMatchObject({ move: 'e2e4' });
+  expect(stored.size).toBe(2);
+  expect(live(seen)).toHaveLength(2);
+  seen.length = 0;
+  const second = new ReviewCoordinator(fetcher);
+  second.foregroundAt([nodes[0]], settings); await flush();
+  expect(second.result('sf', nodes[0], settings)).toMatchObject({ depth: 12 });
+  expect(second.result('maia', nodes[0], settings)).toMatchObject({ move: 'e2e4' });
+  expect(live(seen)).toEqual([]);
+  expect(seen.filter(call => call.endsWith(':GET')).length).toBeGreaterThan(0);
+});
+it('ignores corrupt cached rows and never persists fallback answers', async () => {
+  const puts: string[] = [];
+  const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+    if (String(url).startsWith('/evaluations/')) {
+      if (init?.method === 'PUT') { puts.push(String(url)); return Response.json({}); }
+      return Response.json({ key_hash: 'x', engine: 'sf', value: { nope: true }, created_at: 'now' });
+    }
+    return Response.json({ ...body(String(url)), degraded: true });
+  }) as unknown as typeof fetch;
+  const coordinator = new ReviewCoordinator(fetcher);
+  coordinator.foregroundAt([nodes[0]], settings); await flush();
+  expect(coordinator.result('sf', nodes[0], settings)).toMatchObject({ depth: 12 });
+  expect(puts).toHaveLength(1);
 });
 it('rejects empty lines for non-terminal evaluations', async () => {
   const { fetchEvaluation } = await import('./reviewCoordinator');

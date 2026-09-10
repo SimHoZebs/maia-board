@@ -1,5 +1,5 @@
 import { Chess } from 'chess.js';
-import { requestMove, type MoveResponse, type MaiaModel } from './api';
+import { parseMoveResponse, requestMove, type MoveResponse, type MaiaModel } from './api';
 import { replay } from './domain';
 import { SEARCH_POLICY, terminalEvaluation, type Evaluation, type Score } from './reviewMetrics';
 
@@ -39,28 +39,55 @@ function isScore(value: unknown): value is Score {
 function sameScore(a: Score, b: Score): boolean {
   return a.type === b.type && a.value === b.value && (a.type !== 'mate' || a.winning_side === b.winning_side);
 }
-export async function fetchEvaluation(node: ReviewNode, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<Evaluation> {
-  const response = await fetcher('/evaluate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fen: node.fen, moves: node.moves, initial_fen: node.initialFen }), signal });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.message || `Stockfish request failed (${response.status}).`);
-  if (body.engine !== 'Stockfish 19' || body.search_policy !== SEARCH_POLICY || !Number.isInteger(body.depth) || body.depth < 0 || !isScore(body.score) || ![null, 'white_win', 'black_win', 'draw'].includes(body.terminal) || !(body.best_move === null || typeof body.best_move === 'string') || !Array.isArray(body.lines)) throw new Error('Stockfish returned an incomplete evaluation.');
-  if (body.terminal !== null) {
-    if (body.best_move !== null || body.lines.length !== 0 || body.depth !== 0) throw new Error('Stockfish returned an incomplete evaluation.');
-    if (body.terminal === 'draw') {
-      if (body.score.type !== 'cp' || body.score.value !== 0) throw new Error('Stockfish returned an incomplete evaluation.');
+// Deterministic non-crypto hash for cache keys. Cache identity must be stable
+// across browsers, and crypto.subtle is unavailable on plain-HTTP LAN origins,
+// so collision resistance against adversaries is traded for determinism. At a
+// few thousand rows the accidental-collision odds are negligible, and a hit
+// still passes full response validation before use.
+export function cacheHash(key: string): string {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < key.length; i++) {
+    const ch = key.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0');
+}
+
+export function parseEvaluation(body: unknown): Evaluation {
+  if (!body || typeof body !== 'object') throw new Error('Stockfish returned an incomplete evaluation.');
+  const value = body as Evaluation & { engine?: unknown; search_policy?: unknown };
+  if (value.engine !== 'Stockfish 19' || value.search_policy !== SEARCH_POLICY || !Number.isInteger(value.depth) || value.depth < 0 || !isScore(value.score) || ![null, 'white_win', 'black_win', 'draw'].includes(value.terminal) || !(value.best_move === null || typeof value.best_move === 'string') || !Array.isArray(value.lines)) throw new Error('Stockfish returned an incomplete evaluation.');
+  if (value.terminal !== null) {
+    if (value.best_move !== null || value.lines.length !== 0 || value.depth !== 0) throw new Error('Stockfish returned an incomplete evaluation.');
+    if (value.terminal === 'draw') {
+      if (value.score.type !== 'cp' || value.score.value !== 0) throw new Error('Stockfish returned an incomplete evaluation.');
     } else {
-      const winner = body.terminal === 'white_win' ? 'white' : 'black';
-      if (body.score.type !== 'mate' || body.score.value !== 0 || body.score.winning_side !== winner) throw new Error('Stockfish returned an incomplete evaluation.');
+      const winner = value.terminal === 'white_win' ? 'white' : 'black';
+      if (value.score.type !== 'mate' || value.score.value !== 0 || value.score.winning_side !== winner) throw new Error('Stockfish returned an incomplete evaluation.');
     }
   } else {
-    if (body.lines.length < 1 || body.lines.length > 2) throw new Error('Stockfish returned an incomplete evaluation.');
-    if (typeof body.best_move !== 'string' || body.best_move !== body.lines[0].move) throw new Error('Stockfish returned an incomplete evaluation.');
-    if (!body.lines.every((line: Evaluation['lines'][number]) => typeof line.move === 'string' && isScore(line.score) && Number.isInteger(line.depth) && line.depth >= 1)) throw new Error('Stockfish returned an incomplete evaluation.');
-    const depths = body.lines.map((line: Evaluation['lines'][number]) => line.depth);
-    if (body.depth < Math.min(...depths) || body.depth < 1) throw new Error('Stockfish returned an incomplete evaluation.');
-    if (!sameScore(body.score, body.lines[0].score)) throw new Error('Stockfish returned an incomplete evaluation.');
+    if (value.lines.length < 1 || value.lines.length > 2) throw new Error('Stockfish returned an incomplete evaluation.');
+    if (typeof value.best_move !== 'string' || value.best_move !== value.lines[0].move) throw new Error('Stockfish returned an incomplete evaluation.');
+    if (!value.lines.every(line => typeof line.move === 'string' && isScore(line.score) && Number.isInteger(line.depth) && line.depth >= 1)) throw new Error('Stockfish returned an incomplete evaluation.');
+    const depths = value.lines.map(line => line.depth);
+    if (value.depth < Math.min(...depths) || value.depth < 1) throw new Error('Stockfish returned an incomplete evaluation.');
+    if (!sameScore(value.score, value.lines[0].score)) throw new Error('Stockfish returned an incomplete evaluation.');
   }
-  return body as Evaluation;
+  return value;
+}
+
+export async function fetchEvaluation(node: ReviewNode, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<Evaluation> {
+  const response = await fetcher('/evaluate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fen: node.fen, moves: node.moves, initial_fen: node.initialFen }), signal });
+  const body: unknown = await response.json();
+  if (!response.ok) {
+    const message = typeof body === 'object' && body !== null && typeof (body as { message?: unknown }).message === 'string'
+      ? (body as { message: string }).message : `Stockfish request failed (${response.status}).`;
+    throw new Error(message);
+  }
+  return parseEvaluation(body);
 }
 // Each lane has one in-flight job. Foreground replacement coalesces scrubbing;
 // batch work is pulled one node at a time only when the foreground is empty.
@@ -156,6 +183,46 @@ export class ReviewCoordinator {
       this.pump(engine); this.emit();
     });
   }
+  private async readServerCache(job: Job, signal: AbortSignal): Promise<Result | undefined> {
+    let response: Response;
+    try {
+      response = await this.fetcher(`/evaluations/${cacheHash(job.key)}`, { signal });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      return undefined;
+    }
+    if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+    if (response.status === 404) return undefined;
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      return undefined;
+    }
+    if (!response.ok) return undefined;
+    const record = body as { engine?: unknown; value?: unknown };
+    if (record.engine !== job.engine) return undefined;
+    try {
+      return job.engine === 'sf' ? parseEvaluation(record.value) : parseMoveResponse(record.value);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private storeServerCache(job: Job, result: Result): void {
+    void (async () => {
+      try {
+        await this.fetcher(`/evaluations/${cacheHash(job.key)}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ engine: job.engine, key: job.key, value: result }),
+        });
+      } catch {
+        // Best-effort: the memory cache still serves this session.
+      }
+    })();
+  }
+
   private async execute(job: Job, signal: AbortSignal): Promise<Result> {
     // Retry only busy responses, at most twice. Waiting remains in this lane so
     // another request cannot overtake a server job that has not been released.
@@ -173,7 +240,20 @@ export class ReviewCoordinator {
         });
       }
     };
-    if (job.engine === 'sf') return fetchEvaluation(job.node, signal, retryFetch);
-    return requestMove({ fen: job.node.fen, moves: job.node.moves, initial_fen: job.node.initialFen, elo_maia: job.settings.eloMaia, elo_user: job.settings.eloUser, model: job.settings.model, maia_color: new Chess(job.node.fen).turn() === 'w' ? 'white' : 'black' }, retryFetch, signal);
+    const hit = await this.readServerCache(job, signal).catch(error => {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      return undefined;
+    });
+    if (hit) return hit;
+    if (job.engine === 'sf') {
+      const result = await fetchEvaluation(job.node, signal, retryFetch);
+      this.storeServerCache(job, result);
+      return result;
+    }
+    const result = await requestMove({ fen: job.node.fen, moves: job.node.moves, initial_fen: job.node.initialFen, elo_maia: job.settings.eloMaia, elo_user: job.settings.eloUser, model: job.settings.model, maia_color: new Chess(job.node.fen).turn() === 'w' ? 'white' : 'black' }, retryFetch, signal);
+    // Fallback answers expire in memory within seconds; persisting them would
+    // let a degraded stand-in masquerade as the requested model indefinitely.
+    if (!result.degraded) this.storeServerCache(job, result);
+    return result;
   }
 }
