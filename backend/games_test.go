@@ -1,0 +1,215 @@
+package main
+
+import (
+	"encoding/json"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func testStore(t *testing.T) *GameStore {
+	t.Helper()
+	store, err := NewGameStore(filepath.Join(t.TempDir(), "games.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.db.Close() })
+	return store
+}
+
+func gameFixture(id string, moves ...string) gamePayload {
+	maia, user := 1600, 1400
+	return gamePayload{ID: id, UserColor: "white", EloMaia: &maia, EloUser: &user, Model: "79m", Moves: moves}
+}
+
+func TestGameStoreSaveGetList(t *testing.T) {
+	store := testStore(t)
+	first, err := store.Save(gameFixture("a", "e2e4"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != "a" || first.CreatedAt == "" || first.UpdatedAt == "" {
+		t.Fatalf("unexpected saved row: %+v", first)
+	}
+	if _, err := store.Save(gameFixture("b", "e2e4", "e7e5")); err != nil {
+		t.Fatal(err)
+	}
+	games, total, err := store.List(200)
+	if err != nil || total != 2 || len(games) != 2 {
+		t.Fatalf("list = %d/%d, err = %v", len(games), total, err)
+	}
+	if games[0].ID != "b" {
+		t.Fatalf("expected most-recent first, got %+v", games)
+	}
+	got, err := store.Get("a")
+	if err != nil || len(got.Moves) != 1 || got.Moves[0] != "e2e4" {
+		t.Fatalf("get = %+v, err = %v", got, err)
+	}
+	if _, err := store.Get("missing"); err == nil {
+		t.Fatal("expected missing game error")
+	}
+}
+
+func TestGameStoreUpsertPreservesCreatedAt(t *testing.T) {
+	store := testStore(t)
+	saved, err := store.Save(gameFixture("a", "e2e4"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := gameFixture("a", "e2e4", "e7e5")
+	updated.CreatedAt = "2000-01-01T00:00:00Z"
+	resaved, err := store.Save(updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resaved.CreatedAt != saved.CreatedAt {
+		t.Fatalf("created_at changed: %q -> %q", saved.CreatedAt, resaved.CreatedAt)
+	}
+	if len(resaved.Moves) != 2 {
+		t.Fatalf("moves not updated: %+v", resaved)
+	}
+}
+
+func TestGameStoreGeneratesID(t *testing.T) {
+	store := testStore(t)
+	payload := gameFixture("", "e2e4")
+	saved, err := store.Save(payload)
+	if err != nil || saved.ID == "" {
+		t.Fatalf("saved = %+v, err = %v", saved, err)
+	}
+}
+
+func TestGameStoreCurrentMarker(t *testing.T) {
+	store := testStore(t)
+	if id := store.CurrentID(); id != "" {
+		t.Fatalf("expected empty marker, got %q", id)
+	}
+	payload := gameFixture("a")
+	payload.Current = true
+	if _, err := store.Save(payload); err != nil {
+		t.Fatal(err)
+	}
+	if id := store.CurrentID(); id != "a" {
+		t.Fatalf("marker = %q", id)
+	}
+	if _, err := store.Save(gameFixture("b")); err != nil {
+		t.Fatal(err)
+	}
+	if id := store.CurrentID(); id != "a" {
+		t.Fatalf("plain save moved marker to %q", id)
+	}
+	if err := store.Delete("a"); err != nil {
+		t.Fatal(err)
+	}
+	if id := store.CurrentID(); id != "" {
+		t.Fatalf("delete did not clear marker: %q", id)
+	}
+	if err := store.Delete("missing"); err != nil {
+		t.Fatalf("delete of unknown id must succeed: %v", err)
+	}
+}
+
+func TestGamesHTTP(t *testing.T) {
+	store := testStore(t)
+	s := &server{store: store}
+	post := func(body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		s.games(w, httptest.NewRequest("POST", "/games", strings.NewReader(body)))
+		return w
+	}
+	valid := `{"user_color":"white","elo_maia":1600,"elo_user":1400,"model":"79m","moves":["e2e4"],"current":true}`
+	w := post(valid)
+	if w.Code != 200 {
+		t.Fatalf("save status %d: %s", w.Code, w.Body)
+	}
+	var saved gameRow
+	if err := json.Unmarshal(w.Body.Bytes(), &saved); err != nil || saved.ID == "" {
+		t.Fatalf("save body: %s, err = %v", w.Body, err)
+	}
+	for _, tc := range []struct {
+		name, body, code string
+		status           int
+	}{
+		{"malformed", "{", "invalid_json", 400},
+		{"unknown field", `{"user_color":"white","flags":[]}`, "invalid_json", 400},
+		{"trailing", valid + ` {}`, "invalid_json", 400},
+		{"color", `{"user_color":"green","elo_maia":1,"elo_user":1,"model":"79m","moves":[]}`, "invalid_user_color", 400},
+		{"elo missing", `{"user_color":"white","model":"79m","moves":[]}`, "missing_elo", 400},
+		{"elo range", `{"user_color":"white","elo_maia":9999,"elo_user":1,"model":"79m","moves":[]}`, "invalid_elo", 400},
+		{"model", `{"user_color":"white","elo_maia":1,"elo_user":1,"model":"9m","moves":[]}`, "invalid_model", 400},
+		{"move shape", `{"user_color":"white","elo_maia":1,"elo_user":1,"model":"79m","moves":["e9"]}`, "invalid_move", 400},
+		{"created", `{"user_color":"white","elo_maia":1,"elo_user":1,"model":"79m","moves":[],"created_at":"yesterday"}`, "invalid_created_at", 400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := post(tc.body)
+			if w.Code != tc.status || !strings.Contains(w.Body.String(), `"code":"`+tc.code+`"`) {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+		})
+	}
+
+	w = httptest.NewRecorder()
+	s.games(w, httptest.NewRequest("GET", "/games", nil))
+	if w.Code != 200 {
+		t.Fatalf("list status %d: %s", w.Code, w.Body)
+	}
+	var listed struct {
+		Games     []gameRow `json:"games"`
+		CurrentID *string   `json:"current_id"`
+		Total     int       `json:"total"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if listed.Total != 1 || len(listed.Games) != 1 || listed.CurrentID == nil || *listed.CurrentID != saved.ID {
+		t.Fatalf("list body: %s", w.Body)
+	}
+
+	w = httptest.NewRecorder()
+	s.games(w, httptest.NewRequest("GET", "/games?limit=0", nil))
+	if w.Code != 400 {
+		t.Fatalf("bad limit status %d", w.Code)
+	}
+
+	w = httptest.NewRecorder()
+	s.gameByID(w, httptest.NewRequest("GET", "/games/"+saved.ID, nil))
+	if w.Code != 200 {
+		t.Fatalf("get status %d: %s", w.Code, w.Body)
+	}
+	w = httptest.NewRecorder()
+	s.gameByID(w, httptest.NewRequest("GET", "/games/missing", nil))
+	if w.Code != 404 || !strings.Contains(w.Body.String(), `"code":"not_found"`) {
+		t.Fatalf("missing get: %d %s", w.Code, w.Body)
+	}
+	w = httptest.NewRecorder()
+	s.gameByID(w, httptest.NewRequest("GET", "/games/", nil))
+	if w.Code != 404 {
+		t.Fatalf("empty id status %d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	s.gameByID(w, httptest.NewRequest("DELETE", "/games/"+saved.ID, nil))
+	if w.Code != 204 {
+		t.Fatalf("delete status %d: %s", w.Code, w.Body)
+	}
+	w = httptest.NewRecorder()
+	s.gameByID(w, httptest.NewRequest("GET", "/games/"+saved.ID, nil))
+	if w.Code != 404 {
+		t.Fatalf("deleted game still visible: %d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	s.gameByID(w, httptest.NewRequest("DELETE", "/games/"+saved.ID, nil))
+	if w.Code != 204 {
+		t.Fatalf("repeat delete status %d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	s.games(w, httptest.NewRequest("PUT", "/games", nil))
+	if w.Code != 405 {
+		t.Fatalf("method status %d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	(&server{}).games(w, httptest.NewRequest("GET", "/games", nil))
+	if w.Code != 502 {
+		t.Fatalf("nil store status %d", w.Code)
+	}
+}

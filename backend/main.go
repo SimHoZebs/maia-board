@@ -55,6 +55,7 @@ type server struct {
 	pool      *EnginePool
 	staticDir string
 	evaluator *Evaluator
+	store     *GameStore
 }
 
 func main() {
@@ -67,13 +68,19 @@ func main() {
 
 	large := NewWorker("79m", workerCommand(python, workerPath, largeModel))
 	small := NewWorker("5m", workerCommand(python, workerPath, smallModel))
-	app := &server{pool: NewEnginePool(large, small), staticDir: staticDir,
+	store, err := NewGameStore(getenv("DB_PATH", "maia-board.db"))
+	if err != nil {
+		log.Fatalf("open game database: %v", err)
+	}
+	app := &server{pool: NewEnginePool(large, small), staticDir: staticDir, store: store,
 		evaluator: NewEvaluator(python, getenv("STOCKFISH_WORKER", "/app/stockfish_worker.py"), getenv("STOCKFISH_BINARY", "/app/stockfish"))}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", app.healthz)
 	mux.HandleFunc("/move", app.move)
 	mux.HandleFunc("/evaluate", app.evaluate)
+	mux.HandleFunc("/games", app.games)
+	mux.HandleFunc("/games/", app.gameByID)
 	mux.HandleFunc("/", app.frontend)
 	address := ":" + port
 	log.Printf("maia-board listening on %s", address)
