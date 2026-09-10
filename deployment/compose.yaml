@@ -1,0 +1,30 @@
+services:
+  maia-board:
+    container_name: maia-board
+    image: ghcr.io/simhozebs/maia-board:pending-frontend-integration
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      HF_HOME: /models/huggingface
+      HF_HUB_CACHE: /models/huggingface/hub
+    volumes:
+      - model-cache:/models
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      - "traefik.http.routers.maia-board.rule=Host(`maia3.home.simho.xyz`)"
+      - "traefik.http.routers.maia-board.entrypoints=websecure"
+      - "traefik.http.routers.maia-board.tls=true"
+      - "traefik.http.routers.maia-board.service=maia-board"
+      - "traefik.http.services.maia-board.loadbalancer.server.port=8080"
+    networks:
+      - traefik
+
+networks:
+  traefik:
+    name: traefik
+    external: true
+
+volumes:
+  model-cache:
+    name: maia-board-model-cache
