@@ -1,0 +1,9 @@
+# First build the stockfish-build target as maia-board-stockfish-check:engine.
+FROM maia-board-stockfish-check:engine AS engine
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
+RUN python -m pip install --no-cache-dir python-chess==1.999 chess==1.11.2
+COPY --from=engine /stockfish/src/stockfish /app/stockfish
+COPY backend/stockfish_worker.py backend/test_stockfish_worker.py /check/
+ENV STOCKFISH_BINARY=/app/stockfish
+WORKDIR /check
+ENTRYPOINT ["python", "-m", "unittest", "-v", "test_stockfish_worker"]

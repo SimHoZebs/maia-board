@@ -12,6 +12,16 @@ WORKDIR /src
 COPY backend/ ./
 RUN CGO_ENABLED=0 go test ./... && CGO_ENABLED=0 go build -trimpath -o /out/maia-board .
 
+FROM golang:1.24-bookworm@sha256:1a6d4452c65dea36aac2e2d606b01b4a029ec90cc1ae53890540ce6173ea77ac AS stockfish-build
+WORKDIR /stockfish
+RUN curl -fL --retry 3 https://github.com/official-stockfish/Stockfish/archive/refs/tags/sf_19.tar.gz -o source.tar.gz \
+    && echo '519b653d0d1ffb96531d982ccbe5c6a19425e8388e0e3c2f70f34b424ab32d76  source.tar.gz' | sha256sum -c - \
+    && tar -xzf source.tar.gz --strip-components=1 \
+    && make -C src net \
+    && echo '1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2  src/nn-1a298aa575a0.nnue' | sha256sum -c - \
+    && make -C src -j2 build ARCH=x86-64 \
+    && make -C src strip
+
 FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
 
 ARG MAIA3_REF=1e13597c42d4858b7cfd7cfdae01e297263364b2
@@ -30,6 +40,11 @@ RUN python -m pip install --no-cache-dir \
 WORKDIR /app
 COPY --from=build /out/maia-board /app/maia-board
 COPY backend/maia3_worker.py /app/maia3_worker.py
+COPY backend/stockfish_worker.py /app/stockfish_worker.py
+COPY --from=stockfish-build /stockfish/src/stockfish /app/stockfish
+COPY --from=stockfish-build /stockfish/COPYING /app/licenses/stockfish-COPYING
+COPY --from=stockfish-build /stockfish/source.tar.gz /app/licenses/stockfish-sf_19-source.tar.gz
+COPY backend/STOCKFISH.md /app/licenses/STOCKFISH.md
 COPY --from=frontend-build /frontend/dist /app/static
 
 EXPOSE 8080

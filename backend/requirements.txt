@@ -16,6 +16,7 @@ networkx==3.6.1
 numpy==2.5.3
 packaging==26.3
 python-chess==1.999
+chess==1.11.2
 PyYAML==6.0.3
 setuptools==84.0.0
 sympy==1.14.0

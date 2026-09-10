@@ -54,6 +54,7 @@ func (e *requestError) Error() string { return e.Code + ": " + e.Message }
 type server struct {
 	pool      *EnginePool
 	staticDir string
+	evaluator *Evaluator
 }
 
 func main() {
@@ -66,11 +67,13 @@ func main() {
 
 	large := NewWorker("79m", workerCommand(python, workerPath, largeModel))
 	small := NewWorker("5m", workerCommand(python, workerPath, smallModel))
-	app := &server{pool: NewEnginePool(large, small), staticDir: staticDir}
+	app := &server{pool: NewEnginePool(large, small), staticDir: staticDir,
+		evaluator: NewEvaluator(python, getenv("STOCKFISH_WORKER", "/app/stockfish_worker.py"), getenv("STOCKFISH_BINARY", "/app/stockfish"))}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", app.healthz)
 	mux.HandleFunc("/move", app.move)
+	mux.HandleFunc("/evaluate", app.evaluate)
 	mux.HandleFunc("/", app.frontend)
 	address := ":" + port
 	log.Printf("maia-board listening on %s", address)
