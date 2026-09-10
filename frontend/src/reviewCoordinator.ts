@@ -123,6 +123,15 @@ export class ReviewCoordinator {
       this.foreground[engine] = nodes.slice(0, engine === 'sf' ? 2 : 1).flatMap(node => {
         const job = this.job(engine, node, settings); return job ? [job] : [];
       });
+      // Preempt in-flight batch work only when the viewed position still needs
+      // results: lanes are single-slot and one slow inference would otherwise
+      // stall navigation. Jobs already targeting the new foreground, and batch
+      // jobs when everything viewed is done, are left to finish undisturbed.
+      const running = this.running[engine];
+      const waiting = this.foreground[engine].some(job => !this.finished(job));
+      if (running && waiting && !this.foreground[engine].some(job => job.key === running.key)) {
+        this.controllers[engine]?.abort();
+      }
       this.pump(engine);
     }
     this.emit();
@@ -152,10 +161,12 @@ export class ReviewCoordinator {
     if (foreground) return foreground;
     const batch = this.batch;
     if (!batch || batch.canceled) return;
+    // Peek without consuming: an aborted or superseded job stays at the cursor
+    // and is retried later instead of being lost. Only finished work advances it.
     while (batch.cursor[engine] < batch.nodes.length) {
-      const job = this.job(engine, batch.nodes[batch.cursor[engine]++], batch.settings);
-      if (!job) continue;
-      if (this.finished(job)) { batch.completed.add(job.key); continue; }
+      const job = this.job(engine, batch.nodes[batch.cursor[engine]], batch.settings);
+      if (!job) { batch.cursor[engine]++; continue; }
+      if (this.finished(job)) { batch.completed.add(job.key); batch.cursor[engine]++; continue; }
       return job;
     }
   }

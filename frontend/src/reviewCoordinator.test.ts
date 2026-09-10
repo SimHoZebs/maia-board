@@ -1,4 +1,4 @@
-import { expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { loadLine } from './domain';
 import { cacheHash, ReviewCoordinator, reviewKey, type ReviewNode } from './reviewCoordinator';
 import { SEARCH_POLICY } from './reviewMetrics';
@@ -76,7 +76,10 @@ it('prioritizes interactive navigation over the next batch node and cancels the 
   coordinator.cancelBatch(); coordinator.clearForeground();
   releases.splice(0).forEach(resolve => resolve()); await flush();
   expect(requests).toHaveLength(4); expect(coordinator.progress?.canceled).toBe(true);
-  expect(coordinator.result('sf', nodes[0], settings)).toBeDefined();
+  // The interrupted batch node was preempted, not completed: its partial work
+  // is discarded while the navigated-to position keeps its results.
+  expect(coordinator.result('sf', nodes[0], settings)).toBeUndefined();
+  expect(coordinator.result('sf', nodes[3], settings)).toBeDefined();
 });
 it('never exposes old rating results under a new key and expires fallback responses', async () => {
   const fetcher = vi.fn(async url => Response.json({ ...body(String(url)), degraded: true })) as typeof fetch;
@@ -139,6 +142,94 @@ it('ignores corrupt cached rows and never persists fallback answers', async () =
   coordinator.foregroundAt([nodes[0]], settings); await flush();
   expect(coordinator.result('sf', nodes[0], settings)).toMatchObject({ depth: 12 });
   expect(puts).toHaveLength(1);
+});
+describe('preemption', () => {
+  const sfBody = {
+    engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4',
+    score: { type: 'cp', value: 0 },
+    lines: [{ move: 'e2e4', score: { type: 'cp', value: 0 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: -20 }, depth: 12 }],
+  };
+  const maiaBody = { move: 'e2e4', top_moves: [], wdl: [0, 1, 0], model_used: '79m', degraded: false };
+  type Gate = { resolve: (response: Response) => void; reject: (error: unknown) => void; signal: AbortSignal | null | undefined };
+  function deferredFetcher() {
+    const calls: { url: string; signal: AbortSignal | null | undefined }[] = [];
+    const gates = new Map<string, Gate>();
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      const path = String(url).split('?')[0];
+      const signal = init?.signal ?? null;
+      calls.push({ url: path, signal });
+      if (path.startsWith('/evaluations/')) {
+        if (init?.method === 'PUT') return Response.json({ key_hash: 'x', engine: 'x', created_at: 'now' });
+        return Response.json({ code: 'not_found', message: 'missing' }, { status: 404 });
+      }
+      return new Promise<Response>((resolve, reject) => {
+        gates.set(path, { resolve, reject, signal });
+        signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      });
+    }) as unknown as typeof fetch;
+    return { fetcher, calls, gates };
+  }
+  async function settle(url: '/evaluate' | '/move', helpers: ReturnType<typeof deferredFetcher>) {
+    const gate = helpers.gates.get(url);
+    expect(gate, `no hanging ${url} call`).toBeDefined();
+    helpers.gates.delete(url);
+    gate!.resolve(Response.json(url === '/evaluate' ? sfBody : maiaBody));
+    await flush();
+  }
+  it('preempts stale in-flight batch work when navigating', async () => {
+    const helpers = deferredFetcher();
+    const coordinator = new ReviewCoordinator(helpers.fetcher);
+    coordinator.startBatch(nodes, settings);
+    await flush();
+    const running = helpers.calls.filter(call => call.url === '/evaluate' || call.url === '/move');
+    expect(running).toHaveLength(2);
+    coordinator.foregroundAt([nodes[3]], settings);
+    expect(running.every(call => call.signal?.aborted)).toBe(true);
+    await flush();
+    expect(helpers.calls.filter(call => call.url === '/evaluate' || call.url === '/move')).toHaveLength(4);
+    await settle('/evaluate', helpers);
+    await settle('/move', helpers);
+    expect(coordinator.result('sf', nodes[3], settings)).toMatchObject({ depth: 12 });
+    expect(coordinator.result('maia', nodes[3], settings)).toMatchObject({ move: 'e2e4' });
+    expect(coordinator.error('sf', nodes[0], settings)).toBeUndefined();
+  });
+  it('retries aborted batch nodes so progress still completes', async () => {
+    const helpers = deferredFetcher();
+    const coordinator = new ReviewCoordinator(helpers.fetcher);
+    coordinator.startBatch(nodes, settings);
+    await flush();
+    coordinator.foregroundAt([nodes[3]], settings);
+    await flush();
+    await settle('/evaluate', helpers);
+    await settle('/move', helpers);
+    // Drain the rest of the batch: aborted and pending nodes replay in order.
+    for (let i = 0; i < 12 && coordinator.progress?.running; i++) {
+      await settle('/evaluate', helpers).catch(() => undefined);
+      await settle('/move', helpers).catch(() => undefined);
+    }
+    expect(coordinator.progress).toMatchObject({ running: false, failed: 0 });
+    expect(coordinator.result('sf', nodes[0], settings)).toMatchObject({ depth: 12 });
+    expect(coordinator.result('maia', nodes[1], settings)).toMatchObject({ move: 'e2e4' });
+  });
+  it('leaves running jobs alone when the foreground needs nothing', async () => {
+    const helpers = deferredFetcher();
+    const coordinator = new ReviewCoordinator(helpers.fetcher);
+    coordinator.startBatch(nodes, settings);
+    await flush();
+    const running = helpers.calls.filter(call => call.url === '/evaluate' || call.url === '/move');
+    expect(running).toHaveLength(2);
+    // Same node as the in-flight jobs: nothing new to run, no abort.
+    coordinator.foregroundAt([nodes[0]], settings);
+    expect(running.every(call => !call.signal?.aborted)).toBe(true);
+    await settle('/evaluate', helpers);
+    await settle('/move', helpers);
+    expect(coordinator.result('sf', nodes[0], settings)).toMatchObject({ depth: 12 });
+    // Navigating back to the finished node must not disturb running batch jobs.
+    coordinator.foregroundAt([nodes[0]], settings);
+    const resumed = helpers.calls.filter(call => call.url === '/evaluate' || call.url === '/move');
+    expect(resumed).toHaveLength(4);
+    expect(resumed.every(call => !call.signal?.aborted)).toBe(true);
+  });
 });
 it('rejects empty lines for non-terminal evaluations', async () => {
   const { fetchEvaluation } = await import('./reviewCoordinator');

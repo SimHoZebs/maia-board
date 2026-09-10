@@ -118,10 +118,13 @@ candidate previews use a thin gold arrow.
 
 `useReview.ts` owns the analysis lifecycle. `reviewCoordinator.ts` keeps one request
 in flight per engine, up to two foreground Stockfish jobs and one Maia job, and
-pulls batch work one node at a time. Foreground work takes priority between jobs.
+pulls batch work one node at a time. Foreground work takes priority between jobs:
+navigating aborts a stale in-flight batch job so the viewed position never waits
+behind slow inference, while jobs already targeting the new view finish undisturbed.
 Scrubbing replaces queued foreground work. Results are read only by their exact
 position/settings key; completed obsolete requests cannot replace another
-position's displayed results. Batch snapshots survive index navigation and are
+position's displayed results. Aborted batch nodes stay at the cursor and replay
+later, so progress always completes. Batch snapshots survive index navigation and are
 canceled by line loads/edits, rating/model changes, or leaving Analyze. Cancel
 retains completed results. Batches support at most 256 plies (257 positions).
 
