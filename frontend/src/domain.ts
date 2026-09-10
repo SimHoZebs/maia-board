@@ -3,13 +3,13 @@ import type { Key } from '@lichess-org/chessground/types';
 import type { MaiaColor, MaiaModel, MoveResponse } from './api';
 
 export const START_FEN = new Chess().fen();
-export type Mode = 'play' | 'analysis';
+export type Mode = 'play' | 'analysis' | 'history';
 export type Settings = { userColor: MaiaColor; eloMaia: number; eloUser: number; model: MaiaModel };
 export type Position = { fen: string; moves: string[]; sanMoves: string[]; lastMove?: [Key, Key] };
-export type Analysis = { initialFen: string; moves: string[]; sanMoves: string[]; timeline: Position[]; index: number };
+export type Analysis = { initialFen: string; moves: string[]; sanMoves: string[]; timeline: Position[]; index: number; branchFromPly: number | null; branchMoves: string[] };
 export type Insight = { response: MoveResponse; fen: string; mode: Mode };
 export type StoredGame = { id: string; createdAt: string; moves: string[]; settings: Settings };
-export const defaultSettings: Settings = { userColor: 'white', eloMaia: 1600, eloUser: 1400, model: '79m' };
+export const defaultSettings: Settings = { userColor: 'white', eloMaia: 1600, eloUser: 1600, model: '79m' };
 export const oppositeColor = (color: MaiaColor): MaiaColor => color === 'white' ? 'black' : 'white';
 export const sideName = (color: MaiaColor) => color === 'white' ? 'White' : 'Black';
 export const newId = () => typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -17,7 +17,7 @@ export const newId = () => typeof crypto.randomUUID === 'function' ? crypto.rand
 export function normalizeSettings(stored?: Partial<Settings> | null): Settings {
   const elo = (value: unknown, fallback: number) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 5000 ? value : fallback;
   return { userColor: stored?.userColor === 'black' ? 'black' : 'white', model: stored?.model === '5m' ? '5m' : '79m',
-    eloMaia: elo(stored?.eloMaia, 1600), eloUser: elo(stored?.eloUser, 1400) };
+    eloMaia: elo(stored?.eloMaia, 1600), eloUser: elo(stored?.eloUser, elo(stored?.eloMaia, 1600)) };
 }
 
 export function applyUci(game: Chess, uci: string) {
@@ -65,7 +65,7 @@ export function loadLine(fen = '', pgn = ''): Analysis {
   const game = new Chess(initialFen);
   const timeline = [positionOf(game)];
   moves.forEach(move => { applyUci(game, move); timeline.push(positionOf(game)); });
-  return { initialFen, moves, sanMoves: game.history(), timeline, index: moves.length };
+  return { initialFen, moves, sanMoves: game.history(), timeline, index: moves.length, branchFromPly: null, branchMoves: [] };
 }
 export function exportLine(analysis: Analysis): string {
   const game = replay(analysis.moves, analysis.initialFen);
@@ -75,4 +75,26 @@ export function exportLine(analysis: Analysis): string {
 }
 export function candidateSan(fen: string, uci: string): string {
   try { return applyUci(new Chess(fen), uci).san; } catch { return uci; }
+}
+
+// One replay owns the displayed position and the API's history, including custom starts.
+export function analysisLine(analysis: Analysis, at = analysis.index): Position & { initialFen: string } {
+  const initialFen = new Chess(analysis.initialFen).fen();
+  const moves = analysis.branchFromPly === null ? analysis.moves : [...analysis.moves.slice(0, analysis.branchFromPly), ...analysis.branchMoves];
+  return { ...positionOf(replay(moves.slice(0, at), initialFen)), initialFen };
+}
+export function analysisLength(analysis: Analysis): number {
+  return analysis.branchFromPly === null ? analysis.moves.length : analysis.branchFromPly + analysis.branchMoves.length;
+}
+export function exportExplored(analysis: Analysis): string {
+  return exportLine({ ...analysis, moves: analysisLine(analysis, analysisLength(analysis)).moves });
+}
+export function gameResult(game: Chess): string {
+  return game.isCheckmate() ? (game.turn() === 'w' ? 'Black wins' : 'White wins') : game.isDraw() ? 'Draw' : 'Unfinished';
+}
+// score_moves evaluates _history_after_move, then invert_wdl restores the choosing side.
+// https://github.com/CSSLab/maia3/blob/1e13597c42d4858b7cfd7cfdae01e297263364b2/maia3/uci.py
+export function absoluteWdl(fen: string, wdl: MoveResponse['wdl']) {
+  const [loss, draw, win] = wdl;
+  return new Chess(fen).turn() === 'w' ? [win, draw, loss] : [loss, draw, win];
 }
