@@ -22,7 +22,7 @@ export type Action =
   | { type: 'settings'; settings: Partial<Settings>; id: string; createdAt: string }
   | { type: 'analysis-settings'; settings: Partial<Draft> }
   | { type: 'takeback' } | { type: 'flip' }
-  | { type: 'move'; from: Square; to: Square } | { type: 'try'; uci: string }
+  | { type: 'move'; from: Square; to: Square }
   | { type: 'preview'; uci: string | null } | { type: 'original' }
   | { type: 'promote'; piece: string | null }
   | { type: 'inputs'; inputs: Partial<State['inputs']> }
@@ -119,7 +119,6 @@ export function reducer(state: State, action: Action): State {
       if (game.get(action.from)?.type === 'p' && /[18]$/.test(action.to)) return { ...state, promotion: { from: action.from, to: action.to } };
       return commitMove(state, action.from, action.to);
     }
-    case 'try': return state.mode === 'analysis' && state.analysisLoaded ? commitMove(state, action.uci.slice(0, 2) as Square, action.uci.slice(2, 4) as Square, action.uci[4]) : state;
     case 'promote': return state.promotion && action.piece ? commitMove(state, state.promotion.from, state.promotion.to, action.piece) : { ...state, promotion: null };
     case 'original': return transition(state, { analysis: { ...state.analysis, index: state.analysis.branchFromPly ?? state.analysis.index, branchFromPly: null, branchMoves: [] } }, false);
     case 'inputs': return { ...state, inputs: { ...state.inputs, ...action.inputs } };

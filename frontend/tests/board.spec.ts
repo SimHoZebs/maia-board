@@ -454,7 +454,7 @@ test('analysis candidate preview, independent rating, branch replay and labeled 
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 4');
   await expect(page.locator('.estimate h3')).toHaveText('Maia estimate after Nc6');
   await screenshot(page, testInfo.outputPath('analysis-candidates-desktop.png'));
-  await page.getByRole('button', { name: 'Try Nf6' }).click();
+  await move(page, 'g8', 'f6');
   await piece(page, 'f6', 'black knight');
   await expect(page.locator('#insight-content')).toHaveCount(0);
   await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(0);
@@ -587,7 +587,7 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
   });
 }
 
-test('phone touch movement and candidate selection', async ({ browser }) => {
+test('phone touch movement and board exploration', async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   const page = await context.newPage();
   const app = await boot(page);
@@ -601,7 +601,8 @@ test('phone touch movement and candidate selection', async ({ browser }) => {
   await app.reply(1, 'e2e4');
   await page.getByRole('button', { name: 'Preview e4' }).tap();
   await expect(page.locator('#board svg.cg-shapes line[stroke="#ef4444"]')).toHaveCount(1);
-  await page.getByRole('button', { name: 'Try e4' }).tap();
+  const a = await square(page, 'e2'), b = await square(page, 'e4');
+  await page.touchscreen.tap(a.x, a.y); await page.touchscreen.tap(b.x, b.y);
   await piece(page, 'e4', 'white pawn');
   expect(app.errors).toEqual([]);
   await context.close();
