@@ -2,3 +2,6 @@
 .gitignore
 frontend/node_modules
 frontend/dist
+frontend/dist-browser
+frontend/test-results
+frontend/playwright-report

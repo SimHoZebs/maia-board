@@ -7,7 +7,8 @@ analysis board, with inference on the home cluster instead of phone WASM.
 
 - **Modes:** play vs computer + analysis board. No training/drills/openings.
 - **Frontend:** own minimal static page (no fork of the platform frontend).
-  `chessground` (board) + `chess.js` (rules/PGN) + `fetch` to our API.
+  React + official `@lichess-org/chessground` through a local lifecycle adapter,
+  `chess.js` (rules/PGN), and `fetch` to our API.
   Keep upstream platform repo unmodified as design reference only.
 - **Inference:** server-side. Chain per request: **79M → 5M fallback**,
   then graceful "server unreachable" (never silently play a weak move).
