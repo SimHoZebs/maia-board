@@ -6,13 +6,13 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-FROM golang:1.24-bookworm@sha256:1a6d4452c65dea36aac2e2d606b01b4a029ec90cc1ae53890540ce6173ea77ac AS build
+FROM golang:1.25-bookworm@sha256:3b4a11519ad929d1e1d261a12cff056f0c85b735253d7d861346b9c6f8b36437 AS build
 
 WORKDIR /src
 COPY backend/ ./
 RUN CGO_ENABLED=0 go test ./... && CGO_ENABLED=0 go build -trimpath -o /out/maia-board .
 
-FROM golang:1.24-bookworm@sha256:1a6d4452c65dea36aac2e2d606b01b4a029ec90cc1ae53890540ce6173ea77ac AS stockfish-build
+FROM golang:1.25-bookworm@sha256:3b4a11519ad929d1e1d261a12cff056f0c85b735253d7d861346b9c6f8b36437 AS stockfish-build
 WORKDIR /stockfish
 RUN curl -fL --retry 3 https://github.com/official-stockfish/Stockfish/archive/refs/tags/sf_19.tar.gz -o source.tar.gz \
     && echo '519b653d0d1ffb96531d982ccbe5c6a19425e8388e0e3c2f70f34b424ab32d76  source.tar.gz' | sha256sum -c - \
