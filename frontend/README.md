@@ -44,8 +44,9 @@ The Go server serves the resulting `dist` directory at `/app/static`. Set
   While exploring, an Exploring marker shows above the board; the original line
   stays intact until Return to original. Translucent White/Red/Blue arrows show
   the played continuation, Maia's top choice, and Stockfish's best move, widest
-  to narrowest so agreeing moves remain visible. A compact toggle row hides each
-  source; the board itself is the only move listing.
+  to narrowest so agreeing moves remain visible. The Maia and Stockfish sections
+  carry matching red and blue markers, present their top moves side by side, and
+  tag the move actually played.
 - **History:** recent games on this device, with Resume for unfinished games,
   Analyze, Export, and Delete. Deleting the current saved game also clears its
   current-game record.
@@ -91,8 +92,8 @@ the initial FEN, original prefix, then temporary branch. `ChessBoard.tsx` wraps
 official Chessground, with React owning its container and Chessground owning the
 descendants. A separate `setAutoShapes` effect draws translucent White next-played,
 Red Maia-top, and Blue Stockfish-best arrows with widths 12/8/4. Distinct SVG hashes
-preserve widest-first ordering when arrows coincide or toggles change. Optional
-candidate previews use a thin gold arrow. Toggle state survives position navigation.
+preserve widest-first ordering when arrows coincide. Optional
+candidate previews use a thin gold arrow.
 
 ## Review coordination and scoring
 

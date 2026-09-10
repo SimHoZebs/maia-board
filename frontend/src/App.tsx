@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { FlipVertical2, Plus, Undo2 } from 'lucide-react';
 import { Chess } from 'chess.js';
 import { ChessBoard } from './ChessBoard';
@@ -9,13 +9,11 @@ import { analysisLength, analysisLine, gameResult, oppositeColor, replay, sideNa
 import { toGroundColor } from './board-colors';
 import { currentPosition } from './state';
 import { useReview } from './useReview';
-import { reviewShapes, type ArrowToggles } from './reviewArrows';
-import { ArrowLegend } from './ArrowLegend';
+import { reviewShapes } from './reviewArrows';
 
 export function App({ state, dispatch, children }: Props & { children: ReactNode }) {
   const { mode, settings, request, error } = state;
   const review = useReview(state);
-  const [arrows, setArrows] = useState<ArrowToggles>({ actual: true, maia: true, stockfish: true });
   const position = currentPosition(state);
   const game = new Chess(position.fen), live = replay(state.play.moves);
   const analysis = mode === 'analysis';
@@ -28,7 +26,7 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
   const full = analysis ? analysisLine(state.analysis, analysisLength(state.analysis)) : { sanMoves: live.history() };
   const ply = analysis ? state.analysis.index : state.viewedPly ?? state.play.moves.length;
   const arrowMoves = { actual: review.nodes[ply + 1]?.moves[ply], maia: review.maia?.top_moves[0]?.move, stockfish: review.current?.best_move };
-  const shapes = analysis && ready ? reviewShapes(arrowMoves, arrows, state.preview) : [];
+  const shapes = analysis && ready ? reviewShapes(arrowMoves, { actual: true, maia: true, stockfish: true }, state.preview) : [];
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       if (!ready || mode === 'history' || event.altKey || event.ctrlKey || event.metaKey || (event.target as HTMLElement).closest('input, textarea, select, [contenteditable="true"], dialog')) return;
@@ -63,7 +61,7 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
             </>}
             <div id="error-banner" className="error-banner" role="alert" hidden={!error}>{error}</div>
           </section>
-          {analysis && ready && <InsightPanel state={state} dispatch={dispatch} review={review} legend={<ArrowLegend toggles={arrows} onToggle={source => setArrows(current => ({ ...current, [source]: !current[source] }))} />} />}
+          {analysis && ready && <InsightPanel state={state} dispatch={dispatch} review={review} />}
         </div>
         {ready && <><PlayControls state={state} dispatch={dispatch} /><AnalysisControls state={state} dispatch={dispatch} /></>}
       </>}
