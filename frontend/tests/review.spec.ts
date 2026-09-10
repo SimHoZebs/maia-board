@@ -1,0 +1,165 @@
+import { test, expect, type Page, type Route } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { replay } from '../src/domain';
+import { SEARCH_POLICY } from '../src/reviewMetrics';
+import { KEYS } from '../src/storage';
+
+async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6') {
+  const requests: { engine: string; moves: string[]; initial_fen: string; elo_maia?: number }[] = [];
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.route('http://maia.test/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/move' || path === '/evaluate') {
+      const payload = route.request().postDataJSON(); requests.push({ engine: path, ...payload });
+      const game = replay(payload.moves, payload.initial_fen);
+      const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
+      const preferred = ['e2e4', 'e7e5', 'g1f3', 'b8c6'][payload.moves.length];
+      const best = legal.includes(preferred) ? preferred : legal[0];
+      const score = { type: 'cp', value: [20,20,200,-700,-680][payload.moves.length] ?? 0 };
+      await route.fulfill({ json: path === '/move' ? { move: best, top_moves: [{ move: best, prob: .6 }], wdl: [.2,.3,.5], model_used: payload.model, degraded: false } : {
+        engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12 + payload.moves.length, terminal: null, best_move: best, score,
+        lines: [{ move: best, score, depth: 12 }, { move: legal.find(move => move !== best), score: { type: 'cp', value: game.turn() === 'w' ? -500 : 500 }, depth: 12 }],
+      } }); return;
+    }
+    const filename = path.startsWith('/assets/') ? path.slice(1) : 'index.html';
+    await route.fulfill({ body: await readFile(resolve('dist-browser', filename)), contentType: filename.endsWith('.js') ? 'text/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html' });
+  });
+  await page.goto('http://maia.test/analyze');
+  await page.locator('#analysis-pgn').fill(pgn); await page.locator('#load-analysis').click();
+  return { requests, errors };
+}
+const lines = (page: Page) => page.locator('#board svg.cg-shapes line');
+async function atStart(page: Page) {
+  await page.locator('#analysis-first').click();
+  await expect(lines(page)).toHaveCount(3);
+}
+test('automatic review shows real overlapping SVG arrows, respects toggles and orientation', async ({ page }, info) => {
+  const app = await bootReview(page); await atStart(page);
+  const strokes = async () => lines(page).evaluateAll(elements => elements.map(el => ({ color: el.getAttribute('stroke'), opacity: el.getAttribute('opacity'), width: el.getAttribute('stroke-width'), from: [el.getAttribute('x1'), el.getAttribute('y1')], to: [el.getAttribute('x2'), el.getAttribute('y2')] })));
+  const arrows = await strokes();
+  expect(arrows.map(arrow => arrow.color)).toEqual(['#ffffff','#ef4444','#3b82f6']);
+  expect(arrows.map(arrow => arrow.width)).toEqual(['0.1875','0.125','0.0625']);
+  expect(arrows.map(arrow => arrow.opacity)).toEqual(['0.45','0.45','0.45']);
+  expect(arrows.every(arrow => JSON.stringify(arrow.from) === JSON.stringify(arrows[0].from) && JSON.stringify(arrow.to) === JSON.stringify(arrows[0].to))).toBe(true);
+  const white = page.getByRole('button', { name: 'White · Next played e4' });
+  await white.click(); await expect(lines(page)).toHaveCount(2);
+  await white.click(); await expect(lines(page)).toHaveCount(3);
+  expect((await strokes()).map(arrow => arrow.color)).toEqual(['#ffffff','#ef4444','#3b82f6']);
+  await page.locator('#flip-board').click();
+  expect(Number((await strokes())[0].from[0])).toBe(-Number(arrows[0].from[0]));
+  await page.locator('#flip-board').click();
+  await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
+  await page.screenshot({ path: info.outputPath('coincident-arrows.png'), fullPage: true });
+  expect(app.errors).toEqual([]);
+  expect(app.requests.filter(request => request.engine === '/move' && request.moves.length === 0)).toHaveLength(1);
+});
+test('whole game completes independently of viewing, renders quality and clickable gap-aware graphs', async ({ page }, info) => {
+  const app = await bootReview(page);
+  await expect(page.locator('.selected-quality')).toContainText('Nc6');
+  await page.getByRole('button', { name: 'Analyze entire game' }).click();
+  await page.locator('#analysis-first').click();
+  await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
+  await expect(page.locator('.accuracy-summary')).toContainText('2 / 2 reviewed');
+  await expect(page.locator('.move-cell .quality-great')).toHaveCount(2);
+  await expect(page.locator('.move-cell .quality-mistake')).toHaveCount(1);
+  await expect(page.locator('.move-cell .quality-blunder')).toHaveCount(1);
+  await page.getByRole('tab', { name: 'Move accuracy' }).click();
+  await page.getByRole('button', { name: /^3\. Nf3 ·/ }).click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
+  await expect(page.locator('.selected-quality')).toContainText('Blunder');
+  await expect(page.locator('.selected-evaluation')).toContainText('depth 15');
+  await page.getByRole('tab', { name: 'Evaluation', exact: true }).click();
+  await expect(page.locator('.chart-line')).toHaveCount(4);
+  await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
+  await page.screenshot({ path: info.outputPath('completed-review.png'), fullPage: true });
+  expect(app.errors).toEqual([]);
+  expect(app.requests.filter(request => request.engine === '/evaluate')).toHaveLength(5);
+});
+test('mixed arrow sources retain their own endpoints', async ({ page }, info) => {
+  await bootReview(page);
+  await page.route('http://maia.test/move', route => route.fulfill({ json: { move: 'g1f3', top_moves: [{ move: 'g1f3', prob: .6 }], wdl: [.2,.3,.5], model_used: '79m', degraded: false } }));
+  await page.route('http://maia.test/evaluate', route => route.fulfill({ json: { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'd2d4', score: { type: 'cp', value: 20 }, lines: [] } }));
+  await atStart(page);
+  const endpoints = await lines(page).evaluateAll(elements => elements.map(el => `${el.getAttribute('x1')},${el.getAttribute('y1')}:${el.getAttribute('x2')},${el.getAttribute('y2')}`));
+  expect(new Set(endpoints).size).toBe(3);
+  await expect(page.getByRole('button', { name: 'White · Next played e4' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Red · Maia top Nf3' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Blue · Stockfish best d4' })).toBeVisible();
+  await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
+  await page.screenshot({ path: info.outputPath('mixed-arrows.png'), fullPage: true });
+});
+test('current and predecessor alone leave earlier chart points missing', async ({ page }) => {
+  await bootReview(page);
+  await expect(page.locator('.selected-evaluation')).toContainText('depth 16');
+  await expect(page.locator('.chart-line')).toHaveCount(1);
+  await expect(page.locator('.chart-point').first()).toHaveAccessibleName(/Unreviewed/);
+  await expect(page.locator('.chart-point').first().locator('i')).toHaveCount(0);
+  await expect(page.locator('.accuracy-summary')).toContainText('0 / 2 reviewed');
+});
+test('cancel stops lazy batch scheduling while retaining completed position results', async ({ page }) => {
+  await bootReview(page);
+  await expect(page.locator('.selected-evaluation')).toContainText('depth 16');
+  await expect(page.locator('#insight-content')).toHaveCount(1);
+  const held: Route[] = [];
+  await page.route('http://maia.test/move', route => { held.push(route); });
+  await page.route('http://maia.test/evaluate', route => { held.push(route); });
+  await page.getByRole('button', { name: 'Analyze entire game' }).click();
+  await expect.poll(() => held.length).toBe(2);
+  await page.getByRole('button', { name: 'Cancel analysis' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'canceled' })).toBeVisible();
+  for (const route of held) await route.fulfill({ json: route.request().url().endsWith('/move') ? { move: 'e2e4', top_moves: [{ move: 'e2e4', prob: .6 }], wdl: [.2,.3,.5], model_used: '79m', degraded: false } : { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4', score: { type: 'cp', value: 20 }, lines: [] } });
+  await page.locator('#analysis-first').click();
+  await expect(lines(page)).toHaveCount(3);
+  expect(held).toHaveLength(2);
+  await expect(page.getByRole('status').filter({ hasText: 'canceled' })).toBeVisible();
+});
+for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900 }, { width: 360, height: 800 }, { width: 390, height: 844 }]) {
+  test(`review geometry, arrows and graphs ${viewport.width}x${viewport.height}`, async ({ page }, info) => {
+    await page.setViewportSize(viewport); await bootReview(page); await atStart(page);
+    await page.getByRole('button', { name: 'Analyze entire game' }).click();
+    await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
+    await page.evaluate(() => { window.scrollTo(0, 0); document.querySelector('.insight-panel')!.scrollTop = 0; });
+    const box = (await page.locator('#board').boundingBox())!;
+    expect(box.width).toBeGreaterThan(300); expect(box.width).toBeCloseTo(box.height, 0);
+    for (const rect of await page.locator('.player-strip, .move-navigation, .board-actions').evaluateAll(elements => elements.map(el => { const rect = el.getBoundingClientRect(); return { top: rect.top, bottom: rect.bottom }; }))) {
+      expect(rect.top).toBeGreaterThanOrEqual(0); expect(rect.bottom).toBeLessThanOrEqual(viewport.height);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    for (const size of await page.locator('.arrow-legend button, .chart-point, .chart-tabs button').evaluateAll(elements => elements.map(el => { const rect = el.getBoundingClientRect(); return [rect.width, rect.height]; }))) { expect(size[0]).toBeGreaterThanOrEqual(44); expect(size[1]).toBeGreaterThanOrEqual(44); }
+    await page.screenshot({ path: info.outputPath(`review-${viewport.width}.png`), fullPage: true });
+  });
+}
+test('terminal repetition skips Maia and keeps the local draw result', async ({ page }) => {
+  const app = await bootReview(page, '1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. Ng1 Ng8');
+  await expect(page.locator('.selected-evaluation')).toContainText('terminal result');
+  await expect(page.locator('.selected-evaluation')).toContainText('50.0%');
+  await page.getByRole('button', { name: 'Analyze entire game' }).click();
+  await expect(page.getByRole('button', { name: 'Cancel analysis' })).toHaveCount(0);
+  expect(app.requests.some(request => request.moves.length === 8)).toBe(false);
+});
+test('touch graph selection and arrow toggles preserve position', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const page = await context.newPage(); await bootReview(page);
+  await page.getByRole('button', { name: 'Analyze entire game' }).tap();
+  await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
+  await page.locator('.chart-point').nth(1).tap();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 5');
+  await page.getByRole('button', { name: 'Red · Maia top e5' }).tap();
+  await expect(page.locator('#board svg.cg-shapes line[stroke="#ef4444"]')).toHaveCount(0);
+  await page.locator('.chart-point').nth(2).tap();
+  await expect(page.getByRole('button', { name: 'Red · Maia top Nf3' })).toHaveAttribute('aria-pressed', 'false');
+  await context.close();
+});
+for (const bit of [0, 1]) test(`random side resolves once with crypto bit ${bit}`, async ({ page }) => {
+  await page.addInitScript(bit => { let calls = 0; crypto.getRandomValues = ((array: Uint32Array) => { calls++; array[0] = bit; (window as any).randomSideCalls = calls; return array; }) as typeof crypto.getRandomValues; }, bit);
+  await bootReview(page); await page.locator('#mode-play').click();
+  await page.getByRole('radio', { name: 'Random' }).check();
+  await page.locator('#start-game').click();
+  await expect(page.locator('#board .cg-wrap')).toHaveClass(new RegExp(`orientation-${bit ? 'black' : 'white'}`));
+  await page.locator('#new-game').click(); await page.getByRole('radio', { name: 'Random' }).check();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect(await page.evaluate(() => (window as any).randomSideCalls)).toBe(1);
+  expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)!).userColor, KEYS.settings)).toBe(bit ? 'black' : 'white');
+});

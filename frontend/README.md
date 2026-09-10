@@ -23,18 +23,23 @@ docker build -f backend/Dockerfile .
 ```
 
 The Go server serves the resulting `dist` directory at `/app/static`. Set
-`STATIC_DIR` to use another path. `/move` and `/healthz` remain API routes.
+`STATIC_DIR` to use another path. `/move`, `/evaluate`, and `/healthz` are API routes.
 
 ## Workspaces
 
 - **Play:** choose Maia rating and side, then Start. Starting a new game sets both
-  engine Elo inputs to the chosen rating. During play, player strips show the
+  engine Elo inputs to the chosen rating. Random side resolves once at Start using
+  a cryptographic random bit; the game stores the resolved White or Black side.
+  During play, player strips show the
   active turn; horizontal notation and position navigation sit below the board.
   New game opens cancellable setup. Completed games offer Review game.
 - **Analyze:** load History, PGN (game notation), FEN (a starting position), or the
   standard starting position. Import closes after loading. Analysis has its own
-  rating and model; Analyze position explicitly requests human move probabilities.
-  Changing the position, rating, or model clears the previous answer.
+  rating and model. After a 200 ms pause, the selected position automatically
+  requests Maia probabilities and Stockfish evaluation, plus evaluation of the
+  preceding position to grade the last played move. Analyze entire game reviews
+  the complete imported line; Analyze explored line reviews the current branch.
+  Review graphs, quality badges, and suggestion arrows appear in Analyze.
 - **History:** recent games on this device, with Resume for unfinished games,
   Analyze, Export, and Delete. Deleting the current saved game also clears its
   current-game record.
@@ -55,8 +60,8 @@ and request payloads. The initializer receives the route mode, and a guarded
 render-time update synchronizes later URL changes before effects commit. Direct
 Analyze and History visits therefore restore the game without requesting a play
 move. Review and Resume batch their reducer action with navigation. Returning to
-Play requests once when Maia is still to move; returning to Analyze requires an
-explicit Analyze position action. Game viewing and analysis branches survive
+Play requests once when Maia is still to move; returning to Analyze automatically
+uses or requests results for the selected position. Game viewing and analysis branches survive
 client-side navigation; refreshing restores the existing local-storage records.
 
 `state.ts` owns workflow transitions. Play's `viewedPly` is `null` when following
@@ -78,7 +83,46 @@ record formats are preserved; analysis preferences last for the current session.
 `analysisLine` constructs the displayed FEN and request moves from the same replay:
 the initial FEN, original prefix, then temporary branch. `ChessBoard.tsx` wraps
 official Chessground, with React owning its container and Chessground owning the
-descendants. Candidate preview arrows use a separate `setAutoShapes` effect.
+descendants. A separate `setAutoShapes` effect draws translucent White next-played,
+Red Maia-top, and Blue Stockfish-best arrows with widths 12/8/4. Distinct SVG hashes
+preserve widest-first ordering when arrows coincide or toggles change. Optional
+candidate previews use a thin gold arrow. Toggles survive position navigation.
+
+## Review coordination and scoring
+
+`useReview.ts` owns the analysis lifecycle. `reviewCoordinator.ts` keeps one request
+in flight per engine, up to two foreground Stockfish jobs and one Maia job, and
+pulls batch work one node at a time. Foreground work takes priority between jobs.
+Scrubbing replaces queued foreground work. Results are read only by their exact
+position/settings key; completed obsolete requests cannot replace another
+position's displayed results. Batch snapshots survive index navigation and are
+canceled by line loads/edits, rating/model changes, or leaving Analyze. Cancel
+retains completed results. Batches support at most 256 plies (257 positions).
+
+Separate successful-result caches retain the 512 most recently used entries for
+each engine. Stockfish keys include normalized initial FEN, complete move history,
+and `sf19-n100k-ms750-mpv2-t1-h64-v1`. Maia keys also include both ratings, model,
+and the pinned upstream revision linked below. Fallback Maia entries expire after
+30 seconds. Busy responses retry twice at most, respecting Retry-After with a
+one-second minimum. Other failures require Retry failed. Terminal positions are
+determined from full chess.js history, synthesized locally, and never sent to Maia.
+
+`reviewMetrics.ts` defines `maia-board-review-v1`. Canonical White scores become
+winning chances using the [Lichess formula](https://lichess.org/page/accuracy).
+Mate scores preserve the winning side and ignore distance for accuracy. Loss is
+the decrease in winning chance from the mover's perspective. Thresholds are 5
+percentage points for Inaccuracy, 10 for Mistake, and 20 for Blunder. Great requires
+Stockfish's top move, loss at most 1 point, at least two legal choices, and a
+10-point gap to the second evaluated centipawn alternative. This project-specific
+heuristic does not reproduce Chess.com's grading or detect brilliant moves.
+Other low-loss moves are Best when matching Stockfish, otherwise Good.
+
+A single legal choice is Forced with accuracy 100. Mean move accuracy is the
+arithmetic mean per side, including Forced. Missing/failed evaluation pairs remain
+Unreviewed, are excluded from the mean, and leave graph gaps. Coverage shows
+reviewed/total moves. Graph points navigate the line and expose score, actual
+depth, and quality through accessible labels and a data table. Engine grades are
+estimates at the reported depth; the mean is not Lichess's game aggregation.
 
 Maia probabilities are displayed as returned, without scaling the displayed top
 five to 100%. The win/draw/loss estimate belongs only to the first candidate.
@@ -88,9 +132,12 @@ evaluates after that move and inverts the result back to the choosing side.
 
 ## Browser verification
 
-Playwright intercepts a static `dist-browser` build and `/move` responses; it
+Playwright intercepts a static `dist-browser` build and `/move` and `/evaluate` responses; it
 requires no running server. Both production React and development StrictMode
 exercise gameplay, stale responses, imports, exploration, dialogs, touch, and
-layout. Geometry checks cover 1366×768, 1440×900, 360×800, and 390×844, with
+layout. Review fixtures also use native browser fetch, inspect rendered coincident
+and mixed arrow SVGs, navigate graphs, test batch completion/cancellation and
+terminal handling, and resolve both random-side outcomes. Geometry checks cover
+1366×768, 1440×900, 360×800, and 390×844, with
 screenshots under ignored `test-results/`. Screenshots wait for piece animations
 to finish. Real inference and deployment are outside these browser fixtures.

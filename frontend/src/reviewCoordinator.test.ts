@@ -53,3 +53,26 @@ it('bounds busy retries and requires explicit retry after failure', async () => 
     expect(coordinator.error('sf', nodes[0], settings)).toBe('Busy'); coordinator.suspend();
   } finally { vi.useRealTimers(); }
 });
+it('prioritizes interactive navigation over the next batch node and cancels the remaining snapshot', async () => {
+  const requests: string[] = [], releases: (() => void)[] = [];
+  const fetcher = vi.fn(async (url, init) => { requests.push(`${url}:${JSON.parse(init!.body as string).moves.length}`); await new Promise<void>(resolve => releases.push(resolve)); return Response.json(body(String(url))); }) as typeof fetch;
+  const coordinator = new ReviewCoordinator(fetcher);
+  coordinator.startBatch(nodes, settings); expect(requests).toEqual(['/evaluate:0', '/move:0']);
+  coordinator.foregroundAt([nodes[3], nodes[2]], settings);
+  releases.splice(0).forEach(resolve => resolve()); await flush();
+  expect(requests.slice(2)).toEqual(['/evaluate:3', '/move:3']);
+  coordinator.cancelBatch(); coordinator.clearForeground();
+  releases.splice(0).forEach(resolve => resolve()); await flush();
+  expect(requests).toHaveLength(4); expect(coordinator.progress?.canceled).toBe(true);
+  expect(coordinator.result('sf', nodes[0], settings)).toBeDefined();
+});
+it('never exposes old rating results under a new key and expires fallback responses', async () => {
+  const fetcher = vi.fn(async url => Response.json({ ...body(String(url)), degraded: true })) as typeof fetch;
+  const coordinator = new ReviewCoordinator(fetcher);
+  coordinator.foregroundAt([nodes[0]], settings); await flush();
+  expect(coordinator.result('maia', nodes[0], { ...settings, eloMaia: 2000 })).toBeUndefined();
+  expect(coordinator.result('maia', nodes[0], settings)).toBeDefined();
+  const now = Date.now(); const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 30_001);
+  expect(coordinator.result('maia', nodes[0], settings)).toBeUndefined();
+  expect(coordinator.result('sf', nodes[0], settings)).toBeDefined(); clock.mockRestore();
+});

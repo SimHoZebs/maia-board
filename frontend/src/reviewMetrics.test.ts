@@ -28,3 +28,12 @@ it('recognizes full-history repetition as terminal', () => {
   const game = new Chess(); ['Nf3','Nf6','Ng1','Ng8','Nf3','Nf6','Ng1','Ng8'].forEach(move => game.move(move));
   expect(terminalEvaluation(game)?.terminal).toBe('draw');
 });
+it('includes forced moves at 100 despite engine noise and ignores preserved mate distance', () => {
+  const game = new Chess('5Q1k/8/5K2/8/8/8/8/8 b - - 0 1');
+  expect(game.moves()).toHaveLength(1);
+  expect(reviewMove(evaluation(-900), evaluation(900), game, 'h8h7')).toEqual({ label: 'Forced', accuracy: 100, loss: 0 });
+  const before = { ...evaluation(0), score: { type: 'mate' as const, value: 3 } };
+  const after = { ...evaluation(0), score: { type: 'mate' as const, value: 8 } };
+  expect(reviewMove(before, after, new Chess(), 'e2e4').accuracy).toBe(100);
+  expect(reviewMove(before, { ...after, score: { type: 'mate', value: -1 } }, new Chess(), 'e2e4').label).toBe('Blunder');
+});

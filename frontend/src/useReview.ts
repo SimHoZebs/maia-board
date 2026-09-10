@@ -17,8 +17,8 @@ export function useReview(state: State) {
     const nodes: ReviewNode[] = [{ ...positionOf(game), initialFen: line.initialFen }];
     for (const move of line.moves) { applyUci(game, move); nodes.push({ ...positionOf(game), initialFen: line.initialFen }); }
     return nodes;
-  }, [lineKey]);
-  useEffect(() => { return () => coordinator.suspend(); }, [coordinator, active, lineKey, settingsKey]);
+  }, [lineKey, state.analysis.moves, state.analysis.branchMoves]);
+  useEffect(() => { return () => coordinator.suspend(); }, [coordinator, active, lineKey, settingsKey, state.analysis.moves, state.analysis.branchMoves]);
   useEffect(() => {
     coordinator.clearForeground();
     if (!active || nodes.length > 257) return;
@@ -30,7 +30,7 @@ export function useReview(state: State) {
   const qualities = line.moves.map((move, index) => { const quality = reviewMove(evaluations[index], evaluations[index + 1], game, move); applyUci(game, move); return quality; });
   const current = nodes[state.analysis.index];
   return { nodes, evaluations, qualities, current: evaluations[state.analysis.index], maia: active ? coordinator.result('maia', current, settings) : undefined,
-    error: active ? coordinator.error('sf', current, settings) || coordinator.error('maia', current, settings) : undefined,
+    error: active ? coordinator.error('sf', current, settings) || coordinator.error('maia', current, settings) || (state.analysis.index > 0 ? coordinator.error('sf', nodes[state.analysis.index - 1], settings) : undefined) : undefined,
     progress: coordinator.progress, start: () => coordinator.startBatch(nodes, settings), cancel: () => coordinator.cancelBatch(), retry: () => coordinator.retry(),
     tooLong: nodes.length > 257 };
 }

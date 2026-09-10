@@ -45,11 +45,11 @@ export class ReviewCoordinator {
   private failures = new Map<string, string>();
   private foreground: Record<Engine, Job[]> = { sf: [], maia: [] };
   private running: Partial<Record<Engine, Job>> = {};
-  private batch: { jobs: Job[]; cursor: Record<Engine, number>; completed: Set<string>; canceled: boolean } | null = null;
+  private batch: { nodes: ReviewNode[]; settings: ReviewSettings; cursor: Record<Engine, number>; total: number; completed: Set<string>; canceled: boolean } | null = null;
   private listeners = new Set<() => void>();
   private active = true;
   version = 0;
-  constructor(private fetcher: typeof fetch = fetch) {}
+  constructor(private fetcher: typeof fetch = (input, init) => fetch(input, init)) {}
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   snapshot = () => this.version;
   private emit() { this.version++; this.listeners.forEach(listener => listener()); }
@@ -76,27 +76,33 @@ export class ReviewCoordinator {
     this.emit();
   }
   clearForeground() { this.foreground = { sf: [], maia: [] }; }
-  suspend() { this.active = false; this.clearForeground(); this.cancelBatch(); }
+  suspend() { this.active = false; this.clearForeground(); this.batch = null; this.emit(); }
   startBatch(nodes: ReviewNode[], settings: ReviewSettings) {
-    const jobs = nodes.flatMap(node => (['sf', 'maia'] as const).flatMap(engine => { const job = this.job(engine, node, settings); return job ? [job] : []; }));
-    this.batch = { jobs, cursor: { sf: 0, maia: 0 }, completed: new Set(), canceled: false };
+    if (nodes.length > 257) return;
+    const total = nodes.reduce((count, node) => count + (terminalEvaluation(replay(node.moves, node.initialFen)) ? 0 : 2), 0);
+    this.batch = { nodes, settings, total, cursor: { sf: 0, maia: 0 }, completed: new Set(), canceled: false };
     this.active = true; this.pump('sf'); this.pump('maia'); this.emit();
   }
   cancelBatch() { if (this.batch) this.batch.canceled = true; this.emit(); }
   get progress() {
     if (!this.batch) return null;
-    return { done: this.batch.completed.size, total: this.batch.jobs.length, running: !this.batch.canceled && this.batch.completed.size < this.batch.jobs.length, canceled: this.batch.canceled };
+    const failed = this.batch.nodes.reduce((count, node) => count + Number(!!this.error('sf', node, this.batch!.settings)) + Number(!!this.error('maia', node, this.batch!.settings)), 0);
+    return { done: this.batch.completed.size, total: this.batch.total, failed, running: !this.batch.canceled && this.batch.completed.size < this.batch.total, canceled: this.batch.canceled };
   }
-  retry() { this.failures.clear(); this.pump('sf'); this.pump('maia'); this.emit(); }
+  retry() {
+    this.failures.clear();
+    if (this.batch) { this.batch.cursor = { sf: 0, maia: 0 }; this.batch.completed.clear(); this.batch.canceled = false; }
+    this.pump('sf'); this.pump('maia'); this.emit();
+  }
   private finished(job: Job) { return !!this.cache[job.engine].get(job.key) || this.failures.has(job.key); }
   private next(engine: Engine): Job | undefined {
     const foreground = this.foreground[engine].find(job => !this.finished(job));
     if (foreground) return foreground;
     const batch = this.batch;
     if (!batch || batch.canceled) return;
-    while (batch.cursor[engine] < batch.jobs.length) {
-      const job = batch.jobs[batch.cursor[engine]++];
-      if (job.engine !== engine) continue;
+    while (batch.cursor[engine] < batch.nodes.length) {
+      const job = this.job(engine, batch.nodes[batch.cursor[engine]++], batch.settings);
+      if (!job) continue;
       if (this.finished(job)) { batch.completed.add(job.key); continue; }
       return job;
     }
@@ -114,7 +120,7 @@ export class ReviewCoordinator {
       if (this.failures.size > 512) this.failures.delete(this.failures.keys().next().value!);
     }).finally(() => {
       delete this.running[engine];
-      if (this.batch?.jobs.some(item => item.key === job.key)) this.batch.completed.add(job.key);
+      if (this.batch?.nodes.some(node => reviewKey(engine, node, this.batch!.settings) === job.key)) this.batch.completed.add(job.key);
       this.pump(engine); this.emit();
     });
   }

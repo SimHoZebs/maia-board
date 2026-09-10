@@ -5,6 +5,7 @@ import { Chess } from 'chess.js';
 import { KEYS } from '../src/storage';
 import { defaultSettings, replay, type StoredGame } from '../src/domain';
 import type { MoveRequest } from '../src/api';
+import { SEARCH_POLICY } from '../src/reviewMetrics';
 
 const record = (moves: string[], color: 'white' | 'black' = 'white', id = 'fixture'): StoredGame => ({ id, createdAt: '2026-09-10T00:00:00Z', moves, settings: { ...defaultSettings, userColor: color } });
 
@@ -36,6 +37,12 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
   await page.route('http://maia.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/move') { requests.push({ route, payload: route.request().postDataJSON() }); return; }
+    if (path === '/evaluate') {
+      const payload = route.request().postDataJSON();
+      const game = replay(payload.moves, payload.initial_fen);
+      const moves = game.moves({ verbose: true }).slice(0, 2).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
+      await route.fulfill({ json: { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 14, terminal: null, best_move: moves[0] ?? null, score: { type: 'cp', value: 20 }, lines: moves.map(move => ({ move, score: { type: 'cp', value: 20 }, depth: 14 })) } }); return;
+    }
     const filename = path.startsWith('/assets/') ? path.slice(1) : 'index.html';
     const contentType = filename.endsWith('.js') ? 'text/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html';
     await route.fulfill({ body: await readFile(resolve('dist-browser', filename)), contentType });
@@ -107,7 +114,7 @@ test('direct play resumes once; Back/Forward preserves game viewing and analysis
   await piece(page, 'c4', 'white pawn');
   await page.goForward();
   await expect(page).toHaveURL('http://maia.test/history');
-  expect(app.requests).toHaveLength(1);
+  expect(app.requests.filter(request => !request.payload.initial_fen)).toHaveLength(1);
   expect(await currentMoves(page)).toEqual(['e2e4', 'e7e5']);
   expect(app.errors).toEqual([]);
 });
@@ -121,7 +128,6 @@ test('Back retires pending analysis; Forward does not repeat it or resume play t
   await app.reply(0, 'e7e5');
   expect(await currentMoves(page)).toEqual(['e2e4']);
   await page.locator('#load-analysis').click();
-  await page.locator('#analyze-position').click();
   await expect.poll(() => app.requests.length).toBe(2);
   await page.goForward();
   await expect(page).toHaveURL('http://maia.test/play');
@@ -131,7 +137,7 @@ test('Back retires pending analysis; Forward does not repeat it or resume play t
   await piece(page, 'c5', 'black pawn');
   await page.goBack();
   await expect(page).toHaveURL('http://maia.test/analyze');
-  await expect(page.locator('#insight-content')).toHaveCount(0);
+  await expect(page.locator('#insight-content')).toHaveCount(1);
   await page.goForward();
   await expect(page).toHaveURL('http://maia.test/play');
   await piece(page, 'c5', 'black pawn');
@@ -284,13 +290,12 @@ test('analysis load, navigation, export, request history, stale reply and mode r
   await page.locator('#load-analysis').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 4');
   await piece(page, 'f3', 'white knight');
-  await page.locator('#analyze-position').click();
   await expect.poll(() => app.requests.length).toBe(1);
   expect(app.requests[0].payload.moves).toEqual(['e2e4', 'e7e5', 'g1f3']);
   await page.locator('#analysis-prev').click();
   await app.reply(0, 'b8c6');
   await expect(page.locator('#insight-content')).toHaveCount(0);
-  await expect(page.locator('#analyze-position')).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Analyze entire game' })).toBeEnabled();
   await piece(page, 'g1', 'white knight');
   await page.locator('#analysis-next').click();
   const downloadEvent = page.waitForEvent('download');
@@ -302,7 +307,7 @@ test('analysis load, navigation, export, request history, stale reply and mode r
   await page.locator('#change-game').click();
   await page.getByRole('button', { name: 'FEN', exact: true }).click();
   await page.locator('#analysis-fen').fill(fen); await page.locator('#analysis-pgn').fill('1. e4');
-  await page.locator('#load-analysis').click(); await page.locator('#analyze-position').click();
+  await page.locator('#load-analysis').click();
   await expect.poll(() => app.requests.length).toBe(2);
   expect(app.requests[1].payload.initial_fen).toBe(fen);
   expect(replay(app.requests[1].payload.moves, fen).fen()).toBe(app.requests[1].payload.fen);
@@ -439,13 +444,12 @@ test('analysis candidate preview, independent rating, branch replay and labeled 
   await page.locator('#analysis-pgn').fill('1. e4 e5 2. Nf3');
   await page.locator('#load-analysis').click();
   await expect(page.locator('#analysis-controls')).toHaveCount(0);
-  await page.locator('#analyze-position').click();
   await app.reply(0, 'b8c6', 200, [{ move: 'b8c6', prob: .4 }, { move: 'g8f6', prob: .15 }]);
   await expect(page.locator('.candidate-preview')).toHaveText(['Nc640%', 'Nf615%']);
   await expect(page.locator('.wdl-row')).toHaveText(['White win20%', 'Draw30%', 'Black win50%']);
   await expect(page.locator('.estimate h3')).toHaveText('Maia estimate after Nc6');
   await page.getByRole('button', { name: 'Preview Nf6' }).hover();
-  await expect(page.locator('#board svg.cg-shapes line')).toHaveCount(1);
+  await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(1);
   await piece(page, 'g8', 'black knight');
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 4');
   await expect(page.locator('.estimate h3')).toHaveText('Maia estimate after Nc6');
@@ -453,9 +457,8 @@ test('analysis candidate preview, independent rating, branch replay and labeled 
   await page.getByRole('button', { name: 'Try Nf6' }).click();
   await piece(page, 'f6', 'black knight');
   await expect(page.locator('#insight-content')).toHaveCount(0);
-  await expect(page.locator('#board svg.cg-shapes line')).toHaveCount(0);
+  await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(0);
   await move(page, 'f1', 'c4');
-  await page.locator('#analyze-position').click();
   await expect.poll(() => app.requests.length).toBe(2);
   expect(app.requests[1].payload.moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'g8f6', 'f1c4']);
   expect(replay(app.requests[1].payload.moves).fen()).toBe(app.requests[1].payload.fen);
@@ -467,7 +470,6 @@ test('analysis candidate preview, independent rating, branch replay and labeled 
   await page.locator('#analysis-rating').selectOption('2000');
   await expect(page.locator('#insight-content')).toHaveCount(0);
   await expect(page.locator('#insight-title')).toHaveText('Human moves · 2000 rating');
-  await page.locator('#analyze-position').click();
   await expect.poll(() => app.requests.length).toBe(3);
   expect(app.requests[2].payload).toMatchObject({ elo_maia: 2000, elo_user: 2000 });
   await page.locator('#analysis-model').selectOption('5m');
@@ -538,8 +540,10 @@ test('analysis entry sources and input keyboard isolation', async ({ page }) => 
   await page.getByRole('button', { name: 'Starting position', exact: true }).click();
   await page.locator('#load-analysis').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 1');
-  await page.locator('#analyze-position').click();
-  await app.reply(0, 'e2e4');
+  await expect.poll(() => app.requests.length).toBeGreaterThan(0);
+  if (app.requests[0].payload.moves.length) await app.reply(0);
+  const currentIndex = app.requests[0].payload.moves.length ? 1 : 0;
+  await app.reply(currentIndex, 'e2e4');
   await expect(page.locator('.wdl-row')).toHaveText(['White win50%', 'Draw30%', 'Black win20%']);
 });
 
@@ -594,10 +598,9 @@ test('phone touch movement and candidate selection', async ({ browser }) => {
   await page.locator('#mode-analysis').tap();
   await page.getByRole('button', { name: 'Starting position', exact: true }).tap();
   await page.locator('#load-analysis').tap();
-  await page.locator('#analyze-position').tap();
   await app.reply(1, 'e2e4');
   await page.getByRole('button', { name: 'Preview e4' }).tap();
-  await expect(page.locator('#board svg.cg-shapes line')).toHaveCount(1);
+  await expect(page.locator('#board svg.cg-shapes line[stroke="#ef4444"]')).toHaveCount(1);
   await page.getByRole('button', { name: 'Try e4' }).tap();
   await piece(page, 'e4', 'white pawn');
   expect(app.errors).toEqual([]);

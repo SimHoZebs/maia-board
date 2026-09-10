@@ -17,7 +17,7 @@ export function reviewMove(before: Evaluation | undefined, after: Evaluation | u
   const loss = Math.max(0, pov(before.score) - pov(after.score));
   const [first, second] = before.lines;
   const best = played === before.best_move;
-  const great = best && loss <= 1 && legal >= 2 && first?.move === played && first.score.type === 'cp' && second?.score.type === 'cp' && pov(first.score) - pov(second.score) >= 10;
+  const great = best && loss <= 1 && legal >= 2 && before.score.type === 'cp' && after.score.type === 'cp' && first?.move === played && second?.move !== played && first.score.type === 'cp' && second?.score.type === 'cp' && pov(first.score) - pov(second.score) >= 10;
   return { label: classifyLoss(loss) ?? (great ? 'Great' : best ? 'Best' : 'Good'), accuracy: moveAccuracy(loss), loss };
 }
 export function terminalEvaluation(game: Chess): Evaluation | undefined {
