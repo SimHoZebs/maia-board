@@ -111,6 +111,13 @@ describe('task lifecycles', () => {
     expect(deleted.saved).toEqual([]);
     expect(deleted.request).toBeNull();
   });
+  it('ends a repetition draw using full game history', () => {
+    const moves = ['g1f3', 'g8f6', 'f3g1', 'f6g8', 'g1f3', 'g8f6', 'f3g1', 'f6g8'];
+    localStorage.setItem(KEYS.current, JSON.stringify({ id: 'draw', createdAt: 'today', moves, settings: defaultSettings }));
+    const state = initialState();
+    expect(replay(moves).isThreefoldRepetition()).toBe(true);
+    expect(reducer(state, { type: 'move', from: 'e2', to: 'e4' })).toBe(state);
+  });
   it('maps choosing-side WDL to absolute colors for both request turns', () => {
     expect(absoluteWdl(START_FEN, response.wdl)).toEqual([0.5, 0.3, 0.2]);
     expect(absoluteWdl(replay(['e2e4']).fen(), response.wdl)).toEqual([0.2, 0.3, 0.5]);

@@ -1,48 +1,50 @@
-import type { Dispatch } from 'react';
-import { exportLine, newId, oppositeColor, sideName, type Settings } from './domain';
+import { useState, type Dispatch } from 'react';
+import { exportExplored, exportLine, newId, sideName } from './domain';
 import type { Action, State } from './state';
+import { Dialog } from './Dialog';
+import { SavedGames } from './ReadPanels';
+import { Rating, downloadPgn } from './BoardTools';
 
-type Props = { state: State; dispatch: Dispatch<Action> };
-const ratings = [800, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400];
-
+export type Props = { state: State; dispatch: Dispatch<Action> };
 export function PlayControls({ state, dispatch }: Props) {
-  const { settings } = state;
-  const update = (settings: Partial<Settings>) => dispatch({ type: 'settings', settings, id: newId(), createdAt: new Date().toISOString() });
-  return <section className="panel play-controls" id="play-controls" aria-labelledby="play-settings-title" hidden={state.mode !== 'play'}>
-    <div className="panel-heading"><div><p className="eyebrow">Your table</p><h2 id="play-settings-title">Game settings</h2></div><span className="saved-mark" title="Settings are saved on this device" aria-label="Settings saved">local</span></div>
-    <fieldset className="field-group"><legend>I play</legend><div className="segmented two-up">
-      {(['white', 'black'] as const).map(color => <label className="segment-option" key={color}><input type="radio" name="user-color" value={color} checked={settings.userColor === color} onChange={() => update({ userColor: color })} /><span>{sideName(color)}</span></label>)}
-    </div><p className="field-note">Maia plays <strong id="maia-color-label">{sideName(oppositeColor(settings.userColor))}</strong>.</p></fieldset>
-    <div className="field-grid">{(['eloMaia', 'eloUser'] as const).map(key => <label className="field-group" key={key}>
-      <span className="field-label">{key === 'eloMaia' ? 'Maia Elo' : 'Your Elo'}</span>
-      <select id={key === 'eloMaia' ? 'elo-maia' : 'elo-user'} aria-label={key === 'eloMaia' ? 'Maia Elo' : 'Your Elo'} value={settings[key]} onChange={event => update({ [key]: Number(event.target.value) })}>
-        {[...new Set([...ratings, settings[key]])].sort((a, b) => a - b).map(elo => <option key={elo} value={elo}>{elo}</option>)}
-      </select>
-    </label>)}</div>
-    <fieldset className="field-group"><legend>Model</legend><div className="model-options">
-      {(['79m', '5m'] as const).map(model => <label className="model-option" key={model}><input type="radio" name="model" value={model} checked={settings.model === model} onChange={() => update({ model })} /><span className="model-copy"><strong>{model.toUpperCase()}</strong><small>{model === '79m' ? 'full human prior' : 'quick response'}</small></span></label>)}
-    </div></fieldset>
-    <div className="action-row"><button className="button button-primary" id="new-game" onClick={() => dispatch({ type: 'new', id: newId(), createdAt: new Date().toISOString() })}>New game</button><button className="button button-secondary" id="takeback" disabled={!state.play.moves.length} onClick={() => dispatch({ type: 'takeback' })}>Takeback</button></div>
+  if (!state.setup || state.mode !== 'play') return null;
+  const content = <section id="play-controls" className="setup panel">
+    <h1>{state.started ? 'Start a new game?' : 'Play Maia'}</h1>
+    <p>{state.started ? 'Your current game stays in History. Cancel to keep playing.' : 'Choose a level and a side.'}</p>
+    <Rating value={state.setup.eloMaia} onChange={eloMaia => dispatch({ type: 'setup', draft: { eloMaia } })} />
+    <fieldset><legend>Your side</legend><div className="side-options">{(['white', 'black'] as const).map(color => <label key={color}><input type="radio" name="user-color" checked={state.setup!.userColor === color} onChange={() => dispatch({ type: 'setup', draft: { userColor: color } })} />{sideName(color)}</label>)}</div></fieldset>
+    <div className="actions"><button id="start-game" className="primary" onClick={() => dispatch({ type: 'new', id: newId(), createdAt: new Date().toISOString() })}>{state.started ? 'Start new game' : 'Start game'}</button>{state.started && <button onClick={() => dispatch({ type: 'cancel-setup' })}>Cancel</button>}</div>
   </section>;
+  return state.started ? <Dialog title="Start a new game?" onCancel={() => dispatch({ type: 'cancel-setup' })}>{content}</Dialog> : content;
 }
 
-export function AnalysisControls({ state, dispatch }: Props) {
-  const { analysis, inputs } = state;
-  const download = () => {
-    const url = URL.createObjectURL(new Blob([exportLine(analysis)], { type: 'application/x-chess-pgn' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'maia-analysis.pgn';
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
-  };
-  return <section className="panel analysis-controls" id="analysis-controls" aria-labelledby="analysis-settings-title" hidden={state.mode !== 'analysis'}>
-    <div className="panel-heading"><div><p className="eyebrow">Position lab</p><h2 id="analysis-settings-title">Load a line</h2></div><span className="saved-mark">local</span></div>
-    <label className="field-group"><span className="field-label">FEN <span className="quiet">(optional = start)</span></span><input className="text-input mono" id="analysis-fen" type="text" spellCheck={false} autoComplete="off" placeholder="Starting position" value={inputs.fen} onChange={event => dispatch({ type: 'inputs', inputs: { fen: event.target.value } })} /></label>
-    <label className="field-group"><span className="field-label">PGN <span className="quiet">(optional)</span></span><textarea className="text-input pgn-input mono" id="analysis-pgn" rows={5} spellCheck={false} placeholder="1. e4 e5 2. Nf3 ..." value={inputs.pgn} onChange={event => dispatch({ type: 'inputs', inputs: { pgn: event.target.value } })} /></label>
-    <button className="button button-primary wide-button" id="load-analysis" onClick={() => dispatch({ type: 'load' })}>Load position</button>
-    <button className="button button-accent wide-button" id="analyze-position" disabled={!!state.request} onClick={() => dispatch({ type: 'analyze' })}>Ask Maia about this position</button>
-    <div className="analysis-nav"><button className="icon-button" id="analysis-prev" aria-label="Previous position" disabled={analysis.index === 0} onClick={() => dispatch({ type: 'step', delta: -1 })}>&lt;</button><span id="analysis-index">Position {analysis.index + 1} / {analysis.timeline.length}</span><button className="icon-button" id="analysis-next" aria-label="Next position" disabled={analysis.index === analysis.timeline.length - 1} onClick={() => dispatch({ type: 'step', delta: 1 })}>&gt;</button></div>
-    <button className="button button-secondary wide-button" id="export-pgn" disabled={!analysis.moves.length} onClick={download}>Export PGN</button>
+function ImportForm({ state, dispatch }: Props) {
+  const [source, setSource] = useState<'pgn' | 'fen' | 'history' | 'start'>('pgn');
+  return <section className="panel import-panel" id="analysis-controls">
+    <h1>Analyze a game or position</h1>
+    <div className="source-options" aria-label="Analysis source">{(['history', 'pgn', 'fen', 'start'] as const).map(value => <button key={value} aria-pressed={source === value} onClick={() => setSource(value)}>{({ history: 'History', pgn: 'PGN', fen: 'FEN', start: 'Starting position' })[value]}</button>)}</div>
+    {source === 'history' ? <><button disabled={!state.started} onClick={() => dispatch({ type: 'review' })}>Analyze current game</button><SavedGames state={state} dispatch={dispatch} analysisOnly /></> : <>
+      {source === 'pgn' && <label className="field">Game PGN<textarea id="analysis-pgn" rows={5} spellCheck={false} value={state.inputs.pgn} onChange={event => dispatch({ type: 'inputs', inputs: { pgn: event.target.value } })} placeholder="1. e4 e5 2. Nf3" /></label>}
+      {source === 'fen' && <><label className="field">Starting FEN<input id="analysis-fen" spellCheck={false} value={state.inputs.fen} onChange={event => dispatch({ type: 'inputs', inputs: { fen: event.target.value } })} /></label><label className="field">Moves from this position (optional PGN)<textarea id="analysis-pgn" rows={3} value={state.inputs.pgn} onChange={event => dispatch({ type: 'inputs', inputs: { pgn: event.target.value } })} /></label></>}
+      {source === 'start' && <p>Explore from the standard starting position.</p>}
+      <button id="load-analysis" className="primary" onClick={() => {
+        if (source === 'start') dispatch({ type: 'inputs', inputs: { fen: '', pgn: '' } });
+        if (source === 'pgn') dispatch({ type: 'inputs', inputs: { fen: '' } });
+        dispatch({ type: 'load' });
+      }}>Load {source === 'pgn' ? 'game' : 'position'}</button>
+    </>}
+    {state.error && <p role="alert">{state.error}</p>}
+    {state.analysisLoaded && <button onClick={() => dispatch({ type: 'import', open: false })}>Cancel</button>}
   </section>;
+}
+export function AnalysisControls(props: Props) {
+  if (props.state.mode !== 'analysis' || !props.state.importing) return null;
+  return props.state.analysisLoaded ? <Dialog title="Change game" onCancel={() => props.dispatch({ type: 'import', open: false })}><ImportForm {...props} /></Dialog> : <ImportForm {...props} />;
+}
+export function AnalysisActions({ state, dispatch }: Props) {
+  return <div className="analysis-actions">
+    <button id="change-game" onClick={() => dispatch({ type: 'import', open: true })}>Change game</button>
+    <button id="export-pgn" onClick={() => downloadPgn(exportLine(state.analysis), 'maia-analysis.pgn')}>Export original PGN</button>
+    {state.analysis.branchFromPly !== null && <><button id="return-original" onClick={() => dispatch({ type: 'original' })}>Return to original</button><button id="export-explored" onClick={() => downloadPgn(exportExplored(state.analysis), 'maia-explored.pgn')}>Export explored PGN</button></>}
+  </div>;
 }

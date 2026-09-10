@@ -6,9 +6,9 @@ import type { Color, Key } from '@lichess-org/chessground/types';
 import { legalDests, type Position } from './domain';
 import { toGroundColor } from './board-colors';
 
-type Props = { position: Position; orientation: Color; enabled: boolean; thinking: boolean; interactionVersion: number; onMove: (from: Square, to: Square) => void };
+type Props = { position: Position; orientation: Color; enabled: boolean; thinking: boolean; interactionVersion: number; preview?: string | null; onMove: (from: Square, to: Square) => void };
 
-export function ChessBoard({ position, orientation, enabled, thinking, interactionVersion, onMove }: Props) {
+export function ChessBoard({ position, orientation, enabled, thinking, interactionVersion, preview, onMove }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const api = useRef<Api | null>(null);
   const callback = useRef(onMove);
@@ -45,6 +45,9 @@ export function ChessBoard({ position, orientation, enabled, thinking, interacti
       },
     });
   }, [position.fen, orientation, enabled, lastMove, gesture, interactionVersion]);
+  useLayoutEffect(() => {
+    api.current?.setAutoShapes(preview ? [{ orig: preview.slice(0, 2) as Key, dest: preview.slice(2, 4) as Key, brush: 'blue' }] : []);
+  }, [position.fen, preview, interactionVersion]);
   // React owns this element; Chessground owns all its descendants and CSS classes.
   return <div className={`board${thinking ? ' is-thinking' : ''}`} id="board" aria-label="Chess board"><div ref={container} /></div>;
 }

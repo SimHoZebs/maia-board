@@ -8,7 +8,7 @@ import type { MoveRequest } from '../src/api';
 
 const record = (moves: string[], color: 'white' | 'black' = 'white', id = 'fixture'): StoredGame => ({ id, createdAt: '2026-09-10T00:00:00Z', moves, settings: { ...defaultSettings, userColor: color } });
 
-async function boot(page: Page, storage: Record<string, unknown> = {}) {
+async function boot(page: Page, storage: Record<string, unknown> = {}, start = true) {
   const requests: { route: Route; payload: MoveRequest }[] = [];
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -41,14 +41,15 @@ async function boot(page: Page, storage: Record<string, unknown> = {}) {
     await route.fulfill({ body: await readFile(resolve('dist-browser', filename)), contentType });
   });
   await page.goto('http://maia.test/');
+  if (start && !storage[KEYS.current]) await page.locator('#start-game').click();
   await expect(page.locator('#board cg-board')).toHaveCount(1);
   await expect(page.locator('#board piece:not(.ghost)')).toHaveCount(32 - (storage[KEYS.current] ? countCaptures(storage[KEYS.current] as StoredGame) : 0));
-  async function reply(index: number, move?: string, status = 200) {
+  async function reply(index: number, move?: string, status = 200, topMoves?: { move: string; prob: number }[]) {
     await expect.poll(() => requests.length).toBeGreaterThan(index);
     const item = requests[index];
     const chosen = move ?? new Chess(item.payload.fen).moves({ verbose: true }).map(m => `${m.from}${m.to}${m.promotion ?? ''}`)[0];
     const delivered = page.waitForResponse(response => response.request() === item.route.request());
-    await item.route.fulfill({ status, json: status === 200 ? { move: chosen, top_moves: [{ move: chosen, prob: 0.6 }], wdl: [0.2, 0.3, 0.5], model_used: item.payload.model, degraded: false } : { code: 'engine_busy', message: 'busy' } });
+    await item.route.fulfill({ status, json: status === 200 ? { move: chosen, top_moves: topMoves ?? [{ move: chosen, prob: 0.6 }], wdl: [0.2, 0.3, 0.5], model_used: item.payload.model, degraded: false } : { code: 'engine_busy', message: 'busy' } });
     await (await delivered).finished();
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   }
@@ -79,6 +80,10 @@ async function piece(page: Page, key: string, expected: string | null) {
 async function currentMoves(page: Page) {
   return page.evaluate(key => JSON.parse(localStorage.getItem(key) || 'null')?.moves ?? [], KEYS.current);
 }
+async function screenshot(page: Page, path: string) {
+  await expect(page.locator('#board piece.anim')).toHaveCount(0);
+  await page.screenshot({ path, fullPage: true });
+}
 
 for (const color of ['white', 'black'] as const) for (const drag of [false, true]) {
   test(`${color}: ${drag ? 'drag' : 'click'}, Maia reply, takeback and flip`, async ({ page }) => {
@@ -92,9 +97,9 @@ for (const color of ['white', 'black'] as const) for (const drag of [false, true
     expect(replay(request.moves).fen()).toBe(request.fen);
     expect(request.elo_maia).toBe(1600);
     await app.reply(before, color === 'white' ? 'e7e5' : 'g1f3');
-    await expect(page.locator('#insight-title')).toHaveText(color === 'white' ? 'Played e5' : 'Played Nf3');
-    await expect(page.locator('.wdl-row')).toHaveText(['loss20%', 'draw30%', 'win50%']);
-    await expect(page.locator('.candidate-list li')).toHaveCount(1);
+    await expect(page.locator('#insight-title')).toHaveCount(0);
+    await expect(page.locator('.wdl-row')).toHaveCount(0);
+    await expect(page.locator('.candidate-list li')).toHaveCount(0);
     await page.locator('#flip-board').click();
     await expect(page.locator('#board .cg-wrap')).toHaveClass(new RegExp(`orientation-${color === 'white' ? 'black' : 'white'}`));
     await page.locator('#takeback').click();
@@ -117,7 +122,7 @@ for (const color of ['white', 'black'] as const) {
     await piece(page, `g${rank}`, `${color} king`); await piece(page, `f${rank}`, `${color} rook`); await piece(page, `h${rank}`, null);
     await expect.poll(() => app.requests.length).toBe(1);
     expect(app.requests[0].payload.moves.at(-1)).toBe(`e${rank}g${rank}`);
-    await app.reply(0); await expect(page.locator('#connection-label')).toHaveText('Ready');
+    await app.reply(0); await expect(page.locator('.turn-indicator')).toHaveText('To move');
     expect(app.errors).toEqual([]);
   });
   test(`${color}: en passant removes captured pawn`, async ({ page }) => {
@@ -153,14 +158,13 @@ test('analysis load, navigation, export, request history, stale reply and mode r
   await page.locator('#load-analysis').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 4');
   await piece(page, 'f3', 'white knight');
-  await move(page, 'b8', 'c6', true); await piece(page, 'b8', 'black knight');
   await page.locator('#analyze-position').click();
   await expect.poll(() => app.requests.length).toBe(1);
   expect(app.requests[0].payload.moves).toEqual(['e2e4', 'e7e5', 'g1f3']);
   await page.locator('#analysis-prev').click();
   await app.reply(0, 'b8c6');
-  await expect(page.locator('#insight-title')).toHaveText('Waiting for a position');
-  await expect(page.locator('#connection-label')).toHaveText('Ready');
+  await expect(page.locator('#insight-content')).toHaveCount(0);
+  await expect(page.locator('#analyze-position')).toBeEnabled();
   await piece(page, 'g1', 'white knight');
   await page.locator('#analysis-next').click();
   const downloadEvent = page.waitForEvent('download');
@@ -169,13 +173,15 @@ test('analysis load, navigation, export, request history, stale reply and mode r
   expect(download.suggestedFilename()).toBe('maia-analysis.pgn');
   expect(await readFile((await download.path())!, 'utf8')).toContain('1. e4 e5 2. Nf3');
   const fen = '4k3/8/8/8/8/8/4P3/4K3 w - - 0 1';
+  await page.locator('#change-game').click();
+  await page.getByRole('button', { name: 'FEN', exact: true }).click();
   await page.locator('#analysis-fen').fill(fen); await page.locator('#analysis-pgn').fill('1. e4');
   await page.locator('#load-analysis').click(); await page.locator('#analyze-position').click();
   await expect.poll(() => app.requests.length).toBe(2);
   expect(app.requests[1].payload.initial_fen).toBe(fen);
   expect(replay(app.requests[1].payload.moves, fen).fen()).toBe(app.requests[1].payload.fen);
   await app.reply(1, 'e8d7');
-  await expect(page.locator('#insight-title')).toHaveText('Top human moves');
+  await expect(page.locator('#insight-title')).toHaveText('Human moves · 1600 rating');
   await page.locator('#mode-play').click(); await move(page, 'd2', 'd4');
   await expect.poll(() => app.requests.length).toBe(3);
   await app.reply(2, 'd7d5'); await piece(page, 'd5', 'black pawn');
@@ -186,12 +192,13 @@ test('saved switching at identical FEN retires pending reply and persists select
   const a = record(['e2e4'], 'white', 'a'), b = record(['e2e4'], 'white', 'b');
   const app = await boot(page, { [KEYS.current]: a, [KEYS.saved]: [a, b] });
   await expect.poll(() => app.requests.length).toBe(1);
+  await page.locator('#mode-history').click();
   await page.locator('[data-game-id="b"]').click();
   await expect.poll(() => app.requests.length).toBe(2);
   await expect.poll(() => page.evaluate(key => JSON.parse(localStorage.getItem(key)!).id, KEYS.current)).toBe('b');
   await app.reply(1, 'c7c5'); await app.reply(0, 'e7e5');
   await piece(page, 'c5', 'black pawn'); await piece(page, 'e7', 'black pawn');
-  await expect(page.locator('#insight-title')).toHaveText('Played c5');
+  await expect(page.locator('#insight-title')).toHaveCount(0);
   await page.reload(); await piece(page, 'c5', 'black pawn');
   expect(app.errors).toEqual([]);
 });
@@ -204,14 +211,16 @@ test('pending takeback/new game/mode/settings transitions reject obsolete replie
   await move(page, 'e2', 'e4'); await expect.poll(() => app.requests.length).toBe(2);
   await page.locator('#mode-analysis').click(); await page.locator('#mode-play').click();
   await expect.poll(() => app.requests.length).toBe(3);
-  await app.reply(1, 'e7e5'); await expect(page.locator('#connection-label')).toHaveText('Thinking');
-  await page.locator('.model-option').filter({ hasText: '5M' }).click();
-  await expect.poll(() => app.requests.length).toBe(4);
-  expect(app.requests[3].payload.model).toBe('5m');
-  await app.reply(2, 'e7e5'); await expect(page.locator('#connection-label')).toHaveText('Thinking');
-  await page.locator('#new-game').click(); await app.reply(3, 'e7e5');
+  await app.reply(1, 'e7e5'); await expect(page.locator('.turn-indicator')).toHaveText('Thinking…');
+  await page.locator('#new-game').click();
+  await page.locator('#elo-maia').selectOption('1800');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect(app.requests).toHaveLength(3);
+  await page.locator('#new-game').click();
+  await page.locator('#elo-maia').selectOption('2000');
+  await page.locator('#start-game').click(); await app.reply(2, 'e7e5');
   await expect.poll(() => currentMoves(page)).toEqual([]);
-  await expect(page.locator('#connection-label')).toHaveText('Ready');
+  await expect(page.locator('.turn-indicator')).toHaveText('To move');
   await piece(page, 'e7', 'black pawn');
   expect(app.errors).toEqual([]);
 });
@@ -220,9 +229,9 @@ test('request errors settle without retry loops, controls recover', async ({ pag
   const app = await boot(page);
   await move(page, 'e2', 'e4'); await app.reply(0, undefined, 503);
   await expect(page.locator('#error-banner')).toHaveText('Maia is busy. Wait a moment and try again.');
-  await expect(page.locator('#connection-label')).toHaveText('Check server');
+  await expect(page.locator('.turn-indicator')).not.toHaveText('Thinking…');
   await page.locator('#takeback').click(); await move(page, 'd2', 'd4');
-  await app.reply(1, 'd7d5'); await expect(page.locator('#connection-label')).toHaveText('Ready');
+  await app.reply(1, 'd7d5'); await expect(page.locator('.turn-indicator')).toHaveText('To move');
   expect(app.requests).toHaveLength(2);
 });
 
@@ -233,13 +242,13 @@ test('single live Chessground binding survives React updates and StrictMode clea
   expect(initial.adds - initial.removes).toBe(1);
   if (process.env.NODE_ENV === 'development') expect(initial).toEqual({ adds: 2, removes: 1 });
   await move(page, 'e2', 'e4'); await app.reply(0, 'e7e5');
-  await expect(page.locator('#connection-label')).toHaveText('Ready');
+  await expect(page.locator('.turn-indicator')).toHaveText('To move');
   await page.locator('#mode-analysis').click(); await page.locator('#analysis-pgn').fill('1. d4 d5');
   await page.locator('#load-analysis').click(); await page.locator('#mode-play').click();
   await page.locator('#flip-board').click();
   expect(await stats()).toEqual(initial);
   await expect(page.locator('#board cg-board')).toHaveCount(1);
-  await page.screenshot({ path: testInfo.outputPath('desktop.png'), fullPage: true });
+  await screenshot(page, testInfo.outputPath('desktop.png'));
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.locator('#board cg-board').evaluate(board => {
     const bounds = board.getBoundingClientRect();
@@ -264,7 +273,201 @@ test('single live Chessground binding survives React updates and StrictMode clea
       return Math.abs(rect.left - x) > 1 || Math.abs(rect.top - y) > 1 ? [{ key, actual: [rect.left, rect.top], expected: [x, y] }] : [];
     });
   })).toEqual([]);
-  await page.screenshot({ path: testInfo.outputPath('mobile.png'), fullPage: true });
+  await screenshot(page, testInfo.outputPath('mobile.png'));
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   expect(app.errors).toEqual([]);
+});
+
+test('setup disappears; draft cancel preserves a reply arriving while historical', async ({ page }) => {
+  const app = await boot(page, {}, false);
+  await expect(page.locator('#play-controls')).toBeVisible();
+  expect(app.requests).toHaveLength(0);
+  await page.locator('#elo-maia').selectOption('1800');
+  await page.locator('#start-game').click();
+  await expect(page.locator('#play-controls')).toHaveCount(0);
+  await expect(page.locator('.insight-panel, .saved-panel, .turn-chip, .stage-heading')).toHaveCount(0);
+  await move(page, 'e2', 'e4');
+  await expect.poll(() => app.requests.length).toBe(1);
+  expect(app.requests[0].payload).toMatchObject({ elo_maia: 1800, elo_user: 1800 });
+  await page.locator('#analysis-first').click();
+  await piece(page, 'e2', 'white pawn');
+  await move(page, 'd2', 'd4');
+  expect(await currentMoves(page)).toEqual(['e2e4']);
+  await page.locator('#new-game').click();
+  await page.locator('#elo-maia').selectOption('2200');
+  await app.reply(0, 'e7e5');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#new-game')).toBeFocused();
+  await piece(page, 'e2', 'white pawn');
+  expect(await currentMoves(page)).toEqual(['e2e4', 'e7e5']);
+  await page.getByRole('button', { name: 'Return to game' }).click();
+  await piece(page, 'e5', 'black pawn');
+  expect(app.requests).toHaveLength(1);
+  await expect(page.locator('.player-strip').filter({ hasText: 'Maia' })).toContainText('1800');
+});
+
+test('analysis candidate preview, independent rating, branch replay and labeled exports', async ({ page }, testInfo) => {
+  const app = await boot(page);
+  await page.locator('#mode-analysis').click();
+  await expect(page.locator('#analysis-controls')).toBeVisible();
+  await page.locator('#analysis-pgn').fill('1. e4 e5 2. Nf3');
+  await page.locator('#load-analysis').click();
+  await expect(page.locator('#analysis-controls')).toHaveCount(0);
+  await page.locator('#analyze-position').click();
+  await app.reply(0, 'b8c6', 200, [{ move: 'b8c6', prob: .4 }, { move: 'g8f6', prob: .15 }]);
+  await expect(page.locator('.candidate-preview')).toHaveText(['Nc640%', 'Nf615%']);
+  await expect(page.locator('.wdl-row')).toHaveText(['White win20%', 'Draw30%', 'Black win50%']);
+  await expect(page.locator('.estimate h3')).toHaveText('Maia estimate after Nc6');
+  await page.getByRole('button', { name: 'Preview Nf6' }).hover();
+  await expect(page.locator('#board svg.cg-shapes line')).toHaveCount(1);
+  await piece(page, 'g8', 'black knight');
+  await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 4');
+  await expect(page.locator('.estimate h3')).toHaveText('Maia estimate after Nc6');
+  await screenshot(page, testInfo.outputPath('analysis-candidates-desktop.png'));
+  await page.getByRole('button', { name: 'Try Nf6' }).click();
+  await piece(page, 'f6', 'black knight');
+  await expect(page.locator('#insight-content')).toHaveCount(0);
+  await expect(page.locator('#board svg.cg-shapes line')).toHaveCount(0);
+  await move(page, 'f1', 'c4');
+  await page.locator('#analyze-position').click();
+  await expect.poll(() => app.requests.length).toBe(2);
+  expect(app.requests[1].payload.moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'g8f6', 'f1c4']);
+  expect(replay(app.requests[1].payload.moves).fen()).toBe(app.requests[1].payload.fen);
+  await page.locator('#change-game').click();
+  await page.keyboard.press('Escape');
+  expect(app.requests).toHaveLength(2);
+  await app.reply(1, 'b8c6');
+  await page.getByText('Analysis settings', { exact: true }).click();
+  await page.locator('#analysis-rating').selectOption('2000');
+  await expect(page.locator('#insight-content')).toHaveCount(0);
+  await expect(page.locator('#insight-title')).toHaveText('Human moves · 2000 rating');
+  await page.locator('#analyze-position').click();
+  await expect.poll(() => app.requests.length).toBe(3);
+  expect(app.requests[2].payload).toMatchObject({ elo_maia: 2000, elo_user: 2000 });
+  await page.locator('#analysis-model').selectOption('5m');
+  await app.reply(2, 'b8c6');
+  await expect(page.locator('#insight-content')).toHaveCount(0);
+  for (const [id, filename, expected] of [['export-pgn', 'maia-analysis.pgn', '1. e4 e5 2. Nf3'], ['export-explored', 'maia-explored.pgn', '1. e4 e5 2. Nf3 Nf6 3. Bc4']]) {
+    const downloading = page.waitForEvent('download');
+    await page.locator(`#${id}`).click();
+    const file = await downloading;
+    expect(file.suggestedFilename()).toBe(filename);
+    expect(await readFile((await file.path())!, 'utf8')).toContain(expected);
+  }
+  await page.locator('#return-original').click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 4');
+  await piece(page, 'g8', 'black knight');
+  await page.locator('#mode-play').click();
+  await expect(page.locator('.player-strip').filter({ hasText: 'Maia' })).toContainText('1600');
+  expect(app.errors).toEqual([]);
+});
+
+test('history review, resume, export, delete, and just-finished game review', async ({ page }) => {
+  const mate = record(['f2f3', 'e7e5', 'g2g4', 'd8h4'], 'white', 'mate');
+  const unfinished = record(['e2e4', 'e7e5'], 'white', 'unfinished');
+  const app = await boot(page, { [KEYS.current]: mate, [KEYS.saved]: [mate, unfinished] });
+  await expect(page.locator('.game-result')).toContainText('Black wins');
+  await page.getByRole('button', { name: 'Review game' }).click();
+  await expect(page.locator('#analysis-controls')).toHaveCount(0);
+  await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
+  await page.locator('#mode-history').click();
+  const cards = page.locator('.saved-game');
+  await expect(cards).toHaveCount(2);
+  await expect(cards.first()).toContainText('White · Maia 1600');
+  await expect(cards.first().getByRole('button', { name: 'Resume' })).toHaveCount(0);
+  const downloading = page.waitForEvent('download');
+  await cards.first().getByRole('button', { name: 'Export' }).click();
+  expect(await readFile((await (await downloading).path())!, 'utf8')).toContain('Qh4#');
+  await cards.last().getByRole('button', { name: 'Resume' }).click();
+  await piece(page, 'e5', 'black pawn');
+  await page.locator('#mode-history').click();
+  await cards.last().getByRole('button', { name: 'Delete', exact: true }).click();
+  await page.getByRole('button', { name: 'Delete game', exact: true }).click();
+  await expect(cards).toHaveCount(1);
+  await page.reload();
+  await expect(page.locator('#play-controls')).toBeVisible();
+  expect(await currentMoves(page)).toEqual([]);
+  expect(app.errors).toEqual([]);
+});
+
+test('analysis entry sources and input keyboard isolation', async ({ page }) => {
+  const app = await boot(page, { [KEYS.saved]: [record(['d2d4', 'd7d5'])] });
+  await page.locator('#mode-analysis').click();
+  await page.getByRole('button', { name: 'History', exact: true }).last().click();
+  await page.locator('.saved-game').getByRole('button', { name: 'Analyze', exact: true }).click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
+  await page.locator('#change-game').click();
+  await page.locator('#analysis-pgn').fill('1. e4');
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#change-game')).toBeFocused();
+  await page.locator('#change-game').click();
+  await page.getByRole('button', { name: 'Starting position', exact: true }).click();
+  await page.locator('#load-analysis').click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 1');
+  await page.locator('#analyze-position').click();
+  await app.reply(0, 'e2e4');
+  await expect(page.locator('.wdl-row')).toHaveText(['White win50%', 'Draw30%', 'Black win20%']);
+});
+
+for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900 }, { width: 360, height: 800 }, { width: 390, height: 844 }]) {
+  test(`workspace geometry and horizontal notation ${viewport.width}x${viewport.height}`, async ({ page }, testInfo) => {
+    await page.setViewportSize(viewport);
+    const long = Array.from({ length: 18 }, () => ['g1f3', 'g8f6', 'f3g1', 'f6g8']).flat();
+    await boot(page, { [KEYS.current]: record(long) });
+    const board = await page.locator('#board').boundingBox();
+    expect(board!.width).toBeGreaterThan(viewport.width < 760 ? 300 : 380);
+    expect(Math.abs(board!.width - board!.height)).toBeLessThan(1);
+    for (const selector of ['.player-strip', '.move-navigation', '.board-actions']) for (const box of await page.locator(selector).evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; }))) {
+      expect(box.top).toBeGreaterThanOrEqual(0); expect(box.bottom).toBeLessThanOrEqual(viewport.height);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    for (const box of await page.locator('.board-actions button, .nav-buttons button, .site-header button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height }; }))) {
+      expect(box.width).toBeGreaterThanOrEqual(44); expect(box.height).toBeGreaterThanOrEqual(44);
+    }
+    const list = page.locator('#move-list');
+    expect(await list.evaluate(el => el.scrollWidth > el.clientWidth && el.clientHeight <= 52)).toBe(true);
+    await page.locator('#analysis-first').click();
+    await page.locator('#analysis-next').click();
+    await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
+    await page.locator('#analysis-last').click();
+    await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
+    await expect(page.locator('.game-result')).toBeInViewport();
+    await page.evaluate(({ key, game }) => localStorage.setItem(key, JSON.stringify(game)), { key: KEYS.current, game: record(['e2e4', 'e7e5']) });
+    await page.reload();
+    const controls = (await page.locator('.board-actions').boundingBox())!;
+    expect(controls.y + controls.height).toBeLessThanOrEqual(viewport.height);
+    await screenshot(page, testInfo.outputPath(`play-${viewport.width}.png`));
+    await page.locator('#mode-analysis').click();
+    await page.locator('#analysis-pgn').fill('1. e4 e5 2. Nf3');
+    await page.locator('#load-analysis').click();
+    const rail = (await page.locator('.insight-panel').boundingBox())!;
+    const stage = (await page.locator('.board-stage').boundingBox())!;
+    if (viewport.width > 760) expect(rail.x).toBeGreaterThan(stage.x + stage.width);
+    else expect(rail.y).toBeGreaterThanOrEqual(stage.y + stage.height);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await screenshot(page, testInfo.outputPath(`analysis-${viewport.width}.png`));
+  });
+}
+
+test('phone touch movement and candidate selection', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const page = await context.newPage();
+  const app = await boot(page);
+  const from = await square(page, 'e2'), to = await square(page, 'e4');
+  await page.touchscreen.tap(from.x, from.y); await page.touchscreen.tap(to.x, to.y);
+  await app.reply(0, 'e7e5');
+  await piece(page, 'e5', 'black pawn');
+  await page.locator('#mode-analysis').tap();
+  await page.getByRole('button', { name: 'Starting position', exact: true }).tap();
+  await page.locator('#load-analysis').tap();
+  await page.locator('#analyze-position').tap();
+  await app.reply(1, 'e2e4');
+  await page.getByRole('button', { name: 'Preview e4' }).tap();
+  await expect(page.locator('#board svg.cg-shapes line')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Try e4' }).tap();
+  await piece(page, 'e4', 'white pawn');
+  expect(app.errors).toEqual([]);
+  await context.close();
 });

@@ -110,7 +110,7 @@ export function reducer(state: State, action: Action): State {
       return transition(withPlay(state, { ...state.play, moves: positionOf(game).moves }), { viewedPly: null });
     }
     case 'move': {
-      const game = new Chess(currentPosition(state).fen);
+      const game = state.mode === 'play' ? replay(state.play.moves) : new Chess(currentPosition(state).fen);
       if (state.promotion || game.isGameOver() || state.mode === 'history') return state;
       if (state.mode === 'play' && (!state.started || state.viewedPly !== null || state.request || toGroundColor(game.turn()) !== state.settings.userColor)) return state;
       if (state.mode === 'analysis' && !state.analysisLoaded) return state;

@@ -1,9 +1,10 @@
+import { useEffect } from 'react';
 import { Chess } from 'chess.js';
 import { ChessBoard } from './ChessBoard';
-import { AnalysisControls, PlayControls } from './Controls';
+import { AnalysisActions, AnalysisControls, PlayControls } from './Controls';
 import { InsightPanel, MovesPanel, SavedGames } from './ReadPanels';
 import { PromotionDialog } from './PromotionDialog';
-import { oppositeColor, replay, sideName } from './domain';
+import { analysisLength, analysisLine, gameResult, oppositeColor, replay, sideName, START_FEN } from './domain';
 import { toGroundColor } from './board-colors';
 import { currentPosition } from './state';
 import { useMaiaBoard } from './useMaiaBoard';
@@ -12,23 +13,55 @@ export function App() {
   const { state, dispatch } = useMaiaBoard();
   const { mode, settings, request, error } = state;
   const position = currentPosition(state);
-  const game = mode === 'play' ? replay(state.play.moves) : new Chess(position.fen);
-  const userTurn = mode === 'play' && toGroundColor(game.turn()) === settings.userColor;
-  const baseOrientation = mode === 'play' ? settings.userColor : 'white';
-  const title = mode === 'analysis' ? 'Read the position.' : request ? 'Maia is choosing.' : game.isGameOver() ? 'Game over.' : userTurn ? 'Your move.' : 'The line continues.';
-  const status = error || (request ? 'Maia is reading the position...' : mode === 'play' && game.isGameOver() ? 'This game is over.' : userTurn ? 'Your move. Maia will answer on its turn.' : mode === 'analysis' ? 'Step through the line, then ask Maia for its read.' : 'Maia is ready for the next position.');
-  return <>
-    <div className="app-shell">
-      <header className="site-header"><a className="brand" href="/" aria-label="Maia Board home"><span className="brand-mark" aria-hidden="true">M3</span><span><span className="brand-name">maia board</span><span className="brand-kicker">human moves, modeled</span></span></a>
-        <nav className="mode-switch" aria-label="Board mode">{(['play', 'analysis'] as const).map(value => <button className={`mode-tab${mode === value ? ' is-active' : ''}`} id={`mode-${value}`} key={value} type="button" aria-pressed={mode === value} onClick={() => dispatch({ type: 'mode', mode: value })}>{value === 'play' ? 'Play' : 'Analysis'}</button>)}</nav>
-        <div className={`connection-state${request ? ' is-thinking' : ''}${error ? ' is-error' : ''}`} id="connection-state"><span className="connection-dot" aria-hidden="true" /><span id="connection-label">{request ? 'Thinking' : error ? 'Check server' : 'Ready'}</span></div>
-      </header>
-      <main className="workspace"><section className="board-stage" aria-label="Chess board"><div className="stage-heading"><div><p className="eyebrow" id="stage-eyebrow">{mode === 'play' ? 'Live game / Maia3' : 'Position lab / Maia3'}</p><h1 id="stage-title">{title}</h1></div><div className="turn-chip" id="turn-chip">{sideName(toGroundColor(game.turn()))} to move</div></div>
-        <div className="board-frame"><ChessBoard position={position} orientation={state.flipped ? oppositeColor(baseOrientation) : baseOrientation} enabled={userTurn && !request && !state.promotion && !game.isGameOver()} thinking={!!request} interactionVersion={state.revision} onMove={(from, to) => dispatch({ type: 'move', from, to })} /><div className="board-corner board-corner-tl" aria-hidden="true">M3</div><div className="board-corner board-corner-br" aria-hidden="true">01</div></div>
-        <div className="board-footer"><div className="board-status" id="board-status" role="status" aria-live="polite">{status}</div><button className="text-button" id="flip-board" type="button" onClick={() => dispatch({ type: 'flip' })}>Flip board</button></div><div className="error-banner" id="error-banner" role="alert" hidden={!error}>{error}</div>
-      </section><aside className="control-rail"><PlayControls state={state} dispatch={dispatch} /><AnalysisControls state={state} dispatch={dispatch} /><InsightPanel state={state} /><MovesPanel sans={mode === 'play' ? position.sanMoves : state.analysis.sanMoves} activeIndex={mode === 'analysis' ? state.analysis.index - 1 : -1} /><SavedGames state={state} dispatch={dispatch} /></aside></main>
-      <footer className="site-footer"><span>Maia3 inference stays on your server.</span><span>CPU-ready / LAN-first</span></footer>
-    </div>
+  const game = new Chess(position.fen), live = replay(state.play.moves);
+  const analysis = mode === 'analysis';
+  const ready = analysis ? state.analysisLoaded : state.started;
+  const base = analysis ? 'white' : settings.userColor;
+  const orientation = state.flipped ? oppositeColor(base) : base;
+  const historic = mode === 'play' && state.viewedPly !== null;
+  const userTurn = toGroundColor(live.turn()) === settings.userColor;
+  const enabled = ready && !state.promotion && !game.isGameOver() && (analysis || (mode === 'play' && !live.isGameOver() && !historic && !request && userTurn));
+  const full = analysis ? analysisLine(state.analysis, analysisLength(state.analysis)) : { sanMoves: live.history() };
+  const ply = analysis ? state.analysis.index : state.viewedPly ?? state.play.moves.length;
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      if (!ready || mode === 'history' || event.altKey || event.ctrlKey || event.metaKey || (event.target as HTMLElement).closest('input, textarea, select, [contenteditable="true"], dialog')) return;
+      const delta = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : null;
+      if (delta !== null) { event.preventDefault(); dispatch({ type: 'step', delta }); }
+      else if (event.key === 'Home' || event.key === 'End') { event.preventDefault(); dispatch({ type: 'view', ply: event.key === 'Home' ? 0 : null }); }
+    };
+    document.addEventListener('keydown', keydown);
+    return () => document.removeEventListener('keydown', keydown);
+  }, [ready, mode, dispatch]);
+  const strip = (color: 'white' | 'black') => {
+    const shownGame = analysis || historic ? game : live;
+    const active = toGroundColor(shownGame.turn()) === color && !shownGame.isGameOver();
+    return <div className={`player-strip${active && ready ? ' active' : ''}`}><span className={`side-dot ${color}`} /><strong>{analysis ? sideName(color) : color === settings.userColor ? 'You' : `Maia · ${settings.eloMaia}`}</strong><span className="player-side">{!analysis && sideName(color)}</span>{active && ready && <span className="turn-indicator" role="status">{historic ? 'At this position' : request && !analysis ? 'Thinking…' : 'To move'}</span>}</div>;
+  };
+  return <div className="app-shell">
+    <header className="site-header"><span className="brand">maia board</span><nav aria-label="Destination">{(['play', 'analysis', 'history'] as const).map(value => <button id={`mode-${value}`} key={value} aria-pressed={mode === value} onClick={() => dispatch({ type: 'mode', mode: value })}>{value === 'analysis' ? 'Analyze' : value === 'play' ? 'Play' : 'History'}</button>)}</nav></header>
+    <main>
+      {mode === 'history' ? <SavedGames state={state} dispatch={dispatch} /> : <>
+        {!ready && <div className="entry"><PlayControls state={state} dispatch={dispatch} /><AnalysisControls state={state} dispatch={dispatch} /></div>}
+        <div className={`workspace${analysis && ready ? ' analyzing' : ''}${historic ? ' historical' : ''}${!analysis && live.isGameOver() ? ' finished' : ''}${!ready ? ' awaiting' : ''}`}>
+          <section className="board-stage" aria-label="Chess workspace">
+            {strip(oppositeColor(orientation))}
+            <div className="board-frame"><ChessBoard position={position} orientation={orientation} enabled={enabled} thinking={!!request} interactionVersion={state.revision} preview={analysis ? state.preview : null} onMove={(from, to) => dispatch({ type: 'move', from, to })} /></div>
+            {strip(orientation)}
+            {ready && <>
+              <MovesPanel sans={full.sanMoves} ply={ply} initialFen={analysis ? state.analysis.initialFen : START_FEN} historical={historic} onView={ply => dispatch({ type: 'view', ply })} />
+              <div className="board-actions"><button id="flip-board" onClick={() => dispatch({ type: 'flip' })}>Flip board</button>{!analysis && <><button id="takeback" disabled={!state.play.moves.length} onClick={() => dispatch({ type: 'takeback' })}>Takeback</button><button id="new-game" onClick={() => dispatch({ type: 'setup' })}>New game</button></>}</div>
+              {analysis && state.analysis.branchFromPly !== null && <p className="branch-label">Exploring a temporary line · original game preserved</p>}
+              {analysis && <AnalysisActions state={state} dispatch={dispatch} />}
+              {!analysis && live.isGameOver() && <div className="game-result"><strong>{gameResult(live)}</strong><button className="primary" onClick={() => dispatch({ type: 'review' })}>Review game</button></div>}
+            </>}
+            <div id="error-banner" className="error-banner" role="alert" hidden={!error}>{error}</div>
+          </section>
+          {analysis && ready && <InsightPanel state={state} dispatch={dispatch} />}
+        </div>
+        {ready && <><PlayControls state={state} dispatch={dispatch} /><AnalysisControls state={state} dispatch={dispatch} /></>}
+      </>}
+    </main>
     <PromotionDialog open={!!state.promotion} onChoose={piece => dispatch({ type: 'promote', piece })} />
-  </>;
+  </div>;
 }
