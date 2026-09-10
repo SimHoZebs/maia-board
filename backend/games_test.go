@@ -71,6 +71,46 @@ func TestGameStoreUpsertPreservesCreatedAt(t *testing.T) {
 	}
 }
 
+func TestGameStoreUnchangedSavePreservesOrder(t *testing.T) {
+	store := testStore(t)
+	if _, err := store.Save(gameFixture("a", "e2e4")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Save(gameFixture("b", "d2d4")); err != nil {
+		t.Fatal(err)
+	}
+	unchanged := gameFixture("a", "e2e4")
+	unchanged.Current = true
+	resaved, err := store.Save(unchanged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	games, _, err := store.List(200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(games) != 2 || games[0].ID != "b" || games[1].ID != "a" {
+		t.Fatalf("resave reshuffled recency: %+v", games)
+	}
+	if resaved.UpdatedAt != games[1].UpdatedAt {
+		t.Fatalf("resave rewrote timestamp: %+v", resaved)
+	}
+	if id := store.CurrentID(); id != "a" {
+		t.Fatalf("marker not set on unchanged save: %q", id)
+	}
+	changed := gameFixture("a", "e2e4", "e7e5")
+	if _, err := store.Save(changed); err != nil {
+		t.Fatal(err)
+	}
+	games, _, err = store.List(200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if games[0].ID != "a" {
+		t.Fatalf("changed save did not surface: %+v", games)
+	}
+}
+
 func TestGameStoreGeneratesID(t *testing.T) {
 	store := testStore(t)
 	payload := gameFixture("", "e2e4")

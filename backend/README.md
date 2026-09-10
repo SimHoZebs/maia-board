@@ -44,6 +44,23 @@ The endpoint returns `400 position_mismatch` before inference when replaying
 requested Maia color is not on move; and `400 game_over` when no legal move
 exists.
 
+## Game history
+
+`GET /games` lists stored games newest-first with `{games, current_id, total}`.
+`POST /games` upserts `{id?, user_color, elo_maia, elo_user, model, moves[],
+created_at?, current?}`; a missing id gets a server uuid, `created_at` must be
+RFC3339 and is immutable afterwards, and `current: true` moves the
+current-game marker in the same transaction. `GET /games/:id` returns one game
+or `404 not_found`; `DELETE /games/:id` is idempotent (`204`) and clears the
+marker when it points at the deleted game. Elo, UCI shape, and 256-ply limits
+mirror `/move`. Re-saving unchanged content keeps its position in recency
+order, so resume and migration never reshuffle History.
+
+Storage is SQLite through a pure-Go driver (no CGO, static binary preserved),
+WAL mode, `DB_PATH` (default `./maia-board.db`, `/data/maia-board.db` in the
+managed deployment). Results derive from moves; only history and the marker
+persist. Back up with `VACUUM INTO` against a copy of the database file.
+
 ## Local checks
 
 ```sh

@@ -147,8 +147,11 @@ func (s *GameStore) Save(payload gamePayload) (gameRow, error) {
 		return gameRow{}, err
 	}
 	defer tx.Rollback()
-	var created string
-	err = tx.QueryRow(`SELECT created_at FROM games WHERE id = ?`, id).Scan(&created)
+	var created, updated, stored string
+	var storedColor, storedModel string
+	var storedMaia, storedUser int
+	err = tx.QueryRow(`SELECT created_at, updated_at, user_color, elo_maia, elo_user, model, moves
+		FROM games WHERE id = ?`, id).Scan(&created, &updated, &storedColor, &storedMaia, &storedUser, &storedModel, &stored)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		created = payload.CreatedAt
@@ -157,6 +160,22 @@ func (s *GameStore) Save(payload gamePayload) (gameRow, error) {
 		}
 	case err != nil:
 		return gameRow{}, err
+	default:
+		// Resuming or re-saving unchanged content must not churn recency order.
+		if storedColor == payload.UserColor && storedMaia == *payload.EloMaia && storedUser == *payload.EloUser &&
+			storedModel == payload.Model && stored == string(moves) {
+			if payload.Current {
+				if _, err := tx.Exec(`INSERT INTO meta (key, value) VALUES ('current_game_id', ?)
+					ON CONFLICT (key) DO UPDATE SET value = excluded.value`, id); err != nil {
+					return gameRow{}, err
+				}
+			}
+			if err := tx.Commit(); err != nil {
+				return gameRow{}, err
+			}
+			return gameRow{ID: id, CreatedAt: created, UpdatedAt: updated, UserColor: payload.UserColor,
+				EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves}, nil
+		}
 	}
 	_, err = tx.Exec(`INSERT INTO games (id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
