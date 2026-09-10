@@ -42,9 +42,10 @@ The Go server serves the resulting `dist` directory at `/app/static`. Set
   the complete imported line; Analyze explored line reviews the current branch.
   Review graphs, quality badges, and suggestion arrows appear in Analyze.
   While exploring, an Exploring marker shows above the board; the original line
-  stays intact until Return to original. The arrow legend lists each source and
-  its move; translucent White/Red/Blue arrows are widest to narrowest so
-  agreeing moves remain visible.
+  stays intact until Return to original. Translucent White/Red/Blue arrows show
+  the played continuation, Maia's top choice, and Stockfish's best move, widest
+  to narrowest so agreeing moves remain visible. A compact toggle row hides each
+  source; the board itself is the only move listing.
 - **History:** recent games on this device, with Resume for unfinished games,
   Analyze, Export, and Delete. Deleting the current saved game also clears its
   current-game record.
@@ -91,7 +92,7 @@ official Chessground, with React owning its container and Chessground owning the
 descendants. A separate `setAutoShapes` effect draws translucent White next-played,
 Red Maia-top, and Blue Stockfish-best arrows with widths 12/8/4. Distinct SVG hashes
 preserve widest-first ordering when arrows coincide or toggles change. Optional
-candidate previews use a thin gold arrow. Toggles survive position navigation.
+candidate previews use a thin gold arrow. Toggle state survives position navigation.
 
 ## Review coordination and scoring
 
@@ -126,7 +127,7 @@ A single legal choice is Forced with accuracy 100. Mean move accuracy is the
 arithmetic mean per side, including Forced. Missing/failed evaluation pairs remain
 Unreviewed, are excluded from the mean, and leave graph gaps. Coverage shows
 reviewed/total moves. Graph points navigate the line and expose score, actual
-depth, and quality through accessible labels and a data table. Engine grades are
+depth, and quality through accessible labels. Engine grades are
 estimates at the reported depth; the mean is not Lichess's game aggregation.
 
 Maia probabilities are displayed as returned, without scaling the displayed top

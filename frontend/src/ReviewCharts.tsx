@@ -43,8 +43,5 @@ export function ReviewCharts({ review, ply, sans, onView }: { review: Review; pl
     </div>
     <p className="selected-evaluation" aria-live="polite">{points[ply].description}</p>
     {ply > 0 && <p className="selected-quality"><QualityBadge quality={review.qualities[ply - 1]} /> {sans[ply - 1]} · {review.qualities[ply - 1].label}</p>}
-    <details><summary>Chart data</summary>
-      <div className="chart-table"><table><caption>Position estimates and played-move quality</caption><thead><tr><th>Position</th><th>Evaluation / depth</th><th>Move accuracy</th></tr></thead><tbody>{points.map((point, index) => <tr key={index}><td><button onClick={() => onView(index)}>{index}: {sans[index - 1] ?? 'Start'}</button></td><td>{point.evaluation ? `${scoreText(point.evaluation)} / ${point.evaluation.depth}` : 'Missing'}</td><td>{point.quality?.accuracy == null ? 'Unreviewed' : `${point.quality.accuracy.toFixed(1)}% · ${point.quality.label}`}</td></tr>)}</tbody></table></div>
-    </details>
   </section>;
 }

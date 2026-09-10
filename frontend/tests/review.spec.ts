@@ -43,7 +43,7 @@ test('automatic review shows real overlapping SVG arrows, respects toggles and o
   expect(arrows.map(arrow => arrow.width)).toEqual(['0.1875','0.125','0.0625']);
   expect(arrows.map(arrow => arrow.opacity)).toEqual(['0.45','0.45','0.45']);
   expect(arrows.every(arrow => JSON.stringify(arrow.from) === JSON.stringify(arrows[0].from) && JSON.stringify(arrow.to) === JSON.stringify(arrows[0].to))).toBe(true);
-  const white = page.getByRole('button', { name: 'White · Next played e4' });
+  const white = page.getByRole('button', { name: 'Toggle played-move arrow' });
   await white.click(); await expect(lines(page)).toHaveCount(2);
   await white.click(); await expect(lines(page)).toHaveCount(3);
   expect((await strokes()).map(arrow => arrow.color)).toEqual(['#ffffff','#ef4444','#3b82f6']);
@@ -84,9 +84,9 @@ test('mixed arrow sources retain their own endpoints', async ({ page }, info) =>
   await atStart(page);
   const endpoints = await lines(page).evaluateAll(elements => elements.map(el => `${el.getAttribute('x1')},${el.getAttribute('y1')}:${el.getAttribute('x2')},${el.getAttribute('y2')}`));
   expect(new Set(endpoints).size).toBe(3);
-  await expect(page.getByRole('button', { name: 'White · Next played e4' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Red · Maia top Nf3' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Blue · Stockfish best d4' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Toggle played-move arrow' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Toggle Maia arrow' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Toggle Stockfish arrow' })).toBeVisible();
   await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
   await page.screenshot({ path: info.outputPath('mixed-arrows.png'), fullPage: true });
 });
@@ -127,7 +127,7 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
       expect(rect.top).toBeGreaterThanOrEqual(0); expect(rect.bottom).toBeLessThanOrEqual(viewport.height);
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    for (const size of await page.locator('.arrow-legend button, .chart-point, .chart-tabs button').evaluateAll(elements => elements.map(el => { const rect = el.getBoundingClientRect(); return [rect.width, rect.height]; }))) { expect(size[0]).toBeGreaterThanOrEqual(44); expect(size[1]).toBeGreaterThanOrEqual(44); }
+    for (const size of await page.locator('.arrow-toggles button, .chart-point, .chart-tabs button').evaluateAll(elements => elements.map(el => { const rect = el.getBoundingClientRect(); return [rect.width, rect.height]; }))) { expect(size[0]).toBeGreaterThanOrEqual(44); expect(size[1]).toBeGreaterThanOrEqual(44); }
     await page.screenshot({ path: info.outputPath(`review-${viewport.width}.png`), fullPage: true });
   });
 }
@@ -146,10 +146,10 @@ test('touch graph selection and arrow toggles preserve position', async ({ brows
   await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
   await page.locator('.chart-point').nth(1).tap();
   await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 5');
-  await page.getByRole('button', { name: 'Red · Maia top e5' }).tap();
+  await page.getByRole('button', { name: 'Toggle Maia arrow' }).tap();
   await expect(page.locator('#board svg.cg-shapes line[stroke="#ef4444"]')).toHaveCount(0);
   await page.locator('.chart-point').nth(2).tap();
-  await expect(page.getByRole('button', { name: 'Red · Maia top Nf3' })).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByRole('button', { name: 'Toggle Maia arrow' })).toHaveAttribute('aria-pressed', 'false');
   await context.close();
 });
 for (const bit of [0, 1]) test(`random side resolves once with crypto bit ${bit}`, async ({ page }) => {

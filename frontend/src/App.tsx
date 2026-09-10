@@ -63,7 +63,7 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
             </>}
             <div id="error-banner" className="error-banner" role="alert" hidden={!error}>{error}</div>
           </section>
-          {analysis && ready && <InsightPanel state={state} dispatch={dispatch} review={review} legend={<ArrowLegend fen={position.fen} moves={arrowMoves} toggles={arrows} onToggle={source => setArrows(current => ({ ...current, [source]: !current[source] }))} />} />}
+          {analysis && ready && <InsightPanel state={state} dispatch={dispatch} review={review} legend={<ArrowLegend toggles={arrows} onToggle={source => setArrows(current => ({ ...current, [source]: !current[source] }))} />} />}
         </div>
         {ready && <><PlayControls state={state} dispatch={dispatch} /><AnalysisControls state={state} dispatch={dispatch} /></>}
       </>}
