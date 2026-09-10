@@ -42,7 +42,9 @@ The Go server serves the resulting `dist` directory at `/app/static`. Set
   requests Maia probabilities and Stockfish evaluation, plus evaluation of the
   preceding position to grade the last played move. Analyze entire game reviews
   the complete imported line; Analyze explored line reviews the current branch.
-  Review graphs, quality badges, and suggestion arrows appear in Analyze.
+  Review graphs, quality badges, and suggestion arrows appear in Analyze. The
+  accuracy summary covers one side only: yours for reviewed games, otherwise
+  the side to move in the loaded position.
   While exploring, an Exploring marker shows above the board; the original line
   stays intact until Return to original. Translucent White/Red/Blue arrows show
   the played continuation, Maia's top choice, and Stockfish's best move, widest

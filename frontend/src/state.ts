@@ -149,7 +149,9 @@ export function reducer(state: State, action: Action): State {
     }
     case 'review': {
       const play = action.id ? state.saved.find(game => game.id === action.id) : state.play;
-      return play ? transition(state, { mode: 'analysis', analysis: loadLine('', play.moves.join(' ')), analysisLoaded: true, importing: false }, false) : state;
+      if (!play) return state;
+      const analysis = loadLine('', play.moves.join(' '));
+      return transition(state, { mode: 'analysis', analysis: { ...analysis, perspective: play.settings.userColor, ownGame: true }, analysisLoaded: true, importing: false }, false);
     }
     case 'delete': {
       const saved = state.saved.filter(game => game.id !== action.id);

@@ -1,12 +1,14 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { Review } from './useReview';
 import { scoreText, whiteWin, type Quality } from './reviewMetrics';
+import { sideName } from './domain';
+import type { MaiaColor } from './api';
 
 export function QualityBadge({ quality }: { quality?: Quality }) {
   const label = quality?.label ?? 'Unreviewed';
   return <span className={`quality quality-${label.toLowerCase()}`} title={`${label}${quality?.accuracy == null ? '' : ` · ${quality.accuracy.toFixed(1)}% move accuracy`}`} aria-label={label}>{({ Forced: 'F', Blunder: '??', Mistake: '?', Inaccuracy: '?!', Great: '!', Best: 'B', Good: 'G', Unreviewed: '–' })[label]}</span>;
 }
-export function ReviewCharts({ review, ply, sans, onView }: { review: Review; ply: number; sans: string[]; onView: (ply: number) => void }) {
+export function ReviewCharts({ review, ply, sans, onView, side, yours }: { review: Review; ply: number; sans: string[]; onView: (ply: number) => void; side: MaiaColor; yours: boolean }) {
   const [tab, setTab] = useState<'evaluation' | 'accuracy'>('evaluation');
   const selected = useRef<HTMLButtonElement>(null);
   const chart = useRef<HTMLDivElement>(null);
@@ -21,6 +23,10 @@ export function ReviewCharts({ review, ply, sans, onView }: { review: Review; pl
     return { node, value, description, evaluation, quality };
   });
   const firstWhite = review.nodes[0].fen.split(' ')[1] === 'w';
+  const sideMoves = review.qualities.filter((_, index) => (index % 2 === 0) === ((side === 'white') === firstWhite));
+  const sideReviewed = sideMoves.filter(move => move.accuracy !== null);
+  const sideMean = sideReviewed.length ? sideReviewed.reduce((sum, move) => sum + move.accuracy!, 0) / sideReviewed.length : null;
+  const sideCounts = [...new Set(sideReviewed.map(move => move.label))].map(label => `${sideReviewed.filter(move => move.label === label).length} ${label}`).join(' · ');
   return <section className="review-charts" aria-label="Game review">
     <h2>Game review</h2>
     <div className="chart-tabs" role="tablist" aria-label="Review chart"><button role="tab" aria-selected={tab === 'evaluation'} onClick={() => setTab('evaluation')}>Evaluation</button><button role="tab" aria-selected={tab === 'accuracy'} onClick={() => setTab('accuracy')}>Move accuracy</button></div>
@@ -36,12 +42,12 @@ export function ReviewCharts({ review, ply, sans, onView }: { review: Review; pl
     </div>
     <p className="selected-evaluation" aria-live="polite">{points[ply].description}</p>
     {ply > 0 && <p className="selected-quality"><QualityBadge quality={review.qualities[ply - 1]} /> {sans[ply - 1]} · {review.qualities[ply - 1].label}</p>}
-    <div className="accuracy-summary">{(['White', 'Black'] as const).map((side, sideIndex) => {
-      const moves = review.qualities.filter((_, index) => (index % 2 === 0) === (sideIndex === 0 ? firstWhite : !firstWhite));
-      const reviewed = moves.filter(move => move.accuracy !== null);
-      const mean = reviewed.length ? reviewed.reduce((sum, move) => sum + move.accuracy!, 0) / reviewed.length : null;
-      const counts = [...new Set(reviewed.map(move => move.label))].map(label => `${reviewed.filter(move => move.label === label).length} ${label}`).join(' · ');
-      return <div key={side}><strong>{side}</strong><b>{mean === null ? '—' : `${mean.toFixed(1)}%`}</b><span>Mean move accuracy</span><small>{reviewed.length} / {moves.length} reviewed</small><small>{counts || 'No reviewed moves'}</small></div>;
-    })}</div>
+    <div className="accuracy-summary single"><div>
+      <strong>{sideName(side)}{yours ? ' · you' : ''}</strong>
+      <b>{sideMean === null ? '—' : `${sideMean.toFixed(1)}%`}</b>
+      <span>Mean move accuracy</span>
+      <small>{sideReviewed.length} / {sideMoves.length} reviewed</small>
+      <small>{sideCounts || 'No reviewed moves'}</small>
+    </div></div>
   </section>;
 }

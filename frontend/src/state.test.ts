@@ -128,6 +128,14 @@ describe('task lifecycles', () => {
     expect(replay(moves).isThreefoldRepetition()).toBe(true);
     expect(reducer(state, { type: 'move', from: 'e2', to: 'e4' })).toBe(state);
   });
+  it('scopes the review summary to the played side', () => {
+    expect(loadLine().perspective).toBe('white');
+    expect(loadLine('4k3/8/8/8/8/8/4P3/4K3 b - - 0 12').perspective).toBe('black');
+    const game = { id: 'g', createdAt: '2026-09-10', moves: ['e2e4'], settings: { ...defaultSettings, userColor: 'black' as const } };
+    const reviewed = reducer({ ...initialState(), saved: [game] }, { type: 'review', id: 'g' });
+    expect(reviewed.analysis.perspective).toBe('black');
+    expect(reviewed.analysis.ownGame).toBe(true);
+  });
   it('maps choosing-side WDL to absolute colors for both request turns', () => {
     expect(absoluteWdl(START_FEN, response.wdl)).toEqual([0.5, 0.3, 0.2]);
     expect(absoluteWdl(replay(['e2e4']).fen(), response.wdl)).toEqual([0.2, 0.3, 0.5]);

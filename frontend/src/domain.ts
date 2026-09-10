@@ -6,7 +6,7 @@ export const START_FEN = new Chess().fen();
 export type Mode = 'play' | 'analysis' | 'history';
 export type Settings = { userColor: MaiaColor; eloMaia: number; eloUser: number; model: MaiaModel };
 export type Position = { fen: string; moves: string[]; sanMoves: string[]; lastMove?: [Key, Key] };
-export type Analysis = { initialFen: string; moves: string[]; sanMoves: string[]; timeline: Position[]; index: number; branchFromPly: number | null; branchMoves: string[] };
+export type Analysis = { initialFen: string; moves: string[]; sanMoves: string[]; timeline: Position[]; index: number; branchFromPly: number | null; branchMoves: string[]; perspective: MaiaColor; ownGame: boolean };
 export type Insight = { response: MoveResponse; fen: string; mode: Mode };
 export type StoredGame = { id: string; createdAt: string; moves: string[]; settings: Settings };
 export const defaultSettings: Settings = { userColor: 'white', eloMaia: 1600, eloUser: 1600, model: '79m' };
@@ -65,7 +65,8 @@ export function loadLine(fen = '', pgn = ''): Analysis {
   const game = new Chess(initialFen);
   const timeline = [positionOf(game)];
   moves.forEach(move => { applyUci(game, move); timeline.push(positionOf(game)); });
-  return { initialFen, moves, sanMoves: game.history(), timeline, index: moves.length, branchFromPly: null, branchMoves: [] };
+  return { initialFen, moves, sanMoves: game.history(), timeline, index: moves.length, branchFromPly: null, branchMoves: [],
+    perspective: new Chess(initialFen).turn() === 'w' ? 'white' : 'black', ownGame: false };
 }
 export function exportLine(analysis: Analysis): string {
   const game = replay(analysis.moves, analysis.initialFen);

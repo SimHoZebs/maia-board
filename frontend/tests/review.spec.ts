@@ -69,6 +69,7 @@ test('whole game completes independently of viewing, renders quality and clickab
   await page.locator('#analysis-first').click();
   await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
   await expect(page.locator('.accuracy-summary')).toContainText('2 / 2 reviewed');
+  await expect(page.locator('.accuracy-summary > div')).toHaveCount(1);
   await expect(page.locator('.move-cell .quality-great')).toHaveCount(2);
   await expect(page.locator('.move-cell .quality-mistake')).toHaveCount(1);
   await expect(page.locator('.move-cell .quality-blunder')).toHaveCount(1);
