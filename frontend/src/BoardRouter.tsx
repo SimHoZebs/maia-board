@@ -19,17 +19,20 @@ function DestinationNav() {
 export function BoardRouter() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  // Redirects start in an inert context until the destination URL is committed.
-  const mode = destinations.find(destination => matchPath(destination.path, pathname))?.mode ?? 'history';
+  // Root and unknown URLs use the same execution context as their redirect target.
+  const mode = destinations.find(destination => matchPath(destination.path, pathname))?.mode ?? 'play';
   const { state, dispatch: boardDispatch } = useMaiaBoard(mode);
   const dispatch = useCallback((action: Action) => {
-    if (action.type === 'mode') { void navigate(pathFor(action.mode)); return; }
+    if (action.type === 'mode') {
+      if (action.mode !== mode) void navigate(pathFor(action.mode));
+      return;
+    }
     // Loading a game and changing its URL form one React event update. The reducer
     // establishes the execution context before any request effect can run.
-    if (action.type === 'review') void navigate(pathFor('analysis'));
-    if (action.type === 'saved') void navigate(pathFor('play'));
+    if (action.type === 'review' && mode !== 'analysis') void navigate(pathFor('analysis'));
+    if (action.type === 'saved' && mode !== 'play') void navigate(pathFor('play'));
     boardDispatch(action);
-  }, [navigate, boardDispatch]);
+  }, [mode, navigate, boardDispatch]);
   const workspace = <App state={state} dispatch={dispatch}><DestinationNav /></App>;
   return <Routes>
     {destinations.map(({ path }) => <Route key={path} path={path} element={workspace} />)}

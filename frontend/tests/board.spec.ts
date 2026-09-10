@@ -140,6 +140,18 @@ test('Back retires pending analysis; Forward does not repeat it or resume play t
 });
 
 for (const path of ['/', '/unknown/destination']) {
+  test(`${path} redirects and resumes restored Maia turn exactly once`, async ({ page }) => {
+    const app = await boot(page, { [KEYS.current]: record(['e2e4']) }, false, path);
+    await expect(page).toHaveURL('http://maia.test/play');
+    await expect.poll(() => app.requests.length).toBe(1);
+    expect(app.requests[0].payload.moves).toEqual(['e2e4']);
+    await app.reply(0, 'e7e5');
+    await piece(page, 'e5', 'black pawn');
+    expect(await currentMoves(page)).toEqual(['e2e4', 'e7e5']);
+    expect(app.requests).toHaveLength(1);
+    expect(app.errors).toEqual([]);
+  });
+
   test(`${path} replaces its history entry with play`, async ({ page }) => {
     await boot(page, {}, false, '/history');
     await page.goto(`http://maia.test${path}`);
@@ -151,6 +163,25 @@ for (const path of ['/', '/unknown/destination']) {
     await expect(page).toHaveURL('http://maia.test/play');
   });
 }
+test('Analyze current game loads on Analyze without adding a history entry', async ({ page }) => {
+  const game = record(['e2e4', 'e7e5']);
+  const app = await boot(page, { [KEYS.current]: game }, false, '/history');
+  await page.locator('#mode-analysis').click();
+  await page.getByRole('button', { name: 'History', exact: true }).click();
+  await page.getByRole('button', { name: 'Analyze current game', exact: true }).click();
+  await expect(page).toHaveURL('http://maia.test/analyze');
+  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
+  await piece(page, 'e5', 'black pawn');
+  await page.goBack();
+  await expect(page).toHaveURL('http://maia.test/history');
+  await expect(page.locator('.saved-panel')).toBeVisible();
+  await page.goForward();
+  await expect(page).toHaveURL('http://maia.test/analyze');
+  await piece(page, 'e5', 'black pawn');
+  expect(app.requests).toHaveLength(0);
+  expect(app.errors).toEqual([]);
+});
+
 async function square(page: Page, key: string) {
   const board = page.locator('#board cg-board');
   await board.scrollIntoViewIfNeeded();
