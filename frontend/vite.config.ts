@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   build: {
-    outDir: 'dist',
+    outDir: process.env.MAIA_BUILD_DIR || 'dist',
     emptyOutDir: true,
   },
 });

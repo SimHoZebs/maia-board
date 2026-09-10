@@ -98,13 +98,14 @@ function parseErrorCode(value: unknown): ApiErrorCode {
   return known.includes(value.code as ApiErrorCode) ? value.code as ApiErrorCode : 'unknown';
 }
 
-export async function requestMove(payload: MoveRequest, fetchImpl: FetchLike = fetch): Promise<MoveResponse> {
+export async function requestMove(payload: MoveRequest, fetchImpl: FetchLike = fetch, signal?: AbortSignal): Promise<MoveResponse> {
   let response: Response;
   try {
     response = await fetchImpl('/move', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      signal,
     });
   } catch {
     throw new MaiaApiError('server_unreachable', 'The Maia server could not be reached.');

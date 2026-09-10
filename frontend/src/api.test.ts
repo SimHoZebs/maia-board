@@ -11,6 +11,14 @@ const payload = {
 };
 
 describe('requestMove', () => {
+  it('passes cancellation through without changing the wire payload', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      move: 'e2e4', top_moves: [], wdl: [0.2, 0.3, 0.5], model_used: '79m', degraded: false,
+    })));
+    await requestMove(payload, fetchImpl, controller.signal);
+    expect(fetchImpl).toHaveBeenCalledWith('/move', expect.objectContaining({ signal: controller.signal, body: JSON.stringify(payload) }));
+  });
   it('maps a successful API response', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       move: 'e2e4',

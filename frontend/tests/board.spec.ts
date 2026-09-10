@@ -1,0 +1,270 @@
+import { test, expect, type Page, type Route } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { Chess } from 'chess.js';
+import { KEYS } from '../src/storage';
+import { defaultSettings, replay, type StoredGame } from '../src/domain';
+import type { MoveRequest } from '../src/api';
+
+const record = (moves: string[], color: 'white' | 'black' = 'white', id = 'fixture'): StoredGame => ({ id, createdAt: '2026-09-10T00:00:00Z', moves, settings: { ...defaultSettings, userColor: color } });
+
+async function boot(page: Page, storage: Record<string, unknown> = {}) {
+  const requests: { route: Route; payload: MoveRequest }[] = [];
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(({ storage }) => {
+    if (!sessionStorage.getItem('seeded')) {
+      for (const [key, value] of Object.entries(storage)) localStorage.setItem(key, JSON.stringify(value));
+      sessionStorage.setItem('seeded', '1');
+    }
+    // Deliver obsolete replies too: cancellation is an optimization, never the correctness guard.
+    const originalFetch = window.fetch;
+    window.fetch = (input, init) => originalFetch(input, { ...init, signal: undefined });
+    const stats = { adds: 0, removes: 0 };
+    Object.assign(window, { boardListeners: stats });
+    const add = document.addEventListener.bind(document);
+    const remove = document.removeEventListener.bind(document);
+    document.addEventListener = ((type: string, ...args: any[]) => {
+      if (type === 'mousemove') stats.adds++;
+      return (add as any)(type, ...args);
+    }) as typeof document.addEventListener;
+    document.removeEventListener = ((type: string, ...args: any[]) => {
+      if (type === 'mousemove') stats.removes++;
+      return (remove as any)(type, ...args);
+    }) as typeof document.removeEventListener;
+  }, { storage });
+  await page.route('http://maia.test/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/move') { requests.push({ route, payload: route.request().postDataJSON() }); return; }
+    const filename = path === '/' ? 'index.html' : path.slice(1);
+    const contentType = filename.endsWith('.js') ? 'text/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html';
+    await route.fulfill({ body: await readFile(resolve('dist-browser', filename)), contentType });
+  });
+  await page.goto('http://maia.test/');
+  await expect(page.locator('#board cg-board')).toHaveCount(1);
+  await expect(page.locator('#board piece:not(.ghost)')).toHaveCount(32 - (storage[KEYS.current] ? countCaptures(storage[KEYS.current] as StoredGame) : 0));
+  async function reply(index: number, move?: string, status = 200) {
+    await expect.poll(() => requests.length).toBeGreaterThan(index);
+    const item = requests[index];
+    const chosen = move ?? new Chess(item.payload.fen).moves({ verbose: true }).map(m => `${m.from}${m.to}${m.promotion ?? ''}`)[0];
+    const delivered = page.waitForResponse(response => response.request() === item.route.request());
+    await item.route.fulfill({ status, json: status === 200 ? { move: chosen, top_moves: [{ move: chosen, prob: 0.6 }], wdl: [0.2, 0.3, 0.5], model_used: item.payload.model, degraded: false } : { code: 'engine_busy', message: 'busy' } });
+    await (await delivered).finished();
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  }
+  return { requests, reply, errors };
+}
+function countCaptures(game: StoredGame) { return replay(game.moves).history({ verbose: true }).filter(move => move.captured).length; }
+async function square(page: Page, key: string) {
+  const board = page.locator('#board cg-board');
+  await board.scrollIntoViewIfNeeded();
+  const bounds = (await board.boundingBox())!;
+  const black = await page.locator('#board .cg-wrap').evaluate(el => el.classList.contains('orientation-black'));
+  const file = key.charCodeAt(0) - 97, rank = Number(key[1]) - 1;
+  return { x: bounds.x + (black ? 7 - file + 0.5 : file + 0.5) * bounds.width / 8, y: bounds.y + (black ? rank + 0.5 : 7 - rank + 0.5) * bounds.height / 8 };
+}
+async function move(page: Page, from: string, to: string, drag = false) {
+  const a = await square(page, from), b = await square(page, to);
+  if (drag) {
+    await page.mouse.move(a.x, a.y); await page.mouse.down();
+    await page.mouse.move(b.x, b.y, { steps: 12 }); await page.mouse.up();
+  } else { await page.mouse.click(a.x, a.y); await page.mouse.click(b.x, b.y); }
+}
+async function piece(page: Page, key: string, expected: string | null) {
+  await expect.poll(() => page.locator('#board cg-board piece:not(.ghost)').evaluateAll((els, key) => {
+    const node = els.find(el => (el as HTMLElement & { cgKey: string }).cgKey === key);
+    return node ? node.className.replace(/\s*(anim|dragging|fading)\b/g, '').trim() : null;
+  }, key)).toBe(expected);
+}
+async function currentMoves(page: Page) {
+  return page.evaluate(key => JSON.parse(localStorage.getItem(key) || 'null')?.moves ?? [], KEYS.current);
+}
+
+for (const color of ['white', 'black'] as const) for (const drag of [false, true]) {
+  test(`${color}: ${drag ? 'drag' : 'click'}, Maia reply, takeback and flip`, async ({ page }) => {
+    const app = await boot(page, { [KEYS.settings]: { ...defaultSettings, userColor: color } });
+    if (color === 'black') { await app.reply(0, 'e2e4'); await piece(page, 'e4', 'white pawn'); }
+    const before = color === 'black' ? 1 : 0;
+    await move(page, color === 'white' ? 'e2' : 'e7', color === 'white' ? 'e4' : 'e5', drag);
+    await expect.poll(() => app.requests.length).toBe(before + 1);
+    const request = app.requests[before].payload;
+    expect(request.maia_color).toBe(color === 'white' ? 'black' : 'white');
+    expect(replay(request.moves).fen()).toBe(request.fen);
+    expect(request.elo_maia).toBe(1600);
+    await app.reply(before, color === 'white' ? 'e7e5' : 'g1f3');
+    await expect(page.locator('#insight-title')).toHaveText(color === 'white' ? 'Played e5' : 'Played Nf3');
+    await expect(page.locator('.wdl-row')).toHaveText(['loss20%', 'draw30%', 'win50%']);
+    await expect(page.locator('.candidate-list li')).toHaveCount(1);
+    await page.locator('#flip-board').click();
+    await expect(page.locator('#board .cg-wrap')).toHaveClass(new RegExp(`orientation-${color === 'white' ? 'black' : 'white'}`));
+    await page.locator('#takeback').click();
+    await expect.poll(() => currentMoves(page)).toEqual(color === 'white' ? [] : ['e2e4']);
+    await piece(page, color === 'white' ? 'e2' : 'e7', `${color} pawn`);
+    expect(app.errors).toEqual([]);
+  });
+}
+
+const special = {
+  castle: { white: ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4', 'f8c5', 'd2d3', 'g8f6'], black: ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4', 'f8c5', 'd2d3', 'g8f6', 'e1g1'] },
+  ep: { white: ['e2e4', 'a7a6', 'e4e5', 'd7d5'], black: ['a2a3', 'e7e5', 'a3a4', 'e5e4', 'd2d4'] },
+  promotion: { white: ['a2a4', 'h7h5', 'a4a5', 'h5h4', 'a5a6', 'h4h3', 'a6b7', 'h3g2'], black: ['a2a4', 'h7h5', 'a4a5', 'h5h4', 'a5a6', 'h4h3', 'a6b7', 'h3g2', 'b7a8q'] },
+};
+for (const color of ['white', 'black'] as const) {
+  test(`${color}: castling reconciles rook`, async ({ page }) => {
+    const app = await boot(page, { [KEYS.current]: record(special.castle[color], color) });
+    const rank = color === 'white' ? '1' : '8';
+    await move(page, `e${rank}`, `g${rank}`, color === 'black');
+    await piece(page, `g${rank}`, `${color} king`); await piece(page, `f${rank}`, `${color} rook`); await piece(page, `h${rank}`, null);
+    await expect.poll(() => app.requests.length).toBe(1);
+    expect(app.requests[0].payload.moves.at(-1)).toBe(`e${rank}g${rank}`);
+    await app.reply(0); await expect(page.locator('#connection-label')).toHaveText('Ready');
+    expect(app.errors).toEqual([]);
+  });
+  test(`${color}: en passant removes captured pawn`, async ({ page }) => {
+    const app = await boot(page, { [KEYS.current]: record(special.ep[color], color) });
+    const from = color === 'white' ? 'e5' : 'e4', to = color === 'white' ? 'd6' : 'd3';
+    await move(page, from, to, color === 'white');
+    await piece(page, to, `${color} pawn`); await piece(page, color === 'white' ? 'd5' : 'd4', null);
+    await expect.poll(() => app.requests.length).toBe(1);
+    expect(app.requests[0].payload.moves.at(-1)).toBe(from + to);
+  });
+  test(`${color}: promotion restores board, cancels and underpromotes`, async ({ page }) => {
+    const app = await boot(page, { [KEYS.current]: record(special.promotion[color], color) });
+    const from = color === 'white' ? 'b7' : 'g2', to = color === 'white' ? 'a8' : 'h1';
+    await move(page, from, to);
+    await expect(page.locator('#promotion-dialog')).toBeVisible();
+    await piece(page, from, `${color} pawn`); await piece(page, to, `${color === 'white' ? 'black' : 'white'} rook`);
+    expect(app.requests).toHaveLength(0);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#promotion-dialog')).not.toBeVisible();
+    await move(page, from, to, true);
+    await page.locator('[data-promotion="n"]').click();
+    await piece(page, to, `${color} knight`);
+    await expect.poll(() => app.requests.length).toBe(1);
+    expect(app.requests[0].payload.moves.at(-1)).toBe(from + to + 'n');
+    expect(app.errors).toEqual([]);
+  });
+}
+
+test('analysis load, navigation, export, request history, stale reply and mode reuse', async ({ page }) => {
+  const app = await boot(page);
+  await page.locator('#mode-analysis').click();
+  await page.locator('#analysis-pgn').fill('1. e4 e5 2. Nf3');
+  await page.locator('#load-analysis').click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 4');
+  await piece(page, 'f3', 'white knight');
+  await move(page, 'b8', 'c6', true); await piece(page, 'b8', 'black knight');
+  await page.locator('#analyze-position').click();
+  await expect.poll(() => app.requests.length).toBe(1);
+  expect(app.requests[0].payload.moves).toEqual(['e2e4', 'e7e5', 'g1f3']);
+  await page.locator('#analysis-prev').click();
+  await app.reply(0, 'b8c6');
+  await expect(page.locator('#insight-title')).toHaveText('Waiting for a position');
+  await expect(page.locator('#connection-label')).toHaveText('Ready');
+  await piece(page, 'g1', 'white knight');
+  await page.locator('#analysis-next').click();
+  const downloadEvent = page.waitForEvent('download');
+  await page.locator('#export-pgn').click();
+  const download = await downloadEvent;
+  expect(download.suggestedFilename()).toBe('maia-analysis.pgn');
+  expect(await readFile((await download.path())!, 'utf8')).toContain('1. e4 e5 2. Nf3');
+  const fen = '4k3/8/8/8/8/8/4P3/4K3 w - - 0 1';
+  await page.locator('#analysis-fen').fill(fen); await page.locator('#analysis-pgn').fill('1. e4');
+  await page.locator('#load-analysis').click(); await page.locator('#analyze-position').click();
+  await expect.poll(() => app.requests.length).toBe(2);
+  expect(app.requests[1].payload.initial_fen).toBe(fen);
+  expect(replay(app.requests[1].payload.moves, fen).fen()).toBe(app.requests[1].payload.fen);
+  await app.reply(1, 'e8d7');
+  await expect(page.locator('#insight-title')).toHaveText('Top human moves');
+  await page.locator('#mode-play').click(); await move(page, 'd2', 'd4');
+  await expect.poll(() => app.requests.length).toBe(3);
+  await app.reply(2, 'd7d5'); await piece(page, 'd5', 'black pawn');
+  expect(app.errors).toEqual([]);
+});
+
+test('saved switching at identical FEN retires pending reply and persists selection', async ({ page }) => {
+  const a = record(['e2e4'], 'white', 'a'), b = record(['e2e4'], 'white', 'b');
+  const app = await boot(page, { [KEYS.current]: a, [KEYS.saved]: [a, b] });
+  await expect.poll(() => app.requests.length).toBe(1);
+  await page.locator('[data-game-id="b"]').click();
+  await expect.poll(() => app.requests.length).toBe(2);
+  await expect.poll(() => page.evaluate(key => JSON.parse(localStorage.getItem(key)!).id, KEYS.current)).toBe('b');
+  await app.reply(1, 'c7c5'); await app.reply(0, 'e7e5');
+  await piece(page, 'c5', 'black pawn'); await piece(page, 'e7', 'black pawn');
+  await expect(page.locator('#insight-title')).toHaveText('Played c5');
+  await page.reload(); await piece(page, 'c5', 'black pawn');
+  expect(app.errors).toEqual([]);
+});
+
+test('pending takeback/new game/mode/settings transitions reject obsolete replies', async ({ page }) => {
+  const app = await boot(page);
+  await move(page, 'e2', 'e4'); await expect.poll(() => app.requests.length).toBe(1);
+  await page.locator('#takeback').click(); await app.reply(0, 'e7e5');
+  await piece(page, 'e2', 'white pawn'); await piece(page, 'e7', 'black pawn');
+  await move(page, 'e2', 'e4'); await expect.poll(() => app.requests.length).toBe(2);
+  await page.locator('#mode-analysis').click(); await page.locator('#mode-play').click();
+  await expect.poll(() => app.requests.length).toBe(3);
+  await app.reply(1, 'e7e5'); await expect(page.locator('#connection-label')).toHaveText('Thinking');
+  await page.locator('.model-option').filter({ hasText: '5M' }).click();
+  await expect.poll(() => app.requests.length).toBe(4);
+  expect(app.requests[3].payload.model).toBe('5m');
+  await app.reply(2, 'e7e5'); await expect(page.locator('#connection-label')).toHaveText('Thinking');
+  await page.locator('#new-game').click(); await app.reply(3, 'e7e5');
+  await expect.poll(() => currentMoves(page)).toEqual([]);
+  await expect(page.locator('#connection-label')).toHaveText('Ready');
+  await piece(page, 'e7', 'black pawn');
+  expect(app.errors).toEqual([]);
+});
+
+test('request errors settle without retry loops, controls recover', async ({ page }) => {
+  const app = await boot(page);
+  await move(page, 'e2', 'e4'); await app.reply(0, undefined, 503);
+  await expect(page.locator('#error-banner')).toHaveText('Maia is busy. Wait a moment and try again.');
+  await expect(page.locator('#connection-label')).toHaveText('Check server');
+  await page.locator('#takeback').click(); await move(page, 'd2', 'd4');
+  await app.reply(1, 'd7d5'); await expect(page.locator('#connection-label')).toHaveText('Ready');
+  expect(app.requests).toHaveLength(2);
+});
+
+test('single live Chessground binding survives React updates and StrictMode cleanup', async ({ page }, testInfo) => {
+  const app = await boot(page);
+  const stats = () => page.evaluate(() => (window as any).boardListeners as { adds: number; removes: number });
+  const initial = await stats();
+  expect(initial.adds - initial.removes).toBe(1);
+  if (process.env.NODE_ENV === 'development') expect(initial).toEqual({ adds: 2, removes: 1 });
+  await move(page, 'e2', 'e4'); await app.reply(0, 'e7e5');
+  await expect(page.locator('#connection-label')).toHaveText('Ready');
+  await page.locator('#mode-analysis').click(); await page.locator('#analysis-pgn').fill('1. d4 d5');
+  await page.locator('#load-analysis').click(); await page.locator('#mode-play').click();
+  await page.locator('#flip-board').click();
+  expect(await stats()).toEqual(initial);
+  await expect(page.locator('#board cg-board')).toHaveCount(1);
+  await page.screenshot({ path: testInfo.outputPath('desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.locator('#board cg-board').evaluate(board => {
+    const bounds = board.getBoundingClientRect();
+    return [...board.querySelectorAll('piece:not(.ghost)')].every(piece => {
+      const rect = piece.getBoundingClientRect();
+      return rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1 && rect.top >= bounds.top - 1 && rect.bottom <= bounds.bottom + 1;
+    });
+  })).toBe(true);
+  await move(page, 'g1', 'f3', true);
+  await expect.poll(() => app.requests.length).toBe(2);
+  await app.reply(1, 'b8c6');
+  await piece(page, 'f3', 'white knight');
+  await expect.poll(() => page.locator('#board cg-board').evaluate(board => {
+    const bounds = board.getBoundingClientRect();
+    const black = board.closest('.cg-wrap')!.classList.contains('orientation-black');
+    return [...board.querySelectorAll('piece:not(.ghost)')].flatMap(el => {
+      const key = (el as HTMLElement & { cgKey: string }).cgKey;
+      const file = key.charCodeAt(0) - 97, rank = Number(key[1]) - 1;
+      const rect = el.getBoundingClientRect();
+      const x = bounds.left + (black ? 7 - file : file) * bounds.width / 8;
+      const y = bounds.top + (black ? rank : 7 - rank) * bounds.height / 8;
+      return Math.abs(rect.left - x) > 1 || Math.abs(rect.top - y) > 1 ? [{ key, actual: [rect.left, rect.top], expected: [x, y] }] : [];
+    });
+  })).toEqual([]);
+  await page.screenshot({ path: testInfo.outputPath('mobile.png'), fullPage: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(app.errors).toEqual([]);
+});
