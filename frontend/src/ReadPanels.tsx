@@ -6,7 +6,7 @@ import { Dialog } from './Dialog';
 import { ArrowLeft, ArrowRight, SkipBack, SkipForward } from 'lucide-react';
 import type { Review } from './useReview';
 import { QualityBadge, ReviewCharts } from './ReviewCharts';
-import { scoreValueText, type Evaluation, type Quality } from './reviewMetrics';
+import { scoreValueText, whiteWin, type Evaluation, type Quality } from './reviewMetrics';
 
 export function InsightPanel({ state, dispatch, review }: { state: State; dispatch: Dispatch<Action>; review: Review }) {
   const { analysisSettings } = state;
@@ -32,7 +32,7 @@ export function InsightPanel({ state, dispatch, review }: { state: State; dispat
           return <li key={candidate.move}><span className="rank">{index + 1}</span><button className="candidate-preview" aria-label={`Preview ${san}`} aria-pressed={state.preview === candidate.move} onMouseEnter={() => dispatch({ type: 'preview', uci: candidate.move })} onFocus={() => dispatch({ type: 'preview', uci: candidate.move })} onClick={() => dispatch({ type: 'preview', uci: candidate.move })}><strong>{san}</strong><span>{Math.round(candidate.prob * 100)}%</span></button>{candidate.move === played && <span className="played-tag">Played</span>}</li>;
         })}</ol>
         {played && !response.top_moves.slice(0, 5).some(candidate => candidate.move === played) && <p>Played {candidateSan(insight.fen, played)}</p>}
-        {!!response.top_moves.length && <section className="estimate"><h3>Maia estimate after {candidateSan(insight.fen, response.top_moves[0].move)}</h3>{absoluteWdl(insight.fen, response.wdl).map((value, index) => <div className="wdl-row" key={index}><span>{['White win', 'Draw', 'Black win'][index]}</span><meter min={0} max={1} value={value} /><strong>{Math.round(value * 100)}%</strong></div>)}</section>}
+        {!!response.top_moves.length && <section className="estimate" aria-label="Maia win estimate"><div className="win-hero"><strong>{Math.round(absoluteWdl(insight.fen, response.wdl)[0] * 100)}%</strong><span>White win · after {candidateSan(insight.fen, response.top_moves[0].move)}</span></div></section>}
       </div> : <p className="empty-copy">No analysis yet.</p>}
     </section>
     <section aria-label="Stockfish evaluation">
@@ -43,9 +43,13 @@ export function InsightPanel({ state, dispatch, review }: { state: State; dispat
 }
 
 function StockfishBody({ fen, evaluation, played }: { fen: string; evaluation: Evaluation; played?: string }) {
-  if (evaluation.terminal) return <p>{evaluation.terminal === 'draw' ? 'Draw' : evaluation.terminal === 'white_win' ? 'White wins' : 'Black wins'}</p>;
+  if (evaluation.terminal) return <div>
+    <div className="win-hero"><strong>{Math.round(whiteWin(evaluation.score))}%</strong><span>White win · Stockfish</span></div>
+    <p>{evaluation.terminal === 'draw' ? 'Draw' : evaluation.terminal === 'white_win' ? 'White wins' : 'Black wins'}</p>
+  </div>;
   return <div>
-    <p>Best {evaluation.best_move ? candidateSan(fen, evaluation.best_move) : '—'} · {scoreValueText(evaluation.score)} · depth {evaluation.depth}</p>
+    <div className="win-hero"><strong>{Math.round(whiteWin(evaluation.score))}%</strong><span>White win · Stockfish · depth {evaluation.depth}</span></div>
+    <p>Best {evaluation.best_move ? candidateSan(fen, evaluation.best_move) : '—'} · {scoreValueText(evaluation.score)}</p>
     <ol className="candidate-list">{evaluation.lines.map(line => {
       const san = candidateSan(fen, line.move);
       return <li key={line.move}><strong>{san}</strong><span>{scoreValueText(line.score)}</span>{line.move === played && <span className="played-tag">Played</span>}</li>;

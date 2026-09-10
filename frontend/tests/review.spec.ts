@@ -74,6 +74,17 @@ test('whole game completes independently of viewing, renders quality and clickab
   expect(app.errors).toEqual([]);
   expect(app.requests.filter(request => request.engine === '/evaluate')).toHaveLength(5);
 });
+test('blunder and mistake destinations carry board badges', async ({ page }) => {
+  await bootReview(page);
+  await page.locator('#analysis-first').click();
+  await page.locator('#analysis-next').click();
+  await page.locator('#analysis-next').click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 5');
+  await expect(page.locator('#board').getByText('?', { exact: true })).toBeVisible();
+  await page.locator('#analysis-next').click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
+  await expect(page.locator('#board').getByText('??', { exact: true })).toBeVisible();
+});
 test('mixed arrow sources retain their own endpoints', async ({ page }, info) => {
   await bootReview(page);
   await page.route('http://maia.test/move', route => route.fulfill({ json: { move: 'g1f3', top_moves: [{ move: 'g1f3', prob: .6 }], wdl: [.2,.3,.5], model_used: '79m', degraded: false } }));

@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
+import type { Key } from '@lichess-org/chessground/types';
 import { FlipVertical2, Plus, Undo2 } from 'lucide-react';
 import { Chess } from 'chess.js';
 import { ChessBoard } from './ChessBoard';
@@ -26,7 +27,11 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
   const full = analysis ? analysisLine(state.analysis, analysisLength(state.analysis)) : { sanMoves: live.history() };
   const ply = analysis ? state.analysis.index : state.viewedPly ?? state.play.moves.length;
   const arrowMoves = { actual: review.nodes[ply + 1]?.moves[ply], maia: review.maia?.top_moves[0]?.move, stockfish: review.current?.best_move };
-  const shapes = analysis && ready ? reviewShapes(arrowMoves, { actual: true, maia: true, stockfish: true }, state.preview) : [];
+  const playedQuality = analysis && ready && ply > 0 ? review.qualities[ply - 1] : undefined;
+  const playedUci = analysis && ready && ply > 0 ? review.nodes[ply]?.moves[ply - 1] : undefined;
+  const badge = playedQuality && (playedQuality.label === 'Blunder' || playedQuality.label === 'Mistake') && playedUci
+    ? { square: playedUci.slice(2, 4) as Key, glyph: (playedQuality.label === 'Blunder' ? '??' : '?') as '??' | '?' } : null;
+  const shapes = analysis && ready ? reviewShapes(arrowMoves, { actual: true, maia: true, stockfish: true }, state.preview, badge) : [];
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       if (!ready || mode === 'history' || event.altKey || event.ctrlKey || event.metaKey || (event.target as HTMLElement).closest('input, textarea, select, [contenteditable="true"], dialog')) return;

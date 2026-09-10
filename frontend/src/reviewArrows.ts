@@ -12,12 +12,18 @@ export const reviewBrushes: DrawBrushes = {
 };
 export type ArrowSource = 'actual' | 'maia' | 'stockfish';
 export type ArrowToggles = Record<ArrowSource, boolean>;
+export type SquareBadge = { square: Key; glyph: '??' | '?' };
 const validMove = (move: unknown): move is string => typeof move === 'string' && /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(move);
-export function reviewShapes(moves: Record<ArrowSource, string | null | undefined>, toggles: ArrowToggles, preview?: string | null): DrawShape[] {
+const validSquare = (square: unknown): square is Key => typeof square === 'string' && /^[a-h][1-8]$/.test(square);
+export function reviewShapes(moves: Record<ArrowSource, string | null | undefined>, toggles: ArrowToggles, preview?: string | null, badge?: SquareBadge | null): DrawShape[] {
   const entries = (['actual', 'maia', 'stockfish'] as const).filter(source => toggles[source] && validMove(moves[source])).map(source => ({ move: moves[source]!, brush: source as string }));
   if (validMove(preview) && !entries.some(entry => entry.move === preview)) entries.push({ move: preview, brush: 'candidate' });
   // Changing the complete set gives all shapes a fresh hash. Chessground appends
   // new SVG groups; a shared hash suffix preserves widest-first layering after toggles.
   const signature = entries.map(entry => `${entry.brush}:${entry.move}`).join('|');
-  return entries.map(({ move, brush }) => ({ orig: move.slice(0, 2) as Key, dest: move.slice(2, 4) as Key, brush, customSvg: { html: `<!--${signature}-->` } }));
+  const shapes: DrawShape[] = entries.map(({ move, brush }) => ({ orig: move.slice(0, 2) as Key, dest: move.slice(2, 4) as Key, brush, customSvg: { html: `<!--${signature}-->` } }));
+  if (badge && validSquare(badge.square) && (badge.glyph === '??' || badge.glyph === '?')) {
+    shapes.push({ orig: badge.square, label: { text: badge.glyph, fill: badge.glyph === '??' ? '#e5484d' : '#f5a524' } });
+  }
+  return shapes;
 }

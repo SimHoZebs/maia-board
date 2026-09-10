@@ -45,8 +45,9 @@ The Go server serves the resulting `dist` directory at `/app/static`. Set
   stays intact until Return to original. Translucent White/Red/Blue arrows show
   the played continuation, Maia's top choice, and Stockfish's best move, widest
   to narrowest so agreeing moves remain visible. The Maia and Stockfish sections
-  carry matching red and blue markers, present their top moves side by side, and
-  tag the move actually played.
+  carry matching red and blue markers, lead with comparable White-win heroes,
+  present their top moves side by side, and tag the move actually played.
+  Played blunders and mistakes also get ?? / ? destination badges on the board.
 - **History:** recent games on this device, with Resume for unfinished games,
   Analyze, Export, and Delete. Deleting the current saved game also clears its
   current-game record.
