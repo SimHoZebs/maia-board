@@ -44,12 +44,13 @@ export function InsightPanel({ state, dispatch, review }: { state: State; dispat
 
 function StockfishBody({ fen, evaluation, played }: { fen: string; evaluation: Evaluation; played?: string }) {
   if (evaluation.terminal) return <div>
-    <div className="win-hero"><strong>{Math.round(whiteWin(evaluation.score))}%</strong><span>White win · Stockfish</span></div>
+    <section className="estimate" aria-label="Stockfish win estimate"><div className="win-hero"><strong>{Math.round(whiteWin(evaluation.score))}%</strong><span>White win · final</span></div></section>
     <p>{evaluation.terminal === 'draw' ? 'Draw' : evaluation.terminal === 'white_win' ? 'White wins' : 'Black wins'}</p>
   </div>;
   return <div>
-    <div className="win-hero"><strong>{Math.round(whiteWin(evaluation.score))}%</strong><span>White win · Stockfish · depth {evaluation.depth}</span></div>
-    <p>Best {evaluation.best_move ? candidateSan(fen, evaluation.best_move) : '—'} · {scoreValueText(evaluation.score)}</p>
+    <p className="model-context">Stockfish 19 · depth {evaluation.depth}</p>
+    <section className="estimate" aria-label="Stockfish win estimate"><div className="win-hero"><strong>{Math.round(whiteWin(evaluation.score))}%</strong><span>White win · this position</span></div></section>
+    <h3>Engine moves</h3>
     <ol className="candidate-list">{evaluation.lines.map((line, index) => {
       const san = candidateSan(fen, line.move);
       return <li key={line.move}><span className="rank">{index + 1}</span><span className="line-reading"><strong>{san}</strong><span className="metric">{scoreValueText(line.score)}</span></span>{line.move === played && <span className="played-tag">Played</span>}</li>;
