@@ -18,19 +18,20 @@ export function InsightPanel({ state, dispatch, review }: { state: State; dispat
   return <aside className="panel insight-panel" aria-labelledby="insight-title">
     {review.tooLong && <p role="status">Review supports up to 256 moves (plies).</p>}
     {(review.error || !!review.progress?.failed) && <p role="alert">{review.error || `${review.progress!.failed} analysis jobs failed.`} <button onClick={review.retry}>Retry failed</button></p>}
-    <button className="primary" disabled={review.tooLong || review.progress?.running} onClick={review.start}>{state.analysis.branchFromPly === null ? 'Analyze entire game' : 'Analyze explored line'}</button>
+    {!review.progress?.running && <button className="primary" disabled={review.tooLong} onClick={review.start}>{state.analysis.branchFromPly === null ? 'Analyze entire game' : 'Analyze explored line'}</button>}
     {review.progress && <div role="status">{review.progress.done} / {review.progress.total} analysis jobs {review.progress.failed ? `· ${review.progress.failed} failed` : ''} {review.progress.canceled ? '· canceled' : ''}{review.progress.running && <button onClick={review.cancel}>Cancel analysis</button>}</div>}
     <ReviewCharts review={review} ply={state.analysis.index} sans={review.nodes.at(-1)!.moves.map((_, index) => candidateSan(review.nodes[index].fen, review.nodes[index + 1].moves[index]))} onView={ply => dispatch({ type: 'view', ply })} side={state.analysis.perspective} yours={state.analysis.ownGame} />
+    <div className="engine-duo">
     <section aria-label="Maia analysis">
       <h2 id="insight-title"><span className="source-dot source-maia" aria-hidden="true" /> Human moves · {analysisSettings.eloMaia} rating</h2>
       <details><summary>Analysis settings</summary><Rating id="analysis-rating" label="Analyzed-player rating" value={analysisSettings.eloMaia} onChange={eloMaia => dispatch({ type: 'analysis-settings', settings: { eloMaia } })} /><label className="field">Model<select id="analysis-model" value={analysisSettings.model} onChange={event => dispatch({ type: 'analysis-settings', settings: { model: event.target.value as '5m' | '79m' } })}><option value="79m">79M</option><option value="5m">5M</option></select></label></details>
       <p className="model-context">Maia {response?.model_used.toUpperCase() ?? analysisSettings.model.toUpperCase()}{response?.degraded ? ' · fallback model' : ''}</p>
       {response && insight ? <div id="insight-content">
-        {!!response.top_moves.length && <section className="estimate" aria-label="Maia win estimate"><div className="win-hero"><strong>{Math.round(absoluteWdl(insight.fen, response.wdl)[0] * 100)}%</strong><span>White win · after {candidateSan(insight.fen, response.top_moves[0].move)}</span></div></section>}
-        <h3>Human move probability</h3>
+        <section className="estimate" aria-label="Maia win estimate"><div className="win-hero"><strong>{Math.round(absoluteWdl(insight.fen, response.wdl)[0] * 100)}%</strong><span>White win · after {candidateSan(insight.fen, response.top_moves[0].move)}</span></div></section>
+        <h3>Maia {analysisSettings.eloMaia} moves</h3>
         <ol className="candidate-list">{response.top_moves.slice(0, 5).map((candidate, index) => {
           const san = candidateSan(insight.fen, candidate.move);
-          return <li key={candidate.move}><span className="rank">{index + 1}</span><button className="candidate-preview" aria-label={`Preview ${san}`} aria-pressed={state.preview === candidate.move} onMouseEnter={() => dispatch({ type: 'preview', uci: candidate.move })} onFocus={() => dispatch({ type: 'preview', uci: candidate.move })} onClick={() => dispatch({ type: 'preview', uci: candidate.move })}><strong>{san}</strong><span className="metric">{Math.round(candidate.prob * 100)}%</span></button>{candidate.move === played && <span className="played-tag">Played</span>}</li>;
+          return <li key={candidate.move}><span className="rank">{index + 1}</span>{candidate.move === played && <span className="played-tag">Played</span>}<button className="candidate-preview" aria-label={`Preview ${san}`} aria-pressed={state.preview === candidate.move} onMouseEnter={() => dispatch({ type: 'preview', uci: candidate.move })} onFocus={() => dispatch({ type: 'preview', uci: candidate.move })} onClick={() => dispatch({ type: 'preview', uci: candidate.move })}><strong>{san}</strong><span className="metric">{Math.round(candidate.prob * 100)}%</span></button></li>;
         })}</ol>
         {played && !response.top_moves.slice(0, 5).some(candidate => candidate.move === played) && <p>Played {candidateSan(insight.fen, played)}</p>}
       </div> : <p className="empty-copy">No analysis yet.</p>}
@@ -39,6 +40,7 @@ export function InsightPanel({ state, dispatch, review }: { state: State; dispat
       <h2><span className="source-dot source-stockfish" aria-hidden="true" /> Stockfish</h2>
       {evaluation ? <StockfishBody fen={node.fen} evaluation={evaluation} played={played} /> : <p className="empty-copy">No analysis yet.</p>}
     </section>
+    </div>
   </aside>;
 }
 
@@ -53,7 +55,7 @@ function StockfishBody({ fen, evaluation, played }: { fen: string; evaluation: E
     <h3>Engine moves</h3>
     <ol className="candidate-list">{evaluation.lines.map((line, index) => {
       const san = candidateSan(fen, line.move);
-      return <li key={line.move}><span className="rank">{index + 1}</span><span className="line-reading"><strong>{san}</strong><span className="metric">{scoreValueText(line.score)}</span></span>{line.move === played && <span className="played-tag">Played</span>}</li>;
+      return <li key={line.move}><span className="rank">{index + 1}</span>{line.move === played && <span className="played-tag">Played</span>}<span className="line-reading"><strong>{san}</strong><span className="metric">{scoreValueText(line.score)}</span></span></li>;
     })}</ol>
     {played && !evaluation.lines.some(line => line.move === played) && <p>Played {candidateSan(fen, played)}</p>}
   </div>;

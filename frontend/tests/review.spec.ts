@@ -154,6 +154,7 @@ test('cancel stops lazy batch scheduling while retaining completed position resu
   await page.route('http://maia.test/evaluate', route => { held.push(route); });
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect.poll(() => held.length).toBe(2);
+  await expect(page.getByRole('button', { name: 'Analyze entire game' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Cancel analysis' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'canceled' })).toBeVisible();
   for (const route of held) await route.fulfill({ json: route.request().url().endsWith('/move') ? { move: 'e2e4', top_moves: [{ move: 'e2e4', prob: .6 }], wdl: [.2,.3,.5], model_used: '79m', degraded: false } : { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4', score: { type: 'cp', value: 20 }, lines: [{ move: 'e2e4', score: { type: 'cp', value: 20 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: 0 }, depth: 12 }] } });
