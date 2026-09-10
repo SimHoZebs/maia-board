@@ -11,6 +11,7 @@ const record = (moves: string[], color: 'white' | 'black' = 'white', id = 'fixtu
 
 async function boot(page: Page, storage: Record<string, unknown> = {}, start = true, path = '/') {
   const requests: { route: Route; payload: MoveRequest }[] = [];
+  const gameStore = { games: new Map<string, any>(), currentId: null as string | null };
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(({ storage }) => {
@@ -42,6 +43,36 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
       const game = replay(payload.moves, payload.initial_fen);
       const moves = game.moves({ verbose: true }).slice(0, 2).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
       await route.fulfill({ json: { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 14, terminal: null, best_move: moves[0] ?? null, score: { type: 'cp', value: 20 }, lines: moves.map(move => ({ move, score: { type: 'cp', value: 20 }, depth: 14 })) } }); return;
+    }
+    if (path === '/games' || path.startsWith('/games/')) {
+      const method = route.request().method();
+      const id = path === '/games' ? null : decodeURIComponent(path.slice('/games/'.length));
+      if (method === 'GET' && id === null) {
+        const rows = [...gameStore.games.values()].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+        await route.fulfill({ json: { games: rows, current_id: gameStore.currentId, total: rows.length } });
+        return;
+      }
+      if (method === 'POST') {
+        const body = route.request().postDataJSON();
+        const now = new Date().toISOString();
+        const previous = gameStore.games.get(body.id ?? '');
+        const same = previous && previous.user_color === body.user_color && previous.elo_maia === body.elo_maia
+          && previous.elo_user === body.elo_user && previous.model === body.model && JSON.stringify(previous.moves) === JSON.stringify(body.moves);
+        const row = {
+          id: body.id ?? `mock-${gameStore.games.size + 1}`, created_at: body.created_at || previous?.created_at || now,
+          updated_at: same ? previous.updated_at : now, user_color: body.user_color, elo_maia: body.elo_maia,
+          elo_user: body.elo_user, model: body.model, moves: body.moves,
+        };
+        gameStore.games.set(row.id, row);
+        if (body.current) gameStore.currentId = row.id;
+        await route.fulfill({ json: row });
+        return;
+      }
+      if (method === 'DELETE' && id) {
+        gameStore.games.delete(id);
+        if (gameStore.currentId === id) gameStore.currentId = null;
+      }
+      await route.fulfill({ status: 204, body: '' }); return;
     }
     const filename = path.startsWith('/assets/') ? path.slice(1) : 'index.html';
     const contentType = filename.endsWith('.js') ? 'text/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html';
@@ -326,7 +357,11 @@ test('saved switching at identical FEN retires pending reply and persists select
   await page.locator('#mode-history').click();
   await page.locator('[data-game-id="b"]').click();
   await expect.poll(() => app.requests.length).toBe(2);
-  await expect.poll(() => page.evaluate(key => JSON.parse(localStorage.getItem(key)!).id, KEYS.current)).toBe('b');
+  await expect.poll(() => page.evaluate(key => {
+    const raw = localStorage.getItem(key);
+    const game = raw ? JSON.parse(raw) : null;
+    return typeof game?.id === 'string' ? game.id : null;
+  }, KEYS.current)).toBe('b');
   await app.reply(1, 'c7c5'); await app.reply(0, 'e7e5');
   await piece(page, 'c5', 'black pawn'); await piece(page, 'e7', 'black pawn');
   await expect(page.locator('#insight-title')).toHaveCount(0);

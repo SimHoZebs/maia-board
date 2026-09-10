@@ -89,7 +89,9 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .wdl-row strong { text-align: right; font-weight: 500; }
 .game-result { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; padding: 12px; background: #30372a; }
 .error-banner { margin-top: 12px; padding: 12px; border-left: 3px solid #d59b85; background: #3a2c29; font-size: 14px; }
+.sync-banner { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 60; display: flex; align-items: center; justify-content: space-between; gap: 12px; width: min(560px, calc(100% - 32px)); padding: 12px; border-left: 3px solid #d6b85c; background: #3a3325; font-size: 14px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4); }
 .saved-panel { max-width: 820px; margin: 28px auto; }
+.saved-heading { display: flex; align-items: baseline; gap: 12px; }.saved-heading span { font-size: 12px; color: var(--muted); }
 .saved-game { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-top: 1px solid var(--line); padding: 20px 0; }
 .saved-game h2 { font-size: 16px; margin: 6px 0; }
 .saved-game p { margin: 0; font-size: 13px; }

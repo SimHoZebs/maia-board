@@ -48,12 +48,26 @@ The Go server serves the resulting `dist` directory at `/app/static`. Set
   carry matching red and blue markers, lead with comparable White-win heroes,
   present their top moves side by side, and tag the move actually played.
   Played blunders and mistakes also get ?? / ? destination badges on the board.
-- **History:** recent games on this device, with Resume for unfinished games,
+- **History:** games from the server, with Resume for unfinished games,
   Analyze, Export, and Delete. Deleting the current saved game also clears its
-  current-game record.
+  current-game record. The list shows a total count when the server holds more
+  rows than displayed.
 
 Left/Right and Home/End navigate positions outside form controls and dialogs.
 Dialogs support Escape and restore focus to the opening control.
+
+## Server game history
+
+The server owns game history (`GET/POST /games`, `DELETE /games/:id`). The
+browser keeps its previous localStorage keys as a read cache plus a
+write-ahead outbox (`maia-board.outbox.v1`): every save, delete, and
+current-game marker applies locally first, then flushes in order. Entries leave
+the outbox only on acknowledgement, so reloads and offline stretches never
+lose games; a pending indicator and a Retry control surface the backlog.
+Pre-database libraries migrate once, oldest first with ids preserved, and the
+8-game cap is gone. Boot reconciles server rows with pending ops (pending
+wins, last marker wins); an in-flight Maia reply for the same tip is never
+replaced by the sync. Settings and analysis inputs remain local-only.
 
 ## State and request ownership
 

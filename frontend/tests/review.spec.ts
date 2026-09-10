@@ -23,6 +23,16 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6') {
         lines: [{ move: best, score, depth: 12 }, { move: legal.find(move => move !== best), score: { type: 'cp', value: game.turn() === 'w' ? -500 : 500 }, depth: 12 }],
       } }); return;
     }
+    if (path === '/games' || path.startsWith('/games/')) {
+      const method = route.request().method();
+      if (method === 'GET' && path === '/games') { await route.fulfill({ json: { games: [], current_id: null, total: 0 } }); return; }
+      if (method === 'POST') {
+        const body = route.request().postDataJSON();
+        await route.fulfill({ json: { id: body.id ?? 'mock-game', created_at: '2026-09-10T00:00:00Z', updated_at: '2026-09-10T00:00:00Z', user_color: body.user_color, elo_maia: body.elo_maia, elo_user: body.elo_user, model: body.model, moves: body.moves } });
+        return;
+      }
+      await route.fulfill({ status: 204, body: '' }); return;
+    }
     const filename = path.startsWith('/assets/') ? path.slice(1) : 'index.html';
     await route.fulfill({ body: await readFile(resolve('dist-browser', filename)), contentType: filename.endsWith('.js') ? 'text/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html' });
   });
@@ -169,5 +179,9 @@ for (const bit of [0, 1]) test(`random side resolves once with crypto bit ${bit}
   await page.locator('#new-game').click(); await page.getByRole('radio', { name: 'Random' }).check();
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   expect(await page.evaluate(() => (window as any).randomSideCalls)).toBe(1);
-  expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)!).userColor, KEYS.settings)).toBe(bit ? 'black' : 'white');
+  await expect.poll(() => page.evaluate(key => {
+    const raw = localStorage.getItem(key);
+    const settings = raw ? JSON.parse(raw) : null;
+    return typeof settings?.userColor === 'string' ? settings.userColor : null;
+  }, KEYS.settings)).toBe(bit ? 'black' : 'white');
 });

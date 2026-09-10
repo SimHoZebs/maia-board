@@ -50,6 +50,7 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
   return <div className="app-shell">
     <header className="site-header"><span className="brand">maia board</span>{children}</header>
     <main>
+      {state.syncError && <div className="sync-banner" role="alert"><span>{state.syncError}</span><button onClick={() => dispatch({ type: 'retry-sync' })}>Retry</button></div>}
       {mode === 'history' ? <SavedGames state={state} dispatch={dispatch} /> : <>
         {!ready && <div className="entry"><PlayControls state={state} dispatch={dispatch} /><AnalysisControls state={state} dispatch={dispatch} /></div>}
         <div className={`workspace${analysis && ready ? ' analyzing' : ''}${historic ? ' historical' : ''}${!analysis && live.isGameOver() ? ' finished' : ''}${!ready ? ' awaiting' : ''}`}>

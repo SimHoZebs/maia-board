@@ -19,6 +19,6 @@ export function restoreGame(value: unknown): StoredGame | undefined {
 }
 export function loadSaved(): StoredGame[] {
   const raw = readStorage<unknown>(KEYS.saved);
-  return Array.isArray(raw) ? raw.map(restoreGame).filter((game): game is StoredGame => !!game).slice(0, 8) : [];
+  return Array.isArray(raw) ? raw.map(restoreGame).filter((game): game is StoredGame => !!game) : [];
 }
 export function loadSettings(): Settings { return normalizeSettings(readStorage<Partial<Settings>>(KEYS.settings)); }

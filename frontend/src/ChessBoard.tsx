@@ -25,11 +25,19 @@ export function ChessBoard({ position, orientation, enabled, thinking, interacti
       drawable: { brushes: reviewBrushes },
     });
     api.current = ground;
-    return () => { ground.destroy(); api.current = null; container.current?.replaceChildren(); };
+    // Chessground memoizes its bounding rect until scroll/resize. Any layout
+    // shift (setup opening, banners, fonts) would otherwise offset every click,
+    // so refresh the memo whenever the board resizes.
+    const observer = new ResizeObserver(() => api.current?.state.dom.bounds.clear());
+    if (container.current) observer.observe(container.current);
+    return () => { observer.disconnect(); ground.destroy(); api.current = null; container.current?.replaceChildren(); };
   }, []);
   const lastMove = position.lastMove?.join(',');
   useLayoutEffect(() => {
     const ground = api.current!;
+    // The board may have moved since the last measurement (layout shifts from
+    // setup, banners, or panels). Re-measure so gestures map to live squares.
+    ground.state.dom.bounds.clear();
     const version = ++generation.current;
     const game = new Chess(position.fen);
     ground.cancelMove();

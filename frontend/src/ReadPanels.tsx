@@ -84,7 +84,10 @@ export function MovesPanel({ sans, ply, onView, initialFen, historical, qualitie
 export function SavedGames({ state, dispatch, analysisOnly = false }: { state: State; dispatch: Dispatch<Action>; analysisOnly?: boolean }) {
   const [deleting, setDeleting] = useState<string | null>(null);
   return <section className="saved-panel" aria-label="Saved games">
-    {!analysisOnly && <h1>History</h1>}
+    {!analysisOnly && <div className="saved-heading"><h1>History</h1>
+      {state.syncPending > 0 && <span role="status">Syncing…</span>}
+      {state.historyTotal !== null && state.historyTotal > state.saved.length && <span>Showing {state.saved.length} of {state.historyTotal}</span>}
+    </div>}
     {!state.saved.length && <p className="empty-copy">Your games will appear here.</p>}
     <div id="saved-games">{state.saved.map(game => {
       const result = gameResult(replay(game.moves));

@@ -4,6 +4,7 @@ import { toGroundColor } from './board-colors';
 import { analysisLength, analysisLine, applyUci, loadLine, newId, oppositeColor, positionOf, replay, START_FEN,
   type Analysis, type Insight, type Mode, type Settings, type StoredGame } from './domain';
 import { KEYS, loadSaved, loadSettings, readStorage, restoreGame } from './storage';
+import { loadOutbox, mergeSync, type OutboxOp } from './serverGames';
 
 type Request = { id: number; mode: Mode; payload: MoveRequest };
 export type Draft = Pick<Settings, 'eloMaia' | 'model'> & { userColor: 'white' | 'black' | 'random' };
@@ -14,6 +15,7 @@ export type State = {
   inputs: { fen: string; pgn: string }; flipped: boolean; preview: string | null;
   promotion: { from: Square; to: Square } | null;
   insight: Insight | null; error: string; request: Request | null; revision: number;
+  syncError: string; syncPending: number; flushNonce: number; historyTotal: number | null;
 };
 export type Action =
   | { type: 'mode'; mode: Mode }
@@ -30,7 +32,11 @@ export type Action =
   | { type: 'load' } | { type: 'step'; delta: number } | { type: 'view'; ply: number | null } | { type: 'analyze' }
   | { type: 'saved'; id: string } | { type: 'review'; id?: string } | { type: 'delete'; id: string }
   | { type: 'reply'; request: Request; response: MoveResponse }
-  | { type: 'failure'; request: Request; error: unknown };
+  | { type: 'failure'; request: Request; error: unknown }
+  | { type: 'sync'; saved: StoredGame[]; currentId: string | null; total: number | null; pending: OutboxOp[] }
+  | { type: 'sync-error'; message: string }
+  | { type: 'sync-pending'; pending: number }
+  | { type: 'retry-sync' };
 
 export function currentPosition(state: State) {
   return state.mode === 'analysis' ? analysisLine(state.analysis) : positionOf(replay(state.play.moves.slice(0, state.viewedPly ?? state.play.moves.length)));
@@ -54,7 +60,7 @@ function transition(state: State, changes: Partial<State>, resumePlay = true): S
 }
 function withPlay(state: State, play: StoredGame): State {
   const existed = state.saved.some(game => game.id === play.id);
-  const saved = play.moves.length || existed ? [play, ...state.saved.filter(game => game.id !== play.id)].slice(0, 8) : state.saved;
+  const saved = play.moves.length || existed ? [play, ...state.saved.filter(game => game.id !== play.id)] : state.saved;
   return { ...state, play, saved };
 }
 function commitMove(state: State, from: Square, to: Square, promotion?: string): State {
@@ -83,7 +89,8 @@ export function initialState(mode: Mode = 'play'): State {
   const state: State = { mode, settings, play: restored ?? { id: newId(), createdAt: new Date().toISOString(), moves: [], settings },
     started: !!restored, setup: restored ? null : { ...settings }, viewedPly: null,
     saved: loadSaved(), analysis, analysisSettings: { ...settings }, analysisLoaded: false, importing: true,
-    inputs, flipped: false, preview: null, promotion: null, insight: null, error: '', request: null, revision: 0 };
+    inputs, flipped: false, preview: null, promotion: null, insight: null, error: '', request: null, revision: 0,
+    syncError: '', syncPending: loadOutbox().length, flushNonce: 0, historyTotal: null };
   return mode === 'play' && maiaTurn(state) ? queueRequest(state) : state;
 }
 export function reducer(state: State, action: Action): State {
@@ -150,6 +157,30 @@ export function reducer(state: State, action: Action): State {
       return transition(state, { saved, started: false, setup: { ...state.settings }, viewedPly: null,
         play: { id: newId(), createdAt: new Date().toISOString(), moves: [], settings: state.settings } }, false);
     }
+    case 'sync': {
+      const merged = mergeSync(action.saved, action.currentId, action.pending);
+      const base = { ...state, saved: merged.saved, syncError: '', syncPending: action.pending.length, historyTotal: action.total };
+      const pendingPlay = action.pending.some(op => op.op === 'save' && op.game.id === state.play.id);
+      if (pendingPlay || (merged.currentId === null && action.saved.length === 0 && state.started)) {
+        // Local edits still in the outbox (or an offline cache with no server
+        // rows) win over the server snapshot; keep any in-flight request.
+        if (state.request) return base;
+        return transition(base, {}, true);
+      }
+      const current = merged.saved.find(game => game.id === merged.currentId);
+      if (!current) {
+        return transition(base, { started: false, setup: { ...base.settings }, viewedPly: null,
+          play: { id: newId(), createdAt: new Date().toISOString(), moves: [], settings: base.settings } }, false);
+      }
+      if (state.request && current.id === state.play.id && current.moves.join(',') === state.play.moves.join(',')) {
+        // Same tip with inference already running: keep the request, no duplicate.
+        return { ...base, play: current, settings: { ...current.settings }, started: true, setup: null, viewedPly: null };
+      }
+      return transition(base, { play: current, settings: { ...current.settings }, started: true, setup: null, viewedPly: null });
+    }
+    case 'sync-error': return state.syncError === action.message ? state : { ...state, syncError: action.message };
+    case 'sync-pending': return state.syncPending === action.pending ? state : { ...state, syncPending: action.pending };
+    case 'retry-sync': return { ...state, syncError: '', flushNonce: state.flushNonce + 1 };
     case 'reply': {
       if (state.request !== action.request) return state;
       const insight: Insight = { response: action.response, fen: action.request.payload.fen, mode: state.mode };

@@ -166,3 +166,58 @@ describe('legacy storage and analysis', () => {
     expect(() => loadLine('', '1. e5')).toThrow('Could not read PGN move "e5".');
   });
 });
+
+describe('server sync', () => {
+  const serverGame = (id: string, moves: string[] = []) => ({ id, createdAt: '2026-09-10', moves, settings: defaultSettings });
+  it('adopts the server current game and requeues a Maia turn', () => {
+    const state = reducer(initialState(), {
+      type: 'sync', saved: [serverGame('s', ['e2e4'])], currentId: 's', total: 1, pending: [],
+    });
+    expect(state.play.id).toBe('s');
+    expect(state.started).toBe(true);
+    expect(state.request?.payload.moves).toEqual(['e2e4']);
+    expect(state.syncPending).toBe(0);
+    expect(state.historyTotal).toBe(1);
+  });
+  it('keeps unsynced local edits over the server snapshot', () => {
+    const local = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
+    const pending = [{ op: 'save', game: local.play, current: true }] as const;
+    const next = reducer(local, {
+      type: 'sync', saved: [serverGame('other')], currentId: 'other', total: 1,
+      pending: [...pending],
+    });
+    expect(next.play.moves).toEqual(['e2e4']);
+    expect(next.saved.map(game => game.id)).toEqual(['test', 'other']);
+    expect(next.request).toBe(local.request);
+  });
+  it('starts fresh when the server has no current game', () => {
+    const state = reducer(initialState(), { type: 'sync', saved: [serverGame('s')], currentId: null, total: 1, pending: [] });
+    expect(state.started).toBe(false);
+    expect(state.play.moves).toEqual([]);
+    expect(state.setup).not.toBeNull();
+  });
+  it('keeps a cache-seeded game when the server is empty', () => {
+    const game = { id: 'cache', createdAt: '2026-09-10', moves: ['e2e4'], settings: defaultSettings };
+    localStorage.setItem(KEYS.current, JSON.stringify(game));
+    const state = reducer(initialState(), { type: 'sync', saved: [], currentId: null, total: 0, pending: [] });
+    expect(state.play.id).toBe('cache');
+    expect(state.started).toBe(true);
+  });
+  it('tracks persistence errors, pending counts, and explicit retry', () => {
+    let state = reducer(initialState(), { type: 'sync-error', message: 'down' });
+    expect(state.syncError).toBe('down');
+    state = reducer(state, { type: 'sync-pending', pending: 3 });
+    expect(state.syncPending).toBe(3);
+    expect(reducer(state, { type: 'sync-pending', pending: 3 })).toBe(state);
+    state = reducer(state, { type: 'retry-sync' });
+    expect(state.syncError).toBe('');
+    expect(state.flushNonce).toBe(1);
+  });
+  it('keeps history beyond the old eight-game cap', () => {
+    let state = initialState();
+    const games = Array.from({ length: 12 }, (_, index) => serverGame(`g${index}`, ['e2e4']));
+    state = reducer(state, { type: 'sync', saved: games, currentId: null, total: 12, pending: [] });
+    expect(state.saved).toHaveLength(12);
+    expect(state.historyTotal).toBe(12);
+  });
+});
