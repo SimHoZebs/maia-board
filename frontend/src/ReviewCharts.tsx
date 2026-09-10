@@ -43,10 +43,7 @@ export function ReviewCharts({ review, ply, sans, onView }: { review: Review; pl
     </div>
     <p className="selected-evaluation" aria-live="polite">{points[ply].description}</p>
     {ply > 0 && <p className="selected-quality"><QualityBadge quality={review.qualities[ply - 1]} /> {sans[ply - 1]} · {review.qualities[ply - 1].label}</p>}
-    <details><summary>Review method and chart data</summary>
-      <p>Stockfish 19 estimates at the reported depth; grades are approximate. Evaluation favors White when positive. Mate scores preserve the winner; mate distance does not affect accuracy.</p>
-      <p>Loss is the drop in the mover’s winning chance: 5 percentage points = Inaccuracy, 10 = Mistake, 20 = Blunder. Best follows Stockfish’s top move; other low-loss moves are Good. Great means the top move loses at most 1 point and beats the second evaluated centipawn alternative by at least 10 points. This is a strong-alternative heuristic, not brilliant-move detection.</p>
-      <p>Forced means only one legal move and counts as 100%. Mean move accuracy is the arithmetic average by side, including Forced. Missing or failed pairs are Unreviewed and excluded. <a href="https://lichess.org/page/accuracy" target="_blank" rel="noreferrer">Lichess winning-chance and move-accuracy formulas</a>; game averages use our own method, maia-board-review-v1.</p>
+    <details><summary>Chart data</summary>
       <div className="chart-table"><table><caption>Position estimates and played-move quality</caption><thead><tr><th>Position</th><th>Evaluation / depth</th><th>Move accuracy</th></tr></thead><tbody>{points.map((point, index) => <tr key={index}><td><button onClick={() => onView(index)}>{index}: {sans[index - 1] ?? 'Start'}</button></td><td>{point.evaluation ? `${scoreText(point.evaluation)} / ${point.evaluation.depth}` : 'Missing'}</td><td>{point.quality?.accuracy == null ? 'Unreviewed' : `${point.quality.accuracy.toFixed(1)}% · ${point.quality.label}`}</td></tr>)}</tbody></table></div>
     </details>
   </section>;

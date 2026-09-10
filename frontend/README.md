@@ -30,6 +30,7 @@ The Go server serves the resulting `dist` directory at `/app/static`. Set
 - **Play:** choose Maia rating and side, then Start. Starting a new game sets both
   engine Elo inputs to the chosen rating. Random side resolves once at Start using
   a cryptographic random bit; the game stores the resolved White or Black side.
+  Starting a new game keeps the current game in History; Cancel keeps playing.
   During play, player strips show the
   active turn; horizontal notation and position navigation sit below the board.
   New game opens cancellable setup. Completed games offer Review game.
@@ -40,6 +41,10 @@ The Go server serves the resulting `dist` directory at `/app/static`. Set
   preceding position to grade the last played move. Analyze entire game reviews
   the complete imported line; Analyze explored line reviews the current branch.
   Review graphs, quality badges, and suggestion arrows appear in Analyze.
+  While exploring, an Exploring marker shows above the board; the original line
+  stays intact until Return to original. The arrow legend lists each source and
+  its move; translucent White/Red/Blue arrows are widest to narrowest so
+  agreeing moves remain visible.
 - **History:** recent games on this device, with Resume for unfinished games,
   Analyze, Export, and Delete. Deleting the current saved game also clears its
   current-game record.

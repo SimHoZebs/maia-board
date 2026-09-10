@@ -13,7 +13,7 @@ export function InsightPanel({ state, dispatch, review, legend }: { state: State
   const response = review.maia;
   const insight = response ? { fen: review.nodes[state.analysis.index].fen } : undefined;
   return <aside className="panel insight-panel" aria-labelledby="insight-title">
-    <p role="status">{review.tooLong ? 'Review supports up to 256 moves (plies).' : review.current ? 'Position analysis ready' : 'Reading this position automatically…'}</p>
+    {review.tooLong && <p role="status">Review supports up to 256 moves (plies).</p>}
     {(review.error || !!review.progress?.failed) && <p role="alert">{review.error || `${review.progress!.failed} analysis jobs failed.`} <button onClick={review.retry}>Retry failed</button></p>}
     <button className="primary" disabled={review.tooLong || review.progress?.running} onClick={review.start}>{state.analysis.branchFromPly === null ? 'Analyze entire game' : 'Analyze explored line'}</button>
     {review.progress && <div role="status">{review.progress.done} / {review.progress.total} analysis jobs {review.progress.failed ? `· ${review.progress.failed} failed` : ''} {review.progress.canceled ? '· canceled' : ''}{review.progress.running && <button onClick={review.cancel}>Cancel analysis</button>}</div>}
@@ -29,7 +29,7 @@ export function InsightPanel({ state, dispatch, review, legend }: { state: State
         return <li key={candidate.move}><span className="rank">{index + 1}</span><button className="candidate-preview" aria-label={`Preview ${san}`} aria-pressed={state.preview === candidate.move} onMouseEnter={() => dispatch({ type: 'preview', uci: candidate.move })} onFocus={() => dispatch({ type: 'preview', uci: candidate.move })} onClick={() => dispatch({ type: 'preview', uci: candidate.move })}><strong>{san}</strong><span>{Math.round(candidate.prob * 100)}%</span></button><button aria-label={`Try ${san}`} onClick={() => dispatch({ type: 'try', uci: candidate.move })}>Try move</button></li>;
       })}</ol>
       {!!response.top_moves.length && <section className="estimate"><h3>Maia estimate after {candidateSan(insight.fen, response.top_moves[0].move)}</h3>{absoluteWdl(insight.fen, response.wdl).map((value, index) => <div className="wdl-row" key={index}><span>{['White win', 'Draw', 'Black win'][index]}</span><meter min={0} max={1} value={value} /><strong>{Math.round(value * 100)}%</strong></div>)}</section>}
-    </div> : <p className="empty-copy">Move pieces to explore a temporary line. Analysis follows the selected position.</p>}
+    </div> : <p className="empty-copy">No analysis yet.</p>}
   </aside>;
 }
 
@@ -59,7 +59,7 @@ export function MovesPanel({ sans, ply, onView, initialFen, historical, qualitie
 export function SavedGames({ state, dispatch, analysisOnly = false }: { state: State; dispatch: Dispatch<Action>; analysisOnly?: boolean }) {
   const [deleting, setDeleting] = useState<string | null>(null);
   return <section className="saved-panel" aria-label="Saved games">
-    {!analysisOnly && <><h1>History</h1><p>Games are saved on this device. Export a PGN to keep a copy elsewhere.</p></>}
+    {!analysisOnly && <h1>History</h1>}
     {!state.saved.length && <p className="empty-copy">Your games will appear here.</p>}
     <div id="saved-games">{state.saved.map(game => {
       const result = gameResult(replay(game.moves));

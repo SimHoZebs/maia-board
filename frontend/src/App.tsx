@@ -57,7 +57,7 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
             {ready && <>
               <MovesPanel sans={full.sanMoves} ply={ply} initialFen={analysis ? state.analysis.initialFen : START_FEN} historical={historic} qualities={analysis ? review.qualities : undefined} onView={ply => dispatch({ type: 'view', ply })} />
               <div className="board-actions"><button id="flip-board" onClick={() => dispatch({ type: 'flip' })}><FlipVertical2 size={16} aria-hidden="true" />Flip board</button>{!analysis && <><button id="takeback" disabled={!state.play.moves.length} onClick={() => dispatch({ type: 'takeback' })}><Undo2 size={16} aria-hidden="true" />Takeback</button><button id="new-game" onClick={() => dispatch({ type: 'setup' })}><Plus size={16} aria-hidden="true" />New game</button></>}</div>
-              {analysis && state.analysis.branchFromPly !== null && <p className="branch-label">Exploring a temporary line · original game preserved</p>}
+              {analysis && state.analysis.branchFromPly !== null && <p className="branch-label">Exploring</p>}
               {analysis && <AnalysisActions state={state} dispatch={dispatch} />}
               {!analysis && live.isGameOver() && <div className="game-result"><strong>{gameResult(live)}</strong><button className="primary" onClick={() => dispatch({ type: 'review' })}>Review game</button></div>}
             </>}
