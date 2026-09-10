@@ -7,9 +7,11 @@ import { PromotionDialog } from './PromotionDialog';
 import { analysisLength, analysisLine, gameResult, oppositeColor, replay, sideName, START_FEN } from './domain';
 import { toGroundColor } from './board-colors';
 import { currentPosition } from './state';
+import { useReview } from './useReview';
 
 export function App({ state, dispatch, children }: Props & { children: ReactNode }) {
   const { mode, settings, request, error } = state;
+  const review = useReview(state);
   const position = currentPosition(state);
   const game = new Chess(position.fen), live = replay(state.play.moves);
   const analysis = mode === 'analysis';
@@ -55,7 +57,7 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
             </>}
             <div id="error-banner" className="error-banner" role="alert" hidden={!error}>{error}</div>
           </section>
-          {analysis && ready && <InsightPanel state={state} dispatch={dispatch} />}
+          {analysis && ready && <InsightPanel state={state} dispatch={dispatch} review={review} />}
         </div>
         {ready && <><PlayControls state={state} dispatch={dispatch} /><AnalysisControls state={state} dispatch={dispatch} /></>}
       </>}

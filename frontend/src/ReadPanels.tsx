@@ -4,15 +4,20 @@ import type { Action, State } from './state';
 import { downloadPgn, Rating } from './BoardTools';
 import { Dialog } from './Dialog';
 import { ArrowLeft, ArrowRight, SkipBack, SkipForward } from 'lucide-react';
+import type { Review } from './useReview';
 
-export function InsightPanel({ state, dispatch }: { state: State; dispatch: Dispatch<Action> }) {
-  const { insight, request, analysisSettings } = state;
-  const response = insight?.response;
+export function InsightPanel({ state, dispatch, review }: { state: State; dispatch: Dispatch<Action>; review: Review }) {
+  const { analysisSettings } = state;
+  const response = review.maia;
+  const insight = response ? { fen: review.nodes[state.analysis.index].fen } : undefined;
   return <aside className="panel insight-panel" aria-labelledby="insight-title">
     <h2 id="insight-title">Human moves · {analysisSettings.eloMaia} rating</h2>
     <details><summary>Analysis settings</summary><Rating id="analysis-rating" label="Analyzed-player rating" value={analysisSettings.eloMaia} onChange={eloMaia => dispatch({ type: 'analysis-settings', settings: { eloMaia } })} /><label className="field">Model<select id="analysis-model" value={analysisSettings.model} onChange={event => dispatch({ type: 'analysis-settings', settings: { model: event.target.value as '5m' | '79m' } })}><option value="79m">79M</option><option value="5m">5M</option></select></label></details>
     <p className="model-context">Maia {response?.model_used.toUpperCase() ?? analysisSettings.model.toUpperCase()}{response?.degraded ? ' · fallback model' : ''}</p>
-    <button className="primary" id="analyze-position" disabled={!!request} onClick={() => dispatch({ type: 'analyze' })}>{request ? 'Analyzing…' : 'Analyze position'}</button>
+    <p role="status">{review.tooLong ? 'Review supports up to 256 moves (plies).' : review.current ? 'Position analysis ready' : 'Reading this position automatically…'}</p>
+    {review.error && <p role="alert">{review.error} <button onClick={review.retry}>Retry failed</button></p>}
+    <button className="primary" disabled={review.tooLong || review.progress?.running} onClick={review.start}>{state.analysis.branchFromPly === null ? 'Analyze entire game' : 'Analyze explored line'}</button>
+    {review.progress && <div role="status">{review.progress.done} / {review.progress.total} analysis jobs {review.progress.canceled ? '· canceled' : ''}{review.progress.running && <button onClick={review.cancel}>Cancel analysis</button>}</div>}
     {response && insight ? <div id="insight-content">
       <h3>Human move probability</h3>
       <ol className="candidate-list">{response.top_moves.slice(0, 5).map((candidate, index) => {
@@ -20,7 +25,7 @@ export function InsightPanel({ state, dispatch }: { state: State; dispatch: Disp
         return <li key={candidate.move}><span className="rank">{index + 1}</span><button className="candidate-preview" aria-label={`Preview ${san}`} aria-pressed={state.preview === candidate.move} onMouseEnter={() => dispatch({ type: 'preview', uci: candidate.move })} onFocus={() => dispatch({ type: 'preview', uci: candidate.move })} onClick={() => dispatch({ type: 'preview', uci: candidate.move })}><strong>{san}</strong><span>{Math.round(candidate.prob * 100)}%</span></button><button aria-label={`Try ${san}`} onClick={() => dispatch({ type: 'try', uci: candidate.move })}>Try move</button></li>;
       })}</ol>
       {!!response.top_moves.length && <section className="estimate"><h3>Maia estimate after {candidateSan(insight.fen, response.top_moves[0].move)}</h3>{absoluteWdl(insight.fen, response.wdl).map((value, index) => <div className="wdl-row" key={index}><span>{['White win', 'Draw', 'Black win'][index]}</span><meter min={0} max={1} value={value} /><strong>{Math.round(value * 100)}%</strong></div>)}</section>}
-    </div> : <p className="empty-copy">{request ? 'Reading this position…' : 'Choose a position, then Analyze. Move pieces to explore a temporary line.'}</p>}
+    </div> : <p className="empty-copy">Move pieces to explore a temporary line. Analysis follows the selected position.</p>}
   </aside>;
 }
 
