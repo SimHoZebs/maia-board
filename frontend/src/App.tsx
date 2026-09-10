@@ -1,16 +1,14 @@
-import { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { Chess } from 'chess.js';
 import { ChessBoard } from './ChessBoard';
-import { AnalysisActions, AnalysisControls, PlayControls } from './Controls';
+import { AnalysisActions, AnalysisControls, PlayControls, type Props } from './Controls';
 import { InsightPanel, MovesPanel, SavedGames } from './ReadPanels';
 import { PromotionDialog } from './PromotionDialog';
 import { analysisLength, analysisLine, gameResult, oppositeColor, replay, sideName, START_FEN } from './domain';
 import { toGroundColor } from './board-colors';
 import { currentPosition } from './state';
-import { useMaiaBoard } from './useMaiaBoard';
 
-export function App() {
-  const { state, dispatch } = useMaiaBoard();
+export function App({ state, dispatch, children }: Props & { children: ReactNode }) {
   const { mode, settings, request, error } = state;
   const position = currentPosition(state);
   const game = new Chess(position.fen), live = replay(state.play.moves);
@@ -39,7 +37,7 @@ export function App() {
     return <div className={`player-strip${active && ready ? ' active' : ''}`}><span className={`side-dot ${color}`} /><strong>{analysis ? sideName(color) : color === settings.userColor ? 'You' : `Maia · ${settings.eloMaia}`}</strong><span className="player-side">{!analysis && sideName(color)}</span>{active && ready && <span className="turn-indicator" role="status">{historic ? 'At this position' : request && !analysis ? 'Thinking…' : 'To move'}</span>}</div>;
   };
   return <div className="app-shell">
-    <header className="site-header"><span className="brand">maia board</span><nav aria-label="Destination">{(['play', 'analysis', 'history'] as const).map(value => <button id={`mode-${value}`} key={value} aria-pressed={mode === value} onClick={() => dispatch({ type: 'mode', mode: value })}>{value === 'analysis' ? 'Analyze' : value === 'play' ? 'Play' : 'History'}</button>)}</nav></header>
+    <header className="site-header"><span className="brand">maia board</span>{children}</header>
     <main>
       {mode === 'history' ? <SavedGames state={state} dispatch={dispatch} /> : <>
         {!ready && <div className="entry"><PlayControls state={state} dispatch={dispatch} /><AnalysisControls state={state} dispatch={dispatch} /></div>}

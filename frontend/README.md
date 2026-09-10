@@ -44,6 +44,21 @@ Dialogs support Escape and restore focus to the opening control.
 
 ## State and request ownership
 
+React Router's declarative routes expose `/play`, `/analyze`, and `/history`.
+Root and unknown URLs replace their history entry with `/play`. Header links,
+Review, and saved-game Resume update the URL; Back and Forward select the same
+destinations. The browser fixture serves the static entry page for frontend URLs.
+
+`BoardRouter.tsx` keeps `useMaiaBoard` mounted above the route views. The URL owns
+the destination; reducer `mode` is the execution context used for legal actions
+and request payloads. The initializer receives the route mode, and a guarded
+render-time update synchronizes later URL changes before effects commit. Direct
+Analyze and History visits therefore restore the game without requesting a play
+move. Review and Resume batch their reducer action with navigation. Returning to
+Play requests once when Maia is still to move; returning to Analyze requires an
+explicit Analyze position action. Game viewing and analysis branches survive
+client-side navigation; refreshing restores the existing local-storage records.
+
 `state.ts` owns workflow transitions. Play's `viewedPly` is `null` when following
 the live tip, or a fixed historical ply (one half-move). Looking back leaves the
 live request intact. A reply advances the game while historical viewing stays

@@ -8,7 +8,7 @@ import type { MoveRequest } from '../src/api';
 
 const record = (moves: string[], color: 'white' | 'black' = 'white', id = 'fixture'): StoredGame => ({ id, createdAt: '2026-09-10T00:00:00Z', moves, settings: { ...defaultSettings, userColor: color } });
 
-async function boot(page: Page, storage: Record<string, unknown> = {}, start = true) {
+async function boot(page: Page, storage: Record<string, unknown> = {}, start = true, path = '/') {
   const requests: { route: Route; payload: MoveRequest }[] = [];
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -36,14 +36,17 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
   await page.route('http://maia.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/move') { requests.push({ route, payload: route.request().postDataJSON() }); return; }
-    const filename = path === '/' ? 'index.html' : path.slice(1);
+    const filename = path.startsWith('/assets/') ? path.slice(1) : 'index.html';
     const contentType = filename.endsWith('.js') ? 'text/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html';
     await route.fulfill({ body: await readFile(resolve('dist-browser', filename)), contentType });
   });
-  await page.goto('http://maia.test/');
-  if (start && !storage[KEYS.current]) await page.locator('#start-game').click();
-  await expect(page.locator('#board cg-board')).toHaveCount(1);
-  await expect(page.locator('#board piece:not(.ghost)')).toHaveCount(32 - (storage[KEYS.current] ? countCaptures(storage[KEYS.current] as StoredGame) : 0));
+  await page.goto(`http://maia.test${path}`);
+  await expect(page.getByRole('navigation', { name: 'Destination' })).toBeVisible();
+  if (path === '/' || path === '/play') {
+    if (start && !storage[KEYS.current]) await page.locator('#start-game').click();
+    await expect(page.locator('#board cg-board')).toHaveCount(1);
+    await expect(page.locator('#board piece:not(.ghost)')).toHaveCount(32 - (storage[KEYS.current] ? countCaptures(storage[KEYS.current] as StoredGame) : 0));
+  }
   async function reply(index: number, move?: string, status = 200, topMoves?: { move: string; prob: number }[]) {
     await expect.poll(() => requests.length).toBeGreaterThan(index);
     const item = requests[index];
@@ -56,6 +59,98 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
   return { requests, reply, errors };
 }
 function countCaptures(game: StoredGame) { return replay(game.moves).history({ verbose: true }).filter(move => move.captured).length; }
+
+for (const path of ['/analyze', '/history']) {
+  test(`direct ${path} and refresh never start restored play inference`, async ({ page }) => {
+    const game = record(['e2e4']);
+    const app = await boot(page, { [KEYS.current]: game, [KEYS.saved]: [game] }, false, path);
+    const destination = page.getByRole('link', { name: path === '/analyze' ? 'Analyze' : 'History', exact: true });
+    await expect(destination).toHaveAttribute('aria-current', 'page');
+    await expect(page.locator(path === '/analyze' ? '#analysis-controls' : '.saved-panel')).toBeVisible();
+    await page.reload();
+    await expect(destination).toHaveAttribute('aria-current', 'page');
+    expect(app.requests).toHaveLength(0);
+    expect(await currentMoves(page)).toEqual(['e2e4']);
+    await page.locator('#mode-play').click();
+    await expect(page).toHaveURL('http://maia.test/play');
+    await app.reply(0, 'e7e5');
+    await piece(page, 'e5', 'black pawn');
+    expect(app.requests).toHaveLength(1);
+    expect(app.errors).toEqual([]);
+  });
+}
+
+test('direct play resumes once; Back/Forward preserves game viewing and analysis exploration', async ({ page }) => {
+  const app = await boot(page, { [KEYS.current]: record(['e2e4']) }, false, '/play');
+  await app.reply(0, 'e7e5');
+  await page.locator('#analysis-first').click();
+  await page.locator('#flip-board').click();
+  await page.locator('#mode-analysis').click();
+  await page.locator('#analysis-pgn').fill('1. d4 d5');
+  await page.locator('#load-analysis').click();
+  await move(page, 'c2', 'c4');
+  await page.locator('#mode-history').click();
+  await page.goBack();
+  await expect(page).toHaveURL('http://maia.test/analyze');
+  await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 4');
+  await piece(page, 'c4', 'white pawn');
+  await expect(page.locator('.branch-label')).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL('http://maia.test/play');
+  await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 3');
+  await piece(page, 'e2', 'white pawn');
+  await expect(page.locator('#board .cg-wrap')).toHaveClass(/orientation-black/);
+  await page.getByRole('button', { name: 'Return to game' }).click();
+  await piece(page, 'e5', 'black pawn');
+  await page.goForward();
+  await expect(page).toHaveURL('http://maia.test/analyze');
+  await piece(page, 'c4', 'white pawn');
+  await page.goForward();
+  await expect(page).toHaveURL('http://maia.test/history');
+  expect(app.requests).toHaveLength(1);
+  expect(await currentMoves(page)).toEqual(['e2e4', 'e7e5']);
+  expect(app.errors).toEqual([]);
+});
+
+test('Back retires pending analysis; Forward does not repeat it or resume play twice', async ({ page }) => {
+  const app = await boot(page, { [KEYS.current]: record(['e2e4']) }, false, '/analyze');
+  await page.locator('#mode-play').click();
+  await expect.poll(() => app.requests.length).toBe(1);
+  await page.goBack();
+  await expect(page).toHaveURL('http://maia.test/analyze');
+  await app.reply(0, 'e7e5');
+  expect(await currentMoves(page)).toEqual(['e2e4']);
+  await page.locator('#load-analysis').click();
+  await page.locator('#analyze-position').click();
+  await expect.poll(() => app.requests.length).toBe(2);
+  await page.goForward();
+  await expect(page).toHaveURL('http://maia.test/play');
+  await expect.poll(() => app.requests.length).toBe(3);
+  await app.reply(1, 'd2d4');
+  await app.reply(2, 'c7c5');
+  await piece(page, 'c5', 'black pawn');
+  await page.goBack();
+  await expect(page).toHaveURL('http://maia.test/analyze');
+  await expect(page.locator('#insight-content')).toHaveCount(0);
+  await page.goForward();
+  await expect(page).toHaveURL('http://maia.test/play');
+  await piece(page, 'c5', 'black pawn');
+  expect(app.requests).toHaveLength(3);
+  expect(app.errors).toEqual([]);
+});
+
+for (const path of ['/', '/unknown/destination']) {
+  test(`${path} replaces its history entry with play`, async ({ page }) => {
+    await boot(page, {}, false, '/history');
+    await page.goto(`http://maia.test${path}`);
+    await expect(page).toHaveURL('http://maia.test/play');
+    await expect(page.locator('#play-controls')).toBeVisible();
+    await page.goBack();
+    await expect(page).toHaveURL('http://maia.test/history');
+    await page.goForward();
+    await expect(page).toHaveURL('http://maia.test/play');
+  });
+}
 async function square(page: Page, key: string) {
   const board = page.locator('#board cg-board');
   await board.scrollIntoViewIfNeeded();
@@ -368,6 +463,7 @@ test('history review, resume, export, delete, and just-finished game review', as
   const app = await boot(page, { [KEYS.current]: mate, [KEYS.saved]: [mate, unfinished] });
   await expect(page.locator('.game-result')).toContainText('Black wins');
   await page.getByRole('button', { name: 'Review game' }).click();
+  await expect(page).toHaveURL('http://maia.test/analyze');
   await expect(page.locator('#analysis-controls')).toHaveCount(0);
   await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
   await page.locator('#mode-history').click();
@@ -379,12 +475,16 @@ test('history review, resume, export, delete, and just-finished game review', as
   await cards.first().getByRole('button', { name: 'Export' }).click();
   expect(await readFile((await (await downloading).path())!, 'utf8')).toContain('Qh4#');
   await cards.last().getByRole('button', { name: 'Resume' }).click();
+  await expect(page).toHaveURL('http://maia.test/play');
   await piece(page, 'e5', 'black pawn');
   await page.locator('#mode-history').click();
   await cards.last().getByRole('button', { name: 'Delete', exact: true }).click();
   await page.getByRole('button', { name: 'Delete game', exact: true }).click();
   await expect(cards).toHaveCount(1);
   await page.reload();
+  await expect(page).toHaveURL('http://maia.test/history');
+  await expect(cards).toHaveCount(1);
+  await page.locator('#mode-play').click();
   await expect(page.locator('#play-controls')).toBeVisible();
   expect(await currentMoves(page)).toEqual([]);
   expect(app.errors).toEqual([]);
@@ -395,6 +495,7 @@ test('analysis entry sources and input keyboard isolation', async ({ page }) => 
   await page.locator('#mode-analysis').click();
   await page.getByRole('button', { name: 'History', exact: true }).last().click();
   await page.locator('.saved-game').getByRole('button', { name: 'Analyze', exact: true }).click();
+  await expect(page).toHaveURL('http://maia.test/analyze');
   await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
   await page.locator('#change-game').click();
   await page.locator('#analysis-pgn').fill('1. e4');
@@ -423,7 +524,7 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
       expect(box.top).toBeGreaterThanOrEqual(0); expect(box.bottom).toBeLessThanOrEqual(viewport.height);
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    for (const box of await page.locator('.board-actions button, .nav-buttons button, .site-header button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height }; }))) {
+    for (const box of await page.locator('.board-actions button, .nav-buttons button, .site-header a').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height }; }))) {
       expect(box.width).toBeGreaterThanOrEqual(44); expect(box.height).toBeGreaterThanOrEqual(44);
     }
     const list = page.locator('#move-list');

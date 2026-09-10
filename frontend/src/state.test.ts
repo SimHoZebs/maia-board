@@ -12,6 +12,16 @@ const response: MoveResponse = { move: 'e7e5', top_moves: [], wdl: [0.2, 0.3, 0.
 const started = () => reducer(initialState(), { type: 'new', id: 'test', createdAt: '2026-09-10' });
 
 describe('request ownership', () => {
+  it.each(['play', 'analysis', 'history'] as const)('initializes %s before deciding whether to resume Maia', mode => {
+    const game = { id: 'pending', createdAt: '2026-09-10', moves: ['e2e4'], settings: defaultSettings };
+    localStorage.setItem(KEYS.current, JSON.stringify(game));
+    const state = initialState(mode);
+    expect(state.mode).toBe(mode);
+    expect(state.play).toEqual(game);
+    expect(state.started).toBe(true);
+    if (mode === 'play') expect(state.request?.payload.moves).toEqual(['e2e4']);
+    else expect(state.request).toBeNull();
+  });
   it('rejects success and failure from another game at the same position', () => {
     const a = { id: 'a', createdAt: '2026-09-10', moves: ['e2e4'], settings: defaultSettings };
     localStorage.setItem(KEYS.current, JSON.stringify(a));

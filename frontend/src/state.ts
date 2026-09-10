@@ -73,18 +73,18 @@ function commitMove(state: State, from: Square, to: Square, promotion?: string):
     return transition(withPlay(state, { ...state.play, moves: positionOf(game).moves }), { viewedPly: null });
   } catch { return { ...state, promotion: null, error: 'That move is not legal in this position.' }; }
 }
-export function initialState(): State {
+export function initialState(mode: Mode = 'play'): State {
   const restored = restoreGame(readStorage(KEYS.current));
   const settings = restored?.settings ?? loadSettings();
   const stored = readStorage<Partial<State['inputs']>>(KEYS.analysis);
   const inputs = { fen: typeof stored?.fen === 'string' ? stored.fen : '', pgn: typeof stored?.pgn === 'string' ? stored.pgn : '' };
   let analysis = loadLine();
   try { analysis = loadLine(inputs.fen, inputs.pgn); } catch { /* Keep editable invalid input for correction. */ }
-  const state: State = { mode: 'play', settings, play: restored ?? { id: newId(), createdAt: new Date().toISOString(), moves: [], settings },
+  const state: State = { mode, settings, play: restored ?? { id: newId(), createdAt: new Date().toISOString(), moves: [], settings },
     started: !!restored, setup: restored ? null : { ...settings }, viewedPly: null,
     saved: loadSaved(), analysis, analysisSettings: { ...settings }, analysisLoaded: false, importing: true,
     inputs, flipped: false, preview: null, promotion: null, insight: null, error: '', request: null, revision: 0 };
-  return maiaTurn(state) ? queueRequest(state) : state;
+  return mode === 'play' && maiaTurn(state) ? queueRequest(state) : state;
 }
 export function reducer(state: State, action: Action): State {
   switch (action.type) {
