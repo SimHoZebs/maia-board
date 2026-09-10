@@ -193,6 +193,19 @@ describe('preemption', () => {
     expect(coordinator.result('maia', nodes[3], settings)).toMatchObject({ move: 'e2e4' });
     expect(coordinator.error('sf', nodes[0], settings)).toBeUndefined();
   });
+  it('drops results that resolve after abort instead of caching them', async () => {
+    const helpers = deferredFetcher();
+    const coordinator = new ReviewCoordinator(helpers.fetcher);
+    coordinator.startBatch(nodes, settings);
+    await flush();
+    // The fetch resolves, but navigation aborts the lane before the
+    // coordinator processes the response: nothing may be cached or failed.
+    helpers.gates.get('/evaluate')!.resolve(Response.json(sfBody));
+    coordinator.foregroundAt([nodes[3]], settings);
+    await flush();
+    expect(coordinator.result('sf', nodes[0], settings)).toBeUndefined();
+    expect(coordinator.error('sf', nodes[0], settings)).toBeUndefined();
+  });
   it('retries aborted batch nodes so progress still completes', async () => {
     const helpers = deferredFetcher();
     const coordinator = new ReviewCoordinator(helpers.fetcher);
