@@ -7,8 +7,10 @@ services:
     environment:
       HF_HOME: /models/huggingface
       HF_HUB_CACHE: /models/huggingface/hub
+      DB_PATH: /data/maia-board.db
     volumes:
       - model-cache:/models
+      - game-data:/data
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=traefik"
@@ -28,3 +30,5 @@ networks:
 volumes:
   model-cache:
     name: maia-board-model-cache
+  game-data:
+    name: maia-board-game-data

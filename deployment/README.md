@@ -74,10 +74,12 @@ lifecycle commands on the host.
 - **Rollback** is owned by the Komodo operator. Deploy a known-good Git commit
   and immutable image reference through the Stack, then verify the route and
   `/healthz`. Keep `maia-board-model-cache` when rolling back so cached Maia
-  models survive container replacement.
+  models survive container replacement. Keep `maia-board-game-data` so game
+  history survives as well.
 - **Teardown** is owned by the Komodo operator through the Stack's stop/down
   or delete operation. Preserve the model-cache volume unless removing Maia
-  data is intentional. The existing Traefik stack and its `traefik` network
+  data is intentional, and preserve the game-data volume unless removing game
+  history is intentional. The existing Traefik stack and its `traefik` network
   remain owned by the home-server deployment and must not be changed here.
 
 The stack declaration deliberately does not enable automatic deployment. A
@@ -103,7 +105,8 @@ After an approved Komodo deployment:
 - Confirm the Stack reports one running `maia-board` service on
   `debian-server`.
 - Confirm the service is attached to `traefik`, has no host-published port,
-  and has only the named `maia-board-model-cache` persistent volume.
+  and has only the named `maia-board-model-cache` and `maia-board-game-data`
+  persistent volumes.
 - From a LAN client, open `https://maia3.home.simho.xyz/` and confirm the
   certificate and static UI.
 - From a LAN client, request `https://maia3.home.simho.xyz/healthz` and
