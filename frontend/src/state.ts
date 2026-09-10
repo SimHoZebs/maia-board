@@ -6,7 +6,7 @@ import { analysisLength, analysisLine, applyUci, loadLine, newId, oppositeColor,
 import { KEYS, loadSaved, loadSettings, readStorage, restoreGame } from './storage';
 
 type Request = { id: number; mode: Mode; payload: MoveRequest };
-export type Draft = Pick<Settings, 'eloMaia' | 'userColor' | 'model'>;
+export type Draft = Pick<Settings, 'eloMaia' | 'model'> & { userColor: 'white' | 'black' | 'random' };
 export type State = {
   mode: Mode; settings: Settings; play: StoredGame; saved: StoredGame[];
   started: boolean; setup: Draft | null; viewedPly: number | null;
@@ -18,7 +18,7 @@ export type State = {
 export type Action =
   | { type: 'mode'; mode: Mode }
   | { type: 'setup'; draft?: Partial<Draft> } | { type: 'cancel-setup' }
-  | { type: 'new'; id: string; createdAt: string }
+  | { type: 'new'; id: string; createdAt: string; resolvedColor?: 'white' | 'black' }
   | { type: 'settings'; settings: Partial<Settings>; id: string; createdAt: string }
   | { type: 'analysis-settings'; settings: Partial<Draft> }
   | { type: 'takeback' } | { type: 'flip' }
@@ -93,7 +93,8 @@ export function reducer(state: State, action: Action): State {
     case 'cancel-setup': return state.started ? { ...state, setup: null } : state;
     case 'new': {
       const draft = state.setup ?? state.settings;
-      const settings = { ...draft, eloUser: draft.eloMaia };
+      if (draft.userColor === 'random' && !action.resolvedColor) return state;
+      const settings: Settings = { ...draft, userColor: action.resolvedColor ?? (draft.userColor === 'black' ? 'black' : 'white'), eloUser: draft.eloMaia };
       return transition(state, { started: true, setup: null, viewedPly: null, settings, play: { id: action.id, createdAt: action.createdAt, moves: [], settings } });
     }
     // Legacy action is draft-only; settings cannot mutate an active game.

@@ -2,6 +2,7 @@ import { useState, type Dispatch } from 'react';
 import { exportExplored, exportLine, newId, sideName } from './domain';
 import type { Action, State } from './state';
 import { Dialog } from './Dialog';
+import { resolveSide } from './randomSide';
 import { SavedGames } from './ReadPanels';
 import { Rating, downloadPgn } from './BoardTools';
 
@@ -12,8 +13,8 @@ export function PlayControls({ state, dispatch }: Props) {
     <h1>{state.started ? 'Start a new game?' : 'Play Maia'}</h1>
     <p>{state.started ? 'Your current game stays in History. Cancel to keep playing.' : 'Choose a level and a side.'}</p>
     <Rating value={state.setup.eloMaia} onChange={eloMaia => dispatch({ type: 'setup', draft: { eloMaia } })} />
-    <fieldset><legend>Your side</legend><div className="side-options">{(['white', 'black'] as const).map(color => <label key={color}><input type="radio" name="user-color" checked={state.setup!.userColor === color} onChange={() => dispatch({ type: 'setup', draft: { userColor: color } })} />{sideName(color)}</label>)}</div></fieldset>
-    <div className="actions"><button id="start-game" className="primary" onClick={() => dispatch({ type: 'new', id: newId(), createdAt: new Date().toISOString() })}>{state.started ? 'Start new game' : 'Start game'}</button>{state.started && <button onClick={() => dispatch({ type: 'cancel-setup' })}>Cancel</button>}</div>
+    <fieldset><legend>Your side</legend><div className="side-options">{(['white', 'black', 'random'] as const).map(color => <label key={color}><input type="radio" name="user-color" checked={state.setup!.userColor === color} onChange={() => dispatch({ type: 'setup', draft: { userColor: color } })} />{color === 'random' ? 'Random' : sideName(color)}</label>)}</div></fieldset>
+    <div className="actions"><button id="start-game" className="primary" onClick={() => dispatch({ type: 'new', id: newId(), createdAt: new Date().toISOString(), resolvedColor: resolveSide(state.setup!.userColor) })}>{state.started ? 'Start new game' : 'Start game'}</button>{state.started && <button onClick={() => dispatch({ type: 'cancel-setup' })}>Cancel</button>}</div>
   </section>;
   return state.started ? <Dialog title="Start a new game?" onCancel={() => dispatch({ type: 'cancel-setup' })}>{content}</Dialog> : content;
 }

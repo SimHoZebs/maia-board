@@ -3,6 +3,7 @@ import { absoluteWdl, candidateSan, exportLine, gameResult, loadLine, replay, si
 import type { Action, State } from './state';
 import { downloadPgn, Rating } from './BoardTools';
 import { Dialog } from './Dialog';
+import { ArrowLeft, ArrowRight, SkipBack, SkipForward } from 'lucide-react';
 
 export function InsightPanel({ state, dispatch }: { state: State; dispatch: Dispatch<Action> }) {
   const { insight, request, analysisSettings } = state;
@@ -41,7 +42,7 @@ export function MovesPanel({ sans, ply, onView, initialFen, historical }: { sans
   const parts = initialFen.split(' '), first = Number(parts[5]) * 2 + (parts[1] === 'b' ? 1 : 0);
   return <section className="notation" aria-label="Move history">
     <div className="move-list" id="move-list" ref={list}>{!sans.length && <span className="empty-copy">Moves appear here</span>}{sans.map((san, index) => <button ref={ply === index + 1 ? active : undefined} className="move-cell" aria-current={ply === index + 1 ? 'step' : undefined} key={index} onClick={() => onView(index + 1)}><span>{Math.floor((first + index) / 2)}{(first + index) % 2 ? '…' : '.'}</span> {san}</button>)}</div>
-    <div className="move-navigation"><div className="nav-buttons">{[{ id: 'first', label: 'First position', text: '↤', to: 0 }, { id: 'prev', label: 'Previous position', text: '←', to: ply - 1 }, { id: 'next', label: 'Next position', text: '→', to: ply + 1 }, { id: 'last', label: 'Last position', text: '↦', to: sans.length }].map(item => <button key={item.id} id={`analysis-${item.id}`} aria-label={item.label} disabled={item.to < 0 || item.to > sans.length || item.to === ply} onClick={() => onView(item.to)}>{item.text}</button>)}</div><span id="analysis-index">Position {ply + 1} / {sans.length + 1}</span></div>
+    <div className="move-navigation"><div className="nav-buttons">{[{ id: 'first', label: 'First position', Icon: SkipBack, to: 0 }, { id: 'prev', label: 'Previous position', Icon: ArrowLeft, to: ply - 1 }, { id: 'next', label: 'Next position', Icon: ArrowRight, to: ply + 1 }, { id: 'last', label: 'Last position', Icon: SkipForward, to: sans.length }].map(item => <button key={item.id} id={`analysis-${item.id}`} aria-label={item.label} title={item.label} disabled={item.to < 0 || item.to > sans.length || item.to === ply} onClick={() => onView(item.to)}><item.Icon size={18} aria-hidden="true" /></button>)}</div><span id="analysis-index">Position {ply + 1} / {sans.length + 1}</span></div>
     {historical && <button className="return-game" onClick={() => onView(null)}>Return to game</button>}
   </section>;
 }
