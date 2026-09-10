@@ -48,7 +48,7 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
     return <div className={`player-strip${active && ready ? ' active' : ''}`}><span className={`side-dot ${color}`} /><strong>{analysis ? sideName(color) : color === settings.userColor ? 'You' : `Maia · ${settings.eloMaia}`}</strong><span className="player-side">{!analysis && sideName(color)}</span>{active && ready && <span className="turn-indicator" role="status">{historic ? 'At this position' : request && !analysis ? 'Thinking…' : 'To move'}</span>}</div>;
   };
   return <div className="app-shell">
-    <header className="site-header"><span className="brand">maia board</span>{children}</header>
+    <header className="site-header"><span className="brand">maia board</span>{children}{mode === 'play' && ready && <button id="new-game" className="header-action" type="button" aria-label="New game" title="New game" onClick={() => dispatch({ type: 'setup' })}><Plus size={18} aria-hidden="true" /></button>}</header>
     <main>
       {state.syncError && <div className="sync-banner" role="alert"><span>{state.syncError}</span><button onClick={() => dispatch({ type: 'retry-sync' })}>Retry</button></div>}
       {mode === 'history' ? <SavedGames state={state} dispatch={dispatch} /> : <>
@@ -60,7 +60,7 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
             {strip(orientation)}
             {ready && <>
               <MovesPanel sans={full.sanMoves} ply={ply} initialFen={analysis ? state.analysis.initialFen : START_FEN} historical={historic} qualities={analysis ? review.qualities : undefined} onView={ply => dispatch({ type: 'view', ply })} />
-              <div className="board-actions"><button id="flip-board" onClick={() => dispatch({ type: 'flip' })}><FlipVertical2 size={16} aria-hidden="true" />Flip board</button>{!analysis && <><button id="takeback" disabled={!state.play.moves.length} onClick={() => dispatch({ type: 'takeback' })}><Undo2 size={16} aria-hidden="true" />Takeback</button><button id="new-game" onClick={() => dispatch({ type: 'setup' })}><Plus size={16} aria-hidden="true" />New game</button></>}</div>
+              <div className="board-actions"><button id="flip-board" type="button" aria-label="Flip board" title="Flip board" onClick={() => dispatch({ type: 'flip' })}><FlipVertical2 size={18} aria-hidden="true" /></button>{!analysis && <button id="takeback" type="button" aria-label="Takeback" title="Takeback" disabled={!state.play.moves.length} onClick={() => dispatch({ type: 'takeback' })}><Undo2 size={18} aria-hidden="true" /></button>}</div>
               {analysis && state.analysis.branchFromPly !== null && <p className="branch-label">Exploring</p>}
               {analysis && <AnalysisActions state={state} dispatch={dispatch} />}
               {!analysis && live.isGameOver() && <div className="game-result"><strong>{gameResult(live)}</strong><button className="primary" onClick={() => dispatch({ type: 'review' })}>Review game</button></div>}

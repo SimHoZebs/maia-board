@@ -23,13 +23,6 @@ export function ReviewCharts({ review, ply, sans, onView }: { review: Review; pl
   const firstWhite = review.nodes[0].fen.split(' ')[1] === 'w';
   return <section className="review-charts" aria-label="Game review">
     <h2>Game review</h2>
-    <div className="accuracy-summary">{(['White', 'Black'] as const).map((side, sideIndex) => {
-      const moves = review.qualities.filter((_, index) => (index % 2 === 0) === (sideIndex === 0 ? firstWhite : !firstWhite));
-      const reviewed = moves.filter(move => move.accuracy !== null);
-      const mean = reviewed.length ? reviewed.reduce((sum, move) => sum + move.accuracy!, 0) / reviewed.length : null;
-      const counts = [...new Set(reviewed.map(move => move.label))].map(label => `${reviewed.filter(move => move.label === label).length} ${label}`).join(' · ');
-      return <div key={side}><strong>{side}</strong><b>{mean === null ? '—' : `${mean.toFixed(1)}%`}</b><span>Mean move accuracy</span><small>{reviewed.length} / {moves.length} reviewed</small><small>{counts || 'No reviewed moves'}</small></div>;
-    })}</div>
     <div className="chart-tabs" role="tablist" aria-label="Review chart"><button role="tab" aria-selected={tab === 'evaluation'} onClick={() => setTab('evaluation')}>Evaluation</button><button role="tab" aria-selected={tab === 'accuracy'} onClick={() => setTab('accuracy')}>Move accuracy</button></div>
     <p className="chart-caption">{tab === 'evaluation' ? 'White winning chance · 0–100%' : 'Move accuracy · 0–100%'}</p>
     <div className="review-chart" ref={chart} role="tabpanel" aria-label={tab === 'evaluation' ? 'Evaluation graph' : 'Move accuracy graph'}>
@@ -43,5 +36,12 @@ export function ReviewCharts({ review, ply, sans, onView }: { review: Review; pl
     </div>
     <p className="selected-evaluation" aria-live="polite">{points[ply].description}</p>
     {ply > 0 && <p className="selected-quality"><QualityBadge quality={review.qualities[ply - 1]} /> {sans[ply - 1]} · {review.qualities[ply - 1].label}</p>}
+    <div className="accuracy-summary">{(['White', 'Black'] as const).map((side, sideIndex) => {
+      const moves = review.qualities.filter((_, index) => (index % 2 === 0) === (sideIndex === 0 ? firstWhite : !firstWhite));
+      const reviewed = moves.filter(move => move.accuracy !== null);
+      const mean = reviewed.length ? reviewed.reduce((sum, move) => sum + move.accuracy!, 0) / reviewed.length : null;
+      const counts = [...new Set(reviewed.map(move => move.label))].map(label => `${reviewed.filter(move => move.label === label).length} ${label}`).join(' · ');
+      return <div key={side}><strong>{side}</strong><b>{mean === null ? '—' : `${mean.toFixed(1)}%`}</b><span>Mean move accuracy</span><small>{reviewed.length} / {moves.length} reviewed</small><small>{counts || 'No reviewed moves'}</small></div>;
+    })}</div>
   </section>;
 }

@@ -33,9 +33,11 @@ The Go server serves the resulting `dist` directory at `/app/static`. Set
   Starting a new game keeps the current game in History; Cancel keeps playing.
   During play, player strips show the
   active turn; horizontal notation and position navigation sit below the board.
-  New game opens cancellable setup. Completed games offer Review game.
+  All board controls are icon-only with labels for assistive tech. New game
+  lives in the header above the board; completed games offer Review game.
 - **Analyze:** load History, PGN (game notation), FEN (a starting position), or the
-  standard starting position. Import closes after loading. Analysis has its own
+  standard starting position. Import closes after loading; clicking the Analyze
+  tab while a game is loaded reopens the chooser. Analysis has its own
   rating and model. After a 200 ms pause, the selected position automatically
   requests Maia probabilities and Stockfish evaluation, plus evaluation of the
   preceding position to grade the last played move. Analyze entire game reviews

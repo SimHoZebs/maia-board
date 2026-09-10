@@ -26,13 +26,13 @@ export function InsightPanel({ state, dispatch, review }: { state: State; dispat
       <details><summary>Analysis settings</summary><Rating id="analysis-rating" label="Analyzed-player rating" value={analysisSettings.eloMaia} onChange={eloMaia => dispatch({ type: 'analysis-settings', settings: { eloMaia } })} /><label className="field">Model<select id="analysis-model" value={analysisSettings.model} onChange={event => dispatch({ type: 'analysis-settings', settings: { model: event.target.value as '5m' | '79m' } })}><option value="79m">79M</option><option value="5m">5M</option></select></label></details>
       <p className="model-context">Maia {response?.model_used.toUpperCase() ?? analysisSettings.model.toUpperCase()}{response?.degraded ? ' · fallback model' : ''}</p>
       {response && insight ? <div id="insight-content">
+        {!!response.top_moves.length && <section className="estimate" aria-label="Maia win estimate"><div className="win-hero"><strong>{Math.round(absoluteWdl(insight.fen, response.wdl)[0] * 100)}%</strong><span>White win · after {candidateSan(insight.fen, response.top_moves[0].move)}</span></div></section>}
         <h3>Human move probability</h3>
         <ol className="candidate-list">{response.top_moves.slice(0, 5).map((candidate, index) => {
           const san = candidateSan(insight.fen, candidate.move);
-          return <li key={candidate.move}><span className="rank">{index + 1}</span><button className="candidate-preview" aria-label={`Preview ${san}`} aria-pressed={state.preview === candidate.move} onMouseEnter={() => dispatch({ type: 'preview', uci: candidate.move })} onFocus={() => dispatch({ type: 'preview', uci: candidate.move })} onClick={() => dispatch({ type: 'preview', uci: candidate.move })}><strong>{san}</strong><span>{Math.round(candidate.prob * 100)}%</span></button>{candidate.move === played && <span className="played-tag">Played</span>}</li>;
+          return <li key={candidate.move}><span className="rank">{index + 1}</span><button className="candidate-preview" aria-label={`Preview ${san}`} aria-pressed={state.preview === candidate.move} onMouseEnter={() => dispatch({ type: 'preview', uci: candidate.move })} onFocus={() => dispatch({ type: 'preview', uci: candidate.move })} onClick={() => dispatch({ type: 'preview', uci: candidate.move })}><strong>{san}</strong><span className="metric">{Math.round(candidate.prob * 100)}%</span></button>{candidate.move === played && <span className="played-tag">Played</span>}</li>;
         })}</ol>
         {played && !response.top_moves.slice(0, 5).some(candidate => candidate.move === played) && <p>Played {candidateSan(insight.fen, played)}</p>}
-        {!!response.top_moves.length && <section className="estimate" aria-label="Maia win estimate"><div className="win-hero"><strong>{Math.round(absoluteWdl(insight.fen, response.wdl)[0] * 100)}%</strong><span>White win · after {candidateSan(insight.fen, response.top_moves[0].move)}</span></div></section>}
       </div> : <p className="empty-copy">No analysis yet.</p>}
     </section>
     <section aria-label="Stockfish evaluation">
@@ -50,9 +50,9 @@ function StockfishBody({ fen, evaluation, played }: { fen: string; evaluation: E
   return <div>
     <div className="win-hero"><strong>{Math.round(whiteWin(evaluation.score))}%</strong><span>White win · Stockfish · depth {evaluation.depth}</span></div>
     <p>Best {evaluation.best_move ? candidateSan(fen, evaluation.best_move) : '—'} · {scoreValueText(evaluation.score)}</p>
-    <ol className="candidate-list">{evaluation.lines.map(line => {
+    <ol className="candidate-list">{evaluation.lines.map((line, index) => {
       const san = candidateSan(fen, line.move);
-      return <li key={line.move}><strong>{san}</strong><span>{scoreValueText(line.score)}</span>{line.move === played && <span className="played-tag">Played</span>}</li>;
+      return <li key={line.move}><span className="rank">{index + 1}</span><span className="line-reading"><strong>{san}</strong><span className="metric">{scoreValueText(line.score)}</span></span>{line.move === played && <span className="played-tag">Played</span>}</li>;
     })}</ol>
     {played && !evaluation.lines.some(line => line.move === played) && <p>Played {candidateSan(fen, played)}</p>}
   </div>;

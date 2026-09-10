@@ -335,7 +335,7 @@ test('analysis load, navigation, export, request history, stale reply and mode r
   expect(download.suggestedFilename()).toBe('maia-analysis.pgn');
   expect(await readFile((await download.path())!, 'utf8')).toContain('1. e4 e5 2. Nf3');
   const fen = '4k3/8/8/8/8/8/4P3/4K3 w - - 0 1';
-  await page.locator('#change-game').click();
+  await page.locator('#mode-analysis').click();
   await page.getByRole('button', { name: 'FEN', exact: true }).click();
   await page.locator('#analysis-fen').fill(fen); await page.locator('#analysis-pgn').fill('1. e4');
   await page.locator('#load-analysis').click();
@@ -497,7 +497,7 @@ test('analysis candidate preview, independent rating, branch replay and labeled 
   await expect.poll(() => app.requests.length).toBe(2);
   expect(app.requests[1].payload.moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'g8f6', 'f1c4']);
   expect(replay(app.requests[1].payload.moves).fen()).toBe(app.requests[1].payload.fen);
-  await page.locator('#change-game').click();
+  await page.locator('#mode-analysis').click();
   await page.keyboard.press('Escape');
   expect(app.requests).toHaveLength(2);
   await app.reply(1, 'b8c6');
@@ -565,13 +565,13 @@ test('analysis entry sources and input keyboard isolation', async ({ page }) => 
   await page.locator('.saved-game').getByRole('button', { name: 'Analyze', exact: true }).click();
   await expect(page).toHaveURL('http://maia.test/analyze');
   await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
-  await page.locator('#change-game').click();
+  await page.locator('#mode-analysis').click();
   await page.locator('#analysis-pgn').fill('1. e4');
   await page.keyboard.press('ArrowLeft');
   await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
   await page.keyboard.press('Escape');
-  await expect(page.locator('#change-game')).toBeFocused();
-  await page.locator('#change-game').click();
+  await expect(page.locator('#mode-analysis')).toBeFocused();
+  await page.locator('#mode-analysis').click();
   await page.getByRole('button', { name: 'Starting position', exact: true }).click();
   await page.locator('#load-analysis').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 1');

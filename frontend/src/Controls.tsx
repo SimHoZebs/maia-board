@@ -42,7 +42,6 @@ export function AnalysisControls(props: Props) {
 }
 export function AnalysisActions({ state, dispatch }: Props) {
   return <div className="analysis-actions">
-    <button id="change-game" onClick={() => dispatch({ type: 'import', open: true })}>Change game</button>
     <button id="export-pgn" onClick={() => downloadPgn(exportLine(state.analysis), 'maia-analysis.pgn')}>Export original PGN</button>
     {state.analysis.branchFromPly !== null && <><button id="return-original" onClick={() => dispatch({ type: 'original' })}>Return to original</button><button id="export-explored" onClick={() => downloadPgn(exportExplored(state.analysis), 'maia-explored.pgn')}>Export explored PGN</button></>}
   </div>;
