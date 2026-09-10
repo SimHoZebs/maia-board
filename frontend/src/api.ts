@@ -107,7 +107,10 @@ export async function requestMove(payload: MoveRequest, fetchImpl: FetchLike = f
       body: JSON.stringify(payload),
       signal,
     });
-  } catch {
+  } catch (error) {
+    if (signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
+      throw new DOMException('Aborted', 'AbortError');
+    }
     throw new MaiaApiError('server_unreachable', 'The Maia server could not be reached.');
   }
 

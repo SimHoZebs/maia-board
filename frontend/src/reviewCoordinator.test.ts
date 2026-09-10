@@ -5,7 +5,7 @@ import { SEARCH_POLICY } from './reviewMetrics';
 const settings = { eloMaia: 1600, eloUser: 1600, model: '79m' as const };
 const line = loadLine('', '1. e4 e5 2. Nf3');
 const nodes: ReviewNode[] = line.timeline.map(position => ({ ...position, initialFen: line.initialFen }));
-const body = (url: string) => url === '/evaluate' ? { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4', score: { type: 'cp', value: 0 }, lines: [] } : { move: 'e2e4', top_moves: [], wdl: [0,1,0], model_used: '79m', degraded: false };
+const body = (url: string) => url === '/evaluate' ? { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4', score: { type: 'cp', value: 0 }, lines: [{ move: 'e2e4', score: { type: 'cp', value: 0 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: -20 }, depth: 12 }] } : { move: 'e2e4', top_moves: [], wdl: [0,1,0], model_used: '79m', degraded: false };
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 it('deduplicates in-flight requests and coalesces stale foreground positions', async () => {
   const releases: (() => void)[] = [];
@@ -75,4 +75,10 @@ it('never exposes old rating results under a new key and expires fallback respon
   const now = Date.now(); const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 30_001);
   expect(coordinator.result('maia', nodes[0], settings)).toBeUndefined();
   expect(coordinator.result('sf', nodes[0], settings)).toBeDefined(); clock.mockRestore();
+});
+it('rejects empty lines for non-terminal evaluations', async () => {
+  const { fetchEvaluation } = await import('./reviewCoordinator');
+  const bad = { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4', score: { type: 'cp', value: 0 }, lines: [] };
+  const fetcher = (async () => Response.json(bad)) as typeof fetch;
+  await expect(fetchEvaluation(nodes[0], new AbortController().signal, fetcher)).rejects.toThrow('incomplete evaluation');
 });
