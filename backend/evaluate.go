@@ -161,12 +161,15 @@ func (e *Evaluator) run(parent context.Context, request evaluationRequest) (*eva
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	// Also clean up if the wrapper crashes before its Python finally block runs.
-	defer cleanupEvaluationGroup(cmd.Process.Pid)
+	pid := cmd.Process.Pid
 	if err := cmd.Wait(); err != nil {
+		// Clean up only when the wrapper did not exit cleanly; a successful
+		// Python finally block already quits the engine.
+		cleanupEvaluationGroup(pid)
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
+		cleanupEvaluationGroup(pid)
 		return nil, err
 	}
 	var workerError apiError
