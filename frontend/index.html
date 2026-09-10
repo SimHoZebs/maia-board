@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#101820" />
+    <meta name="description" content="A focused Maia3 chess board for play and analysis." />
+    <title>Maia Board</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="site-header">
+        <a class="brand" href="/" aria-label="Maia Board home">
+          <span class="brand-mark" aria-hidden="true">M3</span>
+          <span>
+            <span class="brand-name">maia board</span>
+            <span class="brand-kicker">human moves, modeled</span>
+          </span>
+        </a>
+        <nav class="mode-switch" aria-label="Board mode">
+          <button class="mode-tab is-active" id="mode-play" type="button" aria-pressed="true">Play</button>
+          <button class="mode-tab" id="mode-analysis" type="button" aria-pressed="false">Analysis</button>
+        </nav>
+        <div class="connection-state" id="connection-state">
+          <span class="connection-dot" aria-hidden="true"></span>
+          <span id="connection-label">Ready</span>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="board-stage" aria-label="Chess board">
+          <div class="stage-heading">
+            <div>
+              <p class="eyebrow" id="stage-eyebrow">Live game / Maia3</p>
+              <h1 id="stage-title">Play a human move.</h1>
+            </div>
+            <div class="turn-chip" id="turn-chip">White to move</div>
+          </div>
+
+          <div class="board-frame">
+            <div class="board" id="board" aria-label="Chess board"></div>
+            <div class="board-corner board-corner-tl" aria-hidden="true">M3</div>
+            <div class="board-corner board-corner-br" aria-hidden="true">01</div>
+          </div>
+
+          <div class="board-footer">
+            <div class="board-status" id="board-status" role="status" aria-live="polite">Set your side, then make a move.</div>
+            <button class="text-button" id="flip-board" type="button">Flip board</button>
+          </div>
+          <div class="error-banner" id="error-banner" role="alert" hidden></div>
+        </section>
+
+        <aside class="control-rail">
+          <section class="panel play-controls" id="play-controls" aria-labelledby="play-settings-title">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Your table</p>
+                <h2 id="play-settings-title">Game settings</h2>
+              </div>
+              <span class="saved-mark" title="Settings are saved on this device" aria-label="Settings saved">local</span>
+            </div>
+
+            <fieldset class="field-group">
+              <legend>I play</legend>
+              <div class="segmented two-up">
+                <label class="segment-option">
+                  <input type="radio" name="user-color" value="white" checked />
+                  <span>White</span>
+                </label>
+                <label class="segment-option">
+                  <input type="radio" name="user-color" value="black" />
+                  <span>Black</span>
+                </label>
+              </div>
+              <p class="field-note">Maia plays <strong id="maia-color-label">Black</strong>.</p>
+            </fieldset>
+
+            <div class="field-grid">
+              <label class="field-group">
+                <span class="field-label">Maia Elo</span>
+                <select id="elo-maia" aria-label="Maia Elo">
+                  <option value="800">800</option>
+                  <option value="1000">1000</option>
+                  <option value="1200">1200</option>
+                  <option value="1400">1400</option>
+                  <option value="1600" selected>1600</option>
+                  <option value="1800">1800</option>
+                  <option value="2000">2000</option>
+                  <option value="2200">2200</option>
+                  <option value="2400">2400</option>
+                </select>
+              </label>
+              <label class="field-group">
+                <span class="field-label">Your Elo</span>
+                <select id="elo-user" aria-label="Your Elo">
+                  <option value="800">800</option>
+                  <option value="1000">1000</option>
+                  <option value="1200">1200</option>
+                  <option value="1400" selected>1400</option>
+                  <option value="1600">1600</option>
+                  <option value="1800">1800</option>
+                  <option value="2000">2000</option>
+                  <option value="2200">2200</option>
+                  <option value="2400">2400</option>
+                </select>
+              </label>
+            </div>
+
+            <fieldset class="field-group">
+              <legend>Model</legend>
+              <div class="model-options">
+                <label class="model-option">
+                  <input type="radio" name="model" value="79m" checked />
+                  <span class="model-copy"><strong>79M</strong><small>full human prior</small></span>
+                </label>
+                <label class="model-option">
+                  <input type="radio" name="model" value="5m" />
+                  <span class="model-copy"><strong>5M</strong><small>quick response</small></span>
+                </label>
+              </div>
+            </fieldset>
+
+            <div class="action-row">
+              <button class="button button-primary" id="new-game" type="button">New game</button>
+              <button class="button button-secondary" id="takeback" type="button">Takeback</button>
+            </div>
+          </section>
+
+          <section class="panel analysis-controls" id="analysis-controls" aria-labelledby="analysis-settings-title" hidden>
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Position lab</p>
+                <h2 id="analysis-settings-title">Load a line</h2>
+              </div>
+              <span class="saved-mark">local</span>
+            </div>
+            <label class="field-group">
+              <span class="field-label">FEN <span class="quiet">(optional = start)</span></span>
+              <input class="text-input mono" id="analysis-fen" type="text" spellcheck="false" autocomplete="off" placeholder="Starting position" />
+            </label>
+            <label class="field-group">
+              <span class="field-label">PGN <span class="quiet">(optional)</span></span>
+              <textarea class="text-input pgn-input mono" id="analysis-pgn" rows="5" spellcheck="false" placeholder="1. e4 e5 2. Nf3 ..."></textarea>
+            </label>
+            <button class="button button-primary wide-button" id="load-analysis" type="button">Load position</button>
+            <button class="button button-accent wide-button" id="analyze-position" type="button">Ask Maia about this position</button>
+            <div class="analysis-nav">
+              <button class="icon-button" id="analysis-prev" type="button" aria-label="Previous position">&lt;</button>
+              <span id="analysis-index">Position 1 / 1</span>
+              <button class="icon-button" id="analysis-next" type="button" aria-label="Next position">&gt;</button>
+            </div>
+            <button class="button button-secondary wide-button" id="export-pgn" type="button">Export PGN</button>
+          </section>
+
+          <section class="panel insight-panel" aria-labelledby="insight-title">
+            <div class="panel-heading insight-heading">
+              <div>
+                <p class="eyebrow" id="insight-eyebrow">Maia's read</p>
+                <h2 id="insight-title">Waiting for a position</h2>
+              </div>
+              <span class="model-badge" id="model-badge">--</span>
+            </div>
+            <div id="insight-content" class="insight-content">
+              <p class="empty-copy">Make a move or load a position. Maia's top five and its win/draw/loss read will land here.</p>
+            </div>
+          </section>
+
+          <section class="panel moves-panel" aria-labelledby="moves-title">
+            <div class="panel-heading compact-heading">
+              <h2 id="moves-title">Moves</h2>
+              <span class="move-count" id="move-count">0 plies</span>
+            </div>
+            <div class="move-list" id="move-list" aria-live="polite">
+              <p class="empty-copy">The line is empty.</p>
+            </div>
+          </section>
+
+          <section class="panel saved-panel" aria-labelledby="saved-title">
+            <div class="panel-heading compact-heading">
+              <h2 id="saved-title">Saved locally</h2>
+              <span class="quiet">this device</span>
+            </div>
+            <div id="saved-games" class="saved-games">
+              <p class="empty-copy">Finished or in-progress games appear here.</p>
+            </div>
+          </section>
+        </aside>
+      </main>
+
+      <footer class="site-footer">
+        <span>Maia3 inference stays on your server.</span>
+        <span>CPU-ready / LAN-first</span>
+      </footer>
+    </div>
+
+    <dialog class="promotion-dialog" id="promotion-dialog" aria-labelledby="promotion-title">
+      <form method="dialog">
+        <p class="eyebrow">Promotion</p>
+        <h2 id="promotion-title">Choose a piece</h2>
+        <div class="promotion-options">
+          <button type="button" data-promotion="q">Queen</button>
+          <button type="button" data-promotion="r">Rook</button>
+          <button type="button" data-promotion="b">Bishop</button>
+          <button type="button" data-promotion="n">Knight</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
