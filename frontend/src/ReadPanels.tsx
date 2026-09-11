@@ -84,12 +84,40 @@ export function InsightPanel({ state, dispatch, review, children }: { state: Sta
 
 function MoveAnalysis({ state, dispatch, review }: { state: State; dispatch: Dispatch<Action>; review: Review }) {
   const { analysisSettings } = state;
+  const ply = state.analysis.index;
   const response = review.maia;
-  const node = review.nodes[state.analysis.index];
+  const node = review.nodes[ply];
   const insight = response ? { fen: node.fen } : undefined;
-  const played = review.nodes[state.analysis.index + 1]?.moves[state.analysis.index];
+  const played = review.nodes[ply + 1]?.moves[ply];
   const evaluation = review.current;
-  return <div className="engine-duo">
+  const lastUci = ply > 0 ? review.nodes[ply]?.moves[ply - 1] : undefined;
+  const prevNode = ply > 0 ? review.nodes[ply - 1] : undefined;
+  const prevEval = ply > 0 ? review.evaluations[ply - 1] : undefined;
+  const prevMaia = review.prevMaia;
+  const lastQuality = ply > 0 ? review.qualities[ply - 1] : undefined;
+  const lastSan = lastUci && prevNode ? candidateSan(prevNode.fen, lastUci) : undefined;
+  const bestUci = prevEval && !prevEval.terminal ? prevEval.best_move : null;
+  const bestSan = bestUci && prevNode ? candidateSan(prevNode.fen, bestUci) : undefined;
+  const parts = state.analysis.initialFen.split(' '), first = Number(parts[5]) * 2 + (parts[1] === 'b' ? 1 : 0);
+  const lastNumber = ply > 0 ? `${Math.floor((first + ply - 1) / 2)}${(first + ply - 1) % 2 ? '…' : '.'}` : '';
+  const ranked = lastUci && prevMaia ? prevMaia.top_moves.findIndex(candidate => candidate.move === lastUci) : -1;
+  const lastProb = ranked >= 0 && prevMaia ? prevMaia.top_moves[ranked].prob : undefined;
+  const topMaia = prevMaia?.top_moves[0];
+  const topMaiaSan = topMaia && prevNode ? candidateSan(prevNode.fen, topMaia.move) : undefined;
+  return <div>
+    {ply > 0 && lastUci && lastSan && <section aria-label="Last move" className="last-move">
+      <h3>Last move · {lastNumber} {lastSan} {lastQuality && <QualityBadge quality={lastQuality} />}</h3>
+      {lastQuality && lastQuality.label !== 'Unreviewed' && prevEval && evaluation ? <p className="model-context">
+        {lastQuality.label}{lastQuality.accuracy != null ? ` · ${lastQuality.accuracy.toFixed(1)}% accuracy` : ''} · {scoreValueText(prevEval.score)} → {scoreValueText(evaluation.score)}
+        {bestUci && bestSan && bestUci !== lastUci && ` · Best was ${bestSan}`}
+        {bestUci === lastUci && ' · Best move'}
+      </p> : <p className="empty-copy">Analyzing last move…</p>}
+      {prevMaia && topMaia && topMaiaSan && lastProb !== undefined && ranked >= 0
+        ? <p className="model-context">Maia expected {topMaiaSan} ({Math.round(topMaia.prob * 100)}%) · played {lastSan} ({Math.round(lastProb * 100)}%, #{ranked + 1})</p>
+        : prevMaia && topMaia && topMaiaSan && <p className="model-context">Maia expected {topMaiaSan} ({Math.round(topMaia.prob * 100)}%)</p>}
+    </section>}
+    <div className="engine-duo">
+      {ply > 0 && <p className="model-context" style={{ gridColumn: '1 / -1', margin: 0 }}>Suggestions from this position · next to move.</p>}
     <EngineSection label="Maia analysis" titleId="insight-title" dotClass="source-maia" title={`Maia • ${analysisSettings.eloMaia}`}>
       {response && insight ? <div id="insight-content">
         <CandidateList>
@@ -105,6 +133,7 @@ function MoveAnalysis({ state, dispatch, review }: { state: State; dispatch: Dis
     <EngineSection label="Stockfish evaluation" dotClass="source-stockfish" title={`Stockfish 19${evaluation && !evaluation.terminal ? ` · depth ${evaluation.depth}` : ''}`}>
       {evaluation ? <StockfishBody fen={node.fen} evaluation={evaluation} played={played} previewUci={state.preview} onPreview={uci => dispatch({ type: 'preview', uci })} /> : <p className="empty-copy">No analysis yet.</p>}
     </EngineSection>
+    </div>
   </div>;
 }
 

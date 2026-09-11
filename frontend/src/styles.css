@@ -111,6 +111,10 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .empty-copy { font-size: 13px; color: var(--muted); }
 .insight-panel .empty-copy { margin: 18px 0 0; }
 #insight-content h3 { margin: 14px 0 6px; font-size: 13px; }
+.last-move { margin-bottom: 12px; }
+.last-move h3 { margin: 0; font-size: 14px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.last-move .model-context { margin: 6px 0 0; }
+.last-move .empty-copy { margin: 6px 0 0; }
 .candidate-list { list-style: none; margin: 0; padding: 0; }
 .candidate-list li { display: flex; gap: 6px; align-items: center; border-bottom: 1px solid var(--line); padding: 4px 0; }
 .rank { font-size: 12px; color: var(--muted); width: 12px; }

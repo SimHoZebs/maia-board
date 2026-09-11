@@ -94,7 +94,9 @@ export function useReview(state: State) {
   const game = replay([], line.initialFen);
   const qualities = line.moves.map((move, index) => { const quality = reviewMove(evaluations[index], evaluations[index + 1], game, move); applyUci(game, move); return quality; });
   const current = nodes[state.analysis.index];
+  const prevNode = state.analysis.index > 0 ? nodes[state.analysis.index - 1] : undefined;
   return { nodes, evaluations, qualities, coverage, current: evaluations[state.analysis.index], maia: active ? coordinator.result('maia', current, settings) : undefined,
+    prevMaia: active && prevNode ? coordinator.result('maia', prevNode, settings) : undefined,
     error: active ? coordinator.error('sf', current, settings) || coordinator.error('maia', current, settings) || (state.analysis.index > 0 ? coordinator.error('sf', nodes[state.analysis.index - 1], settings) : undefined) : undefined,
     progress, recordStatus, start: () => coordinator.startBatch(nodes, settings), cancel: () => coordinator.cancelBatch(), retry: () => coordinator.retry(),
     tooLong: nodes.length > 257 };
