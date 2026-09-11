@@ -17,13 +17,14 @@ var uciMovePattern = regexp.MustCompile(`^[a-h][1-8][a-h][1-8][qrbn]?$`)
 var epSquarePattern = regexp.MustCompile(`^[a-h][36]$`)
 
 type moveRequest struct {
-	FEN        string   `json:"fen"`
-	Moves      []string `json:"moves"`
-	EloMaia    *int     `json:"elo_maia"`
-	EloUser    *int     `json:"elo_user"`
-	Model      string   `json:"model"`
-	MaiaColor  string   `json:"maia_color"`
-	InitialFEN string   `json:"initial_fen,omitempty"`
+	FEN         string   `json:"fen"`
+	Moves       []string `json:"moves"`
+	EloMaia     *int     `json:"elo_maia"`
+	EloUser     *int     `json:"elo_user"`
+	Model       string   `json:"model"`
+	MaiaColor   string   `json:"maia_color"`
+	InitialFEN  string   `json:"initial_fen,omitempty"`
+	Temperature float64  `json:"temperature,omitempty"`
 }
 
 type topMove struct {
@@ -88,9 +89,21 @@ func main() {
 	mux.HandleFunc("/", app.frontend)
 	address := ":" + port
 	log.Printf("maia-board listening on %s", address)
-	if err := http.ListenAndServe(address, mux); err != nil {
+	if err := http.ListenAndServe(address, recoverJSON(mux)); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func recoverJSON(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				log.Printf("panic handling %s %s: %v", r.Method, r.URL.Path, recovered)
+				writeAPIError(w, http.StatusInternalServerError, "internal", "the server hit an unexpected error")
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *server) frontend(w http.ResponseWriter, r *http.Request) {
@@ -183,6 +196,9 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 }
 
 func validateMoveRequest(request moveRequest) (EngineRequest, string, error) {
+	if !validTemperature(request.Temperature) {
+		return EngineRequest{}, "", &requestError{Code: "invalid_request", Message: "temperature must be between 0 and 2"}
+	}
 	fen, side, err := normalizeFEN(request.FEN)
 	if err != nil {
 		return EngineRequest{}, "", err
@@ -226,11 +242,12 @@ func validateMoveRequest(request moveRequest) (EngineRequest, string, error) {
 		}
 	}
 	return EngineRequest{
-		FEN:        fen,
-		Moves:      request.Moves,
-		InitialFEN: initialFEN,
-		SelfElo:    *request.EloMaia,
-		OppoElo:    *request.EloUser,
+		FEN:         fen,
+		Moves:       request.Moves,
+		InitialFEN:  initialFEN,
+		SelfElo:     *request.EloMaia,
+		OppoElo:     *request.EloUser,
+		Temperature: request.Temperature,
 	}, model, nil
 }
 

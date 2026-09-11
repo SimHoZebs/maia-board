@@ -9,6 +9,7 @@ export type MoveRequest = {
   model: MaiaModel;
   maia_color: MaiaColor;
   initial_fen?: string;
+  temperature?: number;
 };
 
 export type TopMove = {

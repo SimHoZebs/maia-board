@@ -14,6 +14,12 @@ export function PlayControls({ state, dispatch }: Props) {
     <h1>{state.started ? 'Start a new game?' : 'Play Maia'}</h1>
     <Rating value={state.setup.eloMaia} onChange={eloMaia => dispatch({ type: 'setup', draft: { eloMaia } })} />
     <fieldset><legend>Your side</legend><div className="side-options">{(['white', 'black', 'random'] as const).map(color => <label key={color}><input type="radio" name="user-color" checked={state.setup!.userColor === color} onChange={() => dispatch({ type: 'setup', draft: { userColor: color } })} />{color === 'random' ? 'Random' : sideName(color)}</label>)}</div></fieldset>
+    <details className="advanced-config"><summary>Advanced</summary>
+      <label className="field" htmlFor="maia-temperature">Maia temperature <output>{(state.setup.temperature ?? 0).toFixed(1)}</output>
+        <input id="maia-temperature" type="range" min="0" max="2" step="0.1" value={state.setup.temperature ?? 0} onChange={e => dispatch({ type: 'setup', draft: { temperature: e.target.valueAsNumber } })} />
+      </label>
+      <p>0 always chooses Maia’s highest-probability move. 1 samples its original probabilities; higher values add more variety. Applies to this new game.</p>
+    </details>
     <div className="actions"><Button id="start-game" variant="primary" onClick={() => dispatch({ type: 'new', id: newId(), createdAt: new Date().toISOString(), resolvedColor: resolveSide(state.setup!.userColor) })}>{state.started ? 'Start new game' : 'Start game'}</Button>{state.started && <Button onClick={() => dispatch({ type: 'cancel-setup' })}>Cancel</Button>}</div>
   </section>;
   return state.started ? <Dialog title="Start a new game?" onCancel={() => dispatch({ type: 'cancel-setup' })}>{content}</Dialog> : content;

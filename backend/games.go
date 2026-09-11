@@ -24,25 +24,27 @@ type GameStore struct {
 }
 
 type gameRow struct {
-	ID        string   `json:"id"`
-	CreatedAt string   `json:"created_at"`
-	UpdatedAt string   `json:"updated_at"`
-	UserColor string   `json:"user_color"`
-	EloMaia   int      `json:"elo_maia"`
-	EloUser   int      `json:"elo_user"`
-	Model     string   `json:"model"`
-	Moves     []string `json:"moves"`
+	Temperature float64  `json:"temperature"`
+	ID          string   `json:"id"`
+	CreatedAt   string   `json:"created_at"`
+	UpdatedAt   string   `json:"updated_at"`
+	UserColor   string   `json:"user_color"`
+	EloMaia     int      `json:"elo_maia"`
+	EloUser     int      `json:"elo_user"`
+	Model       string   `json:"model"`
+	Moves       []string `json:"moves"`
 }
 
 type gamePayload struct {
-	ID        string   `json:"id,omitempty"`
-	CreatedAt string   `json:"created_at,omitempty"`
-	UserColor string   `json:"user_color"`
-	EloMaia   *int     `json:"elo_maia"`
-	EloUser   *int     `json:"elo_user"`
-	Model     string   `json:"model"`
-	Moves     []string `json:"moves"`
-	Current   bool     `json:"current,omitempty"`
+	Temperature float64  `json:"temperature,omitempty"`
+	ID          string   `json:"id,omitempty"`
+	CreatedAt   string   `json:"created_at,omitempty"`
+	UserColor   string   `json:"user_color"`
+	EloMaia     *int     `json:"elo_maia"`
+	EloUser     *int     `json:"elo_user"`
+	Model       string   `json:"model"`
+	Moves       []string `json:"moves"`
+	Current     bool     `json:"current,omitempty"`
 }
 
 func NewGameStore(path string) (*GameStore, error) {
@@ -98,6 +100,10 @@ func NewGameStore(path string) (*GameStore, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := migrateGameTemperature(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &GameStore{db: db}, nil
 }
 
@@ -110,6 +116,9 @@ func newGameID() (string, error) {
 }
 
 func validateGamePayload(payload *gamePayload) *requestError {
+	if !validTemperature(payload.Temperature) {
+		return &requestError{"invalid_request", "temperature must be between 0 and 2"}
+	}
 	if payload.UserColor != "white" && payload.UserColor != "black" {
 		return &requestError{"invalid_user_color", "user_color must be white or black"}
 	}
@@ -165,8 +174,9 @@ func (s *GameStore) Save(payload gamePayload) (gameRow, error) {
 	var created, updated, stored string
 	var storedColor, storedModel string
 	var storedMaia, storedUser int
-	err = tx.QueryRow(`SELECT created_at, updated_at, user_color, elo_maia, elo_user, model, moves
-		FROM games WHERE id = ?`, id).Scan(&created, &updated, &storedColor, &storedMaia, &storedUser, &storedModel, &stored)
+	var storedTemperature float64
+	err = tx.QueryRow(`SELECT created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature
+		FROM games WHERE id = ?`, id).Scan(&created, &updated, &storedColor, &storedMaia, &storedUser, &storedModel, &stored, &storedTemperature)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		created = payload.CreatedAt
@@ -178,7 +188,7 @@ func (s *GameStore) Save(payload gamePayload) (gameRow, error) {
 	default:
 		// Resuming or re-saving unchanged content must not churn recency order.
 		if storedColor == payload.UserColor && storedMaia == *payload.EloMaia && storedUser == *payload.EloUser &&
-			storedModel == payload.Model && stored == string(moves) {
+			storedModel == payload.Model && stored == string(moves) && storedTemperature == payload.Temperature {
 			if payload.Current {
 				if _, err := tx.Exec(`INSERT INTO meta (key, value) VALUES ('current_game_id', ?)
 					ON CONFLICT (key) DO UPDATE SET value = excluded.value`, id); err != nil {
@@ -189,14 +199,14 @@ func (s *GameStore) Save(payload gamePayload) (gameRow, error) {
 				return gameRow{}, err
 			}
 			return gameRow{ID: id, CreatedAt: created, UpdatedAt: updated, UserColor: payload.UserColor,
-				EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves}, nil
+				EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature}, nil
 		}
 	}
-	_, err = tx.Exec(`INSERT INTO games (id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	_, err = tx.Exec(`INSERT INTO games (id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET updated_at = excluded.updated_at, user_color = excluded.user_color,
-			elo_maia = excluded.elo_maia, elo_user = excluded.elo_user, model = excluded.model, moves = excluded.moves`,
-		id, created, now, payload.UserColor, *payload.EloMaia, *payload.EloUser, payload.Model, string(moves))
+			elo_maia = excluded.elo_maia, elo_user = excluded.elo_user, model = excluded.model, moves = excluded.moves, temperature = excluded.temperature`,
+		id, created, now, payload.UserColor, *payload.EloMaia, *payload.EloUser, payload.Model, string(moves), payload.Temperature)
 	if err != nil {
 		return gameRow{}, err
 	}
@@ -211,7 +221,7 @@ func (s *GameStore) Save(payload gamePayload) (gameRow, error) {
 		return gameRow{}, err
 	}
 	return gameRow{ID: id, CreatedAt: created, UpdatedAt: now, UserColor: payload.UserColor,
-		EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves}, nil
+		EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature}, nil
 }
 
 type gameScanner interface {
@@ -222,7 +232,7 @@ func scanGame(scanner gameScanner) (gameRow, error) {
 	var game gameRow
 	var moves string
 	if err := scanner.Scan(&game.ID, &game.CreatedAt, &game.UpdatedAt, &game.UserColor,
-		&game.EloMaia, &game.EloUser, &game.Model, &moves); err != nil {
+		&game.EloMaia, &game.EloUser, &game.Model, &moves, &game.Temperature); err != nil {
 		return gameRow{}, err
 	}
 	if err := json.Unmarshal([]byte(moves), &game.Moves); err != nil {
@@ -235,7 +245,7 @@ func scanGame(scanner gameScanner) (gameRow, error) {
 }
 
 func (s *GameStore) Get(id string) (gameRow, error) {
-	game, err := scanGame(s.db.QueryRow(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves
+	game, err := scanGame(s.db.QueryRow(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature
 		FROM games WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return gameRow{}, sql.ErrNoRows
@@ -248,7 +258,7 @@ func (s *GameStore) List(limit int) ([]gameRow, int, error) {
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM games`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.Query(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves
+	rows, err := s.db.Query(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature
 		FROM games ORDER BY updated_at DESC, created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, 0, err

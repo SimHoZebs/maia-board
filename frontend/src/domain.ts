@@ -4,12 +4,12 @@ import type { MaiaColor, MaiaModel, MoveResponse } from './api';
 
 export const START_FEN = new Chess().fen();
 export type Mode = 'play' | 'analysis' | 'history';
-export type Settings = { userColor: MaiaColor; eloMaia: number; eloUser: number; model: MaiaModel };
+export type Settings = { userColor: MaiaColor; eloMaia: number; eloUser: number; model: MaiaModel; temperature?: number };
 export type Position = { fen: string; moves: string[]; sanMoves: string[]; lastMove?: [Key, Key] };
 export type Analysis = { initialFen: string; moves: string[]; sanMoves: string[]; timeline: Position[]; index: number; branchFromPly: number | null; branchMoves: string[]; perspective: MaiaColor; ownGame: boolean };
 export type Insight = { response: MoveResponse; fen: string; mode: Mode };
 export type StoredGame = { id: string; createdAt: string; moves: string[]; settings: Settings };
-export const defaultSettings: Settings = { userColor: 'white', eloMaia: 1600, eloUser: 1600, model: '79m' };
+export const defaultSettings: Settings = { userColor: 'white', eloMaia: 1600, eloUser: 1600, model: '79m', temperature: 1 };
 export const oppositeColor = (color: MaiaColor): MaiaColor => color === 'white' ? 'black' : 'white';
 export const sideName = (color: MaiaColor) => color === 'white' ? 'White' : 'Black';
 export const newId = () => typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -17,7 +17,8 @@ export const newId = () => typeof crypto.randomUUID === 'function' ? crypto.rand
 export function normalizeSettings(stored?: Partial<Settings> | null): Settings {
   const elo = (value: unknown, fallback: number) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 5000 ? value : fallback;
   return { userColor: stored?.userColor === 'black' ? 'black' : 'white', model: stored?.model === '5m' ? '5m' : '79m',
-    eloMaia: elo(stored?.eloMaia, 1600), eloUser: elo(stored?.eloUser, elo(stored?.eloMaia, 1600)) };
+    eloMaia: elo(stored?.eloMaia, 1600), eloUser: elo(stored?.eloUser, elo(stored?.eloMaia, 1600)),
+    temperature: typeof stored?.temperature === 'number' && Number.isFinite(stored.temperature) && stored.temperature >= 0 && stored.temperature <= 2 ? stored.temperature : 0 };
 }
 
 export function applyUci(game: Chess, uci: string) {

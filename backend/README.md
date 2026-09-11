@@ -34,9 +34,19 @@ Accepted values for `model` are lowercase `79m` and `5m`; omitted `model`
 defaults to `79m`. Elo validation follows the upstream UCI declaration of
 0–5000. `moves` is limited to 256 plies as a resource guard.
 
+Optional `temperature` accepts finite numbers from 0 to 2, defaulting to 0.
+0 selects the highest-policy move; 1 samples the original move probabilities;
+higher values spread selection more evenly. Each request resets the worker's
+temperature, including analysis requests that omit it. Play config exposes it
+under Advanced and saves the value with each game.
+New-game Play setup defaults to 1.0, matching the upstream sampling default.
+Resuming a saved game retains its temperature; legacy saved games retain 0.
+
 The response contains `wdl` as normalized `[loss, draw, win]` probabilities.
 It is the primary candidate's post-move WDL. `top_moves` is rank-ordered and
-contains upstream policy probabilities. `model_used` and `degraded` signal a
+contains upstream policy probabilities, independent of temperature. A sampled
+`move` can differ from the top candidate or fall outside `top_moves`.
+`model_used` and `degraded` signal a
 79M-to-5M fallback.
 
 The endpoint returns `400 position_mismatch` before inference when replaying
@@ -48,13 +58,16 @@ exists.
 
 `GET /games` lists stored games newest-first with `{games, current_id, total}`.
 `POST /games` upserts `{id?, user_color, elo_maia, elo_user, model, moves[],
-created_at?, current?}`; a missing id gets a server uuid, `created_at` must be
+created_at?, current?, temperature?}`; a missing id gets a server uuid, `created_at` must be
 RFC3339 and is immutable afterwards, and `current: true` moves the
 current-game marker in the same transaction. `GET /games/:id` returns one game
 or `404 not_found`; `DELETE /games/:id` is idempotent (`204`) and clears the
 marker when it points at the deleted game. Elo, UCI shape, and 256-ply limits
 mirror `/move`. Re-saving unchanged content keeps its position in recency
 order, so resume and migration never reshuffle History.
+
+Temperature defaults to 0 for legacy requests and saved games. Startup adds the
+`temperature REAL NOT NULL DEFAULT 0` column to existing game databases.
 
 Storage is SQLite through a pure-Go driver (no CGO, static binary preserved),
 WAL mode, `DB_PATH` (default `./maia-board.db`, `/data/maia-board.db` in the

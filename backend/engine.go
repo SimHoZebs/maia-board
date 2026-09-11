@@ -31,11 +31,12 @@ var (
 )
 
 type EngineRequest struct {
-	FEN        string
-	Moves      []string
-	InitialFEN string
-	SelfElo    int
-	OppoElo    int
+	FEN         string
+	Moves       []string
+	InitialFEN  string
+	SelfElo     int
+	OppoElo     int
+	Temperature float64
 }
 
 type Candidate struct {
@@ -168,6 +169,10 @@ func (w *Worker) predictLocked(ctx context.Context, request EngineRequest) (Engi
 		return EngineResult{}, err
 	}
 	if err := w.sendLocked(ctx, "setoption name MultiPV value "+strconv.Itoa(maxMultiPV)); err != nil {
+		w.handleFailureLocked(err)
+		return EngineResult{}, err
+	}
+	if err := w.sendLocked(ctx, "setoption name Temperature value "+strconv.FormatFloat(request.Temperature, 'f', -1, 64)); err != nil {
 		w.handleFailureLocked(err)
 		return EngineResult{}, err
 	}
@@ -540,9 +545,8 @@ func parseEngineTranscript(lines []string, legalCount int) (EngineResult, error)
 		}
 		result.Candidates = append(result.Candidates, Candidate{Move: candidate.move, Policy: candidate.policy, WDL: candidate.wdl})
 	}
-	if result.Candidates[0].Move != result.Move {
-		return EngineResult{}, fmt.Errorf("%w: bestmove does not match multipv 1", ErrProtocol)
-	}
+	// Sampling may choose a move outside the reported top candidates. WDL
+	// describes the highest-policy candidate, independent of sampling temperature.
 	result.WDL = result.Candidates[0].WDL
 	return result, nil
 }

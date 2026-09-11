@@ -1,7 +1,7 @@
 import { Chess, type Square } from 'chess.js';
 import { type MaiaColor, type MoveRequest, type MoveResponse, readableApiError } from './api';
 import { toGroundColor } from './board-colors';
-import { analysisLength, analysisLine, applyUci, loadLine, newId, oppositeColor, positionOf, replay, START_FEN,
+import { analysisLength, analysisLine, applyUci, defaultSettings, loadLine, newId, oppositeColor, positionOf, replay, START_FEN,
   type Analysis, type Insight, type Mode, type Settings, type StoredGame } from './domain';
 import { sameLine, type UrlLine } from './analysisUrl';
 import { KEYS, loadSaved, loadSettings, readStorage, restoreGame } from './storage';
@@ -9,9 +9,11 @@ import { loadOutbox, mergeSync, type OutboxOp } from './serverGames';
 
 type Request = { id: number; mode: Mode; payload: MoveRequest };
 export type Draft = Pick<Settings, 'eloMaia' | 'model'> & { userColor: 'white' | 'black' | 'random' };
+export type PlayDraft = Draft & Pick<Settings, 'temperature'>;
+const newPlayDraft = (settings: Settings): PlayDraft => ({ ...settings, temperature: defaultSettings.temperature });
 export type State = {
   mode: Mode; settings: Settings; play: StoredGame; saved: StoredGame[];
-  started: boolean; setup: Draft | null; viewedPly: number | null;
+  started: boolean; setup: PlayDraft | null; viewedPly: number | null;
   analysis: Analysis; analysisSettings: Draft; analysisLoaded: boolean; importing: boolean; analysisSourceId: string | null;
   inputs: { fen: string; pgn: string }; flipped: boolean; preview: string | null;
   promotion: { from: Square; to: Square } | null;
@@ -20,7 +22,7 @@ export type State = {
 };
 export type Action =
   | { type: 'mode'; mode: Mode }
-  | { type: 'setup'; draft?: Partial<Draft> } | { type: 'cancel-setup' }
+  | { type: 'setup'; draft?: Partial<PlayDraft> } | { type: 'cancel-setup' }
   | { type: 'new'; id: string; createdAt: string; resolvedColor?: 'white' | 'black' }
   | { type: 'settings'; settings: Partial<Settings>; id: string; createdAt: string }
   | { type: 'analysis-settings'; settings: Partial<Draft> }
@@ -52,6 +54,7 @@ function queueRequest(state: State): State {
   return { ...state, error: '', request: { id: state.revision, mode: state.mode, payload: {
     fen: position.fen, moves: position.moves, elo_maia: settings.eloMaia, elo_user: settings.eloUser, model: settings.model,
     maia_color: state.mode === 'play' ? oppositeColor(state.settings.userColor) : toGroundColor(new Chess(position.fen).turn()),
+    ...(state.mode === 'play' ? { temperature: state.settings.temperature ?? 0 } : {}),
     ...(state.mode === 'analysis' && state.analysis.initialFen !== START_FEN ? { initial_fen: state.analysis.initialFen } : {}),
   } } };
 }
@@ -134,8 +137,8 @@ export function initialState(mode: Mode = 'play', urlLine?: UrlLine): State {
     }
   }
   const state: State = { mode, settings, play: restored ?? { id: newId(), createdAt: new Date().toISOString(), moves: [], settings },
-    started: !!restored, setup: restored ? null : { ...settings }, viewedPly: null,
-    saved: loadSaved(), analysis, analysisSettings: { ...settings }, analysisLoaded, importing: !analysisLoaded, analysisSourceId,
+    started: !!restored, setup: restored ? null : newPlayDraft(settings), viewedPly: null,
+    saved: loadSaved(), analysis, analysisSettings: { eloMaia: settings.eloMaia, model: settings.model, userColor: settings.userColor }, analysisLoaded, importing: !analysisLoaded, analysisSourceId,
     inputs, flipped: false, preview: null, promotion: null, insight: null, error: '', request: null, revision: 0,
     syncError: '', syncPending: loadOutbox().length, flushNonce: 0, historyTotal: null };
   return mode === 'play' && maiaTurn(state) ? queueRequest(state) : state;
@@ -144,9 +147,10 @@ export function reducer(state: State, action: Action): State {
   switch (action.type) {
     case 'mode': return action.mode === state.mode ? state : transition(state, { mode: action.mode, setup: state.started ? null : state.setup });
     case 'setup': return { ...state, setup: { ...(state.setup ?? state.settings), ...action.draft } };
+    case 'setup': return { ...state, setup: { ...(state.setup ?? newPlayDraft(state.settings)), ...action.draft } };
     case 'cancel-setup': return state.started ? { ...state, setup: null } : state;
     case 'new': {
-      const draft = state.setup ?? state.settings;
+      const draft = state.setup ?? newPlayDraft(state.settings);
       if (draft.userColor === 'random' && !action.resolvedColor) return state;
       const settings: Settings = { ...draft, userColor: action.resolvedColor ?? (draft.userColor === 'black' ? 'black' : 'white'), eloUser: draft.eloMaia };
       return transition(state, { started: true, setup: null, viewedPly: null, settings, play: { id: action.id, createdAt: action.createdAt, moves: [], settings } });
@@ -210,7 +214,7 @@ export function reducer(state: State, action: Action): State {
     case 'delete': {
       const saved = state.saved.filter(game => game.id !== action.id);
       if (state.play.id !== action.id) return { ...state, saved };
-      return transition(state, { saved, started: false, setup: { ...state.settings }, viewedPly: null,
+      return transition(state, { saved, started: false, setup: newPlayDraft(state.settings), viewedPly: null,
         play: { id: newId(), createdAt: new Date().toISOString(), moves: [], settings: state.settings } }, false);
     }
     case 'sync': {
@@ -225,7 +229,7 @@ export function reducer(state: State, action: Action): State {
       }
       const current = merged.saved.find(game => game.id === merged.currentId);
       if (!current) {
-        return transition(base, { started: false, setup: { ...base.settings }, viewedPly: null,
+        return transition(base, { started: false, setup: newPlayDraft(base.settings), viewedPly: null,
           play: { id: newId(), createdAt: new Date().toISOString(), moves: [], settings: base.settings } }, false);
       }
       if (state.request && current.id === state.play.id && current.moves.join(',') === state.play.moves.join(',')) {
