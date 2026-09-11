@@ -480,7 +480,7 @@ test('analysis candidate preview, independent rating, branch replay and labeled 
   await page.locator('#load-analysis').click();
   await expect(page.locator('#analysis-controls')).toHaveCount(0);
   await app.reply(0, 'b8c6', 200, [{ move: 'b8c6', prob: .4 }, { move: 'g8f6', prob: .15 }]);
-  await expect(page.locator('.candidate-preview')).toHaveText(['Nc640%', 'Nf615%']);
+  await expect(page.locator('section[aria-label="Maia analysis"] .candidate-reading')).toHaveText(['Nc640%', 'Nf615%']);
   await expect(page.locator('section[aria-label="Maia analysis"] .win-hero strong')).toHaveText('20%');
   await expect(page.locator('section[aria-label="Maia analysis"] .win-hero span')).toHaveText('White win · after Nc6');
   await expect(page.locator('section[aria-label="Stockfish evaluation"] .win-hero strong')).toHaveText('52%');

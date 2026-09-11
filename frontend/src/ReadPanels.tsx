@@ -64,7 +64,8 @@ export function InsightPanel({ state, dispatch, review }: { state: State; dispat
         <ol className="candidate-list">{response.top_moves.slice(0, 5).map((candidate, index) => {
           const san = candidateSan(insight.fen, candidate.move);
           const isPlayed = candidate.move === played;
-          return <li key={candidate.move} className={isPlayed ? 'played' : undefined}><span className="rank">{index + 1}</span><button className="candidate-preview" aria-label={`Preview ${san}${isPlayed ? ' (played)' : ''}`} aria-pressed={state.preview === candidate.move} onMouseEnter={() => dispatch({ type: 'preview', uci: candidate.move })} onFocus={() => dispatch({ type: 'preview', uci: candidate.move })} onClick={() => dispatch({ type: 'preview', uci: candidate.move })}>{isPlayed && <span className="visually-hidden">Played, </span>}<strong>{san}</strong><span className="metric">{Math.round(candidate.prob * 100)}%</span></button></li>;
+          const preview = () => dispatch({ type: 'preview', uci: candidate.move });
+          return <CandidateRow key={candidate.move} index={index} san={san} metric={`${Math.round(candidate.prob * 100)}%`} isPlayed={isPlayed} preview={{ label: `Preview ${san}${isPlayed ? ' (played)' : ''}`, active: state.preview === candidate.move, onPreview: preview }} />;
         })}</ol>
         {played && !response.top_moves.slice(0, 5).some(candidate => candidate.move === played) && <p>Played {candidateSan(insight.fen, played)}</p>}
       </div> : <p className="empty-copy">No analysis yet.</p>}
@@ -77,6 +78,16 @@ export function InsightPanel({ state, dispatch, review }: { state: State; dispat
   </aside>;
 }
 
+function CandidateRow({ index, san, metric, isPlayed, preview }: {
+  index: number; san: string; metric: string; isPlayed: boolean;
+  preview?: { label: string; active: boolean; onPreview: () => void };
+}) {
+  const inner = <>{isPlayed && <span className="visually-hidden">Played, </span>}<strong>{san}</strong><span className="metric">{metric}</span></>;
+  return <li className={isPlayed ? 'played' : undefined}><span className="rank">{index + 1}</span>{preview ?
+    <button type="button" className="candidate-reading" aria-label={preview.label} aria-pressed={preview.active} onMouseEnter={preview.onPreview} onFocus={preview.onPreview} onClick={preview.onPreview}>{inner}</button> :
+    <span className="candidate-reading">{inner}</span>}</li>;
+}
+
 function StockfishBody({ fen, evaluation, played }: { fen: string; evaluation: Evaluation; played?: string }) {
   if (evaluation.terminal) return <div>
     <section className="estimate" aria-label="Stockfish win estimate"><div className="win-hero"><strong>{Math.round(whiteWin(evaluation.score))}%</strong><span>White win · final</span></div></section>
@@ -86,11 +97,9 @@ function StockfishBody({ fen, evaluation, played }: { fen: string; evaluation: E
     <p className="model-context">Stockfish 19 · depth {evaluation.depth}</p>
     <section className="estimate" aria-label="Stockfish win estimate"><div className="win-hero"><strong>{Math.round(whiteWin(evaluation.score))}%</strong><span>White win · this position</span></div></section>
     <h3>Engine moves</h3>
-    <ol className="candidate-list">{evaluation.lines.map((line, index) => {
-      const san = candidateSan(fen, line.move);
-      const isPlayed = line.move === played;
-      return <li key={line.move} className={isPlayed ? 'played' : undefined}><span className="rank">{index + 1}</span><span className="line-reading">{isPlayed && <span className="visually-hidden">Played, </span>}<strong>{san}</strong><span className="metric">{scoreValueText(line.score)}</span></span></li>;
-    })}</ol>
+    <ol className="candidate-list">{evaluation.lines.map((line, index) =>
+      <CandidateRow key={line.move} index={index} san={candidateSan(fen, line.move)} metric={scoreValueText(line.score)} isPlayed={line.move === played} />
+    )}</ol>
     <p className="metric-legend">Scores in pawns<br />+ White · - Black</p>
     {played && !evaluation.lines.some(line => line.move === played) && <p>Played {candidateSan(fen, played)}</p>}
   </div>;

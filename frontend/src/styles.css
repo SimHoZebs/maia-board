@@ -87,10 +87,8 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .candidate-list { list-style: none; margin: 0; padding: 0; }
 .candidate-list li { display: flex; gap: 6px; align-items: center; border-bottom: 1px solid var(--line); padding: 4px 0; }
 .rank { font-size: 12px; color: var(--muted); width: 12px; }
-.candidate-preview { display: flex; justify-content: space-between; align-items: center; flex: 1; gap: 10px; min-width: 0; background: transparent; border-color: transparent; border-radius: 5px; padding: 8px; }
-.candidate-preview span { color: var(--accent); font-size: 13px; font-variant-numeric: tabular-nums; }
-.candidate-list .line-reading { display: flex; justify-content: space-between; align-items: center; flex: 1; gap: 10px; padding: 8px; min-width: 0; border: 1px solid transparent; border-radius: 5px; }
-.candidate-list li.played .candidate-preview, .candidate-list li.played .line-reading { background: #414b35; border-color: #899d6b; }
+.candidate-reading { display: flex; justify-content: space-between; align-items: center; flex: 1; gap: 10px; min-width: 0; min-height: 44px; background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 8px; }
+.candidate-list li.played .candidate-reading { background: #414b35; border-color: #899d6b; }
 .candidate-list .metric { color: var(--accent); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .candidate-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .engine-duo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
@@ -104,7 +102,6 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 @media (max-width: 760px) { .engine-duo { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; } }
 .engine-card { min-width: 0; }
 .win-hero { flex-wrap: wrap; }
-.candidate-list li > button:last-child { font-size: 12px; padding: 8px; }
 .wdl-row { display: grid; grid-template-columns: 72px 1fr 34px; gap: 8px; align-items: center; margin: 10px 0; font-size: 12px; }
 .wdl-row meter { width: 100%; height: 7px; }
 .wdl-row strong { text-align: right; font-weight: 500; }
@@ -138,7 +135,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
   .win-hero strong { font-size: 18px; }
   .win-hero span { font-size: 11px; }
   .candidate-list li { gap: 4px; }
-  .candidate-preview, .candidate-list .line-reading { padding: 6px; gap: 6px; }
+  .candidate-reading { padding: 6px; gap: 6px; }
   .candidate-list .metric { font-size: 12px; }
   .rank { width: 10px; }
   .entry { margin: 24px auto; }
