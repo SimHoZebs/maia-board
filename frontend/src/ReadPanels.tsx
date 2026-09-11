@@ -128,10 +128,14 @@ export function MovesPanel({ sans, ply, onView, initialFen, historical, qualitie
   return <section className={`notation${analysis ? ' analysis-notation' : ''}`} aria-label="Move history">
     <div className="move-list" id="move-list" ref={list}>
       {!sans.length && <span className="empty-copy">Moves appear here</span>}
-      {original ? <>
-        <div className="original-line" aria-label="Original line">{original.sans.map((san, index) => index < original.fromPly ? move(san, index) : <span className="original-move" key={index}>{number(index)} {san}</span>)}</div>
-        <div className="variation-line" aria-label="Explored variation">{sans.slice(original.fromPly).map((san, index) => move(san, original.fromPly + index))}</div>
-      </> : sans.map(move)}
+      {original ? <div className="original-line" aria-label="Original line">
+        {original.sans.slice(0, Math.max(0, original.fromPly - 1)).map(move)}
+        <div className="branch-point">
+          {original.fromPly > 0 && move(original.sans[original.fromPly - 1], original.fromPly - 1)}
+          <div className="variation-line" aria-label="Explored variation">{sans.slice(original.fromPly).map((san, index) => move(san, original.fromPly + index))}</div>
+        </div>
+        {original.sans.slice(original.fromPly).map((san, offset) => <span className="original-move" key={original.fromPly + offset}>{number(original.fromPly + offset)} {san}</span>)}
+      </div> : sans.map(move)}
     </div>
     <div className="move-navigation"><div className="board-actions">{tools}</div><div className="nav-buttons">{[{ id: 'first', label: 'First position', Icon: SkipBack, to: 0 }, { id: 'prev', label: 'Previous position', Icon: ArrowLeft, to: ply - 1 }, { id: 'next', label: 'Next position', Icon: ArrowRight, to: ply + 1 }, { id: 'last', label: 'Last position', Icon: SkipForward, to: sans.length }].map(item => <IconButton key={item.id} id={`analysis-${item.id}`} label={item.label} disabled={item.to < 0 || item.to > sans.length || item.to === ply} onClick={() => onView(item.to)}><item.Icon size={16} aria-hidden="true" /></IconButton>)}</div></div>
     <span id="analysis-index">Position {ply + 1} / {sans.length + 1}</span>

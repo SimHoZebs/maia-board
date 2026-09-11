@@ -697,7 +697,13 @@ for (const width of [320, 390]) {
     await page.locator('#analysis-next').click();
     await piece(page, 'f3', 'white knight');
     await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
-    await expect(page.locator('.original-line button')).toHaveCount(1);
+    await expect(page.locator('.branch-point > button')).toHaveCount(1);
+    const origin = (await page.locator('.branch-point > button').boundingBox())!;
+    const branch = (await variation.boundingBox())!;
+    const continuation = (await page.locator('.original-move').first().boundingBox())!;
+    expect(branch.y).toBeGreaterThanOrEqual(origin.y + origin.height);
+    expect(branch.x).toBeGreaterThan(origin.x);
+    expect(continuation.y).toBeGreaterThanOrEqual(branch.y + branch.height);
     const toolbar = await page.locator('.move-navigation button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { y: r.y, width: r.width, height: r.height }; }));
     for (const box of toolbar) { expect(box.y).toBe(toolbar[0].y); expect(box.width).toBe(32); expect(box.height).toBe(32); }
     await expect(page.locator('#analysis-rating')).toBeVisible();
@@ -726,6 +732,37 @@ for (const width of [320, 390]) {
     await expect(variation).toHaveCount(0);
     await page.locator('#analysis-next').click();
     await piece(page, 'e5', 'black pawn');
+  });
+}
+
+for (const originPly of [0, 9, 12]) {
+  test(`variation is inserted at its origin ply ${originPly}`, async ({ page }, info) => {
+    await page.setViewportSize({ width: 320, height: 844 });
+    await boot(page, {}, false, '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6,b5a4,g8f6,e1g1,f8e7,f1e1,b7b5');
+    await page.locator('#analysis-first').click();
+    for (let index = 0; index < originPly; index++) await page.locator('#analysis-next').click();
+    await move(page, originPly === 9 ? 'd7' : 'd2', originPly === 9 ? 'd6' : 'd4');
+    const variation = page.getByLabel('Explored variation', { exact: true });
+    await expect(variation).toBeVisible();
+    await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
+    const placement = await variation.evaluate(el => {
+      const group = el.parentElement!;
+      const before = []; let sibling = group.previousElementSibling;
+      while (sibling) { before.push(sibling.tagName); sibling = sibling.previousElementSibling; }
+      if (el.previousElementSibling) before.push(el.previousElementSibling.tagName);
+      const after = []; sibling = group.nextElementSibling;
+      while (sibling) { after.push(sibling.className); sibling = sibling.nextElementSibling; }
+      return { before, after, top: el.getBoundingClientRect().top, parentBottom: el.previousElementSibling?.getBoundingClientRect().bottom, tailTop: group.nextElementSibling?.getBoundingClientRect().top, bottom: el.getBoundingClientRect().bottom };
+    });
+    expect(placement.before).toEqual(Array(originPly).fill('BUTTON'));
+    expect(placement.after).toEqual(Array(12 - originPly).fill('original-move'));
+    if (placement.parentBottom !== undefined) expect(placement.top).toBeGreaterThanOrEqual(placement.parentBottom);
+    if (placement.tailTop !== undefined) expect(placement.tailTop).toBeGreaterThanOrEqual(placement.bottom);
+    await page.screenshot({ path: info.outputPath(`branch-origin-${originPly}.png`), fullPage: true });
+    await page.locator('#analysis-prev').click();
+    await expect(page.locator('#analysis-index')).toHaveText(`Position ${originPly + 1} / ${originPly + 2}`);
+    await page.locator('#analysis-next').click();
+    await expect(page.locator('.variation-line .move-cell')).toHaveAttribute('aria-current', 'step');
   });
 }
 
