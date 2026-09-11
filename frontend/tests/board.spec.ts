@@ -98,6 +98,25 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
 }
 function countCaptures(game: StoredGame) { return replay(game.moves).history({ verbose: true }).filter(move => move.captured).length; }
 
+for (const width of [390, 640, 1440]) {
+  test(`destination tabs stay in place across modes at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await boot(page);
+    const tabs = page.getByRole('navigation', { name: 'Destination' });
+    const positions = () => tabs.getByRole('link').evaluateAll(links => links.map(link => {
+      const { x, y, width, height } = link.getBoundingClientRect();
+      return { x, y, width, height };
+    }));
+    const initial = await positions();
+    const names = await tabs.getByRole('link').allTextContents();
+    for (const name of [...names.filter(name => name !== 'Play'), 'Play']) {
+      await tabs.getByRole('link', { name, exact: true }).click();
+      await expect(tabs.getByRole('link', { name, exact: true })).toHaveAttribute('aria-current', 'page');
+      expect(await positions()).toEqual(initial);
+    }
+  });
+}
+
 for (const path of ['/analyze', '/history']) {
   test(`direct ${path} and refresh never start restored play inference`, async ({ page }) => {
     const game = record(['e2e4']);
