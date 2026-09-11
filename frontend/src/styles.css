@@ -8,8 +8,10 @@ button:disabled { opacity: .4; cursor: default; }
 button[aria-pressed="true"], button[aria-current] { color: #e6f0d5; background: #414b35; border-color: #899d6b; }
 button.primary { background: var(--accent); color: #202619; border-color: var(--accent); font-weight: 650; }
 button.primary:hover { background: #c9d7b0; }
-button.quiet { background: transparent; border-color: transparent; color: var(--muted); font-size: 12px; min-height: 44px; }
+button.quiet { background: transparent; border-color: transparent; color: var(--muted); font-size: 12px; min-height: 0; min-width: 0; padding: 4px 6px; }
 button.quiet:hover:not(:disabled) { background: transparent; color: inherit; text-decoration: underline; }
+.analysis-record { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin: 6px 0; }
+.analysis-record p { margin: 0; font-size: 12px; color: var(--muted); }
 :focus-visible { outline: 2px solid #d2dfbd; outline-offset: 3px; }
 [hidden] { display: none !important; }
 h1, h2, h3, p { margin: 0 0 16px; }
