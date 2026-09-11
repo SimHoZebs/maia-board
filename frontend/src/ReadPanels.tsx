@@ -4,7 +4,8 @@ import type { Action, State } from './state';
 import { downloadPgn, Rating } from './BoardTools';
 import { Button, CandidateList, CandidateRow, EngineSection, IconButton, WinEstimate } from './components';
 import { Dialog } from './Dialog';
-import { ArrowLeft, ArrowRight, SkipBack, SkipForward } from 'lucide-react';
+import { ArrowLeft, ArrowRight, SkipBack, SkipForward, Play, Search, Download, Trash2 } from 'lucide-react';
+import { BoardThumbnail } from './BoardThumbnail';
 import type { Review } from './useReview';
 import { QualityBadge, ReviewCharts } from './ReviewCharts';
 import { getAnalysisRecords, isFreshRecord, lineHash } from './analysisRecords';
@@ -156,8 +157,17 @@ export function SavedGames({ state, dispatch, analysisOnly = false }: { state: S
     </div>}
     {!state.saved.length && <p className="empty-copy">Your games will appear here.</p>}
     <div id="saved-games">{state.saved.map((game, index) => {
-      const result = gameResult(replay(game.moves));
-      return <article className="saved-game" key={game.id}><div><time dateTime={game.createdAt}>{new Date(game.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</time><h2>{sideName(game.settings.userColor)} · Maia {game.settings.eloMaia}</h2><p>{result}{analyzedLines.has(badgeHashes[index]) && ' · Analyzed'}</p></div><div className="actions">{!analysisOnly && result === 'Unfinished' && <Button data-game-id={game.id} onClick={() => dispatch({ type: 'saved', id: game.id })}>Resume</Button>}<Button onClick={() => dispatch({ type: 'review', id: game.id })}>Analyze</Button>{!analysisOnly && <><Button onClick={() => downloadPgn(exportLine(loadLine('', game.moves.join(' '))), 'maia-game.pgn')}>Export</Button><Button onClick={() => setDeleting(game.id)}>Delete</Button></>}</div></article>;
+      const position = replay(game.moves);
+      const result = gameResult(position);
+      return <article className="saved-game" key={game.id}>
+        <BoardThumbnail fen={position.fen()} orientation={game.settings.userColor} />
+        <div className="saved-details"><time dateTime={game.createdAt}>{new Date(game.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}</time><h2>{sideName(game.settings.userColor)} · Maia {game.settings.eloMaia}</h2><p>{result}{analyzedLines.has(badgeHashes[index]) && ' · Analyzed'}</p></div>
+        <div className="actions saved-actions">
+          {!analysisOnly && result === 'Unfinished' && <IconButton label="Resume" data-game-id={game.id} onClick={() => dispatch({ type: 'saved', id: game.id })}><Play size={16} aria-hidden="true" /></IconButton>}
+          <IconButton label="Analyze" onClick={() => dispatch({ type: 'review', id: game.id })}><Search size={16} aria-hidden="true" /></IconButton>
+          {!analysisOnly && <><IconButton label="Export" onClick={() => downloadPgn(exportLine(loadLine('', game.moves.join(' '))), 'maia-game.pgn')}><Download size={16} aria-hidden="true" /></IconButton><IconButton label="Delete" onClick={() => setDeleting(game.id)}><Trash2 size={16} aria-hidden="true" /></IconButton></>}
+        </div>
+      </article>;
     })}</div>
     {deleting && <Dialog title="Delete saved game?" onCancel={() => setDeleting(null)}><h2>Delete saved game?</h2><p>This removes the game from this device.</p><div className="actions"><Button onClick={() => { dispatch({ type: 'delete', id: deleting }); setDeleting(null); }}>Delete game</Button><Button onClick={() => setDeleting(null)}>Cancel</Button></div></Dialog>}
   </section>;

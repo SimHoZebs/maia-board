@@ -123,6 +123,11 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .saved-game h2 { font-size: 16px; margin: 6px 0; }
 .saved-game p { margin: 0; font-size: 13px; }
 .saved-game time { color: var(--muted); font-size: 12px; }
+.saved-details { flex: 1; min-width: 0; }
+.board-thumbnail { width: 88px; height: 88px; flex: 0 0 88px; overflow: hidden; border-radius: 4px; }
+.board-thumbnail > div { width: 100%; height: 100%; }
+.saved-actions { gap: 4px; flex-shrink: 0; }
+.saved-actions button { width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 .dialog, .promotion-dialog { width: min(540px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow: auto; padding: 24px; color: #eeeae3; background: #282a2b; border: 1px solid #555758; border-radius: 8px; }
 .dialog::backdrop, .promotion-dialog::backdrop { background: #0009; }
 .dialog .panel { padding: 0; border: 0; }
@@ -149,8 +154,8 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
   .rank { width: 10px; }
   .entry { margin: 24px auto; }
   .panel { padding: 18px; }
-  .saved-game { flex-direction: column; align-items: stretch; }
-  .saved-game .actions button { flex: 1; }
+  .saved-game { flex-wrap: wrap; gap: 12px; }
+  .saved-game .saved-actions { width: 100%; justify-content: flex-end; }
   .game-result { font-size: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: 0s !important; } }
