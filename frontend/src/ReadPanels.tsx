@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch } 
 import { absoluteWdl, candidateSan, exportLine, gameResult, loadLine, replay, sideName, START_FEN } from './domain';
 import type { Action, State } from './state';
 import { downloadPgn, Rating } from './BoardTools';
+import { Button, CandidateList, CandidateRow, EngineSection, IconButton, WinEstimate } from './components';
 import { Dialog } from './Dialog';
 import { ArrowLeft, ArrowRight, SkipBack, SkipForward } from 'lucide-react';
 import type { Review } from './useReview';
@@ -17,7 +18,7 @@ function ReviewLaunch({ state, review }: { state: State; review: Review }) {
   const branch = state.analysis.branchFromPly !== null;
   if (branch) {
     if (review.progress?.running) return null;
-    return <button className="primary" disabled={review.tooLong} onClick={review.start}>Analyze explored line</button>;
+    return <Button variant="primary" disabled={review.tooLong} onClick={review.start}>Analyze explored line</Button>;
   }
   const progress = review.progress;
   const complete = !!progress && !progress.running && !progress.canceled && progress.done === progress.total && !progress.failed;
@@ -25,19 +26,19 @@ function ReviewLaunch({ state, review }: { state: State; review: Review }) {
   const record = review.recordStatus.state === 'fresh' ? review.recordStatus.record :
     review.recordStatus.state === 'stale' ? review.recordStatus.record : undefined;
   if (complete || (review.coverage && review.coverage.covered === review.coverage.total)) {
-    return <div className="analysis-record"><p role="status">Analyzed{record ? ` · ${recordDate(record.completed_at)}` : ''}</p><button className="quiet" onClick={review.start}>Re-analyze</button></div>;
+    return <div className="analysis-record"><p role="status">Analyzed{record ? ` · ${recordDate(record.completed_at)}` : ''}</p><Button variant="quiet" onClick={review.start}>Re-analyze</Button></div>;
   }
   if (progress && (progress.canceled || progress.failed > 0)) {
-    return <div className="analysis-record"><button className="primary" disabled={review.tooLong} onClick={review.start}>Analyze entire game</button></div>;
+    return <div className="analysis-record"><Button variant="primary" disabled={review.tooLong} onClick={review.start}>Analyze entire game</Button></div>;
   }
   if (review.coverage && record) {
-    return <div className="analysis-record"><p role="status">Analyzed · {recordDate(record.completed_at)} · {review.coverage.covered} of {review.coverage.total} positions cached</p><button className="primary" onClick={review.start}>Restore remaining</button></div>;
+    return <div className="analysis-record"><p role="status">Analyzed · {recordDate(record.completed_at)} · {review.coverage.covered} of {review.coverage.total} positions cached</p><Button variant="primary" onClick={review.start}>Restore remaining</Button></div>;
   }
-  if (review.recordStatus.state === 'fresh') return <button className="primary" disabled>Loading analysis…</button>;
-  if (review.recordStatus.state === 'checking') return <button className="primary" disabled>Checking analysis…</button>;
+  if (review.recordStatus.state === 'fresh') return <Button variant="primary" disabled>Loading analysis…</Button>;
+  if (review.recordStatus.state === 'checking') return <Button variant="primary" disabled>Checking analysis…</Button>;
   return <div className="analysis-record">{review.recordStatus.state === 'stale' && record &&
     <p>Last analyzed {recordDate(record.completed_at)} · Maia {record.settings.elo_maia} · {record.settings.model}</p>}
-    <button className="primary" disabled={review.tooLong} onClick={review.start}>Analyze entire game</button></div>;
+    <Button variant="primary" disabled={review.tooLong} onClick={review.start}>Analyze entire game</Button></div>;
 }
 
 export function InsightPanel({ state, dispatch, review }: { state: State; dispatch: Dispatch<Action>; review: Review }) {
@@ -49,58 +50,50 @@ export function InsightPanel({ state, dispatch, review }: { state: State; dispat
   const evaluation = review.current;
   return <aside className="panel insight-panel" aria-labelledby="insight-title">
     {review.tooLong && <p role="status">Review supports up to 256 moves (plies).</p>}
-    {(review.error || !!review.progress?.failed) && <p role="alert">{review.error || `${review.progress!.failed} analysis jobs failed.`} <button onClick={review.retry}>Retry failed</button></p>}
+    {(review.error || !!review.progress?.failed) && <p role="alert">{review.error || `${review.progress!.failed} analysis jobs failed.`} <Button onClick={review.retry}>Retry failed</Button></p>}
     <ReviewLaunch state={state} review={review} />
-    {review.progress && <div role="status">{review.progress.done} / {review.progress.total} analysis jobs {review.progress.failed ? `· ${review.progress.failed} failed` : ''} {review.progress.canceled ? '· canceled' : ''}{review.progress.running && <button onClick={review.cancel}>Cancel analysis</button>}</div>}
+    {review.progress && <div role="status">{review.progress.done} / {review.progress.total} analysis jobs {review.progress.failed ? `· ${review.progress.failed} failed` : ''} {review.progress.canceled ? '· canceled' : ''}{review.progress.running && <Button onClick={review.cancel}>Cancel analysis</Button>}</div>}
     <ReviewCharts review={review} ply={state.analysis.index} sans={review.nodes.at(-1)!.moves.map((_, index) => candidateSan(review.nodes[index].fen, review.nodes[index + 1].moves[index]))} onView={ply => dispatch({ type: 'view', ply })} />
     <details><summary>Analysis settings</summary><Rating id="analysis-rating" label="Analyzed-player rating" value={analysisSettings.eloMaia} onChange={eloMaia => dispatch({ type: 'analysis-settings', settings: { eloMaia } })} /><label className="field">Model<select id="analysis-model" value={analysisSettings.model} onChange={event => dispatch({ type: 'analysis-settings', settings: { model: event.target.value as '5m' | '79m' } })}><option value="79m">79M</option><option value="5m">5M</option></select></label></details>
     <div className="engine-duo">
-    <section aria-label="Maia analysis">
-      <h2 id="insight-title"><span className="source-dot source-maia" aria-hidden="true" /> Human moves · {analysisSettings.eloMaia} rating</h2>
+    <EngineSection label="Maia analysis" titleId="insight-title" dotClass="source-maia" title={`Human moves · ${analysisSettings.eloMaia} rating`}>
       <p className="model-context">Maia {response?.model_used.toUpperCase() ?? analysisSettings.model.toUpperCase()}{response?.degraded ? ' · fallback model' : ''}</p>
       {response && insight ? <div id="insight-content">
-        <section className="estimate" aria-label="Maia win estimate"><div className="win-hero"><strong>{Math.round(absoluteWdl(insight.fen, response.wdl)[0] * 100)}%</strong><span>White win · after {candidateSan(insight.fen, response.top_moves[0].move)}</span></div></section>
+        <WinEstimate label="Maia win estimate" percent={Math.round(absoluteWdl(insight.fen, response.wdl)[0] * 100)} caption={`White win · after ${candidateSan(insight.fen, response.top_moves[0].move)}`} />
         <h3>Maia {analysisSettings.eloMaia} moves</h3>
-        <ol className="candidate-list">{response.top_moves.slice(0, 5).map((candidate, index) => {
-          const san = candidateSan(insight.fen, candidate.move);
-          const isPlayed = candidate.move === played;
-          const preview = () => dispatch({ type: 'preview', uci: candidate.move });
-          return <CandidateRow key={candidate.move} index={index} san={san} metric={`${Math.round(candidate.prob * 100)}%`} isPlayed={isPlayed} preview={{ label: `Preview ${san}${isPlayed ? ' (played)' : ''}`, active: state.preview === candidate.move, onPreview: preview }} />;
-        })}</ol>
-        {played && !response.top_moves.slice(0, 5).some(candidate => candidate.move === played) && <p>Played {candidateSan(insight.fen, played)}</p>}
+        <CandidateList playedSan={played && !response.top_moves.slice(0, 5).some(candidate => candidate.move === played) ? candidateSan(insight.fen, played) : null}>
+          {response.top_moves.slice(0, 5).map((candidate, index) => {
+            const san = candidateSan(insight.fen, candidate.move);
+            const isPlayed = candidate.move === played;
+            const preview = () => dispatch({ type: 'preview', uci: candidate.move });
+            return <CandidateRow key={candidate.move} index={index} san={san} metric={`${Math.round(candidate.prob * 100)}%`} isPlayed={isPlayed} preview={{ label: `Preview ${san}${isPlayed ? ' (played)' : ''}`, active: state.preview === candidate.move, onPreview: preview }} />;
+          })}
+        </CandidateList>
       </div> : <p className="empty-copy">No analysis yet.</p>}
-    </section>
-    <section aria-label="Stockfish evaluation">
-      <h2><span className="source-dot source-stockfish" aria-hidden="true" /> Stockfish</h2>
-      {evaluation ? <StockfishBody fen={node.fen} evaluation={evaluation} played={played} /> : <><p className="model-context">Stockfish 19</p><p className="empty-copy">No analysis yet.</p></>}
-    </section>
+    </EngineSection>
+    <EngineSection label="Stockfish evaluation" dotClass="source-stockfish" title="Stockfish">
+      {evaluation ? <StockfishBody fen={node.fen} evaluation={evaluation} played={played} previewUci={state.preview} onPreview={uci => dispatch({ type: 'preview', uci })} /> : <><p className="model-context">Stockfish 19</p><p className="empty-copy">No analysis yet.</p></>}
+    </EngineSection>
     </div>
   </aside>;
 }
 
-function CandidateRow({ index, san, metric, isPlayed, preview }: {
-  index: number; san: string; metric: string; isPlayed: boolean;
-  preview?: { label: string; active: boolean; onPreview: () => void };
-}) {
-  const inner = <>{isPlayed && <span className="visually-hidden">Played, </span>}<strong>{san}</strong><span className="metric">{metric}</span></>;
-  return <li className={isPlayed ? 'played' : undefined}><span className="rank">{index + 1}</span>{preview ?
-    <button type="button" className="candidate-reading" aria-label={preview.label} aria-pressed={preview.active} onMouseEnter={preview.onPreview} onFocus={preview.onPreview} onClick={preview.onPreview}>{inner}</button> :
-    <span className="candidate-reading">{inner}</span>}</li>;
-}
-
-function StockfishBody({ fen, evaluation, played }: { fen: string; evaluation: Evaluation; played?: string }) {
+function StockfishBody({ fen, evaluation, played, previewUci, onPreview }: { fen: string; evaluation: Evaluation; played?: string; previewUci: string | null; onPreview: (uci: string) => void }) {
   if (evaluation.terminal) return <div>
-    <section className="estimate" aria-label="Stockfish win estimate"><div className="win-hero"><strong>{Math.round(whiteWin(evaluation.score))}%</strong><span>White win · final</span></div></section>
+    <WinEstimate label="Stockfish win estimate" percent={Math.round(whiteWin(evaluation.score))} caption="White win · final" />
     <p>{evaluation.terminal === 'draw' ? 'Draw' : evaluation.terminal === 'white_win' ? 'White wins' : 'Black wins'}</p>
   </div>;
   return <div>
     <p className="model-context">Stockfish 19 · depth {evaluation.depth}</p>
-    <section className="estimate" aria-label="Stockfish win estimate"><div className="win-hero"><strong>{Math.round(whiteWin(evaluation.score))}%</strong><span>White win · this position</span></div></section>
+    <WinEstimate label="Stockfish win estimate" percent={Math.round(whiteWin(evaluation.score))} caption="White win · this position" />
     <h3>Engine moves</h3>
-    <ol className="candidate-list">{evaluation.lines.map((line, index) =>
-      <CandidateRow key={line.move} index={index} san={candidateSan(fen, line.move)} metric={scoreValueText(line.score)} isPlayed={line.move === played} />
-    )}</ol>
-    {played && !evaluation.lines.some(line => line.move === played) && <p>Played {candidateSan(fen, played)}</p>}
+    <CandidateList playedSan={played && !evaluation.lines.some(line => line.move === played) ? candidateSan(fen, played) : null}>
+      {evaluation.lines.map((line, index) => {
+        const san = candidateSan(fen, line.move);
+        const isPlayed = line.move === played;
+        return <CandidateRow key={line.move} index={index} san={san} metric={scoreValueText(line.score)} isPlayed={isPlayed} preview={{ label: `Preview ${san}${isPlayed ? ' (played)' : ''}`, active: previewUci === line.move, onPreview: () => onPreview(line.move) }} />;
+      })}
+    </CandidateList>
   </div>;
 }
 
@@ -122,8 +115,8 @@ export function MovesPanel({ sans, ply, onView, initialFen, historical, qualitie
   const parts = initialFen.split(' '), first = Number(parts[5]) * 2 + (parts[1] === 'b' ? 1 : 0);
   return <section className="notation" aria-label="Move history">
     <div className="move-list" id="move-list" ref={list}>{!sans.length && <span className="empty-copy">Moves appear here</span>}{sans.map((san, index) => <button ref={ply === index + 1 ? active : undefined} className="move-cell" aria-current={ply === index + 1 ? 'step' : undefined} key={index} onClick={() => onView(index + 1)}><span>{Math.floor((first + index) / 2)}{(first + index) % 2 ? '…' : '.'}</span> {san} {qualities && <QualityBadge quality={qualities[index]} />}</button>)}</div>
-    <div className="move-navigation"><div className="nav-buttons">{[{ id: 'first', label: 'First position', Icon: SkipBack, to: 0 }, { id: 'prev', label: 'Previous position', Icon: ArrowLeft, to: ply - 1 }, { id: 'next', label: 'Next position', Icon: ArrowRight, to: ply + 1 }, { id: 'last', label: 'Last position', Icon: SkipForward, to: sans.length }].map(item => <button key={item.id} id={`analysis-${item.id}`} aria-label={item.label} title={item.label} disabled={item.to < 0 || item.to > sans.length || item.to === ply} onClick={() => onView(item.to)}><item.Icon size={18} aria-hidden="true" /></button>)}</div><span id="analysis-index">Position {ply + 1} / {sans.length + 1}</span></div>
-    {historical && <button className="return-game" onClick={() => onView(null)}>Return to game</button>}
+    <div className="move-navigation"><div className="nav-buttons">{[{ id: 'first', label: 'First position', Icon: SkipBack, to: 0 }, { id: 'prev', label: 'Previous position', Icon: ArrowLeft, to: ply - 1 }, { id: 'next', label: 'Next position', Icon: ArrowRight, to: ply + 1 }, { id: 'last', label: 'Last position', Icon: SkipForward, to: sans.length }].map(item => <IconButton key={item.id} id={`analysis-${item.id}`} label={item.label} disabled={item.to < 0 || item.to > sans.length || item.to === ply} onClick={() => onView(item.to)}><item.Icon size={18} aria-hidden="true" /></IconButton>)}</div><span id="analysis-index">Position {ply + 1} / {sans.length + 1}</span></div>
+    {historical && <Button className="return-game" onClick={() => onView(null)}>Return to game</Button>}
   </section>;
 }
 
@@ -154,8 +147,8 @@ export function SavedGames({ state, dispatch, analysisOnly = false }: { state: S
     {!state.saved.length && <p className="empty-copy">Your games will appear here.</p>}
     <div id="saved-games">{state.saved.map((game, index) => {
       const result = gameResult(replay(game.moves));
-      return <article className="saved-game" key={game.id}><div><time dateTime={game.createdAt}>{new Date(game.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</time><h2>{sideName(game.settings.userColor)} · Maia {game.settings.eloMaia}</h2><p>{result}{analyzedLines.has(badgeHashes[index]) && ' · Analyzed'}</p></div><div className="actions">{!analysisOnly && result === 'Unfinished' && <button data-game-id={game.id} onClick={() => dispatch({ type: 'saved', id: game.id })}>Resume</button>}<button onClick={() => dispatch({ type: 'review', id: game.id })}>Analyze</button>{!analysisOnly && <><button onClick={() => downloadPgn(exportLine(loadLine('', game.moves.join(' '))), 'maia-game.pgn')}>Export</button><button onClick={() => setDeleting(game.id)}>Delete</button></>}</div></article>;
+      return <article className="saved-game" key={game.id}><div><time dateTime={game.createdAt}>{new Date(game.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</time><h2>{sideName(game.settings.userColor)} · Maia {game.settings.eloMaia}</h2><p>{result}{analyzedLines.has(badgeHashes[index]) && ' · Analyzed'}</p></div><div className="actions">{!analysisOnly && result === 'Unfinished' && <Button data-game-id={game.id} onClick={() => dispatch({ type: 'saved', id: game.id })}>Resume</Button>}<Button onClick={() => dispatch({ type: 'review', id: game.id })}>Analyze</Button>{!analysisOnly && <><Button onClick={() => downloadPgn(exportLine(loadLine('', game.moves.join(' '))), 'maia-game.pgn')}>Export</Button><Button onClick={() => setDeleting(game.id)}>Delete</Button></>}</div></article>;
     })}</div>
-    {deleting && <Dialog title="Delete saved game?" onCancel={() => setDeleting(null)}><h2>Delete saved game?</h2><p>This removes the game from this device.</p><div className="actions"><button onClick={() => { dispatch({ type: 'delete', id: deleting }); setDeleting(null); }}>Delete game</button><button onClick={() => setDeleting(null)}>Cancel</button></div></Dialog>}
+    {deleting && <Dialog title="Delete saved game?" onCancel={() => setDeleting(null)}><h2>Delete saved game?</h2><p>This removes the game from this device.</p><div className="actions"><Button onClick={() => { dispatch({ type: 'delete', id: deleting }); setDeleting(null); }}>Delete game</Button><Button onClick={() => setDeleting(null)}>Cancel</Button></div></Dialog>}
   </section>;
 }

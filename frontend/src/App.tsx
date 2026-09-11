@@ -3,6 +3,7 @@ import type { Key } from '@lichess-org/chessground/types';
 import { FlipVertical2, Plus, Undo2 } from 'lucide-react';
 import { Chess } from 'chess.js';
 import { ChessBoard } from './ChessBoard';
+import { Button, IconButton } from './components';
 import { AnalysisActions, AnalysisControls, PlayControls, type Props } from './Controls';
 import { InsightPanel, MovesPanel, SavedGames } from './ReadPanels';
 import { PromotionDialog } from './PromotionDialog';
@@ -48,9 +49,9 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
     return <div className={`player-strip${active && ready ? ' active' : ''}`}><span className={`side-dot ${color}`} /><strong>{analysis ? sideName(color) : color === settings.userColor ? 'You' : `Maia · ${settings.eloMaia}`}</strong><span className="player-side">{!analysis && sideName(color)}</span>{active && ready && <span className="turn-indicator" role="status">{historic ? 'At this position' : request && !analysis ? 'Thinking…' : 'To move'}</span>}</div>;
   };
   return <div className="app-shell">
-    <header className="site-header"><span className="brand">maia board</span>{children}{mode === 'play' && ready && <button id="new-game" className="header-action" type="button" aria-label="New game" title="New game" onClick={() => dispatch({ type: 'setup' })}><Plus size={18} aria-hidden="true" /></button>}</header>
+    <header className="site-header"><span className="brand">maia board</span>{children}{mode === 'play' && ready && <IconButton id="new-game" className="header-action" label="New game" onClick={() => dispatch({ type: 'setup' })}><Plus size={18} aria-hidden="true" /></IconButton>}</header>
     <main>
-      {state.syncError && <div className="sync-banner" role="alert"><span>{state.syncError}</span><button onClick={() => dispatch({ type: 'retry-sync' })}>Retry</button></div>}
+      {state.syncError && <div className="sync-banner" role="alert"><span>{state.syncError}</span><Button onClick={() => dispatch({ type: 'retry-sync' })}>Retry</Button></div>}
       {mode === 'history' ? <SavedGames state={state} dispatch={dispatch} /> : <>
         {!ready && <div className="entry"><PlayControls state={state} dispatch={dispatch} /><AnalysisControls state={state} dispatch={dispatch} /></div>}
         <div className={`workspace${analysis && ready ? ' analyzing' : ''}${historic ? ' historical' : ''}${!analysis && live.isGameOver() ? ' finished' : ''}${!ready ? ' awaiting' : ''}`}>
@@ -60,10 +61,10 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
             {strip(orientation)}
             {ready && <>
               <MovesPanel sans={full.sanMoves} ply={ply} initialFen={analysis ? state.analysis.initialFen : START_FEN} historical={historic} qualities={analysis ? review.qualities : undefined} onView={ply => dispatch({ type: 'view', ply })} />
-              <div className="board-actions"><button id="flip-board" type="button" aria-label="Flip board" title="Flip board" onClick={() => dispatch({ type: 'flip' })}><FlipVertical2 size={18} aria-hidden="true" /></button>{!analysis && <button id="takeback" type="button" aria-label="Takeback" title="Takeback" disabled={!state.play.moves.length} onClick={() => dispatch({ type: 'takeback' })}><Undo2 size={18} aria-hidden="true" /></button>}</div>
+              <div className="board-actions"><IconButton id="flip-board" label="Flip board" onClick={() => dispatch({ type: 'flip' })}><FlipVertical2 size={18} aria-hidden="true" /></IconButton>{!analysis && <IconButton id="takeback" label="Takeback" disabled={!state.play.moves.length} onClick={() => dispatch({ type: 'takeback' })}><Undo2 size={18} aria-hidden="true" /></IconButton>}</div>
               {analysis && state.analysis.branchFromPly !== null && <p className="branch-label">Exploring</p>}
               {analysis && <AnalysisActions state={state} dispatch={dispatch} />}
-              {!analysis && live.isGameOver() && <div className="game-result"><strong>{gameResult(live)}</strong><button className="primary" onClick={() => dispatch({ type: 'review' })}>Review game</button></div>}
+              {!analysis && live.isGameOver() && <div className="game-result"><strong>{gameResult(live)}</strong><Button variant="primary" onClick={() => dispatch({ type: 'review' })}>Review game</Button></div>}
             </>}
             <div id="error-banner" className="error-banner" role="alert" hidden={!error}>{error}</div>
           </section>
