@@ -10,7 +10,7 @@ const SEARCH_POLICY = stockfishPolicy(defaultStockfishSettings);
 
 const record = (moves: string[], color: 'white' | 'black' = 'white', id = 'fixture'): StoredGame => ({ id, createdAt: '2026-09-10T00:00:00Z', moves, settings: { ...defaultSettings, userColor: color } });
 
-async function boot(page: Page, storage: Record<string, unknown> = {}, start = true, path = '/') {
+async function boot(page: Page, storage: Record<string, unknown> = {}, start = true, path = '/', extraInit?: () => void, expectBoard = true) {
   const requests: { route: Route; payload: MoveRequest }[] = [];
   const gameStore = { games: new Map<string, any>(), currentId: null as string | null };
   const errors: string[] = [];
@@ -36,6 +36,7 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
       return (remove as any)(type, ...args);
     }) as typeof document.removeEventListener;
   }, { storage });
+  if (extraInit) await page.addInitScript(extraInit);
   await page.route('http://maia.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/move') { requests.push({ route, payload: route.request().postDataJSON() }); return; }
@@ -83,8 +84,10 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
   await expect(page.getByRole('navigation', { name: 'Destination' })).toBeVisible();
   if (path === '/' || path === '/play') {
     if (start && !storage[KEYS.current]) await page.locator('#start-game').click();
-    await expect(page.locator('#board cg-board')).toHaveCount(1);
-    await expect(page.locator('#board piece:not(.ghost)')).toHaveCount(32 - (storage[KEYS.current] ? countCaptures(storage[KEYS.current] as StoredGame) : 0));
+    if (expectBoard) {
+      await expect(page.locator('#board cg-board')).toHaveCount(1);
+      await expect(page.locator('#board piece:not(.ghost)')).toHaveCount(32 - (storage[KEYS.current] ? countCaptures(storage[KEYS.current] as StoredGame) : 0));
+    }
   }
   async function reply(index: number, move?: string, status = 200, topMoves?: { move: string; prob: number }[]) {
     await expect.poll(() => requests.length).toBeGreaterThan(index);
@@ -436,11 +439,45 @@ test('pending takeback/new game/mode/settings transitions reject obsolete replie
 test('request errors settle without retry loops, controls recover', async ({ page }) => {
   const app = await boot(page);
   await move(page, 'e2', 'e4'); await app.reply(0, undefined, 503);
-  await expect(page.locator('#error-banner')).toHaveText('Maia is busy. Wait a moment and try again.');
+  await expect(page.locator('#error-banner')).toContainText('Maia is busy. Wait a moment and try again.');
+  await expect(page.locator('#retry-request')).toBeVisible();
   await expect(page.locator('.turn-indicator')).not.toHaveText('Thinking…');
-  await page.locator('#takeback').click(); await move(page, 'd2', 'd4');
-  await app.reply(1, 'd7d5'); await expect(page.locator('.turn-indicator')).toHaveText('To move');
-  expect(app.requests).toHaveLength(2);
+  await page.locator('#retry-request').click();
+  await expect.poll(() => app.requests.length).toBe(2);
+  await app.reply(1, 'e7e5'); await expect(page.locator('.turn-indicator')).toHaveText('To move');
+  expect(app.errors).toEqual([]);
+});
+
+test('board crashes stay inside the board panel, rest of app unaffected', async ({ page }) => {
+  // Surgical sabotage: only ResizeObserver.observe calls inside .board-frame
+  // throw, once. MovesPanel observes outside .board-frame, so a narrow board
+  // boundary must catch this while navigation and controls stay alive. The
+  // stored game keeps the board reset key stable across server sync, so the
+  // fallback persists until the scoped retry instead of auto-clearing.
+  const app = await boot(page, { [KEYS.current]: record([], 'white', 'crash-game') }, true, '/play', () => {
+    const RealRO = window.ResizeObserver;
+    let armed = true;
+    window.ResizeObserver = class extends RealRO {
+      observe(target: Element, options?: ResizeObserverOptions) {
+        if (armed && target instanceof Element && target.closest('.board-frame')) {
+          armed = false;
+          throw new Error('injected board crash');
+        }
+        super.observe(target, options);
+      }
+    };
+  }, false);
+  await expect(page.locator('#board-error')).toContainText('Board failed to render');
+  await expect(page.locator('#board-error')).toContainText('rest of the board is unaffected');
+  await expect(page.locator('#board cg-board')).toHaveCount(0);
+  // Isolation: destination nav and board controls survive the board crash.
+  await expect(page.getByRole('navigation', { name: 'Destination' })).toBeVisible();
+  await expect(page.locator('#flip-board')).toBeVisible();
+  // Scoped retry remounts only the board panel and recovers.
+  await page.locator('#board-error').getByRole('button', { name: 'Try again' }).click();
+  await expect(page.locator('#board cg-board')).toHaveCount(1);
+  await expect(page.locator('#board-error')).toHaveCount(0);
+  expect(app.errors).toEqual([]);
 });
 
 test('single live Chessground binding survives React updates and StrictMode cleanup', async ({ page }, testInfo) => {

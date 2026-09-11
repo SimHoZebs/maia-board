@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -60,5 +61,23 @@ func TestHealthzMethod(t *testing.T) {
 	app.healthz(post, httptest.NewRequest(http.MethodPost, "/healthz", nil))
 	if post.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST /healthz status = %d, want %d", post.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestRecoverJSONEmitsErrorBeforeCrash(t *testing.T) {
+	handler := recoverJSON(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("boom")
+	}))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/move", nil))
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("panic status = %d, want %d", recorder.Code, http.StatusInternalServerError)
+	}
+	var body apiError
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("panic body is not JSON: %v", err)
+	}
+	if body.Code != "internal" || body.Message == "" {
+		t.Fatalf("unexpected panic body: %+v", body)
 	}
 }

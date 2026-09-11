@@ -5,6 +5,7 @@ import { Dialog } from './Dialog';
 import { Button } from './components';
 import { resolveSide } from './randomSide';
 import { SavedGames } from './ReadPanels';
+import { ErrorBoundary, PanelError } from './ErrorBoundary';
 import { Rating, downloadPgn } from './BoardTools';
 
 export type Props = { state: State; dispatch: Dispatch<Action> };
@@ -32,7 +33,7 @@ function ImportForm({ state, dispatch }: Props) {
   return <section className="panel import-panel" id="analysis-controls">
     <h1>Analyze a game or position</h1>
     <div className="source-options" aria-label="Analysis source">{(['history', 'pgn', 'fen', 'start'] as const).map(value => <button key={value} aria-pressed={source === value} onClick={() => setSource(value)}>{({ history: 'History', pgn: 'PGN', fen: 'FEN', start: 'Starting position' })[value]}</button>)}</div>
-    {source === 'history' ? <><Button disabled={!state.started} onClick={() => dispatch({ type: 'review' })}>Analyze current game</Button><SavedGames state={state} dispatch={dispatch} analysisOnly /></> : <>
+    {source === 'history' ? <><Button disabled={!state.started} onClick={() => dispatch({ type: 'review' })}>Analyze current game</Button><ErrorBoundary label="saved games" resetKey={JSON.stringify([state.saved.map(game => game.id), state.saved.length])} renderFallback={(error, retry) => <PanelError title="Saved games failed to render" message={error.message || 'Unknown rendering error.'} onRetry={retry} />}><SavedGames state={state} dispatch={dispatch} analysisOnly /></ErrorBoundary></> : <>
       {source === 'pgn' && <label className="field">Game PGN<textarea id="analysis-pgn" rows={5} spellCheck={false} value={state.inputs.pgn} onChange={event => dispatch({ type: 'inputs', inputs: { pgn: event.target.value } })} placeholder="1. e4 e5 2. Nf3" /></label>}
       {source === 'fen' && <><label className="field">Starting FEN<input id="analysis-fen" spellCheck={false} value={state.inputs.fen} onChange={event => dispatch({ type: 'inputs', inputs: { fen: event.target.value } })} /></label><label className="field">Moves from this position (optional PGN)<textarea id="analysis-pgn" rows={3} value={state.inputs.pgn} onChange={event => dispatch({ type: 'inputs', inputs: { pgn: event.target.value } })} /></label></>}
       <Button id="load-analysis" variant="primary" onClick={() => {

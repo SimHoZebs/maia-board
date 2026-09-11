@@ -39,6 +39,7 @@ export type Action =
   | { type: 'saved'; id: string } | { type: 'review'; id?: string } | { type: 'delete'; id: string }
   | { type: 'reply'; request: Request; response: MoveResponse }
   | { type: 'failure'; request: Request; error: unknown }
+  | { type: 'retry' }
   | { type: 'sync'; saved: StoredGame[]; currentId: string | null; total: number | null; pending: OutboxOp[] }
   | { type: 'sync-error'; message: string }
   | { type: 'sync-pending'; pending: number }
@@ -258,5 +259,14 @@ export function reducer(state: State, action: Action): State {
       } catch { return { ...state, request: null, error: 'Maia returned an illegal move.' }; }
     }
     case 'failure': return state.request === action.request ? { ...state, request: null, error: readableApiError(action.error) } : state;
+    case 'retry': {
+      // Manual retry for the last failed Maia reply. Automatic loops are
+      // intentionally avoided (a busy engine would hot-loop); the banner
+      // surfaces the message first and the user gates the next attempt.
+      if (state.request || !state.error) return state;
+      if (state.mode === 'play') return maiaTurn(state) ? queueRequest({ ...state, revision: state.revision + 1 }) : state;
+      if (state.mode === 'analysis') return state.analysisLoaded ? queueRequest({ ...state, revision: state.revision + 1, insight: null, preview: null }) : state;
+      return state;
+    }
   }
 }
