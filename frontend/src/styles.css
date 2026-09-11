@@ -93,7 +93,8 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .candidate-list .metric { color: var(--accent); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .candidate-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .engine-duo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
-@media (max-width: 760px) { .engine-duo { grid-template-columns: minmax(0, 1fr); } }
+.engine-duo > section { min-width: 0; }
+@media (max-width: 760px) { .engine-duo { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; } }
 .engine-card { min-width: 0; }
 .win-hero { flex-wrap: wrap; }
 .candidate-list li > button:last-child { font-size: 12px; padding: 8px; }
@@ -125,7 +126,15 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
   .workspace.awaiting { display: none; }
   .board-stage { width: min(100%, calc(100dvh - 300px)); margin: auto; }
   .player-strip { height: 34px; font-size: 13px; }
-  .insight-panel { margin-top: 0; width: 100%; }
+  .insight-panel { margin-top: 0; width: 100%; padding: 14px; }
+  .insight-panel section[aria-label="Maia analysis"] h2, .insight-panel section[aria-label="Stockfish evaluation"] h2 { font-size: 13px; }
+  .win-hero strong { font-size: 18px; }
+  .win-hero span { font-size: 11px; }
+  .candidate-list li { gap: 4px; }
+  .candidate-preview, .candidate-list .line-reading { padding: 6px; gap: 6px; }
+  .candidate-list .metric { font-size: 12px; }
+  .played-tag { font-size: 9px; padding: 1px 4px; }
+  .rank { width: 10px; }
   .entry { margin: 24px auto; }
   .panel { padding: 18px; }
   .saved-game { flex-direction: column; align-items: stretch; }
