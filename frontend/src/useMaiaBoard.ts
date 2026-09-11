@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef } from 'react';
 import { requestMove } from './api';
-import { initialState, reducer } from './state';
+import { initialState, reducer, snapshotOf } from './state';
 import { KEYS, loadSaved, readStorage, restoreGame, writeStorage } from './storage';
 import {
   deleteRemote, fetchGames, isMigrated, loadOutbox, markMigrated, migrationOps,
@@ -17,6 +17,11 @@ export function useMaiaBoard(mode: Mode) {
   if (state.mode !== mode) dispatch({ type: 'mode', mode });
   useEffect(() => { writeStorage(KEYS.settings, state.settings); }, [state.settings]);
   useEffect(() => { writeStorage(KEYS.analysis, state.inputs); }, [state.inputs]);
+  useEffect(() => {
+    // The loaded analysis line persists independently of the import-form
+    // inputs, so refresh restores the board, not the setup dialog.
+    writeStorage(KEYS.snapshot, state.analysisLoaded ? snapshotOf(state.analysis, state.analysisSourceId ?? undefined) : null);
+  }, [state.analysis, state.analysisLoaded, state.analysisSourceId]);
   useEffect(() => {
     fetchGames().then(
       list => dispatch({
@@ -64,6 +69,11 @@ export function useMaiaBoard(mode: Mode) {
       for (const id of prevSavedIds.current) {
         if (!ids.includes(id)) pushOutbox({ op: 'delete', id });
       }
+      // Deleting the reviewed game retires its snapshot so refresh cannot
+      // resurrect a just-deleted line as analyzed. Records stay: they are
+      // keyed by line content and shared across duplicate lines.
+      const snapshot = readStorage<{ gameId?: unknown }>(KEYS.snapshot);
+      if (snapshot && typeof snapshot.gameId === 'string' && !ids.includes(snapshot.gameId)) writeStorage(KEYS.snapshot, null);
       dispatch({ type: 'sync-pending', pending: loadOutbox().length });
     }
     prevSavedIds.current = ids;

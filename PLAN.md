@@ -52,6 +52,17 @@ public URL.
 2. If snappy → build static UI in same container.
 3. Then Komodo-ize (`maia-board/maia-board-komodo.toml` style) + Traefik route.
 
+## Analysis persistence (2026-09-11)
+
+Per-position results live in the `evaluations` cache; whole-line completion
+lives in `analyses`, keyed by line content (normalized FEN + UCI moves), not
+game id — pasted PGNs share records, deleting a game orphans nothing. Only
+clean main-line batches record (no failures, no degraded Maia answers, no
+explored branches). The loaded line snapshot (`maia-board.analysis-snapshot.v1`)
+restores the analysis board across refresh; History badges compare records
+against current analysis settings. Restore is click-gated so evicted cache
+rows can never trigger automatic inference storms.
+
 ## Notes
 
 - Licenses: Maia3 AGPL-3.0, keep any fork public from day one.

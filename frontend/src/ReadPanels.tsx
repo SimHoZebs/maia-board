@@ -1,12 +1,42 @@
-import { useLayoutEffect, useRef, useState, type Dispatch } from 'react';
-import { absoluteWdl, candidateSan, exportLine, gameResult, loadLine, replay, sideName } from './domain';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch } from 'react';
+import { absoluteWdl, candidateSan, exportLine, gameResult, loadLine, replay, sideName, START_FEN } from './domain';
 import type { Action, State } from './state';
 import { downloadPgn, Rating } from './BoardTools';
 import { Dialog } from './Dialog';
 import { ArrowLeft, ArrowRight, SkipBack, SkipForward } from 'lucide-react';
 import type { Review } from './useReview';
 import { QualityBadge, ReviewCharts } from './ReviewCharts';
+import { getAnalysisRecords, isFreshRecord, lineHash } from './analysisRecords';
 import { scoreValueText, whiteWin, type Evaluation, type Quality } from './reviewMetrics';
+
+function recordDate(completedAt: string): string {
+  return new Date(completedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function ReviewLaunch({ state, review }: { state: State; review: Review }) {
+  const branch = state.analysis.branchFromPly !== null;
+  if (branch) {
+    if (review.progress?.running) return null;
+    return <button className="primary" disabled={review.tooLong} onClick={review.start}>Analyze explored line</button>;
+  }
+  const progress = review.progress;
+  const complete = !!progress && !progress.running && !progress.canceled && progress.done === progress.total && !progress.failed;
+  if (progress?.running) return null;
+  if (complete) {
+    const record = review.recordStatus.state === 'fresh' ? review.recordStatus.record : undefined;
+    return <div className="analysis-record"><p role="status">Analyzed{record ? ` · ${recordDate(record.completed_at)}` : ''}</p><button onClick={review.start}>Re-analyze</button></div>;
+  }
+  if (progress && (progress.canceled || progress.failed > 0)) {
+    return <div className="analysis-record"><button className="primary" disabled={review.tooLong} onClick={review.start}>Analyze entire game</button></div>;
+  }
+  if (review.recordStatus.state === 'fresh' && review.recordStatus.record) {
+    return <div className="analysis-record"><p role="status">Analyzed · {recordDate(review.recordStatus.record.completed_at)} · results not loaded</p><button className="primary" onClick={review.start}>Restore analysis</button></div>;
+  }
+  if (review.recordStatus.state === 'checking') return <button className="primary" disabled>Checking analysis…</button>;
+  return <div className="analysis-record">{review.recordStatus.state === 'stale' && review.recordStatus.record &&
+    <p>Last analyzed {recordDate(review.recordStatus.record.completed_at)} · Maia {review.recordStatus.record.settings.elo_maia} · {review.recordStatus.record.settings.model}</p>}
+    <button className="primary" disabled={review.tooLong} onClick={review.start}>Analyze entire game</button></div>;
+}
 
 export function InsightPanel({ state, dispatch, review }: { state: State; dispatch: Dispatch<Action>; review: Review }) {
   const { analysisSettings } = state;
@@ -18,7 +48,7 @@ export function InsightPanel({ state, dispatch, review }: { state: State; dispat
   return <aside className="panel insight-panel" aria-labelledby="insight-title">
     {review.tooLong && <p role="status">Review supports up to 256 moves (plies).</p>}
     {(review.error || !!review.progress?.failed) && <p role="alert">{review.error || `${review.progress!.failed} analysis jobs failed.`} <button onClick={review.retry}>Retry failed</button></p>}
-    {!review.progress?.running && <button className="primary" disabled={review.tooLong} onClick={review.start}>{state.analysis.branchFromPly === null ? 'Analyze entire game' : 'Analyze explored line'}</button>}
+    <ReviewLaunch state={state} review={review} />
     {review.progress && <div role="status">{review.progress.done} / {review.progress.total} analysis jobs {review.progress.failed ? `· ${review.progress.failed} failed` : ''} {review.progress.canceled ? '· canceled' : ''}{review.progress.running && <button onClick={review.cancel}>Cancel analysis</button>}</div>}
     <ReviewCharts review={review} ply={state.analysis.index} sans={review.nodes.at(-1)!.moves.map((_, index) => candidateSan(review.nodes[index].fen, review.nodes[index + 1].moves[index]))} onView={ply => dispatch({ type: 'view', ply })} side={state.analysis.perspective} yours={state.analysis.ownGame} />
     <div className="engine-duo">
@@ -86,15 +116,32 @@ export function MovesPanel({ sans, ply, onView, initialFen, historical, qualitie
 
 export function SavedGames({ state, dispatch, analysisOnly = false }: { state: State; dispatch: Dispatch<Action>; analysisOnly?: boolean }) {
   const [deleting, setDeleting] = useState<string | null>(null);
+  // Line-level analyzed lookup, memoized on the saved list plus the current
+  // analysis settings: the badge must agree with the detail view, which
+  // compares records against global analysisSettings (History→Analyze keeps
+  // them). Chunked client-side past the 200-hash server cap.
+  const badgeKey = `${state.saved.map(game => `${game.id}:${game.moves.join(',')}`).join('|')}|${state.analysisSettings.eloMaia}|${state.analysisSettings.model}`;
+  const [analyzedLines, setAnalyzedLines] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const settings = { eloMaia: state.analysisSettings.eloMaia, eloUser: state.analysisSettings.eloMaia, model: state.analysisSettings.model };
+    const hashes = state.saved.map(game => lineHash(START_FEN, game.moves));
+    let cancelled = false;
+    getAnalysisRecords(hashes).then(
+      records => { if (!cancelled) setAnalyzedLines(new Set(records.filter(record => isFreshRecord(record, settings)).map(record => record.line_hash))); },
+      () => { if (!cancelled) setAnalyzedLines(new Set()); },
+    );
+    return () => { cancelled = true; };
+  }, [badgeKey]);
+  const badgeHashes = useMemo(() => state.saved.map(game => lineHash(START_FEN, game.moves)), [badgeKey]);
   return <section className="saved-panel" aria-label="Saved games">
     {!analysisOnly && <div className="saved-heading"><h1>History</h1>
       {state.syncPending > 0 && <span role="status">Syncing…</span>}
       {state.historyTotal !== null && state.historyTotal > state.saved.length && <span>Showing {state.saved.length} of {state.historyTotal}</span>}
     </div>}
     {!state.saved.length && <p className="empty-copy">Your games will appear here.</p>}
-    <div id="saved-games">{state.saved.map(game => {
+    <div id="saved-games">{state.saved.map((game, index) => {
       const result = gameResult(replay(game.moves));
-      return <article className="saved-game" key={game.id}><div><time dateTime={game.createdAt}>{new Date(game.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</time><h2>{sideName(game.settings.userColor)} · Maia {game.settings.eloMaia}</h2><p>{result}</p></div><div className="actions">{!analysisOnly && result === 'Unfinished' && <button data-game-id={game.id} onClick={() => dispatch({ type: 'saved', id: game.id })}>Resume</button>}<button onClick={() => dispatch({ type: 'review', id: game.id })}>Analyze</button>{!analysisOnly && <><button onClick={() => downloadPgn(exportLine(loadLine('', game.moves.join(' '))), 'maia-game.pgn')}>Export</button><button onClick={() => setDeleting(game.id)}>Delete</button></>}</div></article>;
+      return <article className="saved-game" key={game.id}><div><time dateTime={game.createdAt}>{new Date(game.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</time><h2>{sideName(game.settings.userColor)} · Maia {game.settings.eloMaia}</h2><p>{result}{analyzedLines.has(badgeHashes[index]) && ' · Analyzed'}</p></div><div className="actions">{!analysisOnly && result === 'Unfinished' && <button data-game-id={game.id} onClick={() => dispatch({ type: 'saved', id: game.id })}>Resume</button>}<button onClick={() => dispatch({ type: 'review', id: game.id })}>Analyze</button>{!analysisOnly && <><button onClick={() => downloadPgn(exportLine(loadLine('', game.moves.join(' '))), 'maia-game.pgn')}>Export</button><button onClick={() => setDeleting(game.id)}>Delete</button></>}</div></article>;
     })}</div>
     {deleting && <Dialog title="Delete saved game?" onCancel={() => setDeleting(null)}><h2>Delete saved game?</h2><p>This removes the game from this device.</p><div className="actions"><button onClick={() => { dispatch({ type: 'delete', id: deleting }); setDeleting(null); }}>Delete game</button><button onClick={() => setDeleting(null)}>Cancel</button></div></Dialog>}
   </section>;

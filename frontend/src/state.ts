@@ -1,5 +1,5 @@
 import { Chess, type Square } from 'chess.js';
-import { type MoveRequest, type MoveResponse, readableApiError } from './api';
+import { type MaiaColor, type MoveRequest, type MoveResponse, readableApiError } from './api';
 import { toGroundColor } from './board-colors';
 import { analysisLength, analysisLine, applyUci, loadLine, newId, oppositeColor, positionOf, replay, START_FEN,
   type Analysis, type Insight, type Mode, type Settings, type StoredGame } from './domain';
@@ -11,7 +11,7 @@ export type Draft = Pick<Settings, 'eloMaia' | 'model'> & { userColor: 'white' |
 export type State = {
   mode: Mode; settings: Settings; play: StoredGame; saved: StoredGame[];
   started: boolean; setup: Draft | null; viewedPly: number | null;
-  analysis: Analysis; analysisSettings: Draft; analysisLoaded: boolean; importing: boolean;
+  analysis: Analysis; analysisSettings: Draft; analysisLoaded: boolean; importing: boolean; analysisSourceId: string | null;
   inputs: { fen: string; pgn: string }; flipped: boolean; preview: string | null;
   promotion: { from: Square; to: Square } | null;
   insight: Insight | null; error: string; request: Request | null; revision: number;
@@ -79,16 +79,44 @@ function commitMove(state: State, from: Square, to: Square, promotion?: string):
     return transition(withPlay(state, { ...state.play, moves: positionOf(game).moves }), { viewedPly: null });
   } catch { return { ...state, promotion: null, error: 'That move is not legal in this position.' }; }
 }
+export type AnalysisSnapshot = { initialFen: string; moves: string[]; index: number; perspective: MaiaColor; ownGame: boolean; gameId?: string };
+// The loaded analysis line survives refresh independently of the import-form
+// inputs: the snapshot is the board, the inputs are the dialog text. Typing
+// without loading never overwrites it, so boot precedence needs no rule.
+export function readSnapshot(): { analysis: Analysis; gameId?: string } | undefined {
+  const stored = readStorage<Partial<AnalysisSnapshot>>(KEYS.snapshot);
+  if (!stored || typeof stored.initialFen !== 'string' || !Array.isArray(stored.moves) || !stored.moves.every(move => typeof move === 'string')) return;
+  let base: Analysis;
+  try { base = loadLine(stored.initialFen, stored.moves.join(' ')); }
+  catch { return; }
+  if (base.moves.length !== stored.moves.length) return;
+  const analysis: Analysis = { ...base,
+    index: typeof stored.index === 'number' ? Math.max(0, Math.min(base.moves.length, Math.floor(stored.index))) : base.moves.length,
+    perspective: stored.perspective === 'white' || stored.perspective === 'black' ? stored.perspective : base.perspective,
+    ownGame: stored.ownGame === true };
+  return { analysis, ...(typeof stored.gameId === 'string' ? { gameId: stored.gameId } : {}) };
+}
+export function snapshotOf(analysis: Analysis, gameId?: string): AnalysisSnapshot {
+  return { initialFen: analysis.initialFen, moves: analysis.moves, index: analysis.index,
+    perspective: analysis.perspective, ownGame: analysis.ownGame, ...(gameId ? { gameId } : {}) };
+}
 export function initialState(mode: Mode = 'play'): State {
   const restored = restoreGame(readStorage(KEYS.current));
   const settings = restored?.settings ?? loadSettings();
   const stored = readStorage<Partial<State['inputs']>>(KEYS.analysis);
   const inputs = { fen: typeof stored?.fen === 'string' ? stored.fen : '', pgn: typeof stored?.pgn === 'string' ? stored.pgn : '' };
+  const snapshot = readSnapshot();
   let analysis = loadLine();
-  try { analysis = loadLine(inputs.fen, inputs.pgn); } catch { /* Keep editable invalid input for correction. */ }
+  let analysisLoaded = false;
+  if (snapshot) {
+    analysis = snapshot.analysis;
+    analysisLoaded = true;
+  } else {
+    try { analysis = loadLine(inputs.fen, inputs.pgn); } catch { /* Keep editable invalid input for correction. */ }
+  }
   const state: State = { mode, settings, play: restored ?? { id: newId(), createdAt: new Date().toISOString(), moves: [], settings },
     started: !!restored, setup: restored ? null : { ...settings }, viewedPly: null,
-    saved: loadSaved(), analysis, analysisSettings: { ...settings }, analysisLoaded: false, importing: true,
+    saved: loadSaved(), analysis, analysisSettings: { ...settings }, analysisLoaded, importing: !analysisLoaded, analysisSourceId: snapshot?.gameId ?? null,
     inputs, flipped: false, preview: null, promotion: null, insight: null, error: '', request: null, revision: 0,
     syncError: '', syncPending: loadOutbox().length, flushNonce: 0, historyTotal: null };
   return mode === 'play' && maiaTurn(state) ? queueRequest(state) : state;
@@ -130,7 +158,7 @@ export function reducer(state: State, action: Action): State {
     case 'original': return transition(state, { analysis: { ...state.analysis, index: state.analysis.branchFromPly ?? state.analysis.index, branchFromPly: null, branchMoves: [] } }, false);
     case 'inputs': return { ...state, inputs: { ...state.inputs, ...action.inputs } };
     case 'load': {
-      try { return transition(state, { analysis: loadLine(state.inputs.fen, state.inputs.pgn), analysisLoaded: true, importing: false }, false); }
+      try { return transition(state, { analysis: loadLine(state.inputs.fen, state.inputs.pgn), analysisLoaded: true, importing: false, analysisSourceId: null }, false); }
       catch (error) { return { ...state, error: error instanceof Error ? error.message : 'Could not load this position.' }; }
     }
     case 'step': return reducer(state, { type: 'view', ply: (state.mode === 'play' ? state.viewedPly ?? state.play.moves.length : state.analysis.index) + action.delta });
@@ -151,7 +179,7 @@ export function reducer(state: State, action: Action): State {
       const play = action.id ? state.saved.find(game => game.id === action.id) : state.play;
       if (!play) return state;
       const analysis = loadLine('', play.moves.join(' '));
-      return transition(state, { mode: 'analysis', analysis: { ...analysis, perspective: play.settings.userColor, ownGame: true }, analysisLoaded: true, importing: false }, false);
+      return transition(state, { mode: 'analysis', analysis: { ...analysis, perspective: play.settings.userColor, ownGame: true }, analysisLoaded: true, importing: false, analysisSourceId: action.id ?? null }, false);
     }
     case 'delete': {
       const saved = state.saved.filter(game => game.id !== action.id);

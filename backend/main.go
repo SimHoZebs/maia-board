@@ -83,6 +83,8 @@ func main() {
 	mux.HandleFunc("/games/", app.gameByID)
 	mux.HandleFunc("/evaluations", app.evaluations)
 	mux.HandleFunc("/evaluations/", app.evaluations)
+	mux.HandleFunc("/analyses", app.analyses)
+	mux.HandleFunc("/analyses/", app.analyses)
 	mux.HandleFunc("/", app.frontend)
 	address := ":" + port
 	log.Printf("maia-board listening on %s", address)

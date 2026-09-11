@@ -1,13 +1,15 @@
 import { test, expect, type Page, type Route } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { replay } from '../src/domain';
+import { replay, START_FEN } from '../src/domain';
 import { SEARCH_POLICY } from '../src/reviewMetrics';
 import { KEYS } from '../src/storage';
+import { lineHash, recordSettings } from '../src/analysisRecords';
 
 async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6') {
   const requests: { engine: string; moves: string[]; initial_fen: string; elo_maia?: number }[] = [];
   const evaluations = new Map<string, { engine: string; value: unknown }>();
+  const analyses: { line: string; settings: unknown; positions: number; failed: number }[] = [];
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.route('http://maia.test/**', async route => {
@@ -37,6 +39,18 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6') {
         lines: [{ move: best, score, depth: 12 }, { move: legal.find(move => move !== best), score: { type: 'cp', value: game.turn() === 'w' ? -500 : 500 }, depth: 12 }],
       } }); return;
     }
+    if (path === '/analyses' || path.startsWith('/analyses/')) {
+      const url = new URL(route.request().url());
+      if (route.request().method() === 'PUT') {
+        const put = route.request().postDataJSON();
+        analyses.push({ line: path.slice('/analyses/'.length), settings: put.settings, positions: put.positions, failed: put.failed });
+        await route.fulfill({ json: { line_hash: path.slice('/analyses/'.length), settings: put.settings, positions: put.positions, failed: put.failed, completed_at: '2026-09-11T00:00:00Z' } });
+        return;
+      }
+      const wanted = path === '/analyses' ? url.searchParams.getAll('line') : [path.slice('/analyses/'.length)];
+      await route.fulfill({ json: { analyses: analyses.filter(entry => wanted.includes(entry.line)).map(entry => ({ line_hash: entry.line, settings: entry.settings, positions: entry.positions, failed: entry.failed, completed_at: '2026-09-11T00:00:00Z' })) } });
+      return;
+    }
     if (path === '/games' || path.startsWith('/games/')) {
       const method = route.request().method();
       if (method === 'GET' && path === '/games') { await route.fulfill({ json: { games: [], current_id: null, total: 0 } }); return; }
@@ -52,7 +66,7 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6') {
   });
   await page.goto('http://maia.test/analyze');
   await page.locator('#analysis-pgn').fill(pgn); await page.locator('#load-analysis').click();
-  return { requests, errors, evaluations };
+  return { requests, errors, evaluations, analyses };
 }
 const lines = (page: Page) => page.locator('#board svg.cg-shapes line');
 async function atStart(page: Page) {
@@ -116,12 +130,56 @@ test('server-cached positions skip inference after reload', async ({ page }) => 
   await expect.poll(() => app.evaluations.size).toBeGreaterThanOrEqual(3);
   const calls = app.requests.length;
   await page.reload();
-  await page.locator('#analysis-pgn').fill('1. e4 e5 2. Nf3 Nc6');
-  await page.locator('#load-analysis').click();
+  // The loaded line restores from the snapshot with the import panel closed;
+  // cached positions resolve without new inference.
   await expect(page.locator('.selected-evaluation')).toContainText('depth 16');
   await expect(page.locator('.candidate-list li')).not.toHaveCount(0);
   expect(app.requests).toHaveLength(calls);
   expect(app.errors).toEqual([]);
+});
+test('completed analysis persists across reload and restores without inference', async ({ page }) => {
+  const app = await bootReview(page);
+  await page.getByRole('button', { name: 'Analyze entire game' }).click();
+  await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  expect(app.analyses).toHaveLength(1);
+  const inferred = () => app.requests.filter(request => request.engine === '/move' || request.engine === '/evaluate').length;
+  expect(inferred()).toBeGreaterThan(0);
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Restore analysis' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'results not loaded' })).toBeVisible();
+  const before = inferred();
+  await page.getByRole('button', { name: 'Restore analysis' }).click();
+  await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  // Every position resolves from the server eval cache: no GPU inference.
+  expect(inferred()).toBe(before);
+  expect(app.analyses).toHaveLength(1);
+  await expect(page.locator('.candidate-list li').first()).toBeVisible();
+});
+test('changed analysis settings mark the completed record stale', async ({ page }) => {
+  const app = await bootReview(page);
+  await page.getByRole('button', { name: 'Analyze entire game' }).click();
+  await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  expect(app.analyses).toHaveLength(1);
+  await page.getByText('Analysis settings', { exact: true }).click();
+  await page.locator('#analysis-rating').selectOption('1800');
+  await expect(page.getByRole('button', { name: 'Analyze entire game' })).toBeVisible();
+  await expect(page.locator('.analysis-record')).toContainText('Last analyzed');
+});
+test('history rows show analyzed status from stored records', async ({ page }) => {
+  const moves = ['e2e4', 'e7e5'];
+  await bootReview(page);
+  await page.route(url => url.pathname === '/games', route => route.fulfill({ json: { games: [{ id: 'g1',
+    created_at: '2026-09-10T00:00:00Z', updated_at: '2026-09-10T00:00:00Z', user_color: 'white',
+    elo_maia: 1600, elo_user: 1600, model: '79m', moves }], current_id: null, total: 1 } }));
+  await page.route(url => url.pathname === '/analyses', route => route.fulfill({ json: { analyses: [{
+    line_hash: lineHash(START_FEN, moves),
+    settings: recordSettings({ eloMaia: 1600, eloUser: 1600, model: '79m' }),
+    positions: 3, failed: 0, completed_at: '2026-09-11T00:00:00Z' }] } }));
+  await page.goto('http://maia.test/history');
+  await expect(page.locator('.saved-game')).toContainText('Analyzed');
 });
 test('mixed arrow sources retain their own endpoints', async ({ page }, info) => {
   await bootReview(page);

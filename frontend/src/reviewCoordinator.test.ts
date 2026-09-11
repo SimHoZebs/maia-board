@@ -244,6 +244,22 @@ describe('preemption', () => {
     expect(resumed.every(call => !call.signal?.aborted)).toBe(true);
   });
 });
+it('flags batches with degraded Maia answers and clears the flag on retry', async () => {
+  const degraded = vi.fn(async url => Response.json({ ...body(String(url)), degraded: true })) as typeof fetch;
+  const coordinator = new ReviewCoordinator(degraded);
+  coordinator.startBatch(nodes, settings); await flush(); await flush();
+  expect(coordinator.progress).toMatchObject({ running: false });
+  expect(coordinator.batchDegraded()).toBe(true);
+  coordinator.retry();
+  await flush(); await flush();
+  // The retry serves degraded answers from memory without re-execution, yet
+  // the batch results still contain fallback rows, so the flag holds.
+  expect(coordinator.batchDegraded()).toBe(true);
+  expect(coordinator.progress).toMatchObject({ running: false });
+  const clean = new ReviewCoordinator(vi.fn(async url => Response.json(body(String(url)))) as typeof fetch);
+  clean.startBatch(nodes, settings); await flush(); await flush();
+  expect(clean.batchDegraded()).toBe(false);
+});
 it('rejects empty lines for non-terminal evaluations', async () => {
   const { fetchEvaluation } = await import('./reviewCoordinator');
   const bad = { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4', score: { type: 'cp', value: 0 }, lines: [] };

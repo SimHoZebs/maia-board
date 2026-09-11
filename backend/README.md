@@ -72,6 +72,17 @@ values, short keys); `GET /evaluations/:hash` returns the row or
 evict oldest-first past 5000. The key format stays client-owned so policy,
 model, or rating changes miss naturally instead of poisoning results.
 
+## Analysis records
+
+Whole-line batch completion lives in `analyses`, keyed by line content (not
+game id) so pasted PGNs share records and deleting a game never orphans
+results. `PUT /analyses/:hash` upserts `{settings: {elo_maia, elo_user,
+model, search_policy, maia_ref}, positions, failed}` under a 16-hex client
+line hash (`completed_at` is server-set); `GET /analyses/:hash` lists that
+line's records and `GET /analyses?line=h1&line=h2` batch-looks-up at most 200
+hashes. Unknown lines return `{analyses: []}`. Only zero-failure main-line
+batches with non-degraded Maia results are recorded.
+
 ## Local checks
 
 ```sh

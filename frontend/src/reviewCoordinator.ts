@@ -8,7 +8,7 @@ export type ReviewSettings = { eloMaia: number; eloUser: number; model: MaiaMode
 export type Engine = 'sf' | 'maia';
 type Result = Evaluation | MoveResponse;
 type Job = { key: string; engine: Engine; node: ReviewNode; settings: ReviewSettings };
-const MAIA_REF = '1e13597c42d4858b7cfd7cfdae01e297263364b2';
+export const MAIA_REF = '1e13597c42d4858b7cfd7cfdae01e297263364b2';
 export function reviewKey(engine: Engine, node: ReviewNode, settings: ReviewSettings): string {
   return JSON.stringify([new Chess(node.initialFen).fen(), node.moves, engine === 'sf' ? SEARCH_POLICY : [settings.eloMaia, settings.eloUser, settings.model, MAIA_REF]]);
 }
@@ -97,7 +97,7 @@ export class ReviewCoordinator {
   private foreground: Record<Engine, Job[]> = { sf: [], maia: [] };
   private running: Partial<Record<Engine, Job>> = {};
   private controllers: Partial<Record<Engine, AbortController>> = {};
-  private batch: { nodes: ReviewNode[]; settings: ReviewSettings; cursor: Record<Engine, number>; total: number; completed: Set<string>; canceled: boolean } | null = null;
+  private batch: { nodes: ReviewNode[]; settings: ReviewSettings; cursor: Record<Engine, number>; total: number; completed: Set<string>; canceled: boolean; degradedMaia: boolean } | null = null;
   private listeners = new Set<() => void>();
   private active = true;
   version = 0;
@@ -141,10 +141,15 @@ export class ReviewCoordinator {
   startBatch(nodes: ReviewNode[], settings: ReviewSettings) {
     if (nodes.length > 257) return;
     const total = nodes.reduce((count, node) => count + (terminalEvaluation(replay(node.moves, node.initialFen)) ? 0 : 2), 0);
-    this.batch = { nodes, settings, total, cursor: { sf: 0, maia: 0 }, completed: new Set(), canceled: false };
+    this.batch = { nodes, settings, total, cursor: { sf: 0, maia: 0 }, completed: new Set(), canceled: false, degradedMaia: false };
     this.active = true; this.pump('sf'); this.pump('maia'); this.emit();
   }
   cancelBatch() { if (this.batch) this.batch.canceled = true; this.emit(); }
+  // True once a fallback Maia answer settles inside the running batch.
+  // Read at completion time: degraded rows expire from memory within seconds
+  // and are never persisted server-side, so a post-hoc cache peek would miss
+  // them and mislabel fallback batches as clean.
+  batchDegraded() { return this.batch?.degradedMaia ?? false; }
   get progress() {
     if (!this.batch) return null;
     const failed = this.batch.nodes.reduce((count, node) => count + Number(!!this.error('sf', node, this.batch!.settings)) + Number(!!this.error('maia', node, this.batch!.settings)), 0);
@@ -152,7 +157,7 @@ export class ReviewCoordinator {
   }
   retry() {
     this.failures.clear();
-    if (this.batch) { this.batch.cursor = { sf: 0, maia: 0 }; this.batch.completed.clear(); this.batch.canceled = false; }
+    if (this.batch) { this.batch.cursor = { sf: 0, maia: 0 }; this.batch.completed.clear(); this.batch.canceled = false; this.batch.degradedMaia = false; }
     this.pump('sf'); this.pump('maia'); this.emit();
   }
   private finished(job: Job) { return !!this.cache[job.engine].peek(job.key) || this.failures.has(job.key); }
@@ -166,7 +171,14 @@ export class ReviewCoordinator {
     while (batch.cursor[engine] < batch.nodes.length) {
       const job = this.job(engine, batch.nodes[batch.cursor[engine]], batch.settings);
       if (!job) { batch.cursor[engine]++; continue; }
-      if (this.finished(job)) { batch.completed.add(job.key); batch.cursor[engine]++; continue; }
+      if (this.finished(job)) {
+        batch.completed.add(job.key); batch.cursor[engine]++;
+        // Memory-served fallback answers must flag the batch too: without
+        // re-execution the settle handler never sees them, yet the batch
+        // results still contain degraded rows unfit for recording.
+        if (engine === 'maia' && (this.cache.maia.peek(job.key) as MoveResponse | undefined)?.degraded) batch.degradedMaia = true;
+        continue;
+      }
       return job;
     }
   }
@@ -181,7 +193,11 @@ export class ReviewCoordinator {
     void this.execute(job, signal).then(result => {
       if (signal.aborted) return;
       if (engine === 'sf') this.cache.sf.set(job.key, result as Evaluation);
-      else this.cache.maia.set(job.key, result as MoveResponse, (result as MoveResponse).degraded ? 30_000 : Infinity);
+      else {
+        const degraded = (result as MoveResponse).degraded;
+        this.cache.maia.set(job.key, result as MoveResponse, degraded ? 30_000 : Infinity);
+        if (degraded && this.batch?.nodes.some(node => reviewKey(engine, node, this.batch!.settings) === job.key)) this.batch.degradedMaia = true;
+      }
     }).catch(error => {
       if (signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return;
       this.failures.set(job.key, error instanceof Error ? error.message : 'Analysis failed.');

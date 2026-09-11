@@ -85,6 +85,14 @@ func NewGameStore(path string) (*GameStore, error) {
 		value TEXT NOT NULL,
 		created_at TEXT NOT NULL
 	);
+	CREATE TABLE IF NOT EXISTS analyses (
+		line_hash TEXT NOT NULL,
+		settings TEXT NOT NULL,
+		positions INTEGER NOT NULL,
+		failed INTEGER NOT NULL DEFAULT 0,
+		completed_at TEXT NOT NULL,
+		PRIMARY KEY (line_hash, settings)
+	);
 	CREATE INDEX IF NOT EXISTS idx_games_updated ON games(updated_at DESC);`
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
