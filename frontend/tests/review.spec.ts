@@ -2,11 +2,12 @@ import { test, expect, type Page, type Route } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { replay, START_FEN } from '../src/domain';
-import { SEARCH_POLICY } from '../src/reviewMetrics';
+import { defaultStockfishSettings, stockfishPolicy } from '../src/stockfishSettings';
+const SEARCH_POLICY = stockfishPolicy(defaultStockfishSettings);
 import { KEYS } from '../src/storage';
 import { lineHash, recordSettings } from '../src/analysisRecords';
 
-async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6') {
+async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,20,200,-700,-680]) {
   const requests: { engine: string; moves: string[]; initial_fen: string; elo_maia?: number }[] = [];
   const evaluations = new Map<string, { engine: string; value: unknown }>();
   const analyses: { line: string; settings: unknown; positions: number; failed: number }[] = [];
@@ -202,7 +203,7 @@ test('history rows show analyzed status from stored records', async ({ page }) =
     elo_maia: 1600, elo_user: 1600, model: '79m', moves }], current_id: null, total: 1 } }));
   await page.route(url => url.pathname === '/analyses', route => route.fulfill({ json: { analyses: [{
     line_hash: lineHash(START_FEN, moves),
-    settings: recordSettings({ eloMaia: 1600, eloUser: 1600, model: '79m' }),
+    settings: recordSettings({ eloMaia: 1600, eloUser: 1600, model: '79m', stockfish: defaultStockfishSettings }),
     positions: 3, failed: 0, completed_at: '2026-09-11T00:00:00Z' }] } }));
   await page.goto('http://maia.test/history');
   await expect(page.locator('.saved-game')).toContainText('Analyzed');

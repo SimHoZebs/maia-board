@@ -8,6 +8,7 @@ import {
 } from './serverGames';
 import type { Mode, StoredGame } from './domain';
 import type { UrlLine } from './analysisUrl';
+import { STOCKFISH_STORAGE_KEY } from './stockfishSettings';
 
 const LAN_DOWN = 'Game history is unavailable. Check that the server is running on your LAN.';
 
@@ -19,6 +20,7 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
   // render-time update settles it before children or request effects commit.
   if (state.mode !== mode) dispatch({ type: 'mode', mode });
   useEffect(() => { writeStorage(KEYS.settings, state.settings); }, [state.settings]);
+  useEffect(() => { writeStorage(STOCKFISH_STORAGE_KEY, state.stockfish); }, [state.stockfish]);
   useEffect(() => { writeStorage(KEYS.analysis, state.inputs); }, [state.inputs]);
   useEffect(() => {
     // The loaded analysis line persists independently of the import-form

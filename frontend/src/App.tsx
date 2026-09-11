@@ -12,6 +12,7 @@ import { toGroundColor } from './board-colors';
 import { currentPosition } from './state';
 import { useReview } from './useReview';
 import { reviewShapes } from './reviewArrows';
+import { SettingsPage } from './SettingsPage';
 
 export function App({ state, dispatch, children }: Props & { children: ReactNode }) {
   const { mode, settings, request, error } = state;
@@ -35,7 +36,7 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
   const shapes = analysis && ready ? reviewShapes(arrowMoves, { actual: true, maia: true, stockfish: true }, state.preview, badge) : [];
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
-      if (!ready || mode === 'history' || event.altKey || event.ctrlKey || event.metaKey || (event.target as HTMLElement).closest('input, textarea, select, [contenteditable="true"], dialog')) return;
+      if (!ready || (mode !== 'play' && mode !== 'analysis') || event.altKey || event.ctrlKey || event.metaKey || (event.target as HTMLElement).closest('input, textarea, select, [contenteditable="true"], dialog')) return;
       const delta = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : null;
       if (delta !== null) { event.preventDefault(); dispatch({ type: 'step', delta }); }
       else if (event.key === 'Home' || event.key === 'End') { event.preventDefault(); dispatch({ type: 'view', ply: event.key === 'Home' ? 0 : null }); }
@@ -52,7 +53,7 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
     <header className="site-header"><span className="brand">maia board</span>{children}{mode === 'play' && ready && <IconButton id="new-game" className="header-action" label="New game" onClick={() => dispatch({ type: 'setup' })}><Plus size={18} aria-hidden="true" /></IconButton>}</header>
     <main>
       {state.syncError && <div className="sync-banner" role="alert"><span>{state.syncError}</span><Button onClick={() => dispatch({ type: 'retry-sync' })}>Retry</Button></div>}
-      {mode === 'history' ? <SavedGames state={state} dispatch={dispatch} /> : <>
+      {mode === 'settings' ? <SettingsPage state={state} dispatch={dispatch} /> : mode === 'history' ? <SavedGames state={state} dispatch={dispatch} /> : <>
         {!ready && <div className="entry"><PlayControls state={state} dispatch={dispatch} /><AnalysisControls state={state} dispatch={dispatch} /></div>}
         <div className={`workspace${analysis && ready ? ' analyzing' : ''}${historic ? ' historical' : ''}${!analysis && live.isGameOver() ? ' finished' : ''}${!ready ? ' awaiting' : ''}`}>
           <section className="board-stage" aria-label="Chess workspace">

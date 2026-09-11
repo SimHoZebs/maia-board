@@ -3,7 +3,7 @@ import type { Key } from '@lichess-org/chessground/types';
 import type { MaiaColor, MaiaModel, MoveResponse } from './api';
 
 export const START_FEN = new Chess().fen();
-export type Mode = 'play' | 'analysis' | 'history';
+export type Mode = 'play' | 'analysis' | 'history' | 'settings';
 export type Settings = { userColor: MaiaColor; eloMaia: number; eloUser: number; model: MaiaModel; temperature?: number };
 export type Position = { fen: string; moves: string[]; sanMoves: string[]; lastMove?: [Key, Key] };
 export type Analysis = { initialFen: string; moves: string[]; sanMoves: string[]; timeline: Position[]; index: number; branchFromPly: number | null; branchMoves: string[]; perspective: MaiaColor; ownGame: boolean };

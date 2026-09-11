@@ -6,6 +6,7 @@ import { analysisLength, analysisLine, applyUci, defaultSettings, loadLine, newI
 import { sameLine, type UrlLine } from './analysisUrl';
 import { KEYS, loadSaved, loadSettings, readStorage, restoreGame } from './storage';
 import { loadOutbox, mergeSync, type OutboxOp } from './serverGames';
+import { normalizeStockfishSettings, STOCKFISH_STORAGE_KEY, type StockfishSettings } from './stockfishSettings';
 
 type Request = { id: number; mode: Mode; payload: MoveRequest };
 export type Draft = Pick<Settings, 'eloMaia' | 'model'> & { userColor: 'white' | 'black' | 'random' };
@@ -13,7 +14,7 @@ export type PlayDraft = Draft & Pick<Settings, 'temperature'>;
 const newPlayDraft = (settings: Settings): PlayDraft => ({ ...settings, temperature: defaultSettings.temperature });
 export type State = {
   mode: Mode; settings: Settings; play: StoredGame; saved: StoredGame[];
-  started: boolean; setup: PlayDraft | null; viewedPly: number | null;
+  started: boolean; setup: PlayDraft | null; viewedPly: number | null; stockfish: StockfishSettings;
   analysis: Analysis; analysisSettings: Draft; analysisLoaded: boolean; importing: boolean; analysisSourceId: string | null;
   inputs: { fen: string; pgn: string }; flipped: boolean; preview: string | null;
   promotion: { from: Square; to: Square } | null;
@@ -23,6 +24,7 @@ export type State = {
 export type Action =
   | { type: 'mode'; mode: Mode }
   | { type: 'setup'; draft?: Partial<PlayDraft> } | { type: 'cancel-setup' }
+  | { type: 'stockfish-settings'; settings: Partial<StockfishSettings> }
   | { type: 'new'; id: string; createdAt: string; resolvedColor?: 'white' | 'black' }
   | { type: 'settings'; settings: Partial<Settings>; id: string; createdAt: string }
   | { type: 'analysis-settings'; settings: Partial<Draft> }
@@ -139,6 +141,7 @@ export function initialState(mode: Mode = 'play', urlLine?: UrlLine): State {
   const state: State = { mode, settings, play: restored ?? { id: newId(), createdAt: new Date().toISOString(), moves: [], settings },
     started: !!restored, setup: restored ? null : newPlayDraft(settings), viewedPly: null,
     saved: loadSaved(), analysis, analysisSettings: { eloMaia: settings.eloMaia, model: settings.model, userColor: settings.userColor }, analysisLoaded, importing: !analysisLoaded, analysisSourceId,
+    stockfish: normalizeStockfishSettings(readStorage(STOCKFISH_STORAGE_KEY)),
     inputs, flipped: false, preview: null, promotion: null, insight: null, error: '', request: null, revision: 0,
     syncError: '', syncPending: loadOutbox().length, flushNonce: 0, historyTotal: null };
   return mode === 'play' && maiaTurn(state) ? queueRequest(state) : state;
@@ -146,7 +149,7 @@ export function initialState(mode: Mode = 'play', urlLine?: UrlLine): State {
 export function reducer(state: State, action: Action): State {
   switch (action.type) {
     case 'mode': return action.mode === state.mode ? state : transition(state, { mode: action.mode, setup: state.started ? null : state.setup });
-    case 'setup': return { ...state, setup: { ...(state.setup ?? state.settings), ...action.draft } };
+    case 'stockfish-settings': return { ...state, stockfish: normalizeStockfishSettings({ ...state.stockfish, ...action.settings }) };
     case 'setup': return { ...state, setup: { ...(state.setup ?? newPlayDraft(state.settings)), ...action.draft } };
     case 'cancel-setup': return state.started ? { ...state, setup: null } : state;
     case 'new': {
@@ -170,7 +173,7 @@ export function reducer(state: State, action: Action): State {
     }
     case 'move': {
       const game = state.mode === 'play' ? replay(state.play.moves) : new Chess(currentPosition(state).fen);
-      if (state.promotion || game.isGameOver() || state.mode === 'history') return state;
+      if (state.promotion || game.isGameOver() || (state.mode !== 'play' && state.mode !== 'analysis')) return state;
       if (state.mode === 'play' && (!state.started || state.viewedPly !== null || state.request || toGroundColor(game.turn()) !== state.settings.userColor)) return state;
       if (state.mode === 'analysis' && !state.analysisLoaded) return state;
       if (!game.moves({ verbose: true }).some(move => move.from === action.from && move.to === action.to)) return state;
@@ -193,6 +196,7 @@ export function reducer(state: State, action: Action): State {
     }
     case 'step': return reducer(state, { type: 'view', ply: (state.mode === 'play' ? state.viewedPly ?? state.play.moves.length : state.analysis.index) + action.delta });
     case 'view': {
+      if (state.mode !== 'play' && state.mode !== 'analysis') return state;
       if (state.mode === 'play') {
         const ply = action.ply === null ? null : Math.max(0, Math.min(state.play.moves.length, action.ply));
         return { ...state, viewedPly: ply === state.play.moves.length ? null : ply, promotion: null };

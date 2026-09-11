@@ -46,7 +46,17 @@ def white_score(score):
 
 def evaluate(request, binary):
     board = reconstruct(request)
-    result = dict(engine="Stockfish 19", search_policy=SEARCH_POLICY, depth=0,
+    settings = request.get("settings")
+    if settings is None:
+        policy, multipv = SEARCH_POLICY, 2
+        limit = chess.engine.Limit(nodes=100000, time=0.75)
+    else:
+        time_ms, multipv, depth = settings.get("time_ms"), settings.get("lines"), settings.get("depth", 0)
+        if not all(type(value) is int for value in (time_ms, multipv, depth)) or not (250 <= time_ms <= 30000 and 1 <= multipv <= 5 and 0 <= depth <= 40):
+            raise InvalidRequest("invalid_request")
+        policy = f"sf19-ms{time_ms}-mpv{multipv}-d{depth}-t1-h64-v2"
+        limit = chess.engine.Limit(time=time_ms / 1000, depth=depth or None)
+    result = dict(engine="Stockfish 19", search_policy=policy, depth=0,
                   terminal=None, best_move=None, score={"type": "cp", "value": 0}, lines=[])
     # chess.js ends on an existing threefold repetition / 100-halfmove clock,
     # rather than a draw that could be claimed by making the next move.
@@ -68,11 +78,11 @@ def evaluate(request, binary):
         if engine.id.get("name") != "Stockfish 19":
             raise RuntimeError("unexpected engine version")
         engine.configure({"Threads": 1, "Hash": 64})
-        count = min(2, board.legal_moves.count())
+        count = min(multipv, board.legal_moves.count())
         iterations = {}
         # Consume individual UCI reports: analyse() merges reports and can retain
         # an earlier bound flag even after a later exact score arrives.
-        with engine.analysis(board, chess.engine.Limit(nodes=100000, time=0.75), multipv=2) as analysis:
+        with engine.analysis(board, limit, multipv=multipv) as analysis:
             for info in analysis:
                 if info.get("lowerbound") or info.get("upperbound"):
                     continue

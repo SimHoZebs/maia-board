@@ -13,8 +13,8 @@ export function useReview(state: State) {
   const active = state.mode === 'analysis' && state.analysisLoaded;
   const line = analysisLine(state.analysis, analysisLength(state.analysis));
   const lineKey = JSON.stringify([line.initialFen, line.moves]);
-  const settingsKey = JSON.stringify([state.analysisSettings.eloMaia, state.analysisSettings.model]);
-  const settings: RecordSettings = useMemo(() => ({ eloMaia: state.analysisSettings.eloMaia, eloUser: state.analysisSettings.eloMaia, model: state.analysisSettings.model }), [settingsKey]);
+  const settingsKey = JSON.stringify([state.analysisSettings.eloMaia, state.analysisSettings.model, state.stockfish]);
+  const settings: RecordSettings = useMemo(() => ({ eloMaia: state.analysisSettings.eloMaia, eloUser: state.analysisSettings.eloMaia, model: state.analysisSettings.model, stockfish: state.stockfish }), [settingsKey]);
   const mainLine = state.analysis.branchFromPly === null;
   const nodes = useMemo(() => {
     const game = replay([], line.initialFen);

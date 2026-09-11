@@ -149,10 +149,10 @@ export function SavedGames({ state, dispatch, analysisOnly = false }: { state: S
   // analysis settings: the badge must agree with the detail view, which
   // compares records against global analysisSettings (History→Analyze keeps
   // them). Chunked client-side past the 200-hash server cap.
-  const badgeKey = `${state.saved.map(game => `${game.id}:${game.moves.join(',')}`).join('|')}|${state.analysisSettings.eloMaia}|${state.analysisSettings.model}`;
+  const badgeKey = `${state.saved.map(game => `${game.id}:${game.moves.join(',')}`).join('|')}|${state.analysisSettings.eloMaia}|${state.analysisSettings.model}|${JSON.stringify(state.stockfish)}`;
   const [analyzedLines, setAnalyzedLines] = useState<Set<string>>(new Set());
   useEffect(() => {
-    const settings = { eloMaia: state.analysisSettings.eloMaia, eloUser: state.analysisSettings.eloMaia, model: state.analysisSettings.model };
+    const settings = { eloMaia: state.analysisSettings.eloMaia, eloUser: state.analysisSettings.eloMaia, model: state.analysisSettings.model, stockfish: state.stockfish };
     const hashes = state.saved.map(game => lineHash(START_FEN, game.moves));
     let cancelled = false;
     getAnalysisRecords(hashes).then(

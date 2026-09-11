@@ -1,16 +1,17 @@
 import { Chess } from 'chess.js';
 import { parseMoveResponse, requestMove, type MoveResponse, type MaiaModel } from './api';
 import { replay } from './domain';
-import { SEARCH_POLICY, terminalEvaluation, type Evaluation, type Score } from './reviewMetrics';
+import { terminalEvaluation, type Evaluation, type Score } from './reviewMetrics';
+import { stockfishPolicy, type StockfishSettings } from './stockfishSettings';
 
 export type ReviewNode = { initialFen: string; moves: string[]; fen: string };
-export type ReviewSettings = { eloMaia: number; eloUser: number; model: MaiaModel };
+export type ReviewSettings = { eloMaia: number; eloUser: number; model: MaiaModel; stockfish?: StockfishSettings };
 export type Engine = 'sf' | 'maia';
 type Result = Evaluation | MoveResponse;
 type Job = { key: string; engine: Engine; node: ReviewNode; settings: ReviewSettings };
 export const MAIA_REF = '1e13597c42d4858b7cfd7cfdae01e297263364b2';
 export function reviewKey(engine: Engine, node: ReviewNode, settings: ReviewSettings): string {
-  return JSON.stringify([new Chess(node.initialFen).fen(), node.moves, engine === 'sf' ? SEARCH_POLICY : [settings.eloMaia, settings.eloUser, settings.model, MAIA_REF]]);
+  return JSON.stringify([new Chess(node.initialFen).fen(), node.moves, engine === 'sf' ? stockfishPolicy(settings.stockfish) : [settings.eloMaia, settings.eloUser, settings.model, MAIA_REF]]);
 }
 class Lru<T> {
   private values = new Map<string, { value: T; expires: number }>();
@@ -56,10 +57,10 @@ export function cacheHash(key: string): string {
   return (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0');
 }
 
-export function parseEvaluation(body: unknown): Evaluation {
+export function parseEvaluation(body: unknown, settings?: StockfishSettings): Evaluation {
   if (!body || typeof body !== 'object') throw new Error('Stockfish returned an incomplete evaluation.');
   const value = body as Evaluation & { engine?: unknown; search_policy?: unknown };
-  if (value.engine !== 'Stockfish 19' || value.search_policy !== SEARCH_POLICY || !Number.isInteger(value.depth) || value.depth < 0 || !isScore(value.score) || ![null, 'white_win', 'black_win', 'draw'].includes(value.terminal) || !(value.best_move === null || typeof value.best_move === 'string') || !Array.isArray(value.lines)) throw new Error('Stockfish returned an incomplete evaluation.');
+  if (value.engine !== 'Stockfish 19' || value.search_policy !== stockfishPolicy(settings) || !Number.isInteger(value.depth) || value.depth < 0 || !isScore(value.score) || ![null, 'white_win', 'black_win', 'draw'].includes(value.terminal) || !(value.best_move === null || typeof value.best_move === 'string') || !Array.isArray(value.lines)) throw new Error('Stockfish returned an incomplete evaluation.');
   if (value.terminal !== null) {
     if (value.best_move !== null || value.lines.length !== 0 || value.depth !== 0) throw new Error('Stockfish returned an incomplete evaluation.');
     if (value.terminal === 'draw') {
@@ -69,7 +70,7 @@ export function parseEvaluation(body: unknown): Evaluation {
       if (value.score.type !== 'mate' || value.score.value !== 0 || value.score.winning_side !== winner) throw new Error('Stockfish returned an incomplete evaluation.');
     }
   } else {
-    if (value.lines.length < 1 || value.lines.length > 2) throw new Error('Stockfish returned an incomplete evaluation.');
+    if (value.lines.length < 1 || value.lines.length > (settings?.lines ?? 2)) throw new Error('Stockfish returned an incomplete evaluation.');
     if (typeof value.best_move !== 'string' || value.best_move !== value.lines[0].move) throw new Error('Stockfish returned an incomplete evaluation.');
     if (!value.lines.every(line => typeof line.move === 'string' && isScore(line.score) && Number.isInteger(line.depth) && line.depth >= 1)) throw new Error('Stockfish returned an incomplete evaluation.');
     const depths = value.lines.map(line => line.depth);
@@ -79,15 +80,26 @@ export function parseEvaluation(body: unknown): Evaluation {
   return value;
 }
 
-export async function fetchEvaluation(node: ReviewNode, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<Evaluation> {
-  const response = await fetcher('/evaluate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fen: node.fen, moves: node.moves, initial_fen: node.initialFen }), signal });
-  const body: unknown = await response.json();
+export async function fetchEvaluation(node: ReviewNode, signal: AbortSignal, fetcher: typeof fetch = fetch, settings?: StockfishSettings): Promise<Evaluation> {
+  let response: Response;
+  try {
+    response = await fetcher('/evaluate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fen: node.fen, moves: node.moves, initial_fen: node.initialFen, ...(settings ? { settings } : {}) }), signal });
+  } catch (error) {
+    if (signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) throw error;
+    throw new Error('Stockfish is unreachable. Check that the server is running on your LAN.');
+  }
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error('Stockfish returned unreadable data.');
+  }
   if (!response.ok) {
     const message = typeof body === 'object' && body !== null && typeof (body as { message?: unknown }).message === 'string'
       ? (body as { message: string }).message : `Stockfish request failed (${response.status}).`;
     throw new Error(message);
   }
-  return parseEvaluation(body);
+  return parseEvaluation(body, settings);
 }
 // Each lane has one in-flight job. Foreground replacement coalesces scrubbing;
 // batch work is pulled one node at a time only when the foreground is empty.
@@ -112,7 +124,7 @@ export class ReviewCoordinator {
   private job(engine: Engine, node: ReviewNode, settings: ReviewSettings): Job | null {
     const terminal = terminalEvaluation(replay(node.moves, node.initialFen));
     if (terminal) {
-      if (engine === 'sf') this.cache.sf.set(reviewKey(engine, node, settings), terminal);
+      if (engine === 'sf') this.cache.sf.set(reviewKey(engine, node, settings), { ...terminal, search_policy: stockfishPolicy(settings.stockfish) });
       return null;
     }
     return { engine, node, settings, key: reviewKey(engine, node, settings) };
@@ -221,7 +233,7 @@ export class ReviewCoordinator {
       const terminal = terminalEvaluation(replay(node.moves, node.initialFen));
       if (terminal) {
         terminals.add(node);
-        this.cache.sf.set(reviewKey('sf', node, settings), terminal);
+        this.cache.sf.set(reviewKey('sf', node, settings), { ...terminal, search_policy: stockfishPolicy(settings.stockfish) });
         continue;
       }
       for (const engine of ['sf', 'maia'] as const) {
@@ -275,7 +287,7 @@ export class ReviewCoordinator {
     const record = body as { engine?: unknown; value?: unknown };
     if (record.engine !== job.engine) return undefined;
     try {
-      return job.engine === 'sf' ? parseEvaluation(record.value) : parseMoveResponse(record.value);
+      return job.engine === 'sf' ? parseEvaluation(record.value, job.settings.stockfish) : parseMoveResponse(record.value);
     } catch {
       return undefined;
     }
@@ -317,7 +329,7 @@ export class ReviewCoordinator {
     });
     if (hit) return hit;
     if (job.engine === 'sf') {
-      const result = await fetchEvaluation(job.node, signal, retryFetch);
+      const result = await fetchEvaluation(job.node, signal, retryFetch, job.settings.stockfish);
       this.storeServerCache(job, result);
       return result;
     }

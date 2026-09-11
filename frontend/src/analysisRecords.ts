@@ -1,14 +1,14 @@
 import { Chess } from 'chess.js';
 import type { MaiaModel } from './api';
 import { cacheHash, MAIA_REF } from './reviewCoordinator';
-import { SEARCH_POLICY } from './reviewMetrics';
+import { stockfishPolicy, type StockfishSettings } from './stockfishSettings';
 
 // Whole-line completion records. The line hash covers normalized initial FEN
 // plus UCI moves, so History games and pasted PGNs share records without game
 // rows. Settings are part of freshness because Maia output differs per Elo and
 // model; Stockfish cache keys ignore ratings, so post-change restores still
 // hit its cache and only Maia re-infers.
-export type RecordSettings = { eloMaia: number; eloUser: number; model: MaiaModel };
+export type RecordSettings = { eloMaia: number; eloUser: number; model: MaiaModel; stockfish?: StockfishSettings };
 export type AnalysisRecord = {
   line_hash: string;
   settings: { elo_maia: number; elo_user: number; model: string; search_policy: string; maia_ref: string };
@@ -21,7 +21,7 @@ export function lineHash(initialFen: string, moves: string[]): string {
 }
 
 export function recordSettings(settings: RecordSettings): AnalysisRecord['settings'] {
-  return { elo_maia: settings.eloMaia, elo_user: settings.eloUser, model: settings.model, search_policy: SEARCH_POLICY, maia_ref: MAIA_REF };
+  return { elo_maia: settings.eloMaia, elo_user: settings.eloUser, model: settings.model, search_policy: stockfishPolicy(settings.stockfish), maia_ref: MAIA_REF };
 }
 
 export function isFreshRecord(record: AnalysisRecord, settings: RecordSettings): boolean {

@@ -48,6 +48,13 @@ func TestEvaluationHelper(t *testing.T) {
 		time.Sleep(time.Minute)
 	case "bad":
 		fmt.Print("not json /secret/path")
+	case "settings":
+		var request evaluationRequest
+		if err := json.NewDecoder(os.Stdin).Decode(&request); err != nil {
+			os.Exit(2)
+		}
+		terminal := "draw"
+		_ = json.NewEncoder(os.Stdout).Encode(evaluationResponse{Engine: "Stockfish 19", SearchPolicy: request.Settings.policy(), Terminal: &terminal, Score: evaluationScore{Type: "cp"}, Lines: []evaluationLine{}})
 	case "position_mismatch", "invalid_position", "invalid_fen", "engine_unavailable":
 		_ = json.NewEncoder(os.Stdout).Encode(apiError{mode, "/secret/path"})
 	default:
@@ -69,6 +76,9 @@ func TestEvaluateHTTP(t *testing.T) {
 		status                 int
 	}{
 		{"success", valid, "ok", "", 200},
+		{"configured", `{"fen":"` + startFEN + `","settings":{"time_ms":2000,"lines":5,"depth":18}}`, "settings", "", 200},
+		{"invalid settings", `{"fen":"` + startFEN + `","settings":{"time_ms":30001,"lines":5,"depth":18}}`, "settings", "invalid_request", 400},
+		{"wrong policy", `{"fen":"` + startFEN + `","settings":{"time_ms":2000,"lines":5,"depth":18}}`, "ok", "engine_unavailable", 502},
 		{"malformed", "{", "ok", "invalid_json", 400},
 		{"unknown", `{"fen":"` + startFEN + `","flags":[]}`, "ok", "invalid_json", 400},
 		{"trailing", valid + ` {}`, "ok", "invalid_json", 400},
@@ -183,6 +193,12 @@ func TestRealStockfishHTTPAndCancellation(t *testing.T) {
 	(&server{evaluator: e}).evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(`{"fen":"`+startFEN+`","moves":[]}`)))
 	if w.Code != 200 {
 		t.Fatalf("real evaluation: %d %s", w.Code, w.Body)
+	}
+	w = httptest.NewRecorder()
+	(&server{evaluator: e}).evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(`{"fen":"`+startFEN+`","moves":[],"settings":{"time_ms":2000,"lines":5,"depth":8}}`)))
+	var configured evaluationResponse
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &configured) != nil || configured.SearchPolicy != "sf19-ms2000-mpv5-d8-t1-h64-v2" || len(configured.Lines) != 5 || configured.Depth > 8 {
+		t.Fatalf("configured real evaluation: %d %s", w.Code, w.Body)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

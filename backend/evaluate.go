@@ -15,9 +15,10 @@ import (
 const SearchPolicy = "sf19-n100k-ms750-mpv2-t1-h64-v1"
 
 type evaluationRequest struct {
-	FEN        string   `json:"fen"`
-	Moves      []string `json:"moves"`
-	InitialFEN string   `json:"initial_fen,omitempty"`
+	FEN        string             `json:"fen"`
+	Moves      []string           `json:"moves"`
+	InitialFEN string             `json:"initial_fen,omitempty"`
+	Settings   *stockfishSettings `json:"settings,omitempty"`
 }
 
 type evaluationScore struct {
@@ -96,6 +97,9 @@ func (s *server) evaluate(w http.ResponseWriter, r *http.Request) {
 }
 
 func validateEvaluationRequest(r *evaluationRequest) *requestError {
+	if err := r.Settings.validate(); err != nil {
+		return err
+	}
 	if len(r.Moves) > 256 {
 		return &requestError{"history_too_long", "moves may contain at most 256 plies"}
 	}
@@ -136,7 +140,11 @@ func (e *Evaluator) run(parent context.Context, request evaluationRequest) (*eva
 		return nil, ErrWorkerBusy
 	}
 	defer func() { <-e.gate }()
-	ctx, cancel := context.WithTimeout(parent, e.timeout)
+	timeout := e.timeout
+	if request.Settings != nil {
+		timeout += time.Duration(request.Settings.TimeMS) * time.Millisecond
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	input, err := json.Marshal(request)
 	if err != nil {
@@ -190,7 +198,7 @@ func (e *Evaluator) run(parent context.Context, request evaluationRequest) (*eva
 	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
 		return nil, err
 	}
-	if result.Engine != "Stockfish 19" || result.SearchPolicy != SearchPolicy || result.Lines == nil {
+	if result.Engine != "Stockfish 19" || result.SearchPolicy != request.Settings.policy() || result.Lines == nil {
 		return nil, errors.New("invalid worker response")
 	}
 	return &result, nil

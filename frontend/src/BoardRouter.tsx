@@ -10,6 +10,7 @@ const destinations = [
   { mode: 'play', path: '/play', label: 'Play' },
   { mode: 'analysis', path: '/analyze', label: 'Analyze' },
   { mode: 'history', path: '/history', label: 'History' },
+  { mode: 'settings', path: '/settings', label: 'Settings' },
 ] as const;
 const pathFor = (mode: Mode) => destinations.find(destination => destination.mode === mode)!.path;
 

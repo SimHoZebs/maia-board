@@ -22,8 +22,25 @@ Send the full available history, including when examining an earlier position.
 Repetition and Stockfish search depend on that history. A custom starting FEN
 cannot reconstruct repetitions before that position. Requests accept at most
 64 KiB of JSON and 256 plies (individual player moves). Unknown JSON fields and
-trailing JSON values are rejected. Executables and search options come only
-from server configuration.
+trailing JSON values are rejected. Executables, threads, and memory come from
+server configuration.
+
+Optional `settings` configures the search:
+
+```json
+{"time_ms":2000,"lines":5,"depth":18}
+```
+
+`time_ms` is an integer from 250 to 30000; `lines` is an integer from 1 to 5;
+`depth` is an integer from 0 to 40, defaulting to 0. Time and lines are required
+when supplying settings. Depth 0 has no depth target. An explicit search uses time and optional
+depth limits, with no node-count limit; the first reached limit stops the search.
+Its policy identifier is `sf19-ms{time_ms}-mpv{lines}-d{depth}-t1-h64-v2`.
+Omitting settings retains the legacy policy shown below.
+
+The frontend Settings page saves Stockfish preferences in this browser, initially
+750 ms, 2 lines, and depth 0. Preferences are included in position-cache and
+completed-analysis identities. Maia analysis remains independent of these settings.
 
 ## Response and score perspective
 
@@ -61,7 +78,8 @@ helper deliberately uses existing-position repetition/clock checks rather
 than python-chess's broader `claim_draw=True`. Automatic fivefold repetition
 and the 75-move rule are also covered by python-chess's outcome check.
 
-`lines` contains up to two ranked root moves. `best_move` and `score` come from
+`lines` contains up to the requested number of ranked root moves (two for legacy
+requests). `best_move` and `score` come from
 the first line. Each depth is the engine's actual reported search depth;
 top-level depth is the minimum across returned lines. The helper selects the
 deepest iteration containing exact scores for all requested root lines. It
@@ -70,7 +88,7 @@ iteration is available, it returns an engine error.
 
 ## Resource and failure behavior
 
-The fixed policy uses one thread, 64 MiB hash, two principal variations
+The legacy policy uses one thread, 64 MiB hash, two principal variations
 (`MultiPV=2`, meaning two candidate lines), and
 `Limit(nodes=100000, time=0.75)`. The node budget is capped by a 750 ms search
 clock. Engine startup, position validation, and shutdown add time beyond the
@@ -83,7 +101,10 @@ or public batch endpoint. The whole operation has an eight-second timeout tied
 to HTTP request cancellation. Go starts a separate process group; python-chess
 starts Stockfish with `setpgrp=False` so both inherit that group. Normal cleanup
 uses UCI `quit` and closes the engine. Cancellation sends `SIGKILL` to the whole
-group. Pipe waits are capped at one second. Cleanup also kills survivors after
+group. Explicit settings add the requested search time to the eight-second
+operation timeout. The single admission slot stays occupied during that search;
+whole-game reviews apply the budget separately to each position.
+Pipe waits are capped at one second. Cleanup also kills survivors after
 a wrapper crash and reaps adopted group members when the server is PID 1.
 
 Errors use `{code, message}`:
