@@ -10,6 +10,8 @@ import { PromotionDialog } from './PromotionDialog';
 import { analysisLength, analysisLine, gameResult, oppositeColor, replay, sideName, START_FEN } from './domain';
 import { toGroundColor } from './board-colors';
 import { currentPosition } from './state';
+import { usePlayFeedback } from './usePlayFeedback';
+import { PlayFeedback } from './PlayFeedback';
 import { useReview } from './useReview';
 import { reviewShapes } from './reviewArrows';
 import { SettingsPage } from './SettingsPage';
@@ -17,6 +19,7 @@ import { SettingsPage } from './SettingsPage';
 export function App({ state, dispatch, children }: Props & { children: ReactNode }) {
   const { mode, settings, request, error } = state;
   const review = useReview(state);
+  const feedback = usePlayFeedback(state);
   const position = currentPosition(state);
   const game = new Chess(position.fen), live = replay(state.play.moves);
   const analysis = mode === 'analysis';
@@ -65,6 +68,7 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
                 original={analysis && state.analysis.branchFromPly !== null ? { sans: state.analysis.sanMoves, fromPly: state.analysis.branchFromPly } : undefined}
                 tools={<><IconButton id="flip-board" label="Flip board" onClick={() => dispatch({ type: 'flip' })}><RotateCw size={16} aria-hidden="true" /></IconButton>{analysis && state.analysis.branchFromPly !== null && <IconButton id="return-original" label="Return to original" onClick={() => dispatch({ type: 'original' })}><Undo2 size={16} aria-hidden="true" /></IconButton>}{!analysis && <IconButton id="takeback" label="Takeback" disabled={!state.play.moves.length} onClick={() => dispatch({ type: 'takeback' })}><Undo2 size={16} aria-hidden="true" /></IconButton>}</>} />
               {!analysis && live.isGameOver() && <div className="game-result"><strong>{gameResult(live)}</strong><Button variant="primary" onClick={() => dispatch({ type: 'review' })}>Review game</Button></div>}
+              {!analysis && <PlayFeedback feedback={feedback} enabled={state.feedback} onToggle={enabled => dispatch({ type: 'feedback', enabled })} />}
             </>}
             <div id="error-banner" className="error-banner" role="alert" hidden={!error}>{error}</div>
           </section>

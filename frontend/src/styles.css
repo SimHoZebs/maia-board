@@ -177,6 +177,15 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: 0s !important; } }
 .board-actions button { display: inline-flex; align-items: center; gap: 6px; }
+.play-feedback { margin-top: 12px; }
+.play-feedback h2 { font-size: 15px; margin: 0; }
+.feedback-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.feedback-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.feedback-toggle input { width: 16px; min-height: 16px; accent-color: var(--accent); }
+.feedback-result p { margin: 8px 0; }
+.feedback-eval { font-variant-numeric: tabular-nums; color: var(--muted); }
+.feedback-setup { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 16px 0 4px; }
+.feedback-setup input { width: 16px; min-height: 16px; accent-color: var(--accent); }
 .insight-panel { max-height: calc(100dvh - 120px); overflow-y: auto; overflow-x: hidden; }
 .review-charts { margin-top: 20px; }
 .chart-tabs { display: flex; gap: 4px; }

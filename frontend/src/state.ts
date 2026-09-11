@@ -14,7 +14,7 @@ export type PlayDraft = Draft & Pick<Settings, 'temperature'>;
 const newPlayDraft = (settings: Settings): PlayDraft => ({ ...settings, temperature: defaultSettings.temperature });
 export type State = {
   mode: Mode; settings: Settings; play: StoredGame; saved: StoredGame[];
-  started: boolean; setup: PlayDraft | null; viewedPly: number | null; stockfish: StockfishSettings;
+  started: boolean; setup: PlayDraft | null; viewedPly: number | null; stockfish: StockfishSettings; feedback: boolean;
   analysis: Analysis; analysisSettings: Draft; analysisLoaded: boolean; importing: boolean; analysisSourceId: string | null;
   inputs: { fen: string; pgn: string }; flipped: boolean; preview: string | null;
   promotion: { from: Square; to: Square } | null;
@@ -25,6 +25,7 @@ export type Action =
   | { type: 'mode'; mode: Mode }
   | { type: 'setup'; draft?: Partial<PlayDraft> } | { type: 'cancel-setup' }
   | { type: 'stockfish-settings'; settings: Partial<StockfishSettings> }
+  | { type: 'feedback'; enabled: boolean }
   | { type: 'new'; id: string; createdAt: string; resolvedColor?: 'white' | 'black' }
   | { type: 'settings'; settings: Partial<Settings>; id: string; createdAt: string }
   | { type: 'analysis-settings'; settings: Partial<Draft> }
@@ -141,7 +142,7 @@ export function initialState(mode: Mode = 'play', urlLine?: UrlLine): State {
   const state: State = { mode, settings, play: restored ?? { id: newId(), createdAt: new Date().toISOString(), moves: [], settings },
     started: !!restored, setup: restored ? null : newPlayDraft(settings), viewedPly: null,
     saved: loadSaved(), analysis, analysisSettings: { eloMaia: settings.eloMaia, model: settings.model, userColor: settings.userColor }, analysisLoaded, importing: !analysisLoaded, analysisSourceId,
-    stockfish: normalizeStockfishSettings(readStorage(STOCKFISH_STORAGE_KEY)),
+    stockfish: normalizeStockfishSettings(readStorage(STOCKFISH_STORAGE_KEY)), feedback: readStorage<boolean>(KEYS.feedback) === true,
     inputs, flipped: false, preview: null, promotion: null, insight: null, error: '', request: null, revision: 0,
     syncError: '', syncPending: loadOutbox().length, flushNonce: 0, historyTotal: null };
   return mode === 'play' && maiaTurn(state) ? queueRequest(state) : state;
@@ -150,6 +151,7 @@ export function reducer(state: State, action: Action): State {
   switch (action.type) {
     case 'mode': return action.mode === state.mode ? state : transition(state, { mode: action.mode, setup: state.started ? null : state.setup });
     case 'stockfish-settings': return { ...state, stockfish: normalizeStockfishSettings({ ...state.stockfish, ...action.settings }) };
+    case 'feedback': return state.feedback === action.enabled ? state : { ...state, feedback: action.enabled };
     case 'setup': return { ...state, setup: { ...(state.setup ?? newPlayDraft(state.settings)), ...action.draft } };
     case 'cancel-setup': return state.started ? { ...state, setup: null } : state;
     case 'new': {

@@ -20,6 +20,8 @@ export function PlayControls({ state, dispatch }: Props) {
       </label>
       <p>0 always chooses Maia’s highest-probability move. 1 samples its original probabilities; higher values add more variety. Applies to this new game.</p>
     </details>
+    <label className="feedback-setup" htmlFor="feedback-enabled"><input id="feedback-enabled" type="checkbox" checked={state.feedback} onChange={event => dispatch({ type: 'feedback', enabled: event.target.checked })} /> Evaluate my moves with Stockfish after I play them</label>
+    <p>Retrospective only: your move is evaluated after you commit it, never hinted beforehand.</p>
     <div className="actions"><Button id="start-game" variant="primary" onClick={() => dispatch({ type: 'new', id: newId(), createdAt: new Date().toISOString(), resolvedColor: resolveSide(state.setup!.userColor) })}>{state.started ? 'Start new game' : 'Start game'}</Button>{state.started && <Button onClick={() => dispatch({ type: 'cancel-setup' })}>Cancel</Button>}</div>
   </section>;
   return state.started ? <Dialog title="Start a new game?" onCancel={() => dispatch({ type: 'cancel-setup' })}>{content}</Dialog> : content;

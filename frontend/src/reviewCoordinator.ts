@@ -149,6 +149,27 @@ export class ReviewCoordinator {
     this.emit();
   }
   clearForeground() { this.foreground = { sf: [], maia: [] }; }
+  // Play-mode move feedback: Stockfish only, never Maia. A dedicated
+  // coordinator per hook owns this lane so play evaluations cannot contend
+  // with real play replies on the Maia workers or leak into analysis.
+  foregroundSfOnly(nodes: ReviewNode[], settings: ReviewSettings) {
+    this.active = true;
+    this.foreground.maia = [];
+    this.foreground.sf = nodes.slice(0, 2).flatMap(node => {
+      const job = this.job('sf', node, settings); return job ? [job] : [];
+    });
+    const running = this.running.sf;
+    const waiting = this.foreground.sf.some(job => !this.finished(job));
+    if (running && waiting && !this.foreground.sf.some(job => job.key === running.key)) {
+      this.controllers.sf?.abort();
+    }
+    this.pump('sf');
+    this.emit();
+  }
+  retrySfOnly(nodes: ReviewNode[], settings: ReviewSettings) {
+    for (const node of nodes) this.failures.delete(reviewKey('sf', node, settings));
+    this.foregroundSfOnly(nodes, settings);
+  }
   suspend() { this.active = false; this.clearForeground(); this.batch = null; this.emit(); }
   startBatch(nodes: ReviewNode[], settings: ReviewSettings) {
     if (nodes.length > 257) return;

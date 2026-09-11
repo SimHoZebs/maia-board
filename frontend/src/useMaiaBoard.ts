@@ -20,6 +20,7 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
   // render-time update settles it before children or request effects commit.
   if (state.mode !== mode) dispatch({ type: 'mode', mode });
   useEffect(() => { writeStorage(KEYS.settings, state.settings); }, [state.settings]);
+  useEffect(() => { writeStorage(KEYS.feedback, state.feedback); }, [state.feedback]);
   useEffect(() => { writeStorage(STOCKFISH_STORAGE_KEY, state.stockfish); }, [state.stockfish]);
   useEffect(() => { writeStorage(KEYS.analysis, state.inputs); }, [state.inputs]);
   useEffect(() => {
