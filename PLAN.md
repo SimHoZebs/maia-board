@@ -60,8 +60,10 @@ game id — pasted PGNs share records, deleting a game orphans nothing. Only
 clean main-line batches record (no failures, no degraded Maia answers, no
 explored branches). The loaded line snapshot (`maia-board.analysis-snapshot.v1`)
 restores the analysis board across refresh; History badges compare records
-against current analysis settings. Restore is click-gated so evicted cache
-rows can never trigger automatic inference storms.
+against current analysis settings. A fresh record primes itself automatically
+on load through cache reads only, so restores never infer: full coverage
+shows results immediately, partial coverage gates exactly the missing
+positions behind one explicit click.
 
 ## Notes
 

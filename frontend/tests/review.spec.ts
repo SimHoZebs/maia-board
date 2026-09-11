@@ -137,25 +137,39 @@ test('server-cached positions skip inference after reload', async ({ page }) => 
   expect(app.requests).toHaveLength(calls);
   expect(app.errors).toEqual([]);
 });
-test('completed analysis persists across reload and restores without inference', async ({ page }) => {
+test('completed analysis restores automatically across reload without inference', async ({ page }) => {
   const app = await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
   expect(app.analyses).toHaveLength(1);
   const inferred = () => app.requests.filter(request => request.engine === '/move' || request.engine === '/evaluate').length;
-  expect(inferred()).toBeGreaterThan(0);
-  await page.reload();
-  await expect(page.getByRole('button', { name: 'Restore analysis' })).toBeVisible();
-  await expect(page.getByRole('status').filter({ hasText: 'results not loaded' })).toBeVisible();
   const before = inferred();
-  await page.getByRole('button', { name: 'Restore analysis' }).click();
-  await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
+  expect(before).toBeGreaterThan(0);
+  await page.reload();
+  // No click: the fresh record primes itself from the server eval cache.
   await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
-  // Every position resolves from the server eval cache: no GPU inference.
+  await expect(page.locator('.candidate-list li').first()).toBeVisible();
   expect(inferred()).toBe(before);
   expect(app.analyses).toHaveLength(1);
-  await expect(page.locator('.candidate-list li').first()).toBeVisible();
+});
+test('partially evicted analysis restores cached positions and gates the rest', async ({ page }) => {
+  const app = await bootReview(page);
+  await page.getByRole('button', { name: 'Analyze entire game' }).click();
+  await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  // Evict every Maia row server-side: Stockfish stays cached.
+  for (const [hash, entry] of app.evaluations) if (entry.engine === 'maia') app.evaluations.delete(hash);
+  const inferred = (engine: string) => app.requests.filter(request => request.engine === engine).length;
+  const movesBefore = inferred('/move'), evalsBefore = inferred('/evaluate');
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Restore remaining' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: /of \d+ positions cached/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Restore remaining' }).click();
+  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  // Exactly the five evicted Maia positions re-infer; Stockfish never does.
+  expect(inferred('/move') - movesBefore).toBe(5);
+  expect(inferred('/evaluate') - evalsBefore).toBe(0);
 });
 test('changed analysis settings mark the completed record stale', async ({ page }) => {
   const app = await bootReview(page);

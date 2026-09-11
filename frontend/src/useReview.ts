@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { analysisLength, analysisLine, applyUci, positionOf, replay } from './domain';
 import type { State } from './state';
 import { ReviewCoordinator, type ReviewNode } from './reviewCoordinator';
-import { reviewMove } from './reviewMetrics';
+import { reviewMove, terminalEvaluation } from './reviewMetrics';
 import { getAnalysisRecords, isFreshRecord, lineHash, putAnalysisRecord, type AnalysisRecord, type RecordSettings } from './analysisRecords';
 
 export type RecordStatus = { state: 'checking' | 'fresh' | 'stale' | 'none'; record?: AnalysisRecord };
@@ -50,6 +50,27 @@ export function useReview(state: State) {
   }, [active, mainLine, hash, settingsKey]);
   const recorded = useRef<string | null>(null);
   const progress = coordinator.progress;
+  const primeKey = `${hash}|${settingsKey}`;
+  const [primedKey, setPrimedKey] = useState<string | null>(null);
+  useEffect(() => {
+    // Auto-prime fully cached lines: reads only, so a fresh record restores
+    // itself with zero inference. Partial coverage stays for an explicit,
+    // user-gated batch over exactly the missing positions.
+    if (!active || !mainLine || recordStatus.state !== 'fresh' || primedKey === primeKey) return;
+    const controller = new AbortController();
+    void coordinator.primeLine(nodes, settings, controller.signal).then(
+      () => setPrimedKey(primeKey),
+      () => { /* Superseded by navigation or settings change; the next key reprimes. */ },
+    );
+    return () => controller.abort();
+  }, [active, mainLine, hash, settingsKey, recordStatus, primedKey]);
+  // Coverage is counted live from memory so LRU turnover after priming shows
+  // up honestly instead of freezing the prime-time number.
+  const coverage = active && mainLine && primedKey === primeKey ? {
+    total: nodes.length,
+    covered: nodes.filter(node => coordinator.result('sf', node, settings) &&
+      (terminalEvaluation(replay(node.moves, node.initialFen)) || coordinator.result('maia', node, settings))).length,
+  } : null;
   useEffect(() => {
     // Record main-line batches once per outcome: failures stay visible via
     // retry (a clean retry records under its own key), restores skip when the
@@ -73,7 +94,7 @@ export function useReview(state: State) {
   const game = replay([], line.initialFen);
   const qualities = line.moves.map((move, index) => { const quality = reviewMove(evaluations[index], evaluations[index + 1], game, move); applyUci(game, move); return quality; });
   const current = nodes[state.analysis.index];
-  return { nodes, evaluations, qualities, current: evaluations[state.analysis.index], maia: active ? coordinator.result('maia', current, settings) : undefined,
+  return { nodes, evaluations, qualities, coverage, current: evaluations[state.analysis.index], maia: active ? coordinator.result('maia', current, settings) : undefined,
     error: active ? coordinator.error('sf', current, settings) || coordinator.error('maia', current, settings) || (state.analysis.index > 0 ? coordinator.error('sf', nodes[state.analysis.index - 1], settings) : undefined) : undefined,
     progress, recordStatus, start: () => coordinator.startBatch(nodes, settings), cancel: () => coordinator.cancelBatch(), retry: () => coordinator.retry(),
     tooLong: nodes.length > 257 };

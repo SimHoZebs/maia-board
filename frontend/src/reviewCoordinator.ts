@@ -210,6 +210,50 @@ export class ReviewCoordinator {
       this.pump(engine); this.emit();
     });
   }
+  // Prime memory caches from the server eval cache without inference. Reads
+  // only: positions missing server-side stay missing for an explicit,
+  // user-gated batch, so evicted rows can never trigger automatic engine
+  // work. Terminals resolve locally and count as covered.
+  async primeLine(nodes: ReviewNode[], settings: ReviewSettings, signal: AbortSignal): Promise<{ covered: number; total: number }> {
+    const terminals = new Set<ReviewNode>();
+    const pending: Job[] = [];
+    for (const node of nodes) {
+      const terminal = terminalEvaluation(replay(node.moves, node.initialFen));
+      if (terminal) {
+        terminals.add(node);
+        this.cache.sf.set(reviewKey('sf', node, settings), terminal);
+        continue;
+      }
+      for (const engine of ['sf', 'maia'] as const) {
+        const key = reviewKey(engine, node, settings);
+        if (!this.cache[engine].peek(key)) pending.push({ engine, node, settings, key });
+      }
+    }
+    const lanes = Array.from({ length: Math.min(8, pending.length) }, async () => {
+      while (pending.length) {
+        signal.throwIfAborted();
+        const job = pending.shift()!;
+        const hit = await this.readServerCache(job, signal).catch(error => {
+          if (error instanceof DOMException && error.name === 'AbortError') throw error;
+          return undefined;
+        });
+        // Server rows are never degraded (fallbacks are not persisted), so a
+        // validated hit is safe to keep indefinitely.
+        if (hit) {
+          if (job.engine === 'sf') this.cache.sf.set(job.key, hit as Evaluation);
+          else this.cache.maia.set(job.key, hit as MoveResponse, Infinity);
+        }
+      }
+    });
+    await Promise.all(lanes);
+    let covered = 0;
+    for (const node of nodes) {
+      if (this.cache.sf.peek(reviewKey('sf', node, settings)) &&
+        (terminals.has(node) || this.cache.maia.peek(reviewKey('maia', node, settings)))) covered++;
+    }
+    this.emit();
+    return { covered, total: nodes.length };
+  }
   private async readServerCache(job: Job, signal: AbortSignal): Promise<Result | undefined> {
     let response: Response;
     try {

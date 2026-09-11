@@ -22,19 +22,21 @@ function ReviewLaunch({ state, review }: { state: State; review: Review }) {
   const progress = review.progress;
   const complete = !!progress && !progress.running && !progress.canceled && progress.done === progress.total && !progress.failed;
   if (progress?.running) return null;
-  if (complete) {
-    const record = review.recordStatus.state === 'fresh' ? review.recordStatus.record : undefined;
+  const record = review.recordStatus.state === 'fresh' ? review.recordStatus.record :
+    review.recordStatus.state === 'stale' ? review.recordStatus.record : undefined;
+  if (complete || (review.coverage && review.coverage.covered === review.coverage.total)) {
     return <div className="analysis-record"><p role="status">Analyzed{record ? ` · ${recordDate(record.completed_at)}` : ''}</p><button onClick={review.start}>Re-analyze</button></div>;
   }
   if (progress && (progress.canceled || progress.failed > 0)) {
     return <div className="analysis-record"><button className="primary" disabled={review.tooLong} onClick={review.start}>Analyze entire game</button></div>;
   }
-  if (review.recordStatus.state === 'fresh' && review.recordStatus.record) {
-    return <div className="analysis-record"><p role="status">Analyzed · {recordDate(review.recordStatus.record.completed_at)} · results not loaded</p><button className="primary" onClick={review.start}>Restore analysis</button></div>;
+  if (review.coverage && record) {
+    return <div className="analysis-record"><p role="status">Analyzed · {recordDate(record.completed_at)} · {review.coverage.covered} of {review.coverage.total} positions cached</p><button className="primary" onClick={review.start}>Restore remaining</button></div>;
   }
+  if (review.recordStatus.state === 'fresh') return <button className="primary" disabled>Loading analysis…</button>;
   if (review.recordStatus.state === 'checking') return <button className="primary" disabled>Checking analysis…</button>;
-  return <div className="analysis-record">{review.recordStatus.state === 'stale' && review.recordStatus.record &&
-    <p>Last analyzed {recordDate(review.recordStatus.record.completed_at)} · Maia {review.recordStatus.record.settings.elo_maia} · {review.recordStatus.record.settings.model}</p>}
+  return <div className="analysis-record">{review.recordStatus.state === 'stale' && record &&
+    <p>Last analyzed {recordDate(record.completed_at)} · Maia {record.settings.elo_maia} · {record.settings.model}</p>}
     <button className="primary" disabled={review.tooLong} onClick={review.start}>Analyze entire game</button></div>;
 }
 

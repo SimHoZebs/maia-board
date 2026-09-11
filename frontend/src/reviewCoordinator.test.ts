@@ -260,6 +260,35 @@ it('flags batches with degraded Maia answers and clears the flag on retry', asyn
   clean.startBatch(nodes, settings); await flush(); await flush();
   expect(clean.batchDegraded()).toBe(false);
 });
+it('primes memory from the server cache without inference', async () => {
+  const server = new Map<string, { engine: string; value: unknown }>();
+  const live: string[] = [];
+  const fetcher = (async (url: string | URL | Request, init?: RequestInit) => {
+    const path = String(url);
+    if (path.startsWith('/evaluations/')) {
+      if (init?.method === 'PUT') {
+        const put = JSON.parse(init.body as string);
+        server.set(path.slice('/evaluations/'.length), { engine: put.engine, value: put.value });
+        return Response.json({});
+      }
+      const hit = server.get(path.slice('/evaluations/'.length));
+      return hit ? Response.json({ ...hit, key_hash: 'x', created_at: 'now' }) : Response.json({ code: 'not_found' }, { status: 404 });
+    }
+    live.push(path);
+    return Response.json(body(path));
+  }) as unknown as typeof fetch;
+  const first = new ReviewCoordinator(fetcher);
+  first.startBatch(nodes, settings); await flush(); await flush();
+  expect(first.progress).toMatchObject({ running: false });
+  expect(server.size).toBeGreaterThan(0);
+  const calls = live.length;
+  const second = new ReviewCoordinator(fetcher);
+  const coverage = await second.primeLine(nodes, settings, new AbortController().signal);
+  expect(live).toHaveLength(calls);
+  expect(coverage).toEqual({ covered: nodes.length, total: nodes.length });
+  expect(second.result('sf', nodes[2], settings)).toMatchObject({ depth: 12 });
+  expect(second.result('maia', nodes[2], settings)).toMatchObject({ move: 'e2e4' });
+});
 it('rejects empty lines for non-terminal evaluations', async () => {
   const { fetchEvaluation } = await import('./reviewCoordinator');
   const bad = { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4', score: { type: 'cp', value: 0 }, lines: [] };
