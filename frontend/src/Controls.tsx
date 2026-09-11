@@ -66,8 +66,8 @@ export function AnalysisActions({ state, dispatch }: Props) {
     timer.current = window.setTimeout(() => setCopied(false), 2000);
   };
   return <div className="analysis-actions">
-    <Button id="export-pgn" onClick={() => downloadPgn(exportLine(state.analysis), 'maia-analysis.pgn')}>Export original PGN</Button>
-    <Button id="copy-analysis-link" onClick={() => void copyLink()}>{copied ? 'Link copied' : 'Copy link'}</Button>
-    {state.analysis.branchFromPly !== null && <><Button id="return-original" onClick={() => dispatch({ type: 'original' })}>Return to original</Button><Button id="export-explored" onClick={() => downloadPgn(exportExplored(state.analysis), 'maia-explored.pgn')}>Export explored PGN</Button></>}
+    <Button id="export-pgn" variant="quiet" onClick={() => downloadPgn(exportLine(state.analysis), 'maia-analysis.pgn')}>Export original PGN</Button>
+    <Button id="copy-analysis-link" variant="quiet" onClick={() => void copyLink()}>{copied ? 'Link copied' : 'Copy link'}</Button>
+    {state.analysis.branchFromPly !== null && <Button id="export-explored" variant="quiet" onClick={() => downloadPgn(exportExplored(state.analysis), 'maia-explored.pgn')}>Export explored PGN</Button>}
   </div>;
 }

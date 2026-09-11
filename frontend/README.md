@@ -33,7 +33,8 @@ The Go server serves the resulting `dist` directory at `/app/static`. Set
   Starting a new game keeps the current game in History; Cancel keeps playing.
   During play, player strips show the
   active turn; horizontal notation and position navigation sit below the board.
-  All board controls are icon-only with labels for assistive tech. New game
+  Flip, takeback, and position navigation share a compact icon toolbar with labels
+  for assistive tech. New game
   lives in the header above the board; completed games offer Review game.
 - **Analyze:** load History, PGN (game notation), FEN (a starting position), or the
   standard starting position. Import closes after loading; clicking the Analyze
@@ -42,9 +43,12 @@ The Go server serves the resulting `dist` directory at `/app/static`. Set
   requests Maia probabilities and Stockfish evaluation, plus evaluation of the
   preceding position to grade the last played move. Analyze entire game reviews
   the complete imported line; Analyze explored line reviews the current branch.
-   Review graphs, quality badges, and suggestion arrows appear in Analyze.
-   While exploring, an Exploring marker shows above the board; the original line
-  stays intact until Return to original. Translucent White/Red/Blue arrows show
+  Rating and model selectors share a row with the generation action and are disabled during a batch.
+  Review graphs, quality badges, and suggestion arrows appear in Analyze.
+  Move notation wraps below the board. While exploring, the original line remains
+  visible above an indented continuation. Original moves after the branch
+  point are read-only; the toolbar's return arrow exits exploration. Export and copy-link
+  actions follow the analysis results. Translucent White/Red/Blue arrows show
   the played continuation, Maia's top choice, and Stockfish's best move, widest
   to narrowest so agreeing moves remain visible. The Maia and Stockfish sections
   carry matching red and blue markers, lead with comparable White-win heroes,

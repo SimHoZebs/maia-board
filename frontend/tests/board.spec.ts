@@ -132,7 +132,7 @@ test('direct play resumes once; Back/Forward preserves game viewing and analysis
   await expect(page).toHaveURL('http://maia.test/analyze?moves=d2d4,d7d5');
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 4');
   await piece(page, 'c4', 'white pawn');
-  await expect(page.locator('.branch-label')).toBeVisible();
+  await expect(page.getByLabel('Explored variation', { exact: true })).toBeVisible();
   await page.goBack();
   await expect(page).toHaveURL('http://maia.test/play');
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 3');
@@ -365,7 +365,7 @@ test('analysis load, navigation, export, request history, stale reply and mode r
   expect(app.requests[1].payload.initial_fen).toBe(fen);
   expect(replay(app.requests[1].payload.moves, fen).fen()).toBe(app.requests[1].payload.fen);
   await app.reply(1, 'e8d7');
-  await expect(page.locator('#insight-title')).toHaveText('Human moves · 1600 rating');
+  await expect(page.locator('#insight-title')).toHaveText('Maia • 1600');
   await page.locator('#mode-play').click(); await move(page, 'd2', 'd4');
   await expect.poll(() => app.requests.length).toBe(3);
   await app.reply(2, 'd7d5'); await piece(page, 'd5', 'black pawn');
@@ -536,10 +536,10 @@ test('analysis candidate preview, independent rating, branch replay and labeled 
   await page.keyboard.press('Escape');
   expect(app.requests).toHaveLength(tip + 1);
   await app.reply(tip, 'b8c6');
-  await page.getByText('Analysis settings', { exact: true }).click();
+  await expect(page.locator('#analysis-rating')).toBeVisible();
   await page.locator('#analysis-rating').selectOption('2000');
   await expect(page.locator('#insight-content')).toHaveCount(0);
-  await expect(page.locator('#insight-title')).toHaveText('Human moves · 2000 rating');
+  await expect(page.locator('#insight-title')).toHaveText('Maia • 2000');
   await expect.poll(() => app.requests.length).toBe(tip + 2);
   expect(app.requests[tip + 1].payload).toMatchObject({ elo_maia: 2000, elo_user: 2000 });
   await page.locator('#analysis-model').selectOption('5m');
@@ -630,8 +630,10 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
       expect(box.top).toBeGreaterThanOrEqual(0); expect(box.bottom).toBeLessThanOrEqual(viewport.height);
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    for (const box of await page.locator('.board-actions button, .nav-buttons button, .site-header a').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height }; }))) {
-      expect(box.width).toBeGreaterThanOrEqual(44); expect(box.height).toBeGreaterThanOrEqual(44);
+    const toolbarBoxes = await page.locator('.board-actions button, .nav-buttons button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height, top: r.top }; }));
+    for (const box of toolbarBoxes) {
+      expect(box.width).toBe(32); expect(box.height).toBe(32);
+      expect(box.top).toBe(toolbarBoxes[0].top);
     }
     const list = page.locator('#move-list');
     expect(await list.evaluate(el => el.scrollWidth > el.clientWidth && el.clientHeight <= 52)).toBe(true);
@@ -655,6 +657,56 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
     else expect(rail.y).toBeGreaterThanOrEqual(stage.y + stage.height);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await screenshot(page, testInfo.outputPath(`analysis-${viewport.width}.png`));
+  });
+}
+
+for (const width of [320, 390]) {
+  test(`compact analysis variation notation at ${width}px`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height: 844 });
+    await boot(page, {}, false, '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6');
+    await page.locator('#analysis-first').click();
+    await page.locator('#analysis-next').click();
+    await move(page, 'c7', 'c5');
+    await move(page, 'g1', 'f3');
+    await expect(page.getByLabel('Original line', { exact: true })).toContainText('e5');
+    const variation = page.getByLabel('Explored variation', { exact: true });
+    await expect(variation).toContainText('c5');
+    await expect(variation).toContainText('Nf3');
+    await variation.getByRole('button', { name: /c5/ }).click();
+    await piece(page, 'c5', 'black pawn');
+    await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 4');
+    await page.locator('#analysis-next').click();
+    await piece(page, 'f3', 'white knight');
+    await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
+    await expect(page.locator('.original-line button')).toHaveCount(1);
+    const toolbar = await page.locator('.move-navigation button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { y: r.y, width: r.width, height: r.height }; }));
+    for (const box of toolbar) { expect(box.y).toBe(toolbar[0].y); expect(box.width).toBe(32); expect(box.height).toBe(32); }
+    await expect(page.locator('#analysis-rating')).toBeVisible();
+    await expect(page.locator('#analysis-model')).toBeVisible();
+    await expect(page.locator('.generation-settings').getByText('Maia rating', { exact: true })).toBeVisible();
+    await expect(page.locator('.generation-settings').getByText('Model', { exact: true })).toBeVisible();
+    await expect(page.locator('#analysis-rating')).toHaveAccessibleName('Maia rating');
+    await expect(page.locator('.analysis-generation summary')).toHaveCount(0);
+    await expect(page.getByText('Original', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Exploring', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Unreviewed', { exact: false })).toHaveCount(0);
+    await expect(page.locator('.selected-quality, .quality-unreviewed')).toHaveCount(0);
+    await expect(page.locator('.analysis-generation').getByRole('button', { name: 'Analyze explored line' })).toBeVisible();
+    const generation = await page.locator('.analysis-generation button, .analysis-generation select').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { y: r.y, height: r.height }; }));
+    expect(generation).toHaveLength(3);
+    for (const box of generation) { expect(box.y).toBe(generation[0].y); expect(box.height).toBe(32); }
+    const engines = (await page.locator('.engine-duo').boundingBox())!;
+    const exports = (await page.locator('.analysis-actions').boundingBox())!;
+    expect(exports.y).toBeGreaterThanOrEqual(engines.y + engines.height);
+    await expect(page.locator('.board-stage .analysis-actions')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: /Stockfish/ })).toHaveCount(1);
+    await expect(page.getByText('Engine moves', { exact: true })).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: info.outputPath(`variation-${width}.png`), fullPage: true });
+    await page.locator('#return-original').click();
+    await expect(variation).toHaveCount(0);
+    await page.locator('#analysis-next').click();
+    await piece(page, 'e5', 'black pawn');
   });
 }
 

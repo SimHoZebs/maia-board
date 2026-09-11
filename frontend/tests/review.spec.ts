@@ -176,7 +176,7 @@ test('changed analysis settings mark the completed record stale', async ({ page 
   await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
   expect(app.analyses).toHaveLength(1);
-  await page.getByText('Analysis settings', { exact: true }).click();
+  await expect(page.locator('#analysis-rating')).toBeVisible();
   await page.locator('#analysis-rating').selectOption('1800');
   await expect(page.getByRole('button', { name: 'Analyze entire game' })).toBeVisible();
   await expect(page.locator('.analysis-record')).toContainText('Last analyzed');
@@ -201,7 +201,7 @@ test('mixed arrow sources retain their own endpoints', async ({ page }, info) =>
   await atStart(page);
   const endpoints = await lines(page).evaluateAll(elements => elements.map(el => `${el.getAttribute('x1')},${el.getAttribute('y1')}:${el.getAttribute('x2')},${el.getAttribute('y2')}`));
   expect(new Set(endpoints).size).toBe(3);
-  await expect(page.getByRole('heading', { name: /Human moves/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Maia • 1600', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Stockfish' })).toBeVisible();
   await expect(page.locator('.insight-panel')).toContainText('Nf3');
   await expect(page.locator('.insight-panel')).toContainText('d4');
@@ -212,9 +212,12 @@ test('current and predecessor alone leave earlier chart points missing', async (
   await bootReview(page);
   await expect(page.locator('.selected-evaluation')).toContainText('depth 16');
   await expect(page.locator('.chart-line')).toHaveCount(1);
-  await expect(page.locator('.chart-point').first()).toHaveAccessibleName(/Unreviewed/);
+  await expect(page.locator('.chart-point').first()).toHaveAccessibleName('Starting position');
   await expect(page.locator('.chart-point').first().locator('i')).toHaveCount(0);
-  await expect(page.locator('.chart-point').nth(2)).toHaveAccessibleName(/Unreviewed/);
+  await expect(page.locator('.chart-point').nth(2)).toHaveAccessibleName('2. e5');
+  await expect(page.locator('.chart-point').nth(2).locator('i')).toHaveCount(0);
+  await expect(page.getByText('Unreviewed', { exact: false })).toHaveCount(0);
+  await expect(page.locator('[title*="Unreviewed"], [aria-label*="Unreviewed"], .quality-unreviewed')).toHaveCount(0);
 });
 test('cancel stops lazy batch scheduling while retaining completed position results', async ({ page }) => {
   await bootReview(page);
@@ -246,7 +249,7 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
       expect(rect.top).toBeGreaterThanOrEqual(0); expect(rect.bottom).toBeLessThanOrEqual(viewport.height);
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    for (const size of await page.locator('.chart-point, .chart-tabs button').evaluateAll(elements => elements.map(el => { const rect = el.getBoundingClientRect(); return [rect.width, rect.height]; }))) { expect(size[0]).toBeGreaterThanOrEqual(44); expect(size[1]).toBeGreaterThanOrEqual(44); }
+    for (const size of await page.locator('.chart-point, .chart-tabs button').evaluateAll(elements => elements.map(el => { const rect = el.getBoundingClientRect(); return [rect.width, rect.height]; }))) { expect(size[0]).toBeGreaterThanOrEqual(32); expect(size[1]).toBeGreaterThanOrEqual(32); }
     await page.screenshot({ path: info.outputPath(`review-${viewport.width}.png`), fullPage: true });
   });
 }

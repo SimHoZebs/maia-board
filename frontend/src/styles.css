@@ -2,7 +2,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }
 button, input, textarea, select { font: inherit; }
-button { min-height: 44px; min-width: 44px; padding: 8px 13px; background: #2d2f30; color: inherit; border: 1px solid var(--line); border-radius: 5px; cursor: pointer; }
+button { min-height: 32px; min-width: 32px; padding: 5px 9px; font-size: 13px; background: #2d2f30; color: inherit; border: 1px solid var(--line); border-radius: 4px; cursor: pointer; }
 button:hover:not(:disabled) { background: #3b3d3d; }
 button:disabled { opacity: .4; cursor: default; }
 button[aria-pressed="true"], button[aria-current] { color: #e6f0d5; background: #414b35; border-color: #899d6b; }
@@ -46,15 +46,19 @@ p { line-height: 1.5; color: var(--muted); }
 .player-side { color: var(--muted); font-size: 12px; }
 .turn-indicator { margin-left: auto; color: var(--accent); font-size: 12px; }
 .notation { border-top: 1px solid var(--line); }
-.move-list { position: relative; display: flex; align-items: center; gap: 3px; height: 52px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; white-space: nowrap; }
-.move-cell { flex: none; border-color: transparent; background: transparent; padding: 8px; font-size: 14px; }
+.move-list { position: relative; display: flex; align-items: center; gap: 2px; height: 40px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; white-space: nowrap; }
+.move-cell { flex: none; border-color: transparent; background: transparent; padding: 4px 6px; font-size: 14px; }
 .move-cell span { color: var(--muted); font-size: 12px; }
+.analysis-notation .move-list { display: flex; flex-wrap: wrap; align-content: start; height: auto; min-height: 40px; max-height: 144px; padding: 4px 0; overflow-x: hidden; overflow-y: auto; white-space: normal; }
+.original-line, .variation-line { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; width: 100%; }
+.original-move { padding: 4px 6px; color: var(--muted); font-size: 14px; white-space: nowrap; }
+.original-move span { font-size: 12px; }
+.variation-line { margin: 4px 0 2px 10px; padding: 4px 0 4px 8px; width: calc(100% - 10px); border-left: 2px solid var(--accent); }
 .move-navigation { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.nav-buttons { display: flex; gap: 4px; }
-.nav-buttons button { width: 48px; min-height: 44px; font-size: 19px; }
-#analysis-index { color: var(--muted); font-size: 12px; white-space: nowrap; }
-.board-actions { display: flex; gap: 4px; margin-top: 4px; border-top: 1px solid var(--line); padding-top: 4px; }
-.board-actions button { border-color: transparent; background: transparent; min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; padding: 8px; }
+.nav-buttons { display: flex; gap: 2px; }
+.nav-buttons button, .board-actions button { width: 32px; height: 32px; min-height: 32px; min-width: 32px; display: inline-flex; align-items: center; justify-content: center; padding: 4px; border-color: transparent; background: transparent; }
+#analysis-index { display: block; text-align: right; margin-top: 2px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.board-actions { display: flex; gap: 2px; }
 #new-game { margin-left: auto; }
 .return-game { width: 100%; margin-top: 6px; color: var(--accent); }
 .panel { padding: 22px; background: #282a2b; border: 1px solid var(--line); border-radius: 7px; }
@@ -72,10 +76,16 @@ legend { font-size: 14px; margin-bottom: 8px; }
 .actions, .source-options, .analysis-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .source-options { margin: 20px 0; }
 .source-options button { flex-grow: 1; font-size: 13px; }
-.analysis-actions { margin-top: 10px; }
+.analysis-actions { margin-top: 18px; padding-top: 10px; border-top: 1px solid var(--line); }
 .analysis-actions button { font-size: 12px; }
-.branch-label { margin: 12px 0 0; color: var(--accent); font-size: 12px; }
 .insight-panel { align-self: start; margin-top: 32px; padding: 18px; }
+.analysis-generation { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 4px 8px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.analysis-generation .analysis-record { display: contents; }
+.analysis-generation .analysis-record p { flex-basis: 100%; }
+.generation-settings { display: flex; gap: 6px; margin: 0; min-width: 0; }
+.generation-settings .field { margin: 0; gap: 3px; }
+.generation-settings .field > span { font-size: 10px; color: var(--muted); white-space: nowrap; }
+.generation-settings select { min-height: 32px; height: 32px; width: auto; padding: 4px 6px; font-size: 12px; }
 .insight-panel h2 { font-size: 17px; }
 details { font-size: 13px; }
 summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted); }
@@ -87,7 +97,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .candidate-list { list-style: none; margin: 0; padding: 0; }
 .candidate-list li { display: flex; gap: 6px; align-items: center; border-bottom: 1px solid var(--line); padding: 4px 0; }
 .rank { font-size: 12px; color: var(--muted); width: 12px; }
-.candidate-reading { display: flex; justify-content: space-between; align-items: center; flex: 1; gap: 10px; min-width: 0; min-height: 44px; background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 8px; }
+.candidate-reading { display: flex; justify-content: space-between; align-items: center; flex: 1; gap: 10px; min-width: 0; min-height: 32px; background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 5px 6px; }
 .candidate-list li.played .candidate-reading { background: #414b35; border-color: #899d6b; }
 .candidate-list .metric { color: var(--accent); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .candidate-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -141,7 +151,6 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
   .panel { padding: 18px; }
   .saved-game { flex-direction: column; align-items: stretch; }
   .saved-game .actions button { flex: 1; }
-  .nav-buttons button { width: 44px; }
   .game-result { font-size: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: 0s !important; } }

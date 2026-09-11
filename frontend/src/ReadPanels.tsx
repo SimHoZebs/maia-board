@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type ReactNode } from 'react';
 import { absoluteWdl, candidateSan, exportLine, gameResult, loadLine, replay, sideName, START_FEN } from './domain';
 import type { Action, State } from './state';
 import { downloadPgn, Rating } from './BoardTools';
@@ -18,7 +18,7 @@ function ReviewLaunch({ state, review }: { state: State; review: Review }) {
   const branch = state.analysis.branchFromPly !== null;
   if (branch) {
     if (review.progress?.running) return null;
-    return <Button variant="primary" disabled={review.tooLong} onClick={review.start}>Analyze explored line</Button>;
+    return <Button variant="primary" aria-label="Analyze explored line" disabled={review.tooLong} onClick={review.start}>Analyze</Button>;
   }
   const progress = review.progress;
   const complete = !!progress && !progress.running && !progress.canceled && progress.done === progress.total && !progress.failed;
@@ -29,19 +29,19 @@ function ReviewLaunch({ state, review }: { state: State; review: Review }) {
     return <div className="analysis-record"><p role="status">Analyzed{record ? ` · ${recordDate(record.completed_at)}` : ''}</p><Button variant="quiet" onClick={review.start}>Re-analyze</Button></div>;
   }
   if (progress && (progress.canceled || progress.failed > 0)) {
-    return <div className="analysis-record"><Button variant="primary" disabled={review.tooLong} onClick={review.start}>Analyze entire game</Button></div>;
+    return <div className="analysis-record"><Button variant="primary" aria-label="Analyze entire game" disabled={review.tooLong} onClick={review.start}>Analyze</Button></div>;
   }
   if (review.coverage && record) {
-    return <div className="analysis-record"><p role="status">Analyzed · {recordDate(record.completed_at)} · {review.coverage.covered} of {review.coverage.total} positions cached</p><Button variant="primary" onClick={review.start}>Restore remaining</Button></div>;
+    return <div className="analysis-record"><p role="status">Analyzed · {recordDate(record.completed_at)} · {review.coverage.covered} of {review.coverage.total} positions cached</p><Button variant="primary" aria-label="Restore remaining" onClick={review.start}>Restore</Button></div>;
   }
-  if (review.recordStatus.state === 'fresh') return <Button variant="primary" disabled>Loading analysis…</Button>;
-  if (review.recordStatus.state === 'checking') return <Button variant="primary" disabled>Checking analysis…</Button>;
+  if (review.recordStatus.state === 'fresh') return <Button variant="primary" aria-label="Loading analysis" disabled>Loading…</Button>;
+  if (review.recordStatus.state === 'checking') return <Button variant="primary" aria-label="Checking analysis" disabled>Checking…</Button>;
   return <div className="analysis-record">{review.recordStatus.state === 'stale' && record &&
     <p>Last analyzed {recordDate(record.completed_at)} · Maia {record.settings.elo_maia} · {record.settings.model}</p>}
-    <Button variant="primary" disabled={review.tooLong} onClick={review.start}>Analyze entire game</Button></div>;
+    <Button variant="primary" aria-label="Analyze entire game" disabled={review.tooLong} onClick={review.start}>Analyze</Button></div>;
 }
 
-export function InsightPanel({ state, dispatch, review }: { state: State; dispatch: Dispatch<Action>; review: Review }) {
+export function InsightPanel({ state, dispatch, review, children }: { state: State; dispatch: Dispatch<Action>; review: Review; children?: ReactNode }) {
   const { analysisSettings } = state;
   const response = review.maia;
   const node = review.nodes[state.analysis.index];
@@ -51,16 +51,16 @@ export function InsightPanel({ state, dispatch, review }: { state: State; dispat
   return <aside className="panel insight-panel" aria-labelledby="insight-title">
     {review.tooLong && <p role="status">Review supports up to 256 moves (plies).</p>}
     {(review.error || !!review.progress?.failed) && <p role="alert">{review.error || `${review.progress!.failed} analysis jobs failed.`} <Button onClick={review.retry}>Retry failed</Button></p>}
-    <ReviewLaunch state={state} review={review} />
+    <div className="analysis-generation">
+      <ReviewLaunch state={state} review={review} />
+      <fieldset className="generation-settings" aria-label="Analysis settings" disabled={review.progress?.running}><Rating id="analysis-rating" label="Maia rating" value={analysisSettings.eloMaia} onChange={eloMaia => dispatch({ type: 'analysis-settings', settings: { eloMaia } })} /><label className="field"><span>Model</span><select id="analysis-model" value={analysisSettings.model} onChange={event => dispatch({ type: 'analysis-settings', settings: { model: event.target.value as '5m' | '79m' } })}><option value="79m">79M</option><option value="5m">5M</option></select></label></fieldset>
+    </div>
     {review.progress && <div role="status">{review.progress.done} / {review.progress.total} analysis jobs {review.progress.failed ? `· ${review.progress.failed} failed` : ''} {review.progress.canceled ? '· canceled' : ''}{review.progress.running && <Button onClick={review.cancel}>Cancel analysis</Button>}</div>}
     <ReviewCharts review={review} ply={state.analysis.index} sans={review.nodes.at(-1)!.moves.map((_, index) => candidateSan(review.nodes[index].fen, review.nodes[index + 1].moves[index]))} onView={ply => dispatch({ type: 'view', ply })} />
-    <details><summary>Analysis settings</summary><Rating id="analysis-rating" label="Analyzed-player rating" value={analysisSettings.eloMaia} onChange={eloMaia => dispatch({ type: 'analysis-settings', settings: { eloMaia } })} /><label className="field">Model<select id="analysis-model" value={analysisSettings.model} onChange={event => dispatch({ type: 'analysis-settings', settings: { model: event.target.value as '5m' | '79m' } })}><option value="79m">79M</option><option value="5m">5M</option></select></label></details>
     <div className="engine-duo">
-    <EngineSection label="Maia analysis" titleId="insight-title" dotClass="source-maia" title={`Human moves · ${analysisSettings.eloMaia} rating`}>
-      <p className="model-context">Maia {response?.model_used.toUpperCase() ?? analysisSettings.model.toUpperCase()}{response?.degraded ? ' · fallback model' : ''}</p>
+    <EngineSection label="Maia analysis" titleId="insight-title" dotClass="source-maia" title={`Maia • ${analysisSettings.eloMaia}`}>
       {response && insight ? <div id="insight-content">
         <WinEstimate label="Maia win estimate" percent={Math.round(absoluteWdl(insight.fen, response.wdl)[0] * 100)} caption={`White win · after ${candidateSan(insight.fen, response.top_moves[0].move)}`} />
-        <h3>Maia {analysisSettings.eloMaia} moves</h3>
         <CandidateList playedSan={played && !response.top_moves.slice(0, 5).some(candidate => candidate.move === played) ? candidateSan(insight.fen, played) : null}>
           {response.top_moves.slice(0, 5).map((candidate, index) => {
             const san = candidateSan(insight.fen, candidate.move);
@@ -71,10 +71,11 @@ export function InsightPanel({ state, dispatch, review }: { state: State; dispat
         </CandidateList>
       </div> : <p className="empty-copy">No analysis yet.</p>}
     </EngineSection>
-    <EngineSection label="Stockfish evaluation" dotClass="source-stockfish" title="Stockfish">
-      {evaluation ? <StockfishBody fen={node.fen} evaluation={evaluation} played={played} previewUci={state.preview} onPreview={uci => dispatch({ type: 'preview', uci })} /> : <><p className="model-context">Stockfish 19</p><p className="empty-copy">No analysis yet.</p></>}
+    <EngineSection label="Stockfish evaluation" dotClass="source-stockfish" title={`Stockfish 19${evaluation && !evaluation.terminal ? ` · depth ${evaluation.depth}` : ''}`}>
+      {evaluation ? <StockfishBody fen={node.fen} evaluation={evaluation} played={played} previewUci={state.preview} onPreview={uci => dispatch({ type: 'preview', uci })} /> : <p className="empty-copy">No analysis yet.</p>}
     </EngineSection>
     </div>
+    {children}
   </aside>;
 }
 
@@ -84,9 +85,7 @@ function StockfishBody({ fen, evaluation, played, previewUci, onPreview }: { fen
     <p>{evaluation.terminal === 'draw' ? 'Draw' : evaluation.terminal === 'white_win' ? 'White wins' : 'Black wins'}</p>
   </div>;
   return <div>
-    <p className="model-context">Stockfish 19 · depth {evaluation.depth}</p>
     <WinEstimate label="Stockfish win estimate" percent={Math.round(whiteWin(evaluation.score))} caption="White win · this position" />
-    <h3>Engine moves</h3>
     <CandidateList playedSan={played && !evaluation.lines.some(line => line.move === played) ? candidateSan(fen, played) : null}>
       {evaluation.lines.map((line, index) => {
         const san = candidateSan(fen, line.move);
@@ -97,25 +96,36 @@ function StockfishBody({ fen, evaluation, played, previewUci, onPreview }: { fen
   </div>;
 }
 
-export function MovesPanel({ sans, ply, onView, initialFen, historical, qualities }: { sans: string[]; ply: number; onView: (ply: number | null) => void; initialFen: string; historical: boolean; qualities?: Quality[] }) {
+export function MovesPanel({ sans, ply, onView, initialFen, historical, qualities, analysis = false, original, tools }: { sans: string[]; ply: number; onView: (ply: number | null) => void; initialFen: string; historical: boolean; qualities?: Quality[]; analysis?: boolean; original?: { sans: string[]; fromPly: number }; tools?: ReactNode }) {
   const active = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const container = list.current!;
     const reveal = () => {
       const button = active.current;
-      if (button) container.scrollLeft = button.offsetLeft - container.clientWidth / 2 + button.clientWidth / 2;
-      else if (ply === 0) container.scrollLeft = 0;
+      if (button) {
+        if (analysis) container.scrollTop = button.offsetTop - container.clientHeight / 2 + button.clientHeight / 2;
+        else container.scrollLeft = button.offsetLeft - container.clientWidth / 2 + button.clientWidth / 2;
+      } else if (ply === 0) { container.scrollLeft = 0; container.scrollTop = 0; }
     };
     reveal();
     const observer = new ResizeObserver(reveal);
     observer.observe(container);
     return () => observer.disconnect();
-  }, [ply, sans.length]);
+  }, [ply, sans.length, analysis, original?.fromPly]);
   const parts = initialFen.split(' '), first = Number(parts[5]) * 2 + (parts[1] === 'b' ? 1 : 0);
-  return <section className="notation" aria-label="Move history">
-    <div className="move-list" id="move-list" ref={list}>{!sans.length && <span className="empty-copy">Moves appear here</span>}{sans.map((san, index) => <button ref={ply === index + 1 ? active : undefined} className="move-cell" aria-current={ply === index + 1 ? 'step' : undefined} key={index} onClick={() => onView(index + 1)}><span>{Math.floor((first + index) / 2)}{(first + index) % 2 ? '…' : '.'}</span> {san} {qualities && <QualityBadge quality={qualities[index]} />}</button>)}</div>
-    <div className="move-navigation"><div className="nav-buttons">{[{ id: 'first', label: 'First position', Icon: SkipBack, to: 0 }, { id: 'prev', label: 'Previous position', Icon: ArrowLeft, to: ply - 1 }, { id: 'next', label: 'Next position', Icon: ArrowRight, to: ply + 1 }, { id: 'last', label: 'Last position', Icon: SkipForward, to: sans.length }].map(item => <IconButton key={item.id} id={`analysis-${item.id}`} label={item.label} disabled={item.to < 0 || item.to > sans.length || item.to === ply} onClick={() => onView(item.to)}><item.Icon size={18} aria-hidden="true" /></IconButton>)}</div><span id="analysis-index">Position {ply + 1} / {sans.length + 1}</span></div>
+  const number = (index: number) => <span>{Math.floor((first + index) / 2)}{(first + index) % 2 ? '…' : '.'}</span>;
+  const move = (san: string, index: number) => <button ref={ply === index + 1 ? active : undefined} className="move-cell" aria-current={ply === index + 1 ? 'step' : undefined} key={index} onClick={() => onView(index + 1)}>{number(index)} {san} {qualities && <QualityBadge quality={qualities[index]} />}</button>;
+  return <section className={`notation${analysis ? ' analysis-notation' : ''}`} aria-label="Move history">
+    <div className="move-list" id="move-list" ref={list}>
+      {!sans.length && <span className="empty-copy">Moves appear here</span>}
+      {original ? <>
+        <div className="original-line" aria-label="Original line">{original.sans.map((san, index) => index < original.fromPly ? move(san, index) : <span className="original-move" key={index}>{number(index)} {san}</span>)}</div>
+        <div className="variation-line" aria-label="Explored variation">{sans.slice(original.fromPly).map((san, index) => move(san, original.fromPly + index))}</div>
+      </> : sans.map(move)}
+    </div>
+    <div className="move-navigation"><div className="board-actions">{tools}</div><div className="nav-buttons">{[{ id: 'first', label: 'First position', Icon: SkipBack, to: 0 }, { id: 'prev', label: 'Previous position', Icon: ArrowLeft, to: ply - 1 }, { id: 'next', label: 'Next position', Icon: ArrowRight, to: ply + 1 }, { id: 'last', label: 'Last position', Icon: SkipForward, to: sans.length }].map(item => <IconButton key={item.id} id={`analysis-${item.id}`} label={item.label} disabled={item.to < 0 || item.to > sans.length || item.to === ply} onClick={() => onView(item.to)}><item.Icon size={16} aria-hidden="true" /></IconButton>)}</div></div>
+    <span id="analysis-index">Position {ply + 1} / {sans.length + 1}</span>
     {historical && <Button className="return-game" onClick={() => onView(null)}>Return to game</Button>}
   </section>;
 }

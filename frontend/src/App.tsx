@@ -1,6 +1,6 @@
 import { useEffect, type ReactNode } from 'react';
 import type { Key } from '@lichess-org/chessground/types';
-import { FlipVertical2, Plus, Undo2 } from 'lucide-react';
+import { RotateCw, Plus, Undo2 } from 'lucide-react';
 import { Chess } from 'chess.js';
 import { ChessBoard } from './ChessBoard';
 import { Button, IconButton } from './components';
@@ -60,15 +60,14 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
             <div className="board-frame"><ChessBoard position={position} orientation={orientation} enabled={enabled} thinking={!!request} interactionVersion={state.revision} shapes={shapes} onMove={(from, to) => dispatch({ type: 'move', from, to })} /></div>
             {strip(orientation)}
             {ready && <>
-              <MovesPanel sans={full.sanMoves} ply={ply} initialFen={analysis ? state.analysis.initialFen : START_FEN} historical={historic} qualities={analysis ? review.qualities : undefined} onView={ply => dispatch({ type: 'view', ply })} />
-              <div className="board-actions"><IconButton id="flip-board" label="Flip board" onClick={() => dispatch({ type: 'flip' })}><FlipVertical2 size={18} aria-hidden="true" /></IconButton>{!analysis && <IconButton id="takeback" label="Takeback" disabled={!state.play.moves.length} onClick={() => dispatch({ type: 'takeback' })}><Undo2 size={18} aria-hidden="true" /></IconButton>}</div>
-              {analysis && state.analysis.branchFromPly !== null && <p className="branch-label">Exploring</p>}
-              {analysis && <AnalysisActions state={state} dispatch={dispatch} />}
+              <MovesPanel sans={full.sanMoves} ply={ply} initialFen={analysis ? state.analysis.initialFen : START_FEN} historical={historic} qualities={analysis ? review.qualities : undefined} onView={ply => dispatch({ type: 'view', ply })} analysis={analysis}
+                original={analysis && state.analysis.branchFromPly !== null ? { sans: state.analysis.sanMoves, fromPly: state.analysis.branchFromPly } : undefined}
+                tools={<><IconButton id="flip-board" label="Flip board" onClick={() => dispatch({ type: 'flip' })}><RotateCw size={16} aria-hidden="true" /></IconButton>{analysis && state.analysis.branchFromPly !== null && <IconButton id="return-original" label="Return to original" onClick={() => dispatch({ type: 'original' })}><Undo2 size={16} aria-hidden="true" /></IconButton>}{!analysis && <IconButton id="takeback" label="Takeback" disabled={!state.play.moves.length} onClick={() => dispatch({ type: 'takeback' })}><Undo2 size={16} aria-hidden="true" /></IconButton>}</>} />
               {!analysis && live.isGameOver() && <div className="game-result"><strong>{gameResult(live)}</strong><Button variant="primary" onClick={() => dispatch({ type: 'review' })}>Review game</Button></div>}
             </>}
             <div id="error-banner" className="error-banner" role="alert" hidden={!error}>{error}</div>
           </section>
-          {analysis && ready && <InsightPanel state={state} dispatch={dispatch} review={review} />}
+          {analysis && ready && <InsightPanel state={state} dispatch={dispatch} review={review}><AnalysisActions state={state} dispatch={dispatch} /></InsightPanel>}
         </div>
         {ready && <><PlayControls state={state} dispatch={dispatch} /><AnalysisControls state={state} dispatch={dispatch} /></>}
       </>}

@@ -3,8 +3,9 @@ import type { Review } from './useReview';
 import { scoreText, whiteWin, type Quality } from './reviewMetrics';
 
 export function QualityBadge({ quality }: { quality?: Quality }) {
-  const label = quality?.label ?? 'Unreviewed';
-  return <span className={`quality quality-${label.toLowerCase()}`} title={`${label}${quality?.accuracy == null ? '' : ` · ${quality.accuracy.toFixed(1)}% move accuracy`}`} aria-label={label}>{({ Forced: 'F', Blunder: '??', Mistake: '?', Inaccuracy: '?!', Great: '!', Best: 'B', Good: 'G', Unreviewed: '–' })[label]}</span>;
+  if (!quality || quality.label === 'Unreviewed') return null;
+  const label = quality.label;
+  return <span className={`quality quality-${label.toLowerCase()}`} title={`${label}${quality.accuracy == null ? '' : ` · ${quality.accuracy.toFixed(1)}% move accuracy`}`} aria-label={label}>{({ Forced: 'F', Blunder: '??', Mistake: '?', Inaccuracy: '?!', Great: '!', Best: 'B', Good: 'G' })[label]}</span>;
 }
 export function ReviewCharts({ review, ply, sans, onView }: { review: Review; ply: number; sans: string[]; onView: (ply: number) => void }) {
   const [tab, setTab] = useState<'evaluation' | 'accuracy'>('evaluation');
@@ -17,7 +18,12 @@ export function ReviewCharts({ review, ply, sans, onView }: { review: Review; pl
     const evaluation = review.evaluations[index];
     const quality = index ? review.qualities[index - 1] : undefined;
     const value = tab === 'evaluation' ? evaluation ? whiteWin(evaluation.score) : null : quality?.accuracy ?? null;
-    const description = `${index === 0 ? 'Starting position' : `${index}. ${sans[index - 1]}`} · ${value === null ? 'Unreviewed' : `${value.toFixed(1)}% ${tab === 'evaluation' ? 'White winning chance' : 'move accuracy'}`} · ${evaluation ? `${scoreText(evaluation)} · ${evaluation.terminal ? 'terminal result' : `depth ${evaluation.depth}`}` : 'evaluation missing'}${quality ? ` · ${quality.label}` : ''}`;
+    const description = [
+      index === 0 ? 'Starting position' : `${index}. ${sans[index - 1]}`,
+      value === null ? null : `${value.toFixed(1)}% ${tab === 'evaluation' ? 'White winning chance' : 'move accuracy'}`,
+      evaluation ? `${scoreText(evaluation)} · ${evaluation.terminal ? 'terminal result' : `depth ${evaluation.depth}`}` : null,
+      quality && quality.label !== 'Unreviewed' ? quality.label : null,
+    ].filter(Boolean).join(' · ');
     return { node, value, description, evaluation, quality };
   });
   const trackWidth = Math.max(264, points.length * 44);
@@ -40,6 +46,6 @@ export function ReviewCharts({ review, ply, sans, onView }: { review: Review; pl
       </div>
     </div>
     <p className="selected-evaluation" aria-live="polite">{points[ply].description}</p>
-    {ply > 0 && <p className="selected-quality"><QualityBadge quality={review.qualities[ply - 1]} /> {sans[ply - 1]} · {review.qualities[ply - 1].label}</p>}
+    {ply > 0 && review.qualities[ply - 1]?.label !== 'Unreviewed' && review.qualities[ply - 1] && <p className="selected-quality"><QualityBadge quality={review.qualities[ply - 1]} /> {sans[ply - 1]} · {review.qualities[ply - 1].label}</p>}
   </section>;
 }
