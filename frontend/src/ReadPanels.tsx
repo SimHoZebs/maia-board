@@ -4,7 +4,7 @@ import type { Action, State } from './state';
 import { downloadPgn, Rating } from './BoardTools';
 import { Button, CandidateList, CandidateRow, EngineSection, IconButton } from './components';
 import { Dialog } from './Dialog';
-import { ArrowLeft, ArrowRight, SkipBack, SkipForward, Play, Search, Download, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, SkipBack, SkipForward, Play, Search, Download, Trash2, CornerDownRight } from 'lucide-react';
 import { BoardThumbnail } from './BoardThumbnail';
 import type { Review } from './useReview';
 import { QualityBadge } from './ReviewCharts';
@@ -143,8 +143,8 @@ export function MovesPanel({ sans, ply, onView, initialFen, historical, qualitie
     const reveal = () => {
       const button = active.current;
       if (button) {
-        if (analysis) container.scrollTop = button.offsetTop - container.clientHeight / 2 + button.clientHeight / 2;
-        else container.scrollLeft = button.offsetLeft - container.clientWidth / 2 + button.clientWidth / 2;
+        const bounds = button.getBoundingClientRect(), viewport = container.getBoundingClientRect();
+        container.scrollLeft += bounds.left - viewport.left - container.clientWidth / 2 + bounds.width / 2;
       } else if (ply === 0) { container.scrollLeft = 0; container.scrollTop = 0; }
     };
     reveal();
@@ -162,7 +162,7 @@ export function MovesPanel({ sans, ply, onView, initialFen, historical, qualitie
         {original.sans.slice(0, Math.max(0, original.fromPly - 1)).map(move)}
         <div className="branch-point">
           {original.fromPly > 0 && move(original.sans[original.fromPly - 1], original.fromPly - 1)}
-          <div className="variation-line" aria-label="Explored variation">{sans.slice(original.fromPly).map((san, index) => move(san, original.fromPly + index))}</div>
+          <div className="variation-line" aria-label="Explored variation"><CornerDownRight className="branch-connector" size={14} aria-hidden="true" />{sans.slice(original.fromPly).map((san, index) => move(san, original.fromPly + index))}</div>
         </div>
         {original.sans.slice(original.fromPly).map((san, offset) => <span className="original-move" key={original.fromPly + offset}>{number(original.fromPly + offset)} {san}</span>)}
       </div> : sans.map(move)}

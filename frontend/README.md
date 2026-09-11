@@ -45,8 +45,8 @@ The Go server serves the resulting `dist` directory at `/app/static`. Set
   the complete imported line; Analyze explored line reviews the current branch.
   Rating and model selectors share a row with the generation action and are disabled during a batch.
   Review graphs, quality badges, and suggestion arrows appear in Analyze.
-  Move notation wraps below the board. While exploring, the original line remains
-  visible above an indented continuation. Original moves after the branch
+  Move notation scrolls horizontally in a single row below the board. Exploring adds
+  a second row beneath the branch's origin; the original line stays on the first row. Original moves after the branch
   point are read-only; the toolbar's return arrow exits exploration. Export and copy-link
   actions follow the analysis results. Translucent White/Red/Blue arrows show
   the played continuation, Maia's top choice, and Stockfish's best move, widest

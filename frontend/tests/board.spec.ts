@@ -627,7 +627,7 @@ test('analysis entry sources and input keyboard isolation', async ({ page }) => 
   await page.keyboard.press('Escape');
   await expect(page.locator('#mode-analysis')).toBeFocused();
   await page.locator('#mode-analysis').click();
-  await page.getByRole('button', { name: 'Starting position', exact: true }).click();
+  await page.locator('#analysis-controls').getByRole('button', { name: 'Starting position', exact: true }).click();
   await page.locator('#load-analysis').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 1');
   await expect.poll(() => app.requests.length).toBeGreaterThan(0);
@@ -704,7 +704,7 @@ for (const width of [320, 390]) {
     const continuation = (await page.locator('.original-move').first().boundingBox())!;
     expect(branch.y).toBeGreaterThanOrEqual(origin.y + origin.height);
     expect(branch.x).toBeGreaterThan(origin.x);
-    expect(continuation.y).toBeGreaterThanOrEqual(branch.y + branch.height);
+    expect(continuation.y).toBe(origin.y);
     const toolbar = await page.locator('.move-navigation button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { y: r.y, width: r.width, height: r.height }; }));
     for (const box of toolbar) { expect(box.y).toBe(toolbar[0].y); expect(box.width).toBe(32); expect(box.height).toBe(32); }
     await expect(page.locator('#analysis-rating')).toBeVisible();
@@ -758,7 +758,7 @@ for (const originPly of [0, 9, 12]) {
     expect(placement.before).toEqual(Array(originPly).fill('BUTTON'));
     expect(placement.after).toEqual(Array(12 - originPly).fill('original-move'));
     if (placement.parentBottom !== undefined) expect(placement.top).toBeGreaterThanOrEqual(placement.parentBottom);
-    if (placement.tailTop !== undefined) expect(placement.tailTop).toBeGreaterThanOrEqual(placement.bottom);
+    if (placement.tailTop !== undefined) expect(placement.tailTop).toBeLessThan(placement.top);
     await page.screenshot({ path: info.outputPath(`branch-origin-${originPly}.png`), fullPage: true });
     await page.locator('#analysis-prev').click();
     await expect(page.locator('#analysis-index')).toHaveText(`Position ${originPly + 1} / ${originPly + 2}`);
@@ -766,6 +766,40 @@ for (const originPly of [0, 9, 12]) {
     await expect(page.locator('.variation-line .move-cell')).toHaveAttribute('aria-current', 'step');
   });
 }
+
+test('analysis keeps one scrolling main row and adds height only for a branch', async ({ page }, info) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await boot(page, {}, false, '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6,b5a4,g8f6,e1g1,f8e7,f1e1,b7b5');
+  const list = page.locator('#move-list');
+  const height = await list.evaluate(el => el.clientHeight);
+  expect(height).toBe(40);
+  expect(await list.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
+  const rows = await list.locator('.move-cell').evaluateAll(elements => elements.map(el => el.getBoundingClientRect().y));
+  expect(new Set(rows).size).toBe(1);
+  await page.locator('#analysis-first').click();
+  await page.locator('#analysis-next').click();
+  await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
+  await page.locator('#analysis-last').click();
+  await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
+  await page.locator('#analysis-first').click();
+  for (const [from, to] of [['d2', 'd4'], ['d7', 'd5'], ['c2', 'c4'], ['e7', 'e6'], ['b1', 'c3'], ['g8', 'f6'], ['c1', 'g5'], ['f8', 'e7'], ['e2', 'e3'], ['e8', 'g8']]) await move(page, from, to);
+  expect(await list.evaluate(el => el.clientHeight)).toBe(height + 32);
+  const mainRows = await list.locator('.original-move').evaluateAll(elements => elements.map(el => el.getBoundingClientRect().y));
+  const branchRows = await list.locator('.variation-line .move-cell').evaluateAll(elements => elements.map(el => el.getBoundingClientRect().y));
+  expect(new Set(mainRows).size).toBe(1);
+  expect(new Set(branchRows).size).toBe(1);
+  expect(branchRows[0]).toBe(mainRows[0] + 32);
+  await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
+  await page.locator('#analysis-first').click();
+  await page.locator('#analysis-next').click();
+  await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
+  await page.locator('#analysis-last').click();
+  await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath('horizontal-variation.png'), fullPage: true });
+  await page.locator('#return-original').click();
+  expect(await list.evaluate(el => el.clientHeight)).toBe(height);
+});
 
 test('phone touch movement and board exploration', async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
