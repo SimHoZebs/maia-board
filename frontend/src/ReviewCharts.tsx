@@ -32,7 +32,6 @@ export function ReviewCharts({ review, ply, sans, onView }: { review: Review; pl
   return <section className="review-charts" aria-label="Game review">
     <h2>Game review</h2>
     <div className="chart-tabs" role="tablist" aria-label="Review chart"><button role="tab" aria-selected={tab === 'evaluation'} onClick={() => setTab('evaluation')}>Evaluation</button><button role="tab" aria-selected={tab === 'accuracy'} onClick={() => setTab('accuracy')}>Move accuracy</button></div>
-    <p className="chart-caption">{tab === 'evaluation' ? 'White winning chance · 0–100%' : 'Move accuracy · 0–100%'}</p>
     <div className="review-chart" role="tabpanel" aria-label={tab === 'evaluation' ? 'Evaluation graph' : 'Move accuracy graph'}>
       <div className="chart-yaxis" aria-hidden="true">{ticks.map(tick => <span key={tick} style={{ top: yFor(tick) }}>{tick}%</span>)}</div>
       <div className="chart-scroll" ref={chart}>
@@ -45,7 +44,5 @@ export function ReviewCharts({ review, ply, sans, onView }: { review: Review; pl
       </div>
       </div>
     </div>
-    <p className="selected-evaluation" aria-live="polite">{points[ply].description}</p>
-    {ply > 0 && review.qualities[ply - 1]?.label !== 'Unreviewed' && review.qualities[ply - 1] && <p className="selected-quality"><QualityBadge quality={review.qualities[ply - 1]} /> {sans[ply - 1]} · {review.qualities[ply - 1].label}</p>}
   </section>;
 }

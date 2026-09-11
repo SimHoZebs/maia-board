@@ -92,7 +92,8 @@ test('automatic review shows real overlapping SVG arrows and orientation', async
 });
 test('whole game completes independently of viewing, renders quality and clickable gap-aware graphs', async ({ page }, info) => {
   const app = await bootReview(page);
-  await expect(page.locator('.selected-quality')).toContainText('Nc6');
+  await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/Nc6/);
+  await expect(page.locator('.review-charts p')).toHaveCount(0);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await page.locator('#analysis-first').click();
   await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
@@ -103,8 +104,7 @@ test('whole game completes independently of viewing, renders quality and clickab
   await page.getByRole('tab', { name: 'Move accuracy' }).click();
   await page.getByRole('button', { name: /^3\. Nf3 ·/ }).click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
-  await expect(page.locator('.selected-quality')).toContainText('Blunder');
-  await expect(page.locator('.selected-evaluation')).toContainText('depth 15');
+  await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/depth 15.*Blunder/);
   await page.getByRole('tab', { name: 'Evaluation', exact: true }).click();
   await expect(page.locator('.chart-line')).toHaveCount(4);
   await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
@@ -125,13 +125,13 @@ test('blunder and mistake destinations carry board badges', async ({ page }) => 
 });
 test('server-cached positions skip inference after reload', async ({ page }) => {
   const app = await bootReview(page);
-  await expect(page.locator('.selected-evaluation')).toContainText('depth 16');
+  await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/depth 16/);
   await expect.poll(() => app.evaluations.size).toBeGreaterThanOrEqual(3);
   const calls = app.requests.length;
   await page.reload();
   // The loaded line restores from the snapshot with the import panel closed;
   // cached positions resolve without new inference.
-  await expect(page.locator('.selected-evaluation')).toContainText('depth 16');
+  await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/depth 16/);
   await expect(page.locator('.candidate-list li')).not.toHaveCount(0);
   expect(app.requests).toHaveLength(calls);
   expect(app.errors).toEqual([]);
@@ -210,7 +210,7 @@ test('mixed arrow sources retain their own endpoints', async ({ page }, info) =>
 });
 test('current and predecessor alone leave earlier chart points missing', async ({ page }) => {
   await bootReview(page);
-  await expect(page.locator('.selected-evaluation')).toContainText('depth 16');
+  await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/depth 16/);
   await expect(page.locator('.chart-line')).toHaveCount(1);
   await expect(page.locator('.chart-point').first()).toHaveAccessibleName('Starting position');
   await expect(page.locator('.chart-point').first().locator('i')).toHaveCount(0);
@@ -221,7 +221,7 @@ test('current and predecessor alone leave earlier chart points missing', async (
 });
 test('cancel stops lazy batch scheduling while retaining completed position results', async ({ page }) => {
   await bootReview(page);
-  await expect(page.locator('.selected-evaluation')).toContainText('depth 16');
+  await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/depth 16/);
   await expect(page.locator('#insight-content')).toHaveCount(1);
   const held: Route[] = [];
   await page.route('http://maia.test/move', route => { held.push(route); });
@@ -255,8 +255,7 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
 }
 test('terminal repetition skips Maia and keeps the local draw result', async ({ page }) => {
   const app = await bootReview(page, '1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. Ng1 Ng8');
-  await expect(page.locator('.selected-evaluation')).toContainText('terminal result');
-  await expect(page.locator('.selected-evaluation')).toContainText('50.0%');
+  await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/50\.0%.*terminal result/);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Cancel analysis' })).toHaveCount(0);
   expect(app.requests.some(request => request.moves.length === 8)).toBe(false);
