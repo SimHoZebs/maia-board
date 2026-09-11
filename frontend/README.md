@@ -42,15 +42,13 @@ The Go server serves the resulting `dist` directory at `/app/static`. Set
   requests Maia probabilities and Stockfish evaluation, plus evaluation of the
   preceding position to grade the last played move. Analyze entire game reviews
   the complete imported line; Analyze explored line reviews the current branch.
-  Review graphs, quality badges, and suggestion arrows appear in Analyze. The
-  accuracy summary covers one side only: yours for reviewed games, otherwise
-  the side to move in the loaded position.
-  While exploring, an Exploring marker shows above the board; the original line
+   Review graphs, quality badges, and suggestion arrows appear in Analyze.
+   While exploring, an Exploring marker shows above the board; the original line
   stays intact until Return to original. Translucent White/Red/Blue arrows show
   the played continuation, Maia's top choice, and Stockfish's best move, widest
   to narrowest so agreeing moves remain visible. The Maia and Stockfish sections
   carry matching red and blue markers, lead with comparable White-win heroes,
-  present their top moves side by side, and tag the move actually played.
+   present their top moves side by side, and highlight the move actually played.
   Played blunders and mistakes also get ?? / ? destination badges on the board.
 - **History:** games from the server, with Resume for unfinished games,
   Analyze, Export, and Delete. Deleting the current saved game also clears its
@@ -152,12 +150,10 @@ Stockfish's top move, loss at most 1 point, at least two legal choices, and a
 heuristic does not reproduce Chess.com's grading or detect brilliant moves.
 Other low-loss moves are Best when matching Stockfish, otherwise Good.
 
-A single legal choice is Forced with accuracy 100. Mean move accuracy is the
-arithmetic mean per side, including Forced. Missing/failed evaluation pairs remain
-Unreviewed, are excluded from the mean, and leave graph gaps. Coverage shows
-reviewed/total moves. Graph points navigate the line and expose score, actual
+A single legal choice is Forced with accuracy 100. Missing/failed evaluation pairs remain
+Unreviewed and leave graph gaps. Graph points navigate the line and expose score, actual
 depth, and quality through accessible labels. Engine grades are
-estimates at the reported depth; the mean is not Lichess's game aggregation.
+estimates at the reported depth.
 
 Maia probabilities are displayed as returned, without scaling the displayed top
 five to 100%. The win/draw/loss estimate belongs only to the first candidate.

@@ -98,7 +98,6 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .engine-duo h3 { margin: 14px 0 6px; font-size: 13px; }
 .engine-duo .win-hero strong { line-height: 1.2; }
 .engine-duo .win-hero span { line-height: 1.4; min-height: 2lh; }
-.metric-legend { font-size: 11px; margin: 8px 0 0; }
 @media (max-width: 760px) { .engine-duo { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; } }
 .engine-card { min-width: 0; }
 .win-hero { flex-wrap: wrap; }
@@ -148,13 +147,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: 0s !important; } }
 .board-actions button { display: inline-flex; align-items: center; gap: 6px; }
 .insight-panel { max-height: calc(100dvh - 120px); overflow-y: auto; overflow-x: hidden; }
-.accuracy-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
-.accuracy-summary.single { grid-template-columns: 1fr; }
 .review-charts { margin-top: 20px; }.insight-panel > [role="status"] { font-size: 12px; margin-bottom: 10px; }
-.accuracy-summary { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
-.accuracy-summary > div { display: flex; flex-direction: column; gap: 3px; }
-.accuracy-summary b { font-size: 19px; font-variant-numeric: tabular-nums; }
-.accuracy-summary span, .accuracy-summary small { font-size: 11px; color: var(--muted); line-height: 1.4; }
 .chart-tabs { display: flex; gap: 4px; }
 .chart-tabs button { flex: 1; font-size: 12px; }
 .chart-tabs [aria-selected="true"] { border-color: var(--accent); color: var(--accent); }

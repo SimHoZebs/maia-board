@@ -52,7 +52,7 @@ export function InsightPanel({ state, dispatch, review }: { state: State; dispat
     {(review.error || !!review.progress?.failed) && <p role="alert">{review.error || `${review.progress!.failed} analysis jobs failed.`} <button onClick={review.retry}>Retry failed</button></p>}
     <ReviewLaunch state={state} review={review} />
     {review.progress && <div role="status">{review.progress.done} / {review.progress.total} analysis jobs {review.progress.failed ? `· ${review.progress.failed} failed` : ''} {review.progress.canceled ? '· canceled' : ''}{review.progress.running && <button onClick={review.cancel}>Cancel analysis</button>}</div>}
-    <ReviewCharts review={review} ply={state.analysis.index} sans={review.nodes.at(-1)!.moves.map((_, index) => candidateSan(review.nodes[index].fen, review.nodes[index + 1].moves[index]))} onView={ply => dispatch({ type: 'view', ply })} side={state.analysis.perspective} yours={state.analysis.ownGame} />
+    <ReviewCharts review={review} ply={state.analysis.index} sans={review.nodes.at(-1)!.moves.map((_, index) => candidateSan(review.nodes[index].fen, review.nodes[index + 1].moves[index]))} onView={ply => dispatch({ type: 'view', ply })} />
     <details><summary>Analysis settings</summary><Rating id="analysis-rating" label="Analyzed-player rating" value={analysisSettings.eloMaia} onChange={eloMaia => dispatch({ type: 'analysis-settings', settings: { eloMaia } })} /><label className="field">Model<select id="analysis-model" value={analysisSettings.model} onChange={event => dispatch({ type: 'analysis-settings', settings: { model: event.target.value as '5m' | '79m' } })}><option value="79m">79M</option><option value="5m">5M</option></select></label></details>
     <div className="engine-duo">
     <section aria-label="Maia analysis">
@@ -100,7 +100,6 @@ function StockfishBody({ fen, evaluation, played }: { fen: string; evaluation: E
     <ol className="candidate-list">{evaluation.lines.map((line, index) =>
       <CandidateRow key={line.move} index={index} san={candidateSan(fen, line.move)} metric={scoreValueText(line.score)} isPlayed={line.move === played} />
     )}</ol>
-    <p className="metric-legend">Scores in pawns<br />+ White · - Black</p>
     {played && !evaluation.lines.some(line => line.move === played) && <p>Played {candidateSan(fen, played)}</p>}
   </div>;
 }

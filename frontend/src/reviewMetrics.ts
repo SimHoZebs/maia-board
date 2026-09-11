@@ -25,5 +25,13 @@ export function terminalEvaluation(game: Chess): Evaluation | undefined {
   const winner = game.isCheckmate() ? (game.turn() === 'w' ? 'black' : 'white') : null;
   return { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 0, terminal: winner ? `${winner}_win` : 'draw', best_move: null, lines: [], score: winner ? { type: 'mate', value: 0, winning_side: winner } : { type: 'cp', value: 0 } };
 }
-export function scoreValueText(score: Score): string { return score.type === 'mate' ? `${score.winning_side ?? (score.value > 0 ? 'white' : 'black')} mate ${Math.abs(score.value)}` : `${score.value >= 0 ? '+' : ''}${(score.value / 100).toFixed(2)} pawns`; }
+export function scoreValueText(score: Score): string {
+  // Bare signed numbers: sign is White-relative (+ White, - Black), magnitude
+  // is pawns for cp or moves-to-mate for mate. No unit words.
+  if (score.type === 'mate') {
+    const white = (score.winning_side ?? (score.value > 0 ? 'white' : 'black')) === 'white';
+    return `${white ? '+' : '-'}M${Math.abs(score.value)}`;
+  }
+  return `${score.value >= 0 ? '+' : '-'}${(Math.abs(score.value) / 100).toFixed(2)}`;
+}
 export function scoreText(result: Evaluation): string { return scoreValueText(result.score); }
