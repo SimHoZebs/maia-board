@@ -87,13 +87,20 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .candidate-list { list-style: none; margin: 0; padding: 0; }
 .candidate-list li { display: flex; gap: 6px; align-items: center; border-bottom: 1px solid var(--line); padding: 4px 0; }
 .rank { font-size: 12px; color: var(--muted); width: 12px; }
-.candidate-preview { display: flex; justify-content: space-between; align-items: center; flex: 1; gap: 10px; min-width: 0; background: transparent; border-color: transparent; padding: 8px; }
+.candidate-preview { display: flex; justify-content: space-between; align-items: center; flex: 1; gap: 10px; min-width: 0; background: transparent; border-color: transparent; border-radius: 5px; padding: 8px; }
 .candidate-preview span { color: var(--accent); font-size: 13px; font-variant-numeric: tabular-nums; }
-.candidate-list .line-reading { display: flex; justify-content: space-between; align-items: center; flex: 1; gap: 10px; padding: 8px; min-width: 0; }
+.candidate-list .line-reading { display: flex; justify-content: space-between; align-items: center; flex: 1; gap: 10px; padding: 8px; min-width: 0; border: 1px solid transparent; border-radius: 5px; }
+.candidate-list li.played .candidate-preview, .candidate-list li.played .line-reading { background: #414b35; border-color: #899d6b; }
 .candidate-list .metric { color: var(--accent); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .candidate-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .engine-duo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
 .engine-duo > section { min-width: 0; }
+.engine-duo h2 { line-height: 1.35; min-height: 2lh; }
+.engine-duo .model-context { line-height: 1.4; min-height: 2lh; }
+.engine-duo h3 { margin: 14px 0 6px; font-size: 13px; }
+.engine-duo .win-hero strong { line-height: 1.2; }
+.engine-duo .win-hero span { line-height: 1.4; min-height: 2lh; }
+.metric-legend { font-size: 11px; margin: 8px 0 0; }
 @media (max-width: 760px) { .engine-duo { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; } }
 .engine-card { min-width: 0; }
 .win-hero { flex-wrap: wrap; }
@@ -133,7 +140,6 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
   .candidate-list li { gap: 4px; }
   .candidate-preview, .candidate-list .line-reading { padding: 6px; gap: 6px; }
   .candidate-list .metric { font-size: 12px; }
-  .played-tag { font-size: 9px; padding: 1px 4px; }
   .rank { width: 10px; }
   .entry { margin: 24px auto; }
   .panel { padding: 18px; }
@@ -173,6 +179,6 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .quality { display: inline-flex; min-width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 4px; background: #454746; color: #eee !important; font-size: 11px; font-weight: 750; }
 .quality-blunder { background: #a63c3c; }.quality-mistake { background: #985920; }.quality-inaccuracy { background: #7c691e; }.quality-great { background: #286b89; }.quality-best, .quality-good { background: #496336; }
 .selected-quality { font-size: 13px; }
-.source-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }.source-maia { background: #ef4444; }.source-stockfish { background: #3b82f6; }.played-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; border: 1px solid #fff; border-radius: 4px; padding: 2px 6px; color: #fff; white-space: nowrap; }.win-hero { display: flex; align-items: baseline; gap: 8px; margin: 8px 0 2px; }.win-hero strong { font-size: 21px; font-weight: 750; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }.win-hero span { font-size: 12px; color: var(--muted); }
+.source-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }.source-maia { background: #ef4444; }.source-stockfish { background: #3b82f6; }.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }.win-hero { display: flex; align-items: baseline; gap: 8px; margin: 8px 0 2px; }.win-hero strong { font-size: 21px; font-weight: 750; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }.win-hero span { font-size: 12px; color: var(--muted); }
 .insight-panel section[aria-label="Maia analysis"] h2, .insight-panel section[aria-label="Stockfish evaluation"] h2 { font-size: 14px; }
 @media (max-width: 760px) { .insight-panel { max-height: none; overflow: visible; }.side-options { gap: 5px; }.side-options label { padding: 0 8px; font-size: 13px; } }
