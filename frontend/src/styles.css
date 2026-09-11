@@ -77,10 +77,13 @@ legend { font-size: 14px; margin-bottom: 8px; }
 .actions, .source-options, .analysis-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .source-options { margin: 20px 0; }
 .source-options button { flex-grow: 1; font-size: 13px; }
-.analysis-actions { margin-top: 18px; padding-top: 10px; border-top: 1px solid var(--line); }
 .analysis-actions button { font-size: 12px; }
-.insight-panel { align-self: start; margin-top: 32px; padding: 18px; }
-.analysis-generation { display: flex; align-items: flex-end; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.panel.insight-panel { --section-space: 12px; display: flex; flex-direction: column; gap: var(--section-space); align-self: start; margin-top: 32px; padding: 6px 18px 18px; }
+.insight-panel > .analysis-section { flex: none; min-width: 0; margin: 0; }
+.insight-panel > .analysis-section ~ .analysis-section:not([hidden]) { border-top: 1px solid var(--line); padding-top: var(--section-space); }
+.analysis-controls-section { display: grid; gap: 8px; }
+.analysis-controls-section > [role="status"], .analysis-controls-section > [role="alert"] { margin: 0; font-size: 12px; }
+.analysis-generation { display: flex; align-items: flex-end; gap: 8px; overflow-x: auto; }
 .analysis-generation .analysis-record { display: contents; }
 .analysis-generation .analysis-record p { white-space: nowrap; font-size: 11px; }
 .analysis-generation > button, .analysis-generation .analysis-record button { flex-shrink: 0; white-space: nowrap; padding-inline: 6px; font-size: 11px; }
@@ -156,7 +159,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
   .workspace.awaiting { display: none; }
   .board-stage { width: min(100%, calc(100dvh - 300px)); margin: auto; }
   .player-strip { height: 34px; font-size: 13px; }
-  .insight-panel { margin-top: 0; width: 100%; padding: 14px; }
+  .panel.insight-panel { margin-top: 0; width: 100%; padding: 6px 14px 14px; }
   .insight-panel section[aria-label="Maia analysis"] h2, .insight-panel section[aria-label="Stockfish evaluation"] h2 { font-size: 13px; }
   .win-hero strong { font-size: 18px; }
   .win-hero span { font-size: 11px; }
@@ -173,7 +176,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: 0s !important; } }
 .board-actions button { display: inline-flex; align-items: center; gap: 6px; }
 .insight-panel { max-height: calc(100dvh - 120px); overflow-y: auto; overflow-x: hidden; }
-.review-charts { margin-top: 20px; }.insight-panel > [role="status"] { font-size: 12px; margin-bottom: 10px; }
+.review-charts { margin-top: 20px; }
 .chart-tabs { display: flex; gap: 4px; }
 .chart-tabs button { flex: 1; font-size: 12px; }
 .chart-tabs [aria-selected="true"] { border-color: var(--accent); color: var(--accent); }

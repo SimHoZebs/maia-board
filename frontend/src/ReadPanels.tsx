@@ -10,6 +10,7 @@ import type { Review } from './useReview';
 import { QualityBadge } from './ReviewCharts';
 import { getAnalysisRecords, isFreshRecord, lineHash } from './analysisRecords';
 import { scoreValueText, whiteWin, type Evaluation, type Quality } from './reviewMetrics';
+import { ReviewOverview } from './ReviewOverview';
 
 function recordDate(completedAt: string): string {
   return new Date(completedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
@@ -43,21 +44,52 @@ function ReviewLaunch({ state, review }: { state: State; review: Review }) {
 }
 
 export function InsightPanel({ state, dispatch, review, children }: { state: State; dispatch: Dispatch<Action>; review: Review; children?: ReactNode }) {
+  const [tab, setTab] = useState<'moves' | 'overview'>('moves');
+  const moveTab = useRef<HTMLButtonElement>(null);
+  const overviewTab = useRef<HTMLButtonElement>(null);
+  const tabs = [{ id: 'moves', label: 'Move analysis', ref: moveTab }, { id: 'overview', label: 'Overview', ref: overviewTab }] as const;
+  const inspect = (beforePly: number) => {
+    setTab('moves');
+    dispatch({ type: 'view', ply: beforePly });
+    moveTab.current?.focus({ preventScroll: true });
+    document.getElementById('board')?.scrollIntoView({ block: 'start' });
+  };
+  return <aside className="panel insight-panel" aria-label="Game analysis">
+    <div className="analysis-tabs analysis-section" role="tablist" aria-label="Game analysis views">
+      {tabs.map((item, index) => <button key={item.id} ref={item.ref} type="button" role="tab" id={`analysis-tab-${item.id}`} aria-controls={`analysis-panel-${item.id}`} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} onClick={() => { setTab(item.id); dispatch({ type: 'preview', uci: null }); }} onKeyDown={event => {
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : null;
+        if (next === null) return;
+        event.preventDefault(); event.stopPropagation();
+        setTab(tabs[next].id); dispatch({ type: 'preview', uci: null }); tabs[next].ref.current?.focus();
+      }}>{item.label}</button>)}
+    </div>
+    <div className="analysis-section analysis-controls-section">
+    {review.tooLong && <p role="status">Review supports up to 256 moves (plies).</p>}
+    {(review.error || !!review.progress?.failed) && <p role="alert">{review.error || `${review.progress!.failed} analysis jobs failed.`} <Button onClick={review.retry}>Retry failed</Button></p>}
+    <div className="analysis-generation">
+      <ReviewLaunch state={state} review={review} />
+      <fieldset className="generation-settings" aria-label="Analysis settings" disabled={review.progress?.running}><Rating id="analysis-rating" label="Maia rating" value={state.analysisSettings.eloMaia} onChange={eloMaia => dispatch({ type: 'analysis-settings', settings: { eloMaia } })} /><label className="field"><span>Model</span><select id="analysis-model" value={state.analysisSettings.model} onChange={event => dispatch({ type: 'analysis-settings', settings: { model: event.target.value as '5m' | '79m' } })}><option value="79m">79M</option><option value="5m">5M</option></select></label></fieldset>
+    </div>
+    {review.progress && <div role="status">{review.progress.done} / {review.progress.total} analysis jobs {review.progress.failed ? `· ${review.progress.failed} failed` : ''} {review.progress.canceled ? '· canceled' : ''}{review.progress.running && <Button onClick={review.cancel}>Cancel analysis</Button>}</div>}
+    </div>
+    <div className="analysis-section" role="tabpanel" id="analysis-panel-moves" aria-labelledby="analysis-tab-moves" hidden={tab !== 'moves'} tabIndex={0}>
+      {tab === 'moves' && <MoveAnalysis state={state} dispatch={dispatch} review={review} />}
+    </div>
+    <div className="analysis-section" role="tabpanel" id="analysis-panel-overview" aria-labelledby="analysis-tab-overview" hidden={tab !== 'overview'} tabIndex={0}>
+      {tab === 'overview' && <ReviewOverview review={review} ply={state.analysis.index} userSide={state.analysis.ownGame ? state.analysis.perspective : undefined} branch={state.analysis.branchFromPly !== null} onInspect={inspect} />}
+    </div>
+    {children && <div className="analysis-section">{children}</div>}
+  </aside>;
+}
+
+function MoveAnalysis({ state, dispatch, review }: { state: State; dispatch: Dispatch<Action>; review: Review }) {
   const { analysisSettings } = state;
   const response = review.maia;
   const node = review.nodes[state.analysis.index];
   const insight = response ? { fen: node.fen } : undefined;
   const played = review.nodes[state.analysis.index + 1]?.moves[state.analysis.index];
   const evaluation = review.current;
-  return <aside className="panel insight-panel" aria-labelledby="insight-title">
-    {review.tooLong && <p role="status">Review supports up to 256 moves (plies).</p>}
-    {(review.error || !!review.progress?.failed) && <p role="alert">{review.error || `${review.progress!.failed} analysis jobs failed.`} <Button onClick={review.retry}>Retry failed</Button></p>}
-    <div className="analysis-generation">
-      <ReviewLaunch state={state} review={review} />
-      <fieldset className="generation-settings" aria-label="Analysis settings" disabled={review.progress?.running}><Rating id="analysis-rating" label="Maia rating" value={analysisSettings.eloMaia} onChange={eloMaia => dispatch({ type: 'analysis-settings', settings: { eloMaia } })} /><label className="field"><span>Model</span><select id="analysis-model" value={analysisSettings.model} onChange={event => dispatch({ type: 'analysis-settings', settings: { model: event.target.value as '5m' | '79m' } })}><option value="79m">79M</option><option value="5m">5M</option></select></label></fieldset>
-    </div>
-    {review.progress && <div role="status">{review.progress.done} / {review.progress.total} analysis jobs {review.progress.failed ? `· ${review.progress.failed} failed` : ''} {review.progress.canceled ? '· canceled' : ''}{review.progress.running && <Button onClick={review.cancel}>Cancel analysis</Button>}</div>}
-    <div className="engine-duo">
+  return <div className="engine-duo">
     <EngineSection label="Maia analysis" titleId="insight-title" dotClass="source-maia" title={`Maia • ${analysisSettings.eloMaia}`}>
       {response && insight ? <div id="insight-content">
         <CandidateList>
@@ -73,9 +105,7 @@ export function InsightPanel({ state, dispatch, review, children }: { state: Sta
     <EngineSection label="Stockfish evaluation" dotClass="source-stockfish" title={`Stockfish 19${evaluation && !evaluation.terminal ? ` · depth ${evaluation.depth}` : ''}`}>
       {evaluation ? <StockfishBody fen={node.fen} evaluation={evaluation} played={played} previewUci={state.preview} onPreview={uci => dispatch({ type: 'preview', uci })} /> : <p className="empty-copy">No analysis yet.</p>}
     </EngineSection>
-    </div>
-    {children}
-  </aside>;
+  </div>;
 }
 
 export function StockfishBar({ evaluation, orientation }: { evaluation?: Evaluation; orientation: 'white' | 'black' }) {
