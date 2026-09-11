@@ -1,13 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type ReactNode } from 'react';
-import { absoluteWdl, candidateSan, exportLine, gameResult, loadLine, replay, sideName, START_FEN } from './domain';
+import { candidateSan, exportLine, gameResult, loadLine, replay, sideName, START_FEN } from './domain';
 import type { Action, State } from './state';
 import { downloadPgn, Rating } from './BoardTools';
-import { Button, CandidateList, CandidateRow, EngineSection, IconButton, WinEstimate } from './components';
+import { Button, CandidateList, CandidateRow, EngineSection, IconButton } from './components';
 import { Dialog } from './Dialog';
 import { ArrowLeft, ArrowRight, SkipBack, SkipForward, Play, Search, Download, Trash2 } from 'lucide-react';
 import { BoardThumbnail } from './BoardThumbnail';
 import type { Review } from './useReview';
-import { QualityBadge, ReviewCharts } from './ReviewCharts';
+import { QualityBadge } from './ReviewCharts';
 import { getAnalysisRecords, isFreshRecord, lineHash } from './analysisRecords';
 import { scoreValueText, whiteWin, type Evaluation, type Quality } from './reviewMetrics';
 
@@ -57,12 +57,10 @@ export function InsightPanel({ state, dispatch, review, children }: { state: Sta
       <fieldset className="generation-settings" aria-label="Analysis settings" disabled={review.progress?.running}><Rating id="analysis-rating" label="Maia rating" value={analysisSettings.eloMaia} onChange={eloMaia => dispatch({ type: 'analysis-settings', settings: { eloMaia } })} /><label className="field"><span>Model</span><select id="analysis-model" value={analysisSettings.model} onChange={event => dispatch({ type: 'analysis-settings', settings: { model: event.target.value as '5m' | '79m' } })}><option value="79m">79M</option><option value="5m">5M</option></select></label></fieldset>
     </div>
     {review.progress && <div role="status">{review.progress.done} / {review.progress.total} analysis jobs {review.progress.failed ? `· ${review.progress.failed} failed` : ''} {review.progress.canceled ? '· canceled' : ''}{review.progress.running && <Button onClick={review.cancel}>Cancel analysis</Button>}</div>}
-    <ReviewCharts review={review} ply={state.analysis.index} sans={review.nodes.at(-1)!.moves.map((_, index) => candidateSan(review.nodes[index].fen, review.nodes[index + 1].moves[index]))} onView={ply => dispatch({ type: 'view', ply })} />
     <div className="engine-duo">
     <EngineSection label="Maia analysis" titleId="insight-title" dotClass="source-maia" title={`Maia • ${analysisSettings.eloMaia}`}>
       {response && insight ? <div id="insight-content">
-        <WinEstimate label="Maia win estimate" percent={Math.round(absoluteWdl(insight.fen, response.wdl)[0] * 100)} caption={`White win · after ${candidateSan(insight.fen, response.top_moves[0].move)}`} />
-        <CandidateList playedSan={played && !response.top_moves.slice(0, 5).some(candidate => candidate.move === played) ? candidateSan(insight.fen, played) : null}>
+        <CandidateList>
           {response.top_moves.slice(0, 5).map((candidate, index) => {
             const san = candidateSan(insight.fen, candidate.move);
             const isPlayed = candidate.move === played;
@@ -80,14 +78,24 @@ export function InsightPanel({ state, dispatch, review, children }: { state: Sta
   </aside>;
 }
 
+export function StockfishBar({ evaluation, orientation }: { evaluation?: Evaluation; orientation: 'white' | 'black' }) {
+  const percent = evaluation ? whiteWin(evaluation.score) : 50;
+  const score = evaluation ? scoreValueText(evaluation.score) : '—';
+  const description = !evaluation ? 'No evaluation yet' : evaluation.terminal === 'draw' ? 'Draw' : evaluation.terminal === 'white_win' ? 'White wins' : evaluation.terminal === 'black_win' ? 'Black wins' : `${score} · White perspective`;
+  return <section className={`stockfish-balance orientation-${orientation}${evaluation ? '' : ' pending'}`} aria-label="Stockfish position evaluation">
+    <div className="balance-track" role="img" aria-label={`${description}${evaluation ? ` · estimated White winning chance ${Math.round(percent)}%` : ''}`} title={description}>
+      <div className="balance-white" style={{ height: `${percent}%` }} />
+      <strong className="balance-score" aria-hidden="true">{score}</strong>
+    </div>
+  </section>;
+}
+
 function StockfishBody({ fen, evaluation, played, previewUci, onPreview }: { fen: string; evaluation: Evaluation; played?: string; previewUci: string | null; onPreview: (uci: string) => void }) {
   if (evaluation.terminal) return <div>
-    <WinEstimate label="Stockfish win estimate" percent={Math.round(whiteWin(evaluation.score))} caption="White win · final" />
     <p>{evaluation.terminal === 'draw' ? 'Draw' : evaluation.terminal === 'white_win' ? 'White wins' : 'Black wins'}</p>
   </div>;
   return <div>
-    <WinEstimate label="Stockfish win estimate" percent={Math.round(whiteWin(evaluation.score))} caption="White win · this position" />
-    <CandidateList playedSan={played && !evaluation.lines.some(line => line.move === played) ? candidateSan(fen, played) : null}>
+    <CandidateList>
       {evaluation.lines.map((line, index) => {
         const san = candidateSan(fen, line.move);
         const isPlayed = line.move === played;

@@ -19,6 +19,7 @@ export function ChessBoard({ position, orientation, enabled, thinking, interacti
   useLayoutEffect(() => { callback.current = onMove; });
   useLayoutEffect(() => {
     const ground = Chessground(container.current!, {
+      addDimensionsCssVarsTo: container.current!.closest<HTMLElement>('.board-frame') ?? undefined,
       viewOnly: false, coordinates: true, animation: { enabled: true, duration: 220 },
       premovable: { enabled: false },
       movable: { free: false, rookCastle: false },

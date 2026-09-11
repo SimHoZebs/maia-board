@@ -522,14 +522,14 @@ test('analysis candidate preview, independent rating, branch replay and labeled 
   await expect(page.locator('#analysis-controls')).toHaveCount(0);
   await app.reply(0, 'b8c6', 200, [{ move: 'b8c6', prob: .4 }, { move: 'g8f6', prob: .15 }]);
   await expect(page.locator('section[aria-label="Maia analysis"] .candidate-reading')).toHaveText(['Nc640%', 'Nf615%']);
-  await expect(page.locator('section[aria-label="Maia analysis"] .win-hero strong')).toHaveText('20%');
-  await expect(page.locator('section[aria-label="Maia analysis"] .win-hero span')).toHaveText('White win · after Nc6');
-  await expect(page.locator('section[aria-label="Stockfish evaluation"] .win-hero strong')).toHaveText('52%');
+  await expect(page.locator('.win-hero')).toHaveCount(0);
+  await expect(page.locator('section[aria-label="Maia analysis"] .candidate-list')).toContainText('Nc6');
+  await expect(page.locator('.balance-track')).toHaveAccessibleName(/estimated White winning chance 52%/);
   await page.getByRole('button', { name: 'Preview Nf6' }).hover();
   await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(1);
   await piece(page, 'g8', 'black knight');
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 4');
-  await expect(page.locator('section[aria-label="Maia analysis"] .win-hero span')).toHaveText('White win · after Nc6');
+  await expect(page.locator('section[aria-label="Maia analysis"] .candidate-list')).toContainText('Nc6');
   await screenshot(page, testInfo.outputPath('analysis-candidates-desktop.png'));
   await move(page, 'g8', 'f6');
   await piece(page, 'f6', 'black knight');
@@ -633,8 +633,8 @@ test('analysis entry sources and input keyboard isolation', async ({ page }) => 
   if (app.requests[0].payload.moves.length) await app.reply(0);
   const currentIndex = app.requests[0].payload.moves.length ? 1 : 0;
   await app.reply(currentIndex, 'e2e4');
-  await expect(page.locator('section[aria-label="Maia analysis"] .win-hero strong')).toHaveText('50%');
-  await expect(page.locator('section[aria-label="Maia analysis"] .win-hero span')).toHaveText('White win · after e4');
+  await expect(page.locator('.win-hero')).toHaveCount(0);
+  await expect(page.locator('section[aria-label="Maia analysis"] .candidate-list')).toContainText('e4');
 });
 
 for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900 }, { width: 360, height: 800 }, { width: 390, height: 844 }]) {

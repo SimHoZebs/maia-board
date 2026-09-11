@@ -5,7 +5,7 @@ import { Chess } from 'chess.js';
 import { ChessBoard } from './ChessBoard';
 import { Button, IconButton } from './components';
 import { AnalysisActions, AnalysisControls, PlayControls, type Props } from './Controls';
-import { InsightPanel, MovesPanel, SavedGames } from './ReadPanels';
+import { InsightPanel, MovesPanel, SavedGames, StockfishBar } from './ReadPanels';
 import { PromotionDialog } from './PromotionDialog';
 import { analysisLength, analysisLine, gameResult, oppositeColor, replay, sideName, START_FEN } from './domain';
 import { toGroundColor } from './board-colors';
@@ -57,7 +57,7 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
         <div className={`workspace${analysis && ready ? ' analyzing' : ''}${historic ? ' historical' : ''}${!analysis && live.isGameOver() ? ' finished' : ''}${!ready ? ' awaiting' : ''}`}>
           <section className="board-stage" aria-label="Chess workspace">
             {strip(oppositeColor(orientation))}
-            <div className="board-frame"><ChessBoard position={position} orientation={orientation} enabled={enabled} thinking={!!request} interactionVersion={state.revision} shapes={shapes} onMove={(from, to) => dispatch({ type: 'move', from, to })} /></div>
+            <div className={`board-frame${analysis && ready ? ' with-evaluation' : ''}`}><ChessBoard position={position} orientation={orientation} enabled={enabled} thinking={!!request} interactionVersion={state.revision} shapes={shapes} onMove={(from, to) => dispatch({ type: 'move', from, to })} />{analysis && ready && <StockfishBar evaluation={review.current} orientation={orientation} />}</div>
             {strip(orientation)}
             {ready && <>
               <MovesPanel sans={full.sanMoves} ply={ply} initialFen={analysis ? state.analysis.initialFen : START_FEN} historical={historic} qualities={analysis ? review.qualities : undefined} onView={ply => dispatch({ type: 'view', ply })} analysis={analysis}

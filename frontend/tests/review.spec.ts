@@ -90,10 +90,10 @@ test('automatic review shows real overlapping SVG arrows and orientation', async
   expect(app.errors).toEqual([]);
   expect(app.requests.filter(request => request.engine === '/move' && request.moves.length === 0)).toHaveLength(1);
 });
-test('whole game completes independently of viewing, renders quality and clickable gap-aware graphs', async ({ page }, info) => {
+test('whole game completes independently of viewing and updates the position balance', async ({ page }, info) => {
   const app = await bootReview(page);
-  await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/Nc6/);
-  await expect(page.locator('.review-charts p')).toHaveCount(0);
+  await expect(page.locator('.balance-score')).toHaveText('-6.80');
+  await expect(page.locator('.review-charts, .win-hero')).toHaveCount(0);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await page.locator('#analysis-first').click();
   await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
@@ -101,17 +101,30 @@ test('whole game completes independently of viewing, renders quality and clickab
   await expect(page.locator('.move-cell .quality-great')).toHaveCount(2);
   await expect(page.locator('.move-cell .quality-mistake')).toHaveCount(1);
   await expect(page.locator('.move-cell .quality-blunder')).toHaveCount(1);
-  await page.getByRole('tab', { name: 'Move accuracy' }).click();
-  await page.getByRole('button', { name: /^3\. Nf3 ·/ }).click();
+  await page.locator('.move-cell').nth(2).click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
-  await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/depth 15.*Blunder/);
-  await page.getByRole('tab', { name: 'Evaluation', exact: true }).click();
-  await expect(page.locator('.chart-line')).toHaveCount(4);
+  await expect(page.locator('.balance-score')).toHaveText('-7.00');
+  await expect(page.locator('.balance-track')).toHaveAccessibleName(/estimated White winning chance 7%/);
   await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
   await page.screenshot({ path: info.outputPath('completed-review.png'), fullPage: true });
   expect(app.errors).toEqual([]);
   expect(app.requests.filter(request => request.engine === '/evaluate')).toHaveLength(5);
 });
+test('unlisted played moves have no fallback below either prediction list', async ({ page }) => {
+  await bootReview(page, '1. d4 d5');
+  await page.locator('#analysis-first').click();
+  await expect(page.locator('#insight-content .candidate-list')).toContainText('e4');
+  await expect(page.locator('section[aria-label="Stockfish evaluation"] .candidate-list')).toContainText('e4');
+  await expect(page.locator('.engine-duo')).not.toContainText('Played d4');
+  await expect(page.locator('.engine-duo .candidate-list')).not.toContainText(['d4', 'd4']);
+});
+
+test('checkmate fills the bar for the winning side', async ({ page }) => {
+  await bootReview(page, '1. f3 e5 2. g4 Qh4#');
+  await expect(page.locator('.balance-track')).toHaveAccessibleName('Black wins · estimated White winning chance 0%');
+  await expect(page.locator('.balance-white')).toHaveCSS('height', '0px');
+});
+
 test('blunder and mistake destinations carry board badges', async ({ page }) => {
   await bootReview(page);
   await page.locator('#analysis-first').click();
@@ -125,13 +138,13 @@ test('blunder and mistake destinations carry board badges', async ({ page }) => 
 });
 test('server-cached positions skip inference after reload', async ({ page }) => {
   const app = await bootReview(page);
-  await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/depth 16/);
+  await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 16' })).toBeVisible();
   await expect.poll(() => app.evaluations.size).toBeGreaterThanOrEqual(3);
   const calls = app.requests.length;
   await page.reload();
   // The loaded line restores from the snapshot with the import panel closed;
   // cached positions resolve without new inference.
-  await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/depth 16/);
+  await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 16' })).toBeVisible();
   await expect(page.locator('.candidate-list li')).not.toHaveCount(0);
   expect(app.requests).toHaveLength(calls);
   expect(app.errors).toEqual([]);
@@ -208,20 +221,16 @@ test('mixed arrow sources retain their own endpoints', async ({ page }, info) =>
   await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
   await page.screenshot({ path: info.outputPath('mixed-arrows.png'), fullPage: true });
 });
-test('current and predecessor alone leave earlier chart points missing', async ({ page }) => {
+test('current position balance replaces the win-rate sections', async ({ page }) => {
   await bootReview(page);
-  await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/depth 16/);
-  await expect(page.locator('.chart-line')).toHaveCount(1);
-  await expect(page.locator('.chart-point').first()).toHaveAccessibleName('Starting position');
-  await expect(page.locator('.chart-point').first().locator('i')).toHaveCount(0);
-  await expect(page.locator('.chart-point').nth(2)).toHaveAccessibleName('2. e5');
-  await expect(page.locator('.chart-point').nth(2).locator('i')).toHaveCount(0);
+  await expect(page.locator('.balance-score')).toHaveText('-6.80');
+  await expect(page.locator('.review-charts, .win-hero')).toHaveCount(0);
   await expect(page.getByText('Unreviewed', { exact: false })).toHaveCount(0);
   await expect(page.locator('[title*="Unreviewed"], [aria-label*="Unreviewed"], .quality-unreviewed')).toHaveCount(0);
 });
 test('cancel stops lazy batch scheduling while retaining completed position results', async ({ page }) => {
   await bootReview(page);
-  await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/depth 16/);
+  await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 16' })).toBeVisible();
   await expect(page.locator('#insight-content')).toHaveCount(1);
   const held: Route[] = [];
   await page.route('http://maia.test/move', route => { held.push(route); });
@@ -238,7 +247,7 @@ test('cancel stops lazy batch scheduling while retaining completed position resu
   await expect(page.getByRole('status').filter({ hasText: 'canceled' })).toBeVisible();
 });
 for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900 }, { width: 360, height: 800 }, { width: 390, height: 844 }]) {
-  test(`review geometry, arrows and graphs ${viewport.width}x${viewport.height}`, async ({ page }, info) => {
+  test(`review geometry, arrows and balance ${viewport.width}x${viewport.height}`, async ({ page }, info) => {
     await page.setViewportSize(viewport); await bootReview(page); await atStart(page);
     await page.getByRole('button', { name: 'Analyze entire game' }).click();
     await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
@@ -249,25 +258,54 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
       expect(rect.top).toBeGreaterThanOrEqual(0); expect(rect.bottom).toBeLessThanOrEqual(viewport.height);
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    for (const size of await page.locator('.chart-point, .chart-tabs button').evaluateAll(elements => elements.map(el => { const rect = el.getBoundingClientRect(); return [rect.width, rect.height]; }))) { expect(size[0]).toBeGreaterThanOrEqual(32); expect(size[1]).toBeGreaterThanOrEqual(32); }
+    const row = await page.locator('.analysis-record p, .analysis-record button, .generation-settings').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; }));
+    expect(Math.max(...row.map(r => r.top))).toBeLessThan(Math.min(...row.map(r => r.bottom)));
+    const bar = (await page.locator('.balance-track').boundingBox())!;
+    expect(bar.height).toBeGreaterThan(bar.width * 5);
+    const squares = (await page.locator('#board cg-board').boundingBox())!;
+    expect(bar.x).toBeCloseTo(squares.x + squares.width, 0);
+    expect(bar.y).toBeCloseTo(squares.y, 0);
+    expect(bar.height).toBeCloseTo(squares.height, 0);
+    const white = (await page.locator('.balance-white').boundingBox())!;
+    expect(white.y + white.height).toBeCloseTo(bar.y + bar.height, 0);
+    await page.locator('#flip-board').click();
+    const flipped = (await page.locator('.balance-white').boundingBox())!;
+    expect(flipped.y).toBeCloseTo(bar.y, 0);
+    expect(flipped.height).toBeCloseTo(white.height, 0);
+    await page.locator('#flip-board').click();
     await page.screenshot({ path: info.outputPath(`review-${viewport.width}.png`), fullPage: true });
   });
 }
+test('evaluation bar follows rendered board dimensions on resize and fractional pixel density', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1103, height: 857 }, deviceScaleFactor: 1.25 });
+  const page = await context.newPage();
+  await bootReview(page);
+  for (const viewport of [{ width: 1103, height: 857 }, { width: 393, height: 851 }, { width: 1281, height: 901 }]) {
+    await page.setViewportSize(viewport);
+    await expect.poll(async () => {
+      const board = (await page.locator('#board cg-board').boundingBox())!;
+      const bar = (await page.locator('.balance-track').boundingBox())!;
+      return Math.max(Math.abs(bar.x - board.x - board.width), Math.abs(bar.y - board.y), Math.abs(bar.height - board.height));
+    }).toBeLessThan(.1);
+  }
+  await context.close();
+});
+
 test('terminal repetition skips Maia and keeps the local draw result', async ({ page }) => {
   const app = await bootReview(page, '1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. Ng1 Ng8');
-  await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/50\.0%.*terminal result/);
+  await expect(page.locator('.balance-track')).toHaveAccessibleName('Draw · estimated White winning chance 50%');
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Cancel analysis' })).toHaveCount(0);
   expect(app.requests.some(request => request.moves.length === 8)).toBe(false);
 });
-test('touch graph selection preserves position', async ({ browser }) => {
+test('touch move selection updates the position balance', async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   const page = await context.newPage(); await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).tap();
   await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
-  await page.locator('.chart-point').nth(1).tap();
+  await page.locator('.move-cell').nth(0).tap();
   await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 5');
-  await page.locator('.chart-point').nth(2).tap();
+  await page.locator('.move-cell').nth(1).tap();
   await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 5');
   await expect(page.locator('#board svg.cg-shapes line')).toHaveCount(3);
   await context.close();
