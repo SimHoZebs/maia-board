@@ -25,7 +25,7 @@ function ReviewLaunch({ state, review }: { state: State; review: Review }) {
   const record = review.recordStatus.state === 'fresh' ? review.recordStatus.record :
     review.recordStatus.state === 'stale' ? review.recordStatus.record : undefined;
   if (complete || (review.coverage && review.coverage.covered === review.coverage.total)) {
-    return <div className="analysis-record"><p role="status">Analyzed{record ? ` · ${recordDate(record.completed_at)}` : ''}</p><button onClick={review.start}>Re-analyze</button></div>;
+    return <div className="analysis-record"><p role="status">Analyzed{record ? ` · ${recordDate(record.completed_at)}` : ''}</p><button className="quiet" onClick={review.start}>Re-analyze</button></div>;
   }
   if (progress && (progress.canceled || progress.failed > 0)) {
     return <div className="analysis-record"><button className="primary" disabled={review.tooLong} onClick={review.start}>Analyze entire game</button></div>;

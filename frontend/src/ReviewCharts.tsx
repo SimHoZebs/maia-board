@@ -27,17 +27,23 @@ export function ReviewCharts({ review, ply, sans, onView, side, yours }: { revie
   const sideReviewed = sideMoves.filter(move => move.accuracy !== null);
   const sideMean = sideReviewed.length ? sideReviewed.reduce((sum, move) => sum + move.accuracy!, 0) / sideReviewed.length : null;
   const sideCounts = [...new Set(sideReviewed.map(move => move.label))].map(label => `${sideReviewed.filter(move => move.label === label).length} ${label}`).join(' · ');
+  const trackWidth = Math.max(264, points.length * 44);
+  const yFor = (percent: number) => 110 - percent;
+  const ticks = [100, 75, 50, 25, 0];
   return <section className="review-charts" aria-label="Game review">
     <h2>Game review</h2>
     <div className="chart-tabs" role="tablist" aria-label="Review chart"><button role="tab" aria-selected={tab === 'evaluation'} onClick={() => setTab('evaluation')}>Evaluation</button><button role="tab" aria-selected={tab === 'accuracy'} onClick={() => setTab('accuracy')}>Move accuracy</button></div>
     <p className="chart-caption">{tab === 'evaluation' ? 'White winning chance · 0–100%' : 'Move accuracy · 0–100%'}</p>
-    <div className="review-chart" ref={chart} role="tabpanel" aria-label={tab === 'evaluation' ? 'Evaluation graph' : 'Move accuracy graph'}>
-      <div className="chart-track" style={{ width: Math.max(264, points.length * 44) }}>
-        <svg aria-hidden="true" width="100%" height="120" viewBox={`0 0 ${Math.max(264, points.length * 44)} 120`} preserveAspectRatio="none">
-          <line x1="0" x2="100%" y1="60" y2="60" className="chart-midline" />
+    <div className="review-chart" role="tabpanel" aria-label={tab === 'evaluation' ? 'Evaluation graph' : 'Move accuracy graph'}>
+      <div className="chart-yaxis" aria-hidden="true">{ticks.map(tick => <span key={tick} style={{ top: yFor(tick) }}>{tick}%</span>)}</div>
+      <div className="chart-scroll" ref={chart}>
+      <div className="chart-track" style={{ width: trackWidth }}>
+        <svg aria-hidden="true" width="100%" height="120" viewBox={`0 0 ${trackWidth} 120`} preserveAspectRatio="none">
+          {ticks.map(tick => <line key={tick} x1="0" x2={trackWidth} y1={yFor(tick)} y2={yFor(tick)} className={tick === 50 ? 'chart-midline' : 'chart-gridline'} />)}
           {points.map((point, index) => index > 0 && point.value !== null && points[index - 1].value !== null ? <line key={index} x1={(index - 1) * 44 + 22} y1={110 - points[index - 1].value!} x2={index * 44 + 22} y2={110 - point.value} className="chart-line" /> : null)}
         </svg>
         {points.map((point, index) => <button key={index} ref={index === ply ? selected : undefined} className="chart-point" aria-label={point.description} aria-current={index === ply ? 'step' : undefined} title={point.description} onClick={() => onView(index)} style={{ left: index * 44 }}>{point.value !== null && <i style={{ top: 110 - point.value }} />}<span>{index}</span></button>)}
+      </div>
       </div>
     </div>
     <p className="selected-evaluation" aria-live="polite">{points[ply].description}</p>
