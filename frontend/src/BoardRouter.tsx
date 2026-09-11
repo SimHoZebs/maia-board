@@ -1,9 +1,10 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { matchPath, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router';
 import { App } from './App';
 import type { Mode } from './domain';
 import type { Action, State } from './state';
 import { useMaiaBoard } from './useMaiaBoard';
+import { analysisPath, parseAnalysisSearch, sameLine } from './analysisUrl';
 
 const destinations = [
   { mode: 'play', path: '/play', label: 'Play' },
@@ -13,7 +14,10 @@ const destinations = [
 const pathFor = (mode: Mode) => destinations.find(destination => destination.mode === mode)!.path;
 
 function DestinationNav({ state, dispatch }: { state: State; dispatch: (action: Action) => void }) {
-  return <nav aria-label="Destination">{destinations.map(({ mode: destMode, path, label }) => <NavLink id={`mode-${destMode}`} key={destMode} to={path} end onClick={() => {
+  // The Analyze tab deep-links the loaded game so it is copyable; the bare
+  // path is only the empty importer.
+  const analyzeTo = state.analysisLoaded ? analysisPath(state.analysis) : '/analyze';
+  return <nav aria-label="Destination">{destinations.map(({ mode: destMode, path, label }) => <NavLink id={`mode-${destMode}`} key={destMode} to={destMode === 'analysis' ? analyzeTo : path} end onClick={() => {
     // The tab is the game chooser: reopen it when already analyzing a game.
     if (destMode === 'analysis' && state.mode === 'analysis' && state.analysisLoaded && !state.importing) {
       dispatch({ type: 'import', open: true });
@@ -22,11 +26,38 @@ function DestinationNav({ state, dispatch }: { state: State; dispatch: (action: 
 }
 
 export function BoardRouter() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const navigate = useNavigate();
   // Redirects start in an inert context until the destination URL is committed.
   const mode = destinations.find(destination => matchPath(destination.path, pathname))?.mode ?? 'play';
-  const { state, dispatch: boardDispatch } = useMaiaBoard(mode);
+  // Parsed once per location: the initializer takes the mount value for boot,
+  // the sync effect takes the live one for Back/Forward.
+  const urlLine = useMemo(() => (mode === 'analysis' ? parseAnalysisSearch(search) : undefined), [mode, search]);
+  const { state, dispatch: boardDispatch } = useMaiaBoard(mode, urlLine);
+  // Loaded analyses own their URL: the address bar carries the game's content
+  // (normalized FEN + UCI moves), so each game is linkable and Back walks games.
+  // One effect serves both directions. A mismatch alone cannot tell a stale URL
+  // (in-app load, state is newer) from a stale board (Back/Forward, location is
+  // newer), so the previous search breaks the tie: a moved location loads into
+  // state, an unchanged one is brought along by navigation.
+  const prevSearch = useRef(search);
+  useEffect(() => {
+    if (mode !== 'analysis' || !state.analysisLoaded) { prevSearch.current = search; return; }
+    if (search !== prevSearch.current) {
+      prevSearch.current = search;
+      // Bare `/analyze` never clears: it is the empty importer, not a game.
+      if (urlLine && !sameLine(urlLine, state.analysis)) {
+        boardDispatch({ type: 'url-line', initialFen: urlLine.initialFen, moves: urlLine.moves });
+      }
+      return;
+    }
+    const wanted = analysisPath(state.analysis);
+    if (`/analyze${search}` === wanted) return;
+    // Canonicalize in place when the URL already names this line (hand-edited
+    // variants, present-but-empty ?moves=); only a genuinely new game pushes a
+    // history entry, so Back still walks games instead of encodings.
+    void navigate(wanted, { replace: !urlLine || sameLine(urlLine, state.analysis) });
+  }, [mode, search, urlLine, state.analysis, state.analysisLoaded, navigate, boardDispatch]);
   const dispatch = useCallback((action: Action) => {
     if (action.type === 'mode') {
       if (action.mode !== mode) void navigate(pathFor(action.mode));

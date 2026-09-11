@@ -7,11 +7,14 @@ import {
   pushOutbox, saveRemote, ServerGamesError, storeOutbox, toStoredGame,
 } from './serverGames';
 import type { Mode, StoredGame } from './domain';
+import type { UrlLine } from './analysisUrl';
 
 const LAN_DOWN = 'Game history is unavailable. Check that the server is running on your LAN.';
 
-export function useMaiaBoard(mode: Mode) {
-  const [state, dispatch] = useReducer(reducer, mode, initialState);
+export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
+  // The initializer runs once on mount: a content URL wins over the snapshot
+  // on first paint so shared links never flash the previous local line.
+  const [state, dispatch] = useReducer(reducer, mode, m => initialState(m, urlLine));
   // URL owns destination; reducer mode is its execution context. A guarded
   // render-time update settles it before children or request effects commit.
   if (state.mode !== mode) dispatch({ type: 'mode', mode });

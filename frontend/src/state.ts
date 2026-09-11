@@ -3,6 +3,7 @@ import { type MaiaColor, type MoveRequest, type MoveResponse, readableApiError }
 import { toGroundColor } from './board-colors';
 import { analysisLength, analysisLine, applyUci, loadLine, newId, oppositeColor, positionOf, replay, START_FEN,
   type Analysis, type Insight, type Mode, type Settings, type StoredGame } from './domain';
+import { sameLine, type UrlLine } from './analysisUrl';
 import { KEYS, loadSaved, loadSettings, readStorage, restoreGame } from './storage';
 import { loadOutbox, mergeSync, type OutboxOp } from './serverGames';
 
@@ -29,7 +30,7 @@ export type Action =
   | { type: 'promote'; piece: string | null }
   | { type: 'inputs'; inputs: Partial<State['inputs']> }
   | { type: 'import'; open: boolean }
-  | { type: 'load' } | { type: 'step'; delta: number } | { type: 'view'; ply: number | null } | { type: 'analyze' }
+  | { type: 'load' } | { type: 'url-line'; initialFen: string; moves: string[] } | { type: 'step'; delta: number } | { type: 'view'; ply: number | null } | { type: 'analyze' }
   | { type: 'saved'; id: string } | { type: 'review'; id?: string } | { type: 'delete'; id: string }
   | { type: 'reply'; request: Request; response: MoveResponse }
   | { type: 'failure'; request: Request; error: unknown }
@@ -100,7 +101,7 @@ export function snapshotOf(analysis: Analysis, gameId?: string): AnalysisSnapsho
   return { initialFen: analysis.initialFen, moves: analysis.moves, index: analysis.index,
     perspective: analysis.perspective, ownGame: analysis.ownGame, ...(gameId ? { gameId } : {}) };
 }
-export function initialState(mode: Mode = 'play'): State {
+export function initialState(mode: Mode = 'play', urlLine?: UrlLine): State {
   const restored = restoreGame(readStorage(KEYS.current));
   const settings = restored?.settings ?? loadSettings();
   const stored = readStorage<Partial<State['inputs']>>(KEYS.analysis);
@@ -108,15 +109,33 @@ export function initialState(mode: Mode = 'play'): State {
   const snapshot = readSnapshot();
   let analysis = loadLine();
   let analysisLoaded = false;
-  if (snapshot) {
-    analysis = snapshot.analysis;
-    analysisLoaded = true;
-  } else {
-    try { analysis = loadLine(inputs.fen, inputs.pgn); } catch { /* Keep editable invalid input for correction. */ }
+  let analysisSourceId: string | null = snapshot?.gameId ?? null;
+  if (mode === 'analysis' && urlLine) {
+    try {
+      const linked = loadLine(urlLine.initialFen, urlLine.moves.join(' '));
+      if (snapshot && sameLine(snapshot.analysis, linked)) {
+        // Shared link to the already-restored line: keep the snapshot's
+        // cursor, branch origin, and perspective across refresh.
+        analysis = snapshot.analysis;
+        analysisLoaded = true;
+      } else {
+        analysis = linked;
+        analysisLoaded = true;
+        analysisSourceId = null;
+      }
+    } catch { /* Fall through to snapshot/inputs below. */ }
+  }
+  if (!analysisLoaded) {
+    if (snapshot) {
+      analysis = snapshot.analysis;
+      analysisLoaded = true;
+    } else {
+      try { analysis = loadLine(inputs.fen, inputs.pgn); } catch { /* Keep editable invalid input for correction. */ }
+    }
   }
   const state: State = { mode, settings, play: restored ?? { id: newId(), createdAt: new Date().toISOString(), moves: [], settings },
     started: !!restored, setup: restored ? null : { ...settings }, viewedPly: null,
-    saved: loadSaved(), analysis, analysisSettings: { ...settings }, analysisLoaded, importing: !analysisLoaded, analysisSourceId: snapshot?.gameId ?? null,
+    saved: loadSaved(), analysis, analysisSettings: { ...settings }, analysisLoaded, importing: !analysisLoaded, analysisSourceId,
     inputs, flipped: false, preview: null, promotion: null, insight: null, error: '', request: null, revision: 0,
     syncError: '', syncPending: loadOutbox().length, flushNonce: 0, historyTotal: null };
   return mode === 'play' && maiaTurn(state) ? queueRequest(state) : state;
@@ -160,6 +179,13 @@ export function reducer(state: State, action: Action): State {
     case 'load': {
       try { return transition(state, { analysis: loadLine(state.inputs.fen, state.inputs.pgn), analysisLoaded: true, importing: false, analysisSourceId: null }, false); }
       catch (error) { return { ...state, error: error instanceof Error ? error.message : 'Could not load this position.' }; }
+    }
+    case 'url-line': {
+      // Back/Forward (or tab link) navigation between content URLs. Same line
+      // is a no-op so canonical replaces never reset the cursor or branch.
+      if (state.mode !== 'analysis' || sameLine(state.analysis, action)) return state;
+      try { return transition(state, { analysis: loadLine(action.initialFen, action.moves.join(' ')), analysisLoaded: true, importing: false, analysisSourceId: null }, false); }
+      catch { return state; }
     }
     case 'step': return reducer(state, { type: 'view', ply: (state.mode === 'play' ? state.viewedPly ?? state.play.moves.length : state.analysis.index) + action.delta });
     case 'view': {

@@ -76,7 +76,10 @@ replaced by the sync. Settings and analysis inputs remain local-only.
 React Router's declarative routes expose `/play`, `/analyze`, and `/history`.
 Root and unknown URLs replace their history entry with `/play`. Header links,
 Review, and saved-game Resume update the URL; Back and Forward select the same
-destinations. The browser fixture serves the static entry page for frontend URLs.
+destinations. A loaded analysis owns a content URL,
+`/analyze?moves=e2e4,e7e5` plus `fen=` for custom starts, so each game is
+linkable and Back walks loaded games. The empty starting position is bare
+`/analyze`. The browser fixture serves the static entry page for frontend URLs.
 
 `BoardRouter.tsx` keeps `useMaiaBoard` mounted above the route views. The URL owns
 the destination; reducer `mode` is the execution context used for legal actions

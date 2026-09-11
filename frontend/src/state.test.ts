@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MaiaApiError, type MoveResponse } from './api';
 import { absoluteWdl, analysisLine, defaultSettings, exportExplored, exportLine, loadLine, replay, START_FEN } from './domain';
-import { currentPosition, initialState, reducer } from './state';
+import { currentPosition, initialState, reducer, snapshotOf } from './state';
 import { KEYS, restoreGame } from './storage';
 
 beforeEach(() => {
@@ -101,6 +101,30 @@ describe('task lifecycles', () => {
     expect(state.analysis.branchFromPly).toBeNull();
     expect(state.analysis.index).toBe(1);
     expect(state.analysis.moves).toHaveLength(3);
+  });
+  it('loads shared analysis links without resetting an identical line', () => {
+    let state = reducer(initialState(), { type: 'mode', mode: 'analysis' });
+    state = reducer(state, { type: 'inputs', inputs: { pgn: '1. e4 e5' } });
+    state = reducer(state, { type: 'load' });
+    const loaded = state.analysis;
+    state = reducer(state, { type: 'view', ply: 1 });
+    const kept = reducer(state, { type: 'url-line', initialFen: loaded.initialFen, moves: loaded.moves });
+    expect(kept).toBe(state);
+    expect(kept.analysis.index).toBe(1);
+    const switched = reducer(state, { type: 'url-line', initialFen: START_FEN, moves: ['d2d4'] });
+    expect(switched.analysis.moves).toEqual(['d2d4']);
+    expect(switched.analysis.index).toBe(1);
+    expect(switched.analysisLoaded).toBe(true);
+  });
+  it('boots shared links over the snapshot but keeps its cursor on match', () => {
+    localStorage.setItem(KEYS.snapshot, JSON.stringify(snapshotOf({ ...loadLine('', '1. e4 e5'), index: 1 })));
+    const matched = initialState('analysis', { initialFen: START_FEN, moves: ['e2e4', 'e7e5'] });
+    expect(matched.analysisLoaded).toBe(true);
+    expect(matched.analysis.index).toBe(1);
+    const linked = initialState('analysis', { initialFen: START_FEN, moves: ['d2d4'] });
+    expect(linked.analysis.moves).toEqual(['d2d4']);
+    expect(linked.analysis.index).toBe(1);
+    expect(linked.analysisSourceId).toBeNull();
   });
   it('replays custom-start black promotion with the identical request history', () => {
     let state = reducer(started(), { type: 'mode', mode: 'analysis' });

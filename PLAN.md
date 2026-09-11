@@ -60,10 +60,15 @@ game id — pasted PGNs share records, deleting a game orphans nothing. Only
 clean main-line batches record (no failures, no degraded Maia answers, no
 explored branches). The loaded line snapshot (`maia-board.analysis-snapshot.v1`)
 restores the analysis board across refresh; History badges compare records
-against current analysis settings. A fresh record primes itself automatically
-on load through cache reads only, so restores never infer: full coverage
-shows results immediately, partial coverage gates exactly the missing
-positions behind one explicit click.
+ against current analysis settings. A fresh record primes itself automatically
+ on load through cache reads only, so restores never infer: full coverage
+ shows results immediately, partial coverage gates exactly the missing
+ positions behind one explicit click.
+
+ Each loaded analysis owns a content URL (`/analyze?moves=e2e4,e7e5`, plus
+ `fen=` for custom starts; empty startpos stays bare `/analyze`), so games are
+ shareable and Back walks loaded games. The snapshot still preserves the cursor
+ and branch across refresh when its line matches the URL.
 
 ## Notes
 

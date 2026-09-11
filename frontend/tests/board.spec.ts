@@ -129,7 +129,7 @@ test('direct play resumes once; Back/Forward preserves game viewing and analysis
   await move(page, 'c2', 'c4');
   await page.locator('#mode-history').click();
   await page.goBack();
-  await expect(page).toHaveURL('http://maia.test/analyze');
+  await expect(page).toHaveURL('http://maia.test/analyze?moves=d2d4,d7d5');
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 4');
   await piece(page, 'c4', 'white pawn');
   await expect(page.locator('.branch-label')).toBeVisible();
@@ -141,7 +141,7 @@ test('direct play resumes once; Back/Forward preserves game viewing and analysis
   await page.getByRole('button', { name: 'Return to game' }).click();
   await piece(page, 'e5', 'black pawn');
   await page.goForward();
-  await expect(page).toHaveURL('http://maia.test/analyze');
+  await expect(page).toHaveURL('http://maia.test/analyze?moves=d2d4,d7d5');
   await piece(page, 'c4', 'white pawn');
   await page.goForward();
   await expect(page).toHaveURL('http://maia.test/history');
@@ -206,16 +206,38 @@ test('Analyze current game loads on Analyze without adding a history entry', asy
   await page.locator('#mode-analysis').click();
   await page.getByRole('button', { name: 'History', exact: true }).click();
   await page.getByRole('button', { name: 'Analyze current game', exact: true }).click();
-  await expect(page).toHaveURL('http://maia.test/analyze');
+  await expect(page).toHaveURL('http://maia.test/analyze?moves=e2e4,e7e5');
   await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
   await piece(page, 'e5', 'black pawn');
   await page.goBack();
   await expect(page).toHaveURL('http://maia.test/history');
   await expect(page.locator('.saved-panel')).toBeVisible();
   await page.goForward();
-  await expect(page).toHaveURL('http://maia.test/analyze');
+  await expect(page).toHaveURL('http://maia.test/analyze?moves=e2e4,e7e5');
   await piece(page, 'e5', 'black pawn');
-  expect(app.requests).toHaveLength(0);
+  // Play requests never send initial_fen; the analysis foreground always
+  // does. Review must never resume play inference, while its own 200ms
+  // auto-fetch may legitimately win the race here.
+  expect(app.requests.filter(request => !request.payload.initial_fen)).toHaveLength(0);
+  expect(app.errors).toEqual([]);
+});
+
+test('analysis content URLs deep-link, copy, and walk games', async ({ page }) => {
+  const app = await boot(page);
+  await page.locator('#mode-analysis').click();
+  await page.locator('#analysis-pgn').fill('1. e4 e5');
+  await page.locator('#load-analysis').click();
+  await expect(page).toHaveURL('http://maia.test/analyze?moves=e2e4,e7e5');
+  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
+  await page.locator('#copy-analysis-link').click();
+  await expect(page.locator('#copy-analysis-link')).toHaveText('Link copied');
+  await page.goto('http://maia.test/analyze?moves=d2d4,d7d5');
+  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
+  await piece(page, 'd5', 'black pawn');
+  await page.goBack();
+  await expect(page).toHaveURL('http://maia.test/analyze?moves=e2e4,e7e5');
+  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
+  await piece(page, 'e5', 'black pawn');
   expect(app.errors).toEqual([]);
 });
 
@@ -495,21 +517,33 @@ test('analysis candidate preview, independent rating, branch replay and labeled 
   await expect(page.locator('#insight-content')).toHaveCount(0);
   await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(0);
   await move(page, 'f1', 'c4');
-  await expect.poll(() => app.requests.length).toBe(2);
-  expect(app.requests[1].payload.moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'g8f6', 'f1c4']);
-  expect(replay(app.requests[1].payload.moves).fen()).toBe(app.requests[1].payload.fen);
+  // Either branch move can win the 200ms foreground race. A parked
+  // intermediate tip holds the single Maia lane (the fixture holds routes
+  // open), so answer held requests until the tip fires.
+  const full = ['e2e4', 'e7e5', 'g1f3', 'g8f6', 'f1c4'];
+  const replied = new Set([0]);
+  let tip = -1;
+  for (let waited = 0; waited < 100 && tip < 0; waited++) {
+    const last = app.requests.at(-1);
+    if (last && last.payload.moves.join() === full.join()) { tip = app.requests.length - 1; break; }
+    const pending = app.requests.findIndex((_, index) => !replied.has(index));
+    if (pending >= 0) { replied.add(pending); await app.reply(pending); }
+    else await page.waitForTimeout(100);
+  }
+  expect(tip).toBeGreaterThanOrEqual(1);
+  expect(replay(app.requests[tip].payload.moves).fen()).toBe(app.requests[tip].payload.fen);
   await page.locator('#mode-analysis').click();
   await page.keyboard.press('Escape');
-  expect(app.requests).toHaveLength(2);
-  await app.reply(1, 'b8c6');
+  expect(app.requests).toHaveLength(tip + 1);
+  await app.reply(tip, 'b8c6');
   await page.getByText('Analysis settings', { exact: true }).click();
   await page.locator('#analysis-rating').selectOption('2000');
   await expect(page.locator('#insight-content')).toHaveCount(0);
   await expect(page.locator('#insight-title')).toHaveText('Human moves · 2000 rating');
-  await expect.poll(() => app.requests.length).toBe(3);
-  expect(app.requests[2].payload).toMatchObject({ elo_maia: 2000, elo_user: 2000 });
+  await expect.poll(() => app.requests.length).toBe(tip + 2);
+  expect(app.requests[tip + 1].payload).toMatchObject({ elo_maia: 2000, elo_user: 2000 });
   await page.locator('#analysis-model').selectOption('5m');
-  await app.reply(2, 'b8c6');
+  await app.reply(tip + 1, 'b8c6');
   await expect(page.locator('#insight-content')).toHaveCount(0);
   for (const [id, filename, expected] of [['export-pgn', 'maia-analysis.pgn', '1. e4 e5 2. Nf3'], ['export-explored', 'maia-explored.pgn', '1. e4 e5 2. Nf3 Nf6 3. Bc4']]) {
     const downloading = page.waitForEvent('download');
@@ -532,7 +566,7 @@ test('history review, resume, export, delete, and just-finished game review', as
   const app = await boot(page, { [KEYS.current]: mate, [KEYS.saved]: [mate, unfinished] });
   await expect(page.locator('.game-result')).toContainText('Black wins');
   await page.getByRole('button', { name: 'Review game' }).click();
-  await expect(page).toHaveURL('http://maia.test/analyze');
+  await expect(page).toHaveURL('http://maia.test/analyze?moves=f2f3,e7e5,g2g4,d8h4');
   await expect(page.locator('#analysis-controls')).toHaveCount(0);
   await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
   await page.locator('#mode-history').click();
@@ -564,7 +598,7 @@ test('analysis entry sources and input keyboard isolation', async ({ page }) => 
   await page.locator('#mode-analysis').click();
   await page.getByRole('button', { name: 'History', exact: true }).last().click();
   await page.locator('.saved-game').getByRole('button', { name: 'Analyze', exact: true }).click();
-  await expect(page).toHaveURL('http://maia.test/analyze');
+  await expect(page).toHaveURL('http://maia.test/analyze?moves=d2d4,d7d5');
   await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
   await page.locator('#mode-analysis').click();
   await page.locator('#analysis-pgn').fill('1. e4');

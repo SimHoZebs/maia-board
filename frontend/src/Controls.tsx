@@ -1,4 +1,4 @@
-import { useState, type Dispatch } from 'react';
+import { useEffect, useRef, useState, type Dispatch } from 'react';
 import { exportExplored, exportLine, newId, sideName } from './domain';
 import type { Action, State } from './state';
 import { Dialog } from './Dialog';
@@ -41,8 +41,32 @@ export function AnalysisControls(props: Props) {
   return props.state.analysisLoaded ? <Dialog title="Change game" onCancel={() => props.dispatch({ type: 'import', open: false })}><ImportForm {...props} /></Dialog> : <ImportForm {...props} />;
 }
 export function AnalysisActions({ state, dispatch }: Props) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<number | null>(null);
+  useEffect(() => () => { if (timer.current !== null) window.clearTimeout(timer.current); }, []);
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+    } catch {
+      // execCommand is deprecated but remains the fallback for insecure LAN
+      // origins where the async clipboard is unavailable.
+      const field = document.createElement('textarea');
+      try {
+        field.value = window.location.href;
+        document.body.appendChild(field);
+        field.select();
+        document.execCommand('copy');
+      } finally {
+        field.remove();
+      }
+    }
+    setCopied(true);
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setCopied(false), 2000);
+  };
   return <div className="analysis-actions">
     <button id="export-pgn" onClick={() => downloadPgn(exportLine(state.analysis), 'maia-analysis.pgn')}>Export original PGN</button>
+    <button id="copy-analysis-link" onClick={() => void copyLink()}>{copied ? 'Link copied' : 'Copy link'}</button>
     {state.analysis.branchFromPly !== null && <><button id="return-original" onClick={() => dispatch({ type: 'original' })}>Return to original</button><button id="export-explored" onClick={() => downloadPgn(exportExplored(state.analysis), 'maia-explored.pgn')}>Export explored PGN</button></>}
   </div>;
 }
