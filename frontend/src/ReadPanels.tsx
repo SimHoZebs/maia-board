@@ -39,7 +39,7 @@ function ReviewLaunch({ state, review }: { state: State; review: Review }) {
   if (review.recordStatus.state === 'fresh') return <Button variant="primary" aria-label="Loading analysis" disabled>Loading…</Button>;
   if (review.recordStatus.state === 'checking') return <Button variant="primary" aria-label="Checking analysis" disabled>Checking…</Button>;
   return <div className="analysis-record">{review.recordStatus.state === 'stale' && record &&
-    <p>Last analyzed {recordDate(record.completed_at)} · Maia {record.settings.elo_maia} · {record.settings.model}</p>}
+    <p>Last analyzed {recordDate(record.completed_at)} · Maia {record.settings.elo_maia}</p>}
     <Button variant="primary" aria-label="Analyze entire game" disabled={review.tooLong} onClick={review.start}>Analyze</Button></div>;
 }
 
@@ -68,7 +68,7 @@ export function InsightPanel({ state, dispatch, review, children }: { state: Sta
     {(review.error || !!review.progress?.failed) && <p role="alert">{review.error || `${review.progress!.failed} analysis jobs failed.`} <Button onClick={review.retry}>Retry failed</Button></p>}
     <div className="analysis-generation">
       <ReviewLaunch state={state} review={review} />
-      <fieldset className="generation-settings" aria-label="Analysis settings" disabled={review.progress?.running}><Rating id="analysis-rating" label="Maia rating" value={state.analysisSettings.eloMaia} onChange={eloMaia => dispatch({ type: 'analysis-settings', settings: { eloMaia } })} /><label className="field"><span>Model</span><select id="analysis-model" value={state.analysisSettings.model} onChange={event => dispatch({ type: 'analysis-settings', settings: { model: event.target.value as '5m' | '79m' } })}><option value="79m">79M</option><option value="5m">5M</option></select></label></fieldset>
+      <fieldset className="generation-settings" aria-label="Analysis settings" disabled={review.progress?.running}><Rating id="analysis-rating" label="Maia rating" value={state.analysisSettings.eloMaia} onChange={eloMaia => dispatch({ type: 'analysis-settings', settings: { eloMaia } })} /></fieldset>
     </div>
     {review.progress && <div role="status">{review.progress.done} / {review.progress.total} analysis jobs {review.progress.failed ? `· ${review.progress.failed} failed` : ''} {review.progress.canceled ? '· canceled' : ''}{review.progress.running && <Button onClick={review.cancel}>Cancel analysis</Button>}</div>}
     </div>

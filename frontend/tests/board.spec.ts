@@ -599,9 +599,6 @@ test('analysis candidate preview, independent rating, branch replay and labeled 
   await expect(page.locator('#insight-title')).toHaveText('Maia • 2000');
   await expect.poll(() => app.requests.length).toBe(tip + 2);
   expect(app.requests[tip + 1].payload).toMatchObject({ elo_maia: 2000, elo_user: 2000 });
-  await page.locator('#analysis-model').selectOption('5m');
-  await app.reply(tip + 1, 'b8c6');
-  await expect(page.locator('#insight-content')).toHaveCount(0);
   for (const [id, filename, expected] of [['export-pgn', 'maia-analysis.pgn', '1. e4 e5 2. Nf3'], ['export-explored', 'maia-explored.pgn', '1. e4 e5 2. Nf3 Nf6 3. Bc4']]) {
     const downloading = page.waitForEvent('download');
     await page.locator(`#${id}`).click();
@@ -745,9 +742,7 @@ for (const width of [320, 390]) {
     const toolbar = await page.locator('.move-navigation button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { y: r.y, width: r.width, height: r.height }; }));
     for (const box of toolbar) { expect(box.y).toBe(toolbar[0].y); expect(box.width).toBe(32); expect(box.height).toBe(32); }
     await expect(page.locator('#analysis-rating')).toBeVisible();
-    await expect(page.locator('#analysis-model')).toBeVisible();
     await expect(page.locator('.generation-settings').getByText('Maia rating', { exact: true })).toBeVisible();
-    await expect(page.locator('.generation-settings').getByText('Model', { exact: true })).toBeVisible();
     await expect(page.locator('#analysis-rating')).toHaveAccessibleName('Maia rating');
     await expect(page.locator('.analysis-generation summary')).toHaveCount(0);
     await expect(page.getByText('Original', { exact: true })).toHaveCount(0);
@@ -756,7 +751,7 @@ for (const width of [320, 390]) {
     await expect(page.locator('.selected-quality, .quality-unreviewed')).toHaveCount(0);
     await expect(page.locator('.analysis-generation').getByRole('button', { name: 'Analyze explored line' })).toBeVisible();
     const generation = await page.locator('.analysis-generation button, .analysis-generation select').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { y: r.y, height: r.height }; }));
-    expect(generation).toHaveLength(3);
+    expect(generation).toHaveLength(2);
     for (const box of generation) { expect(box.y).toBe(generation[0].y); expect(box.height).toBe(32); }
     const engines = (await page.locator('.engine-duo').boundingBox())!;
     const exports = (await page.locator('.analysis-actions').boundingBox())!;
