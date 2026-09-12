@@ -11,20 +11,18 @@
 .chart-point .chart-dot-best, .chart-point .chart-dot-good { background: #496336; }
 .overview-heading { display: flex; flex-direction: column; gap: 5px; margin-bottom: 16px; }
 .overview-heading h2 { margin: 0; }
-.review-coverage, .accuracy-coverage { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .accuracy-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.accuracy-summary > :only-child { grid-column: 1 / -1; }
 .accuracy-card { display: flex; flex-direction: column; min-width: 0; padding: 12px 10px; border: 1px solid var(--line); border-radius: 5px; background: #202122; }
 .accuracy-card.own-side { border-color: #76865b; }
 .accuracy-card h3 { display: flex; align-items: center; gap: 7px; margin: 0 0 14px; font-size: 12px; font-weight: 600; }
 .accuracy-value { font-size: clamp(24px, 3vw, 32px); line-height: 1; font-weight: 650; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
 .accuracy-caption { margin-top: 6px; font-size: 11px; color: var(--muted); }
-.accuracy-coverage { margin-top: 8px; }
 .quality-counts { display: flex; flex-direction: column; gap: 7px; margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--line); font-size: 11px; }
 .quality-counts > div { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
 .quality-counts dt { display: flex; align-items: center; gap: 6px; color: var(--muted); }
 .quality-counts dd { margin: 0; font-variant-numeric: tabular-nums; }
-.accuracy-method, .overview-hint { margin: 12px 0; color: var(--muted); font-size: 11px; }
-.overview-partial { padding: 10px 12px; border-left: 2px solid var(--accent); background: #b8c99809; font-size: 12px; }
+.overview-partial { margin: 12px 0; padding: 10px 12px; border-left: 2px solid var(--accent); background: #b8c99809; font-size: 12px; }
 .overview-issues-heading { display: flex; align-items: center; justify-content: space-between; margin-top: 20px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
 .overview-issues-heading h3 { margin: 0; font-size: 13px; }
 .overview-issues-heading > span { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }

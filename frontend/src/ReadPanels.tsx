@@ -84,40 +84,12 @@ export function InsightPanel({ state, dispatch, review, children }: { state: Sta
 
 function MoveAnalysis({ state, dispatch, review }: { state: State; dispatch: Dispatch<Action>; review: Review }) {
   const { analysisSettings } = state;
-  const ply = state.analysis.index;
   const response = review.maia;
-  const node = review.nodes[ply];
+  const node = review.nodes[state.analysis.index];
   const insight = response ? { fen: node.fen } : undefined;
-  const played = review.nodes[ply + 1]?.moves[ply];
+  const played = review.nodes[state.analysis.index + 1]?.moves[state.analysis.index];
   const evaluation = review.current;
-  const lastUci = ply > 0 ? review.nodes[ply]?.moves[ply - 1] : undefined;
-  const prevNode = ply > 0 ? review.nodes[ply - 1] : undefined;
-  const prevEval = ply > 0 ? review.evaluations[ply - 1] : undefined;
-  const prevMaia = review.prevMaia;
-  const lastQuality = ply > 0 ? review.qualities[ply - 1] : undefined;
-  const lastSan = lastUci && prevNode ? candidateSan(prevNode.fen, lastUci) : undefined;
-  const bestUci = prevEval && !prevEval.terminal ? prevEval.best_move : null;
-  const bestSan = bestUci && prevNode ? candidateSan(prevNode.fen, bestUci) : undefined;
-  const parts = state.analysis.initialFen.split(' '), first = Number(parts[5]) * 2 + (parts[1] === 'b' ? 1 : 0);
-  const lastNumber = ply > 0 ? `${Math.floor((first + ply - 1) / 2)}${(first + ply - 1) % 2 ? '…' : '.'}` : '';
-  const ranked = lastUci && prevMaia ? prevMaia.top_moves.findIndex(candidate => candidate.move === lastUci) : -1;
-  const lastProb = ranked >= 0 && prevMaia ? prevMaia.top_moves[ranked].prob : undefined;
-  const topMaia = prevMaia?.top_moves[0];
-  const topMaiaSan = topMaia && prevNode ? candidateSan(prevNode.fen, topMaia.move) : undefined;
-  return <div>
-    {ply > 0 && lastUci && lastSan && <section aria-label="Last move" className="last-move">
-      <h3>Last move · {lastNumber} {lastSan} {lastQuality && <QualityBadge quality={lastQuality} />}</h3>
-      {lastQuality && lastQuality.label !== 'Unreviewed' && prevEval && evaluation ? <p className="model-context">
-        {lastQuality.label}{lastQuality.accuracy != null ? ` · ${lastQuality.accuracy.toFixed(1)}% accuracy` : ''} · {scoreValueText(prevEval.score)} → {scoreValueText(evaluation.score)}
-        {bestUci && bestSan && bestUci !== lastUci && ` · Best was ${bestSan}`}
-        {bestUci === lastUci && ' · Best move'}
-      </p> : <p className="empty-copy">Analyzing last move…</p>}
-      {prevMaia && topMaia && topMaiaSan && lastProb !== undefined && ranked >= 0
-        ? <p className="model-context">Maia expected {topMaiaSan} ({Math.round(topMaia.prob * 100)}%) · played {lastSan} ({Math.round(lastProb * 100)}%, #{ranked + 1})</p>
-        : prevMaia && topMaia && topMaiaSan && <p className="model-context">Maia expected {topMaiaSan} ({Math.round(topMaia.prob * 100)}%)</p>}
-    </section>}
-    <div className="engine-duo">
-      {ply > 0 && <p className="model-context" style={{ gridColumn: '1 / -1', margin: 0 }}>Suggestions from this position · next to move.</p>}
+  return <div className="engine-duo">
     <EngineSection label="Maia analysis" titleId="insight-title" dotClass="source-maia" title={`Maia • ${analysisSettings.eloMaia}`}>
       {response && insight ? <div id="insight-content">
         <CandidateList>
@@ -133,7 +105,6 @@ function MoveAnalysis({ state, dispatch, review }: { state: State; dispatch: Dis
     <EngineSection label="Stockfish evaluation" dotClass="source-stockfish" title={`Stockfish 19${evaluation && !evaluation.terminal ? ` · depth ${evaluation.depth}` : ''}`}>
       {evaluation ? <StockfishBody fen={node.fen} evaluation={evaluation} played={played} previewUci={state.preview} onPreview={uci => dispatch({ type: 'preview', uci })} /> : <p className="empty-copy">No analysis yet.</p>}
     </EngineSection>
-    </div>
   </div>;
 }
 
@@ -164,7 +135,7 @@ function StockfishBody({ fen, evaluation, played, previewUci, onPreview }: { fen
   </div>;
 }
 
-export function MovesPanel({ sans, ply, onView, initialFen, historical, qualities, analysis = false, original, tools }: { sans: string[]; ply: number; onView: (ply: number | null) => void; initialFen: string; historical: boolean; qualities?: Quality[]; analysis?: boolean; original?: { sans: string[]; fromPly: number }; tools?: ReactNode }) {
+export function MovesPanel({ sans, ply, onView, onOriginalView, initialFen, historical, qualities, analysis = false, original, tools }: { sans: string[]; ply: number; onView: (ply: number | null) => void; onOriginalView?: (ply: number) => void; initialFen: string; historical: boolean; qualities?: Quality[]; analysis?: boolean; original?: { sans: string[]; fromPly: number }; tools?: ReactNode }) {
   const active = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -193,7 +164,7 @@ export function MovesPanel({ sans, ply, onView, initialFen, historical, qualitie
           {original.fromPly > 0 && move(original.sans[original.fromPly - 1], original.fromPly - 1)}
           <div className="variation-line" aria-label="Explored variation"><CornerDownRight className="branch-connector" size={14} aria-hidden="true" />{sans.slice(original.fromPly).map((san, index) => move(san, original.fromPly + index))}</div>
         </div>
-        {original.sans.slice(original.fromPly).map((san, offset) => <span className="original-move" key={original.fromPly + offset}>{number(original.fromPly + offset)} {san}</span>)}
+        {original.sans.slice(original.fromPly).map((san, offset) => <button className="move-cell original-move" key={original.fromPly + offset} onClick={() => (onOriginalView ?? onView)(original.fromPly + offset + 1)}>{number(original.fromPly + offset)} {san}</button>)}
       </div> : sans.map(move)}
     </div>
     <div className="move-navigation"><div className="board-actions">{tools}</div><div className="nav-buttons">{[{ id: 'first', label: 'First position', Icon: SkipBack, to: 0 }, { id: 'prev', label: 'Previous position', Icon: ArrowLeft, to: ply - 1 }, { id: 'next', label: 'Next position', Icon: ArrowRight, to: ply + 1 }, { id: 'last', label: 'Last position', Icon: SkipForward, to: sans.length }].map(item => <IconButton key={item.id} id={`analysis-${item.id}`} label={item.label} disabled={item.to < 0 || item.to > sans.length || item.to === ply} onClick={() => onView(item.to)}><item.Icon size={16} aria-hidden="true" /></IconButton>)}</div></div>

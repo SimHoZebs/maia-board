@@ -52,7 +52,7 @@ p { line-height: 1.5; color: var(--muted); }
 .move-cell span { color: var(--muted); font-size: 12px; }
 .analysis-notation .move-list { align-items: flex-start; height: auto; min-height: 40px; padding: 4px 0; overflow-x: auto; overflow-y: hidden; }
 .original-line, .variation-line { display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 2px; width: max-content; flex: none; }
-.original-move { display: inline-flex; align-items: center; gap: 4px; height: 32px; border: 1px solid transparent; padding: 4px 6px; color: var(--muted); font-size: 14px; white-space: nowrap; }
+.original-move { display: inline-flex; align-items: center; gap: 4px; height: 32px; border: 1px solid transparent; background: transparent; padding: 4px 6px; color: var(--muted); font-size: 14px; white-space: nowrap; cursor: pointer; }
 .original-move span { font-size: 12px; }
 .branch-point { position: relative; flex: none; min-width: 0; height: 64px; }
 .variation-line { position: absolute; top: 32px; left: 10px; align-items: center; }
@@ -111,10 +111,6 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .empty-copy { font-size: 13px; color: var(--muted); }
 .insight-panel .empty-copy { margin: 18px 0 0; }
 #insight-content h3 { margin: 14px 0 6px; font-size: 13px; }
-.last-move { margin-bottom: 12px; }
-.last-move h3 { margin: 0; font-size: 14px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.last-move .model-context { margin: 6px 0 0; }
-.last-move .empty-copy { margin: 6px 0 0; }
 .candidate-list { list-style: none; margin: 0; padding: 0; }
 .candidate-list li { display: flex; gap: 6px; align-items: center; border-bottom: 1px solid var(--line); padding: 4px 0; }
 .rank { font-size: 12px; color: var(--muted); width: 12px; }
@@ -190,7 +186,8 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .feedback-eval { font-variant-numeric: tabular-nums; color: var(--muted); }
 .feedback-setup { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 16px 0 4px; }
 .feedback-setup input { width: 16px; min-height: 16px; accent-color: var(--accent); }
-.insight-panel { max-height: calc(100dvh - 120px); overflow-y: auto; overflow-x: hidden; }
+.insight-panel { max-height: calc(100dvh - 120px); overflow: hidden; }
+.insight-panel > div[role="tabpanel"] { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
 .review-charts { margin-top: 20px; }
 .chart-tabs { display: flex; gap: 4px; }
 .chart-tabs button { flex: 1; font-size: 12px; }

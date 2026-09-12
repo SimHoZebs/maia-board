@@ -1,13 +1,14 @@
 import { useId, useLayoutEffect, useRef, useState } from 'react';
 import type { Review } from './useReview';
 import { scoreText, whiteWin, type Quality } from './reviewMetrics';
+import type { ReviewSide } from './reviewSummary';
 
 export function QualityBadge({ quality }: { quality?: Quality }) {
   if (!quality || quality.label === 'Unreviewed') return null;
   const label = quality.label;
   return <span className={`quality quality-${label.toLowerCase()}`} title={`${label}${quality.accuracy == null ? '' : ` · ${quality.accuracy.toFixed(1)}% move accuracy`}`} aria-label={label}>{({ Forced: 'F', Blunder: '??', Mistake: '?', Inaccuracy: '?!', Great: '!', Best: 'B', Good: 'G' })[label]}</span>;
 }
-export function ReviewCharts({ review, ply, sans, onView }: { review: Review; ply: number; sans: string[]; onView: (ply: number) => void }) {
+export function ReviewCharts({ review, ply, sans, onView, side }: { review: Review; ply: number; sans: string[]; onView: (ply: number) => void; side?: ReviewSide }) {
   const [tab, setTab] = useState<'evaluation' | 'accuracy'>('accuracy');
   const id = useId();
   const tabs = [{ id: 'accuracy', label: 'Move accuracy' }, { id: 'evaluation', label: 'Evaluation' }] as const;
@@ -20,8 +21,11 @@ export function ReviewCharts({ review, ply, sans, onView }: { review: Review; pl
   const points = review.nodes.map((node, index) => {
     const evaluation = review.evaluations[index];
     const quality = index ? review.qualities[index - 1] : undefined;
-    const value = tab === 'evaluation' ? evaluation ? whiteWin(evaluation.score) : null : quality?.accuracy ?? null;
     const before = index ? review.nodes[index - 1].fen.split(' ') : null;
+    const mover = before ? (before[1] === 'w' ? 'white' : 'black') : null;
+    const turn = node.fen.split(' ')[1] === 'w' ? 'white' : 'black';
+    const outOfScope = !!side && (tab === 'evaluation' ? turn !== side : mover !== side);
+    const value = outOfScope ? null : tab === 'evaluation' ? evaluation ? whiteWin(evaluation.score) : null : quality?.accuracy ?? null;
     const moveNumber = before ? `${before[5]}${before[1] === 'w' ? '.' : '…'}` : '0';
     const description = [
       index === 0 ? 'Starting position' : `${moveNumber} ${sans[index - 1]} · ${before![1] === 'w' ? 'White' : 'Black'}`,
@@ -29,7 +33,7 @@ export function ReviewCharts({ review, ply, sans, onView }: { review: Review; pl
       tab === 'evaluation' && evaluation ? `${scoreText(evaluation)} · ${evaluation.terminal ? 'terminal result' : `depth ${evaluation.depth}`}` : null,
       quality && quality.label !== 'Unreviewed' ? quality.label : null,
     ].filter(Boolean).join(' · ');
-    return { node, value, description, evaluation, quality, moveNumber };
+    return { node, value, description, evaluation, quality, moveNumber, mover, turn };
   });
   const trackWidth = Math.max(264, points.length * 44);
   const yFor = (percent: number) => 110 - percent;
@@ -51,7 +55,10 @@ export function ReviewCharts({ review, ply, sans, onView }: { review: Review; pl
           {ticks.map(tick => <line key={tick} x1="0" x2={trackWidth} y1={yFor(tick)} y2={yFor(tick)} className={tick === 50 ? 'chart-midline' : 'chart-gridline'} />)}
           {points.map((point, index) => index > 0 && point.value !== null && points[index - 1].value !== null ? <line key={index} x1={(index - 1) * 44 + 22} y1={110 - points[index - 1].value!} x2={index * 44 + 22} y2={110 - point.value} className="chart-line" /> : null)}
         </svg>
-        {points.map((point, index) => <button key={index} type="button" ref={index === selectedPly ? selected : undefined} className="chart-point" disabled={tab === 'accuracy' && index === 0} aria-label={point.description} aria-current={index === selectedPly ? 'step' : undefined} title={point.description} onClick={() => onView(tab === 'accuracy' ? index - 1 : index)} style={{ left: index * 44 }}>{point.value !== null && <i className={tab === 'accuracy' && point.quality ? `chart-dot-${point.quality.label.toLowerCase()}` : undefined} style={{ top: 110 - point.value }} />}<span>{point.moveNumber}</span></button>)}
+        {points.map((point, index) => {
+          const scopedOut = !!side && (tab === 'evaluation' ? point.turn !== side : point.mover !== side);
+          return <button key={index} type="button" ref={index === selectedPly ? selected : undefined} className="chart-point" disabled={(tab === 'accuracy' && index === 0) || scopedOut} aria-label={point.description} aria-current={index === selectedPly ? 'step' : undefined} title={point.description} onClick={() => onView(tab === 'accuracy' ? index - 1 : index)} style={{ left: index * 44 }}>{point.value !== null && <i className={tab === 'accuracy' && point.quality ? `chart-dot-${point.quality.label.toLowerCase()}` : undefined} style={{ top: 110 - point.value }} />}<span>{point.moveNumber}</span></button>;
+        })}
       </div>
       </div>
     </div>

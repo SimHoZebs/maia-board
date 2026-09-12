@@ -788,7 +788,8 @@ for (const originPly of [0, 9, 12]) {
       return { before, after, top: el.getBoundingClientRect().top, parentBottom: el.previousElementSibling?.getBoundingClientRect().bottom, tailTop: group.nextElementSibling?.getBoundingClientRect().top, bottom: el.getBoundingClientRect().bottom };
     });
     expect(placement.before).toEqual(Array(originPly).fill('BUTTON'));
-    expect(placement.after).toEqual(Array(12 - originPly).fill('original-move'));
+    expect(placement.after).toHaveLength(12 - originPly);
+    for (const cls of placement.after) expect(cls).toContain('original-move');
     if (placement.parentBottom !== undefined) expect(placement.top).toBeGreaterThanOrEqual(placement.parentBottom);
     if (placement.tailTop !== undefined) expect(placement.tailTop).toBeLessThan(placement.top);
     await page.screenshot({ path: info.outputPath(`branch-origin-${originPly}.png`), fullPage: true });
@@ -798,6 +799,24 @@ for (const originPly of [0, 9, 12]) {
     await expect(page.locator('.variation-line .move-cell')).toHaveAttribute('aria-current', 'step');
   });
 }
+
+test('tapping an original move after the branch exits the branch', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await boot(page, {}, false, '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6');
+  await page.locator('#analysis-first').click();
+  await page.locator('#analysis-next').click();
+  await move(page, 'c7', 'c5');
+  await expect(page.getByLabel('Explored variation', { exact: true })).toBeVisible();
+  await expect(page.locator('#return-original')).toBeVisible();
+  await page.locator('.original-move').first().click();
+  await expect(page.getByLabel('Explored variation', { exact: true })).toHaveCount(0);
+  await expect(page.locator('#return-original')).toHaveCount(0);
+  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 7');
+  await piece(page, 'e5', 'black pawn');
+  await page.locator('#analysis-next').click();
+  await piece(page, 'f3', 'white knight');
+  await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 7');
+});
 
 test('analysis keeps one scrolling main row and adds height only for a branch', async ({ page }, info) => {
   await page.setViewportSize({ width: 320, height: 844 });

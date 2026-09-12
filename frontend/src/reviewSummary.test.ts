@@ -40,6 +40,23 @@ it('uses the actual mover and fullmove number for black-to-move imports', () => 
   ]);
 });
 
+it('scopes totals, means, and issues to one side when requested', () => {
+  const moves = ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1b5'];
+  const qs = [quality(100), quality(80), quality(40, 'Blunder'), quality(60, 'Mistake'), quality(100, 'Forced')];
+  const summary = summarizeReview(nodes(moves), qs, 'black');
+  expect(summary.sides).toHaveLength(1);
+  expect(summary.sides[0]).toMatchObject({ color: 'black', total: 2, reviewed: 2, accuracy: 70, issues: { Inaccuracy: 0, Mistake: 1, Blunder: 0 } });
+  expect(summary).toMatchObject({ total: 2, reviewed: 2 });
+  expect(summary.issues.map(issue => issue.beforePly)).toEqual([3]);
+});
+
+it('hides the other side even when it holds the only reviewed moves', () => {
+  const summary = summarizeReview(nodes(['e2e4', 'e7e5']), [quality(0, 'Blunder'), missing], 'black');
+  expect(summary.sides).toHaveLength(1);
+  expect(summary.sides[0]).toMatchObject({ color: 'black', total: 1, reviewed: 0, accuracy: null });
+  expect(summary).toMatchObject({ total: 1, reviewed: 0, issues: [] });
+});
+
 it('leaves both accuracies unavailable when there are no moves', () => {
   const summary = summarizeReview(nodes([]), []);
   expect(summary).toMatchObject({ total: 0, reviewed: 0, issues: [] });

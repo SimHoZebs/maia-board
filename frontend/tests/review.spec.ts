@@ -142,10 +142,10 @@ test('overview summarizes the game and opens the decision before a selected mist
   await expect(page.locator('.overview-partial')).toContainText('Summary covers reviewed moves only');
   await expect(page.getByRole('region', { name: 'White accuracy', exact: true }).locator('.accuracy-value')).toHaveText('—');
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
-  await expect(page.locator('.review-coverage')).toHaveText('4 / 4 moves reviewed');
+  await expect(page.locator('.review-coverage')).toHaveCount(0);
   await expect(page.locator('.overview-partial')).toHaveCount(0);
   await expect(page.locator('.accuracy-caption')).toHaveText(['Accuracy', 'Accuracy']);
-  await expect(page.locator('.accuracy-coverage')).toHaveText(['2 / 2 moves reviewed', '2 / 2 moves reviewed']);
+  await expect(page.locator('.accuracy-coverage')).toHaveCount(0);
   await expect(page.locator('.review-issue')).toHaveCount(2);
   await expect(page.locator('.accuracy-summary')).not.toContainText('You');
   await page.screenshot({ path: info.outputPath('overview-desktop.png'), fullPage: true });
@@ -257,18 +257,54 @@ test('overview graphs leave unreviewed positions as gaps', async ({ page }) => {
   await expect(page.locator('.chart-point').nth(2).locator('i')).toHaveCount(0);
 });
 
-test('overview labels the saved user side without depending on board orientation', async ({ page }) => {
-  await bootReview(page);
+test('overview shows only your moves with your decision points on the graphs', async ({ page }) => {
+  const app = await bootReview(page);
   await page.evaluate(key => {
     const snapshot = JSON.parse(localStorage.getItem(key)!);
     localStorage.setItem(key, JSON.stringify({ ...snapshot, ownGame: true, perspective: 'black' }));
   }, KEYS.snapshot);
   await page.reload();
   await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+  await expect(page.locator('.accuracy-card')).toHaveCount(1);
   await expect(page.getByRole('region', { name: 'Black accuracy', exact: true })).toContainText('Black · You');
-  await expect(page.getByRole('region', { name: 'White accuracy', exact: true })).not.toContainText('You');
+  await expect(page.getByRole('region', { name: 'White accuracy', exact: true })).toHaveCount(0);
+  await expect(page.locator('.accuracy-caption')).toHaveText('Partial accuracy');
+  await expect(page.locator('.review-issue')).toHaveCount(0);
+  await expect(page.locator('.chart-point i')).toHaveCount(1);
+  await expect(page.locator('.chart-point:disabled')).toHaveCount(3);
+  await expect(page.locator('.chart-line')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Analyze entire game' }).click();
+  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  await expect(page.locator('.accuracy-caption')).toHaveText('Accuracy');
+  await expect(page.locator('.review-issue')).toHaveCount(1);
+  await expect(page.locator('.issue-move small')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Review 1… e5 · Black · You · Mistake', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Move analysis', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 5');
+  await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+  await expect(page.locator('.chart-point i')).toHaveCount(2);
+  await expect(page.locator('.chart-line')).toHaveCount(0);
+  await page.getByRole('tab', { name: 'Evaluation', exact: true }).click();
+  await expect(page.locator('.chart-point i')).toHaveCount(2);
+  await expect(page.locator('.chart-line')).toHaveCount(0);
+  await expect(page.locator('.chart-point:disabled')).toHaveCount(3);
   await page.locator('#flip-board').click();
   await expect(page.getByRole('region', { name: 'Black accuracy', exact: true })).toContainText('Black · You');
+  expect(app.errors).toEqual([]);
+});
+
+test('analysis tabs stay visible while panel content scrolls', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 700 });
+  await bootReview(page);
+  await page.getByRole('button', { name: 'Analyze entire game' }).click();
+  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+  const tabs = page.getByRole('tablist', { name: 'Game analysis views', exact: true });
+  const before = await tabs.boundingBox();
+  await page.locator('#analysis-panel-overview').evaluate(el => { el.scrollTop = el.scrollHeight; });
+  await expect.poll(() => page.locator('#analysis-panel-overview').evaluate(el => el.scrollTop)).toBeGreaterThan(0);
+  expect(await tabs.boundingBox()).toEqual(before);
+  await expect(tabs).toBeInViewport();
 });
 
 test('unlisted played moves have no fallback below either prediction list', async ({ page }) => {
