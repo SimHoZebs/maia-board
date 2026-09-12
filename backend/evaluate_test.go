@@ -131,6 +131,58 @@ func TestEvaluateHTTP(t *testing.T) {
 	}
 }
 
+func TestEvaluateCacheReadThrough(t *testing.T) {
+	cached := `{"fen":"` + startFEN + `","moves":[],"cache_hash":"abc123","cache_key":"test-key"}`
+	store := testStore(t)
+	// Miss: computes live, stores the row, reports miss.
+	s := &server{evaluator: fakeEvaluator(t, "ok"), store: store}
+	w := httptest.NewRecorder()
+	s.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(cached)))
+	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "miss" {
+		t.Fatalf("miss: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
+	}
+	first := w.Body.String()
+	// Hit: serves from SQLite without an evaluator configured.
+	hit := &server{store: store}
+	w = httptest.NewRecorder()
+	hit.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(cached)))
+	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "hit" {
+		t.Fatalf("hit: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
+	}
+	if normalizeJSON(t, w.Body.String()) != normalizeJSON(t, first) {
+		t.Fatalf("cached body changed:\n%s\n%s", first, w.Body)
+	}
+	// Same hash, different key: a stale row is recomputed and overwritten.
+	stale := `{"fen":"` + startFEN + `","moves":[],"cache_hash":"abc123","cache_key":"other-key"}`
+	w = httptest.NewRecorder()
+	s.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(stale)))
+	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "miss" {
+		t.Fatalf("stale: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
+	}
+	w = httptest.NewRecorder()
+	hit.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(stale)))
+	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "hit" {
+		t.Fatalf("stale overwrite: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
+	}
+	// Corrupt row: validation fails, falls through to live inference.
+	put := httptest.NewRecorder()
+	hit.evaluations(put, httptest.NewRequest("PUT", "/evaluations/deadbeef", strings.NewReader(`{"engine":"sf","key":"k","value":{"a":1}}`)))
+	if put.Code != 200 {
+		t.Fatalf("seed corrupt row: %d %s", put.Code, put.Body)
+	}
+	w = httptest.NewRecorder()
+	s.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(`{"fen":"`+startFEN+`","moves":[],"cache_hash":"deadbeef","cache_key":"k"}`)))
+	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "miss" {
+		t.Fatalf("corrupt: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
+	}
+	// No cache coordinates: computes live, sets no header.
+	w = httptest.NewRecorder()
+	s.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(`{"fen":"`+startFEN+`","moves":[]}`)))
+	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "" {
+		t.Fatalf("uncached: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
+	}
+}
+
 func TestEvaluationCancellationKillsGroup(t *testing.T) {
 	for _, mode := range []string{"cancel", "timeout", "crash"} {
 		t.Run(mode, func(t *testing.T) {

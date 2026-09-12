@@ -18,6 +18,22 @@ func testStore(t *testing.T) *GameStore {
 	return store
 }
 
+// normalizeJSON re-encodes so semantically identical documents compare equal
+// regardless of key order (hits serve the stored document verbatim while
+// misses serialize fresh structs).
+func normalizeJSON(t *testing.T, document string) string {
+	t.Helper()
+	var value any
+	if err := json.Unmarshal([]byte(document), &value); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("cannot re-encode JSON: %v", err)
+	}
+	return string(encoded)
+}
+
 func gameFixture(id string, moves ...string) gamePayload {
 	maia, user := 1600, 1400
 	return gamePayload{ID: id, UserColor: "white", EloMaia: &maia, EloUser: &user, Model: "79m", Moves: moves}

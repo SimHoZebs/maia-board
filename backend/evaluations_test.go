@@ -116,3 +116,34 @@ func TestEvaluationCacheEvictsOldest(t *testing.T) {
 		t.Fatalf("oldest survived: %d", w.Code)
 	}
 }
+
+func TestEvaluationCacheRewriteRefreshesEvictionRank(t *testing.T) {
+	old := evalCacheMaxRows
+	evalCacheMaxRows = 3
+	defer func() { evalCacheMaxRows = old }()
+	s := &server{store: testStore(t)}
+	for _, id := range []string{"a1", "b2", "c3"} {
+		if w := putCache(t, s, id, `{"engine":"sf","key":"`+id+`","value":{"n":1}}`); w.Code != 200 {
+			t.Fatalf("put %s: %d %s", id, w.Code, w.Body)
+		}
+	}
+	// Rewriting a1 must refresh its rank: the next insert evicts b2, not a1.
+	if w := putCache(t, s, "a1", `{"engine":"sf","key":"a1","value":{"n":2}}`); w.Code != 200 {
+		t.Fatalf("re-put a1: %d %s", w.Code, w.Body)
+	}
+	if w := putCache(t, s, "d4", `{"engine":"sf","key":"d4","value":{"n":1}}`); w.Code != 200 {
+		t.Fatalf("put d4: %d %s", w.Code, w.Body)
+	}
+	for _, id := range []string{"a1", "c3", "d4"} {
+		w := httptest.NewRecorder()
+		s.evaluations(w, httptest.NewRequest("GET", "/evaluations/"+id, nil))
+		if w.Code != 200 {
+			t.Fatalf("expected %s to survive: %d", id, w.Code)
+		}
+	}
+	w := httptest.NewRecorder()
+	s.evaluations(w, httptest.NewRequest("GET", "/evaluations/b2", nil))
+	if w.Code != 404 {
+		t.Fatalf("expected b2 evicted, got %d", w.Code)
+	}
+}

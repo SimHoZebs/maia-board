@@ -70,10 +70,18 @@ func (s *GameStore) cachePut(hash, engine, key, value string) (cachedEvaluation,
 		return cachedEvaluation{}, err
 	}
 	defer tx.Rollback()
+	// DELETE then INSERT (rather than ON CONFLICT DO UPDATE) so the row gets
+	// a fresh rowid: eviction below orders by rowid, making it
+	// least-recently-written-first. An upsert would keep the original rowid
+	// and let refreshed openings age out as if never rewritten. Reads do not
+	// touch rank: a read-touch would double write load on this
+	// single-connection database for a recency signal the current working
+	// set (recent games, re-touched on every visit) does not need.
+	if _, err := tx.Exec(`DELETE FROM evaluations WHERE key_hash = ?`, hash); err != nil {
+		return cachedEvaluation{}, err
+	}
 	if _, err := tx.Exec(`INSERT INTO evaluations (key_hash, engine, cache_key, value, created_at)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT (key_hash) DO UPDATE SET engine = excluded.engine, cache_key = excluded.cache_key,
-			value = excluded.value, created_at = excluded.created_at`,
+		VALUES (?, ?, ?, ?, ?)`,
 		hash, engine, key, value, now); err != nil {
 		return cachedEvaluation{}, err
 	}
@@ -102,6 +110,46 @@ func (s *GameStore) cacheGet(hash string) (cachedEvaluation, error) {
 	}
 	entry.Value = decoded
 	return entry, nil
+}
+
+// Read-through helpers for POST /evaluate and POST /move. The cache key
+// format stays client-owned and opaque: the server never interprets chess
+// positions, it only files values under the hash the client computed. A hit
+// additionally requires the stored key to equal the presented key, so a
+// colliding or mismatched hash falls through to live inference and
+// overwrites the row instead of serving another position's result.
+func validCacheRef(hash, key string) bool {
+	return evalHashPattern.MatchString(hash) && key != "" && len(key) <= evalCacheMaxKeyBytes
+}
+
+func (s *server) lookupCache(hash, engine, key string) (cachedEvaluation, bool) {
+	if s.store == nil || !validCacheRef(hash, key) {
+		return cachedEvaluation{}, false
+	}
+	entry, err := s.store.cacheGet(hash)
+	if err != nil || entry.Engine != engine || entry.Key != key {
+		return cachedEvaluation{}, false
+	}
+	return entry, true
+}
+
+// Best-effort write-through: store failures never fail the live request.
+func (s *server) storeCache(hash, engine, key string, value any) {
+	if s.store == nil || !validCacheRef(hash, key) {
+		return
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return
+	}
+	var document any
+	if err := json.Unmarshal(encoded, &document); err != nil {
+		return
+	}
+	if validCachePut(&cachePut{Engine: engine, Key: key, Value: document}) != nil {
+		return
+	}
+	_, _ = s.store.cachePut(hash, engine, key, string(encoded))
 }
 
 func (s *server) evaluations(w http.ResponseWriter, r *http.Request) {

@@ -26,6 +26,11 @@ type moveRequest struct {
 	MaiaColor   string   `json:"maia_color"`
 	InitialFEN  string   `json:"initial_fen,omitempty"`
 	Temperature float64  `json:"temperature,omitempty"`
+	// Opaque read-through coordinates, same contract as POST /evaluate's
+	// cache_hash/cache_key: serve a matching cached row or compute live
+	// and store it, so play-time callers skip the GET+PUT round-trips.
+	CacheHash string `json:"cache_hash,omitempty"`
+	CacheKey  string `json:"cache_key,omitempty"`
 }
 
 type topMove struct {
@@ -181,6 +186,27 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 	}
 	model = validated
 
+	// Cache lookup runs before the worker pool is touched: hits must never
+	// occupy an inference slot. Only deterministic (temperature 0) requests
+	// participate: sampled moves vary per call, so they are neither served
+	// from nor filed under the shared key. Degraded rows are stand-ins, and
+	// the served model must equal the requested one.
+	useCache := request.Temperature == 0
+	if useCache {
+		if entry, ok := s.lookupCache(request.CacheHash, "maia", request.CacheKey); ok {
+			var cached moveResponse
+			if encoded, err := json.Marshal(entry.Value); err == nil {
+			if err := json.Unmarshal(encoded, &cached); err == nil &&
+				cached.Move != "" && cached.ModelUsed == model && !cached.Degraded {
+					model, degraded = cached.ModelUsed, cached.Degraded
+					w.Header().Set("X-Eval-Cache", "hit")
+					writeJSON(w, http.StatusOK, entry.Value)
+					return
+				}
+			}
+		}
+	}
+
 	result, used, fallback, err := s.pool.predict(r.Context(), model, engineRequest)
 	if err != nil {
 		switch {
@@ -202,6 +228,16 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 	response := moveResponse{Move: result.Move, WDL: result.WDL, ModelUsed: used, Degraded: degraded}
 	for _, candidate := range result.Candidates {
 		response.TopMoves = append(response.TopMoves, topMove{Move: candidate.Move, Prob: candidate.Policy})
+	}
+	// Fallback answers are stand-ins for the requested model: serving them
+	// later would masquerade as full-quality inference, so they are never
+	// persisted (matching the old explicit-PUT contract). Sampled
+	// (temperature != 0) answers vary per call and are never filed either.
+	if !degraded && useCache {
+		s.storeCache(request.CacheHash, "maia", request.CacheKey, response)
+	}
+	if useCache && validCacheRef(request.CacheHash, request.CacheKey) {
+		w.Header().Set("X-Eval-Cache", "miss")
 	}
 	writeJSON(w, http.StatusOK, response)
 }

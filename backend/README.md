@@ -82,8 +82,22 @@ ops burden for no query benefit. `PUT /evaluations/:hash` stores
 `{engine, key, value}` under a client hash (`sf` or `maia` only, JSON object
 values, short keys); `GET /evaluations/:hash` returns the row or
 `404 not_found`; `GET /evaluations/stats` reports row count and bytes. Rows
-evict oldest-first past 5000. The key format stays client-owned so policy,
-model, or rating changes miss naturally instead of poisoning results.
+evict least-recently-written-first past 5000 (rewrites refresh rank).
+
+`POST /evaluate` and `POST /move` are read-through: with optional
+`cache_hash`/`cache_key` they serve a matching cached row (`X-Eval-Cache:
+hit`) or compute live, persist results, and report `X-Eval-Cache: miss`. A
+hit additionally requires the stored key to equal the presented key and the
+value to validate (Stockfish policy included; Maia requires the stored model
+to equal the requested one and rejects degraded rows), so stale or corrupt
+rows fall through to inference and are overwritten, and hits return the
+stored document verbatim. Only deterministic (`temperature` 0) Maia requests
+participate — sampled moves vary per call — and degraded fallbacks are never
+persisted. The frontend revalidates served rows with its stricter parser and,
+when one fails, retries once without coordinates and writes the validated
+result back explicitly, healing lax legacy rows. The key format
+stays client-owned so policy, model, or rating changes miss naturally instead
+of poisoning results.
 
 ## Analysis records
 

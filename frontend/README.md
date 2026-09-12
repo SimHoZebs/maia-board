@@ -144,11 +144,16 @@ and the pinned upstream revision linked below. Fallback Maia entries expire afte
 one-second minimum. Other failures require Retry failed. Terminal positions are
 determined from full chess.js history, synthesized locally, and never sent to Maia.
 
-Behind the memory caches sits the server evaluation cache (`PUT/GET
-/evaluations/:hash`, 5000 oldest-first rows). Fresh inference writes through;
-degraded Maia answers never persist. Cached rows pass the same response
+Behind the memory caches sits the server evaluation cache (5000
+least-recently-written-first rows). `POST /evaluate` and `POST /move` are
+read-through: each request carries its cache coordinates, so one round-trip
+covers lookup, inference, and persistence with no separate probe, and the
+`X-Eval-Cache` response header tells hits from live inference for timing.
+Degraded Maia answers never persist. Cached rows pass the same response
 validation as live ones before display, and a corrupt or unexpected row falls
-back to live inference instead of failing the position.
+back to live inference instead of failing the position. `PUT/GET
+/evaluations/:hash` remain for read-only line priming, which must never
+trigger engine work.
 
 `reviewMetrics.ts` defines `maia-board-review-v1`. Canonical White scores become
 winning chances using the [Lichess formula](https://lichess.org/page/accuracy).

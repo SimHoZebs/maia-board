@@ -97,31 +97,15 @@ export function cacheHash(key: string): string {
 }
 
 // Play-time Maia replies carry the same top_moves/WDL compute as analysis
-// batches. Persisting them under the identical reviewKey lets later analysis
-// at the same Elo reuse them instead of re-inferring. Degraded fallback
+// batches. Play requests carry these coordinates to POST /move, so the
+// read-through backend files them under the identical reviewKey and later
+// analysis at the same Elo hits instead of re-inferring. Degraded fallback
 // answers are never persisted (matching batch behavior).
 export function maiaCacheKeyForMoveRequest(payload: { fen: string; moves: string[]; initial_fen?: string; elo_maia: number; elo_user: number; model: MaiaModel }): { key: string; hash: string } {
   const node: ReviewNode = { initialFen: payload.initial_fen ?? new Chess().fen(), moves: payload.moves, fen: payload.fen };
   const settings: ReviewSettings = { eloMaia: payload.elo_maia, eloUser: payload.elo_user, model: payload.model };
   const key = reviewKey('maia', node, settings);
   return { key, hash: cacheHash(key) };
-}
-
-export async function persistMaiaReply(
-  payload: { fen: string; moves: string[]; initial_fen?: string; elo_maia: number; elo_user: number; model: MaiaModel },
-  response: MoveResponse,
-  fetcher: typeof fetch = fetch,
-): Promise<void> {
-  if (response.degraded) return;
-  try {
-    const { key, hash } = maiaCacheKeyForMoveRequest(payload);
-    await fetcher(`/evaluations/${hash}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ engine: 'maia', key, value: response }),
-    });
-  } catch {
-    // Best-effort: the live game continues even when the cache is unreachable.
-  }
 }
 
 export function parseEvaluation(body: unknown, settings?: StockfishSettings): Evaluation {
@@ -152,26 +136,55 @@ export function parseEvaluation(body: unknown, settings?: StockfishSettings): Ev
   return value;
 }
 
-export async function fetchEvaluation(node: ReviewNode, signal: AbortSignal, fetcher: typeof fetch = fetch, settings?: StockfishSettings): Promise<Evaluation> {
-  let response: Response;
+export async function fetchEvaluation(node: ReviewNode, signal: AbortSignal, fetcher: typeof fetch = fetch, settings?: StockfishSettings, cache?: { hash: string; key: string }): Promise<Evaluation & { cached?: boolean }> {
+  const post = async (coordinates?: { hash: string; key: string }): Promise<Response> => {
+    try {
+      return await fetcher('/evaluate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fen: node.fen, moves: node.moves, initial_fen: node.initialFen, ...(settings ? { settings } : {}), ...(coordinates ? { cache_hash: coordinates.hash, cache_key: coordinates.key } : {}) }), signal });
+    } catch (error) {
+      if (signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) throw error;
+      throw new Error('Stockfish is unreachable. Check that the server is running on your LAN.');
+    }
+  };
+  const read = async (response: Response): Promise<{ parsed: Evaluation; hit: boolean }> => {
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      throw new Error('Stockfish returned unreadable data.');
+    }
+    if (!response.ok) {
+      const message = typeof body === 'object' && body !== null && typeof (body as { message?: unknown }).message === 'string'
+        ? (body as { message: string }).message : `Stockfish request failed (${response.status}).`;
+      throw new Error(message);
+    }
+    return { parsed: parseEvaluation(body, settings), hit: response.headers.get('X-Eval-Cache') === 'hit' };
+  };
+  const first = await post(cache);
   try {
-    response = await fetcher('/evaluate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fen: node.fen, moves: node.moves, initial_fen: node.initialFen, ...(settings ? { settings } : {}) }), signal });
+    const { parsed, hit } = await read(first);
+    // Read-through backends mark served rows; absence means live inference
+    // (or an older backend without the header).
+    if (hit) return { ...parsed, cached: true as const };
+    return parsed;
   } catch (error) {
-    if (signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) throw error;
-    throw new Error('Stockfish is unreachable. Check that the server is running on your LAN.');
+    // A served row that fails validation is poison (e.g. a lax legacy PUT):
+    // fall back to live inference once. The coord-less retry files nothing
+    // server-side, so write the validated live result back explicitly to heal
+    // the row; other failures propagate as-is.
+    if (!cache || first.headers.get('X-Eval-Cache') !== 'hit') throw error;
+    const { parsed } = await read(await post(undefined));
+    void (async () => {
+      try {
+        await fetcher(`/evaluations/${cache.hash}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ engine: 'sf', key: cache.key, value: parsed }),
+        });
+      } catch {
+        // Best-effort: the memory cache still serves this session.
+      }
+    })();
+    return parsed;
   }
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    throw new Error('Stockfish returned unreadable data.');
-  }
-  if (!response.ok) {
-    const message = typeof body === 'object' && body !== null && typeof (body as { message?: unknown }).message === 'string'
-      ? (body as { message: string }).message : `Stockfish request failed (${response.status}).`;
-    throw new Error(message);
-  }
-  return parseEvaluation(body, settings);
 }
 // No-op subscription for hooks whose coordinator is inactive (suspended with
 // nothing displayed from it): cross-engine settles must not re-render the
@@ -502,8 +515,8 @@ export class ReviewCoordinator {
           if (error instanceof DOMException && error.name === 'AbortError') throw error;
           return undefined;
         });
-        // Server rows are never degraded (fallbacks are not persisted), so a
-        // validated hit is safe to keep indefinitely.
+        // Degraded rows are rejected at the probe, so a validated hit is
+        // safe to keep indefinitely.
         if (hit) {
           if (job.engine === 'sf') this.cache.sf.set(job.key, hit as Evaluation);
           else this.cache.maia.set(job.key, hit as MoveResponse, Infinity);
@@ -520,13 +533,16 @@ export class ReviewCoordinator {
     this.emit();
     return { covered, total: nodes.length };
   }
+  // Read-only server probe used only by primeLine: positions missing
+  // server-side stay missing for an explicit, user-gated batch, so evicted
+  // rows can never trigger automatic engine work. The live path (execute)
+  // no longer probes: POST /evaluate and POST /move are read-through.
   private async readServerCache(job: Job, signal: AbortSignal): Promise<Result | undefined> {
     let response: Response;
     // Cache probes are fast SQLite lookups; a probe that never settles (dead
-    // socket after backgrounding) must degrade to a miss, never wedge the
-    // lane or a prime. The race timer rejects independently of the fetcher so
-    // it also covers fetchers that ignore the abort signal. A timeout falls
-    // through to live inference, which re-probes before inferring.
+    // socket after backgrounding) must degrade to a miss, never wedge a prime.
+    // The race timer rejects independently of the fetcher so it also covers
+    // fetchers that ignore the abort signal.
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       response = await Promise.race([
@@ -554,23 +570,14 @@ export class ReviewCoordinator {
     const record = body as { engine?: unknown; value?: unknown };
     if (record.engine !== job.engine) return undefined;
     try {
-      return job.engine === 'sf' ? parseEvaluation(record.value, job.settings.stockfish) : parseMoveResponse(record.value);
+      // Degraded Maia rows are stand-ins, never canonical: a lax legacy row
+      // must read as a miss so live inference overwrites it.
+      if (job.engine === 'sf') return parseEvaluation(record.value, job.settings.stockfish);
+      const reply = parseMoveResponse(record.value);
+      return reply.degraded ? undefined : reply;
     } catch {
       return undefined;
     }
-  }
-
-  private storeServerCache(job: Job, result: Result): void {
-    void (async () => {
-      try {
-        await this.fetcher(`/evaluations/${cacheHash(job.key)}`, {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ engine: job.engine, key: job.key, value: result }),
-        });
-      } catch {
-        // Best-effort: the memory cache still serves this session.
-      }
-    })();
   }
 
   private async execute(job: Job, signal: AbortSignal): Promise<{ result: Result; source: 'server-cache' | 'live'; retries: number }> {
@@ -592,20 +599,17 @@ export class ReviewCoordinator {
         });
       }
     };
-    const hit = await this.readServerCache(job, signal).catch(error => {
-      if (error instanceof DOMException && error.name === 'AbortError') throw error;
-      return undefined;
-    });
-    if (hit) return { result: hit, source: 'server-cache', retries };
+    // Read-through: the POST carries the cache coordinates the old code
+    // used for its separate GET probe + PUT write-back, so one request
+    // covers lookup, inference, and persistence. The backend reports hits
+    // via X-Eval-Cache; anything else is live inference.
     if (job.engine === 'sf') {
-      const result = await fetchEvaluation(job.node, signal, retryFetch, job.settings.stockfish);
-      this.storeServerCache(job, result);
-      return { result, source: 'live', retries };
+      const result = await fetchEvaluation(job.node, signal, retryFetch, job.settings.stockfish, { hash: cacheHash(job.key), key: job.key });
+      return { result, source: result.cached ? 'server-cache' : 'live', retries };
     }
-    const result = await requestMove({ fen: job.node.fen, moves: job.node.moves, initial_fen: job.node.initialFen, elo_maia: job.settings.eloMaia, elo_user: job.settings.eloUser, model: job.settings.model, maia_color: new Chess(job.node.fen).turn() === 'w' ? 'white' : 'black' }, retryFetch, signal);
-    // Fallback answers expire in memory within seconds; persisting them would
-    // let a degraded stand-in masquerade as the requested model indefinitely.
-    if (!result.degraded) this.storeServerCache(job, result);
-    return { result, source: 'live', retries };
+    const result = await requestMove({ fen: job.node.fen, moves: job.node.moves, initial_fen: job.node.initialFen, elo_maia: job.settings.eloMaia, elo_user: job.settings.eloUser, model: job.settings.model, maia_color: new Chess(job.node.fen).turn() === 'w' ? 'white' : 'black', cache_hash: cacheHash(job.key), cache_key: job.key }, retryFetch, signal);
+    // Fallback answers expire in memory within seconds; the backend never
+    // persists them either, so degraded rows stay request-local.
+    return { result, source: result.cached ? 'server-cache' : 'live', retries };
   }
 }

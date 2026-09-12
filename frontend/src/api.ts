@@ -10,6 +10,10 @@ export type MoveRequest = {
   maia_color: MaiaColor;
   initial_fen?: string;
   temperature?: number;
+  // Opaque read-through coordinates (see reviewCoordinator.maiaCacheKeyForMoveRequest):
+  // the backend serves a matching cached row or computes live and stores it.
+  cache_hash?: string;
+  cache_key?: string;
 };
 
 export type TopMove = {
@@ -99,35 +103,67 @@ function parseErrorCode(value: unknown): ApiErrorCode {
   return known.includes(value.code as ApiErrorCode) ? value.code as ApiErrorCode : 'unknown';
 }
 
-export async function requestMove(payload: MoveRequest, fetchImpl: FetchLike = fetch, signal?: AbortSignal): Promise<MoveResponse> {
-  let response: Response;
-  try {
-    response = await fetchImpl('/move', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal,
-    });
-  } catch (error) {
-    if (signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
-      throw new DOMException('Aborted', 'AbortError');
+export async function requestMove(payload: MoveRequest, fetchImpl: FetchLike = fetch, signal?: AbortSignal): Promise<MoveResponse & { cached?: boolean }> {
+  const post = async (coordinates: boolean): Promise<Response> => {
+    const { cache_hash: _hash, cache_key: _key, ...rest } = payload;
+    try {
+      return await fetchImpl('/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(coordinates ? payload : rest),
+        signal,
+      });
+    } catch (error) {
+      if (signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
+      throw new MaiaApiError('server_unreachable', 'The Maia server could not be reached.');
     }
-    throw new MaiaApiError('server_unreachable', 'The Maia server could not be reached.');
-  }
-
-  let body: unknown;
+  };
+  const read = async (response: Response): Promise<{ parsed: MoveResponse; hit: boolean }> => {
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      throw new MaiaApiError('unknown', 'The Maia server returned unreadable data.', response.status);
+    }
+    if (!response.ok) {
+      const code = parseErrorCode(body);
+      const message = isRecord(body) && typeof body.message === 'string' ? body.message : 'The Maia server rejected this position.';
+      throw new MaiaApiError(code, message, response.status);
+    }
+    return { parsed: parseMoveResponse(body), hit: response.headers.get('X-Eval-Cache') === 'hit' };
+  };
+  const hasCoordinates = payload.cache_hash !== undefined || payload.cache_key !== undefined;
+  const first = await post(hasCoordinates);
   try {
-    body = await response.json();
-  } catch {
-    throw new MaiaApiError('unknown', 'The Maia server returned unreadable data.', response.status);
+    const { parsed, hit } = await read(first);
+    // Read-through backends mark served rows; absence means live inference
+    // (or an older backend without the header).
+    if (hit) return { ...parsed, cached: true as const };
+    return parsed;
+  } catch (error) {
+    // A served row that fails validation is poison (e.g. a lax legacy PUT):
+    // fall back to live inference once. The coord-less retry files nothing
+    // server-side, so write the validated live result back explicitly to heal
+    // the row (never degraded stand-ins); other failures propagate as-is.
+    if (!hasCoordinates || first.headers.get('X-Eval-Cache') !== 'hit') throw error;
+    const { parsed } = await read(await post(false));
+    if (!parsed.degraded) {
+      const { cache_hash: hash, cache_key: key } = payload;
+      void (async () => {
+        try {
+          await fetchImpl(`/evaluations/${hash}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ engine: 'maia', key, value: parsed }),
+          });
+        } catch {
+          // Best-effort: the live game continues regardless.
+        }
+      })();
+    }
+    return parsed;
   }
-
-  if (!response.ok) {
-    const code = parseErrorCode(body);
-    const message = isRecord(body) && typeof body.message === 'string' ? body.message : 'The Maia server rejected this position.';
-    throw new MaiaApiError(code, message, response.status);
-  }
-  return parseMoveResponse(body);
 }
 
 export function readableApiError(error: unknown): string {

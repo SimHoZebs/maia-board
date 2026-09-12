@@ -20,6 +20,12 @@ type evaluationRequest struct {
 	Moves      []string           `json:"moves"`
 	InitialFEN string             `json:"initial_fen,omitempty"`
 	Settings   *stockfishSettings `json:"settings,omitempty"`
+	// Opaque read-through coordinates: the client-computed hash and key of
+	// this exact position+settings. When present the handler serves a
+	// matching cached row (X-Eval-Cache: hit) or computes live and stores
+	// the result, so callers never probe the cache with a separate GET.
+	CacheHash string `json:"cache_hash,omitempty"`
+	CacheKey  string `json:"cache_key,omitempty"`
 }
 
 type evaluationScore struct {
@@ -92,6 +98,22 @@ func (s *server) evaluate(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 400, err.Code, err.Message)
 		return
 	}
+	// Cache lookup runs before the single admission slot is touched: hits
+	// must never queue behind live searches.
+	if entry, ok := s.lookupCache(request.CacheHash, "sf", request.CacheKey); ok {
+		var cached evaluationResponse
+		if encoded, err := json.Marshal(entry.Value); err == nil {
+			if err := json.Unmarshal(encoded, &cached); err == nil &&
+				cached.Engine == "Stockfish 19" && cached.SearchPolicy == request.Settings.policy() && cached.Lines != nil {
+				result = &cached
+				w.Header().Set("X-Eval-Cache", "hit")
+				// Serve the stored document, not the re-encoded struct, so
+				// hits stay byte-compatible with misses as fields evolve.
+				writeJSON(w, 200, entry.Value)
+				return
+			}
+		}
+	}
 	if s.evaluator == nil {
 		writeAPIError(w, 502, "engine_unavailable", "Stockfish is unavailable")
 		return
@@ -109,6 +131,10 @@ func (s *server) evaluate(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, 502, "engine_unavailable", "Stockfish evaluation is unavailable")
 		}
 		return
+	}
+	if validCacheRef(request.CacheHash, request.CacheKey) {
+		s.storeCache(request.CacheHash, "sf", request.CacheKey, result)
+		w.Header().Set("X-Eval-Cache", "miss")
 	}
 	writeJSON(w, 200, result)
 }

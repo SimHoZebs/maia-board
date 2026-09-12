@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef } from 'react';
 import { MaiaApiError, requestMove } from './api';
-import { persistMaiaReply } from './reviewCoordinator';
+import { maiaCacheKeyForMoveRequest } from './reviewCoordinator';
 import { initialState, reducer, snapshotOf } from './state';
 import { KEYS, loadSaved, readStorage, restoreGame, writeStorage } from './storage';
 import {
@@ -130,18 +130,25 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
     // StrictMode's setup/cleanup rehearsal must not launch duplicate inference.
     queueMicrotask(() => {
       if (!active) return;
-      void requestMove(request.payload, fetch, controller.signal).then(
+      // Play-time Maia compute is filed for later analysis reuse under the
+      // identical cache key batches use, so reviewing at the same Elo hits
+      // the server cache instead of re-inferring. The coordinates ride along
+      // on the read-through POST, replacing the old explicit PUT-after-reply.
+      // Only deterministic (temperature 0) games participate: sampled moves
+      // vary per call and the backend files them nowhere.
+      // Analysis singles are intentionally not persisted here: on Maia-locked
+      // positions the single lane is global-only while batches use the pinned
+      // game Elo, so persisting singles would cache rows under an identity
+      // batches never read.
+      let payload = request.payload;
+      if (request.mode === 'play' && (request.payload.temperature ?? 0) === 0) {
+        const { key, hash } = maiaCacheKeyForMoveRequest(request.payload);
+        payload = { ...request.payload, cache_key: key, cache_hash: hash };
+      }
+      void requestMove(payload, fetch, controller.signal).then(
         response => {
           window.clearTimeout(stalled);
           if (!active) return;
-          // Play-time Maia compute is saved for later analysis reuse under the
-          // identical cache key batches use, so reviewing at the same Elo hits
-          // the server cache instead of re-inferring. Analysis singles are
-          // intentionally not persisted here: on Maia-locked positions the
-          // single lane is global-only while batches use the pinned game Elo,
-          // so persisting singles would cache rows under an identity batches
-          // never read. Batches persist with the correct per-node identity.
-          if (request.mode === 'play') void persistMaiaReply(request.payload, response, fetch);
           dispatch({ type: 'reply', request, response });
         },
         error => {

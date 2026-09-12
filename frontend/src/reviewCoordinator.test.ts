@@ -8,6 +8,54 @@ const line = loadLine('', '1. e4 e5 2. Nf3');
 const nodes: ReviewNode[] = testNodes(line.initialFen, line.moves);
 const body = (url: string) => url === '/evaluate' ? { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4', score: { type: 'cp', value: 0 }, lines: [{ move: 'e2e4', score: { type: 'cp', value: 0 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: -20 }, depth: 12 }] } : { move: 'e2e4', top_moves: [], wdl: [0,1,0], model_used: '79m', degraded: false };
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
+// Emulates the read-through backend: POST /evaluate and POST /move carry
+// cache_hash/cache_key, serve matching stored rows with an X-Eval-Cache hit
+// header, or compute live (via liveBody), store non-degraded results, and
+// report a miss. Validation mirrors the server (engine + key + policy/shape).
+type StoredRow = { engine: string; key: string; value: unknown };
+function validStored(value: unknown, engine: string, request: Record<string, unknown> & { settings?: Parameters<typeof stockfishPolicy>[0] }): boolean {
+  if (!value || typeof value !== 'object') return false;
+  if (engine === 'sf') {
+    const row = value as { engine?: unknown; search_policy?: unknown; lines?: unknown };
+    return row.engine === 'Stockfish 19' && row.search_policy === stockfishPolicy(request.settings) && Array.isArray(row.lines);
+  }
+  return typeof (value as { move?: unknown }).move === 'string';
+}
+function readThroughFetcher(
+  store: Map<string, StoredRow>,
+  liveBody: (path: string, request: Record<string, unknown>) => unknown,
+  transcript: string[] = [],
+) {
+  return (async (url: string | URL | Request, init?: RequestInit) => {
+    const path = String(url).split('?')[0];
+    if (path === '/evaluate' || path === '/move') {
+      const request = JSON.parse(init?.body as string) as Record<string, unknown> & { cache_hash: string; cache_key: string };
+      const engine = path === '/evaluate' ? 'sf' : 'maia';
+      const hit = store.get(request.cache_hash);
+      if (hit && hit.engine === engine && hit.key === request.cache_key && validStored(hit.value, engine, request)) {
+        transcript.push(`${path}:hit`);
+        return Response.json(hit.value, { headers: { 'X-Eval-Cache': 'hit' } });
+      }
+      const value = liveBody(path, request);
+      // Mirrors the server: every Stockfish result persists, Maia rows persist
+      // unless degraded; requests without coordinates (live retries) file nothing.
+      if (request.cache_hash && !(engine === 'maia' && (value as { degraded?: boolean }).degraded)) store.set(request.cache_hash, { engine, key: request.cache_key, value });
+      transcript.push(`${path}:miss`);
+      return Response.json(value);
+    }
+    if (path.startsWith('/evaluations/')) {
+      if (init?.method === 'PUT') {
+        const put = JSON.parse(init.body as string) as { engine: string; key: string; value: unknown };
+        store.set(path.slice('/evaluations/'.length), { engine: put.engine, key: put.key, value: put.value });
+        return Response.json({ key_hash: 'x', engine: put.engine, created_at: 'now' });
+      }
+      const hit = store.get(path.slice('/evaluations/'.length));
+      if (hit) return Response.json({ key_hash: 'x', engine: hit.engine, value: hit.value, created_at: 'now' });
+      return Response.json({ code: 'not_found', message: 'missing' }, { status: 404 });
+    }
+    return Response.json(liveBody(path, {}));
+  }) as unknown as typeof fetch;
+}
 it('deduplicates in-flight requests and coalesces stale foreground positions', async () => {
   const releases: (() => void)[] = [];
   const requests: string[] = [];
@@ -69,9 +117,10 @@ it('bounds busy retries and requires explicit retry after failure', async () => 
     const fetcher = vi.fn(async () => Response.json({ message: 'Busy' }, { status: 503, headers: { 'Retry-After': '1' } })) as typeof fetch;
     const coordinator = new ReviewCoordinator(fetcher);
     coordinator.foregroundAt([nodes[0]], settings); await vi.runAllTimersAsync(); await flush();
-    // One server-cache probe plus three live attempts per engine lane.
-    expect(fetcher).toHaveBeenCalledTimes(8);
-    coordinator.foregroundAt([nodes[0]], settings); await flush(); expect(fetcher).toHaveBeenCalledTimes(8);
+    // Three live attempts per engine lane (no separate cache probe: the POST
+    // itself is the read-through lookup).
+    expect(fetcher).toHaveBeenCalledTimes(6);
+    coordinator.foregroundAt([nodes[0]], settings); await flush(); expect(fetcher).toHaveBeenCalledTimes(6);
     expect(coordinator.error('sf', nodes[0], settings)).toBe('Busy'); coordinator.suspend();
   } finally { vi.useRealTimers(); }
 });
@@ -112,51 +161,93 @@ it('hashes cache keys deterministically to short hex', () => {
   expect(cacheHash('a')).not.toBe(cacheHash('b'));
 });
 it('serves repeated positions from the server cache without re-inference', async () => {
-  const seen: string[] = [];
-  const stored = new Map<string, { engine: string; value: unknown }>();
-  const evaluation = { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4', score: { type: 'cp', value: 0 }, lines: [{ move: 'e2e4', score: { type: 'cp', value: 0 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: -20 }, depth: 12 }] };
-  const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
-    seen.push(`${String(url).split('?')[0]}:${init?.method ?? 'GET'}`);
-    if (String(url).startsWith('/evaluations/')) {
-      if (init?.method === 'PUT') {
-        const put = JSON.parse(init.body as string);
-        stored.set(String(url).split('/').pop()!, { engine: put.engine, value: put.value });
-        return Response.json({ key_hash: 'x', engine: put.engine, created_at: 'now' });
-      }
-      const hit = stored.get(String(url).split('/').pop()!);
-      if (hit) return Response.json({ key_hash: 'x', engine: hit.engine, value: hit.value, created_at: 'now' });
-      return Response.json({ code: 'not_found', message: 'missing' }, { status: 404 });
-    }
-    return Response.json(body(String(url)));
-  }) as unknown as typeof fetch;
-  const live = (calls: string[]) => calls.filter(call => call === '/move:POST' || call === '/evaluate:POST');
+  const stored = new Map<string, StoredRow>();
+  const transcript: string[] = [];
+  const fetcher = vi.fn(readThroughFetcher(stored, path => body(path), transcript));
+  const misses = () => transcript.filter(call => call.endsWith(':miss'));
   const first = new ReviewCoordinator(fetcher);
   first.foregroundAt([nodes[0]], settings); await flush();
   expect(first.result('sf', nodes[0], settings)).toMatchObject({ depth: 12 });
   expect(first.result('maia', nodes[0], settings)).toMatchObject({ move: 'e2e4' });
   expect(stored.size).toBe(2);
-  expect(live(seen)).toHaveLength(2);
-  seen.length = 0;
+  expect(misses()).toHaveLength(2);
+  transcript.length = 0;
   const second = new ReviewCoordinator(fetcher);
   second.foregroundAt([nodes[0]], settings); await flush();
   expect(second.result('sf', nodes[0], settings)).toMatchObject({ depth: 12 });
   expect(second.result('maia', nodes[0], settings)).toMatchObject({ move: 'e2e4' });
-  expect(live(seen)).toEqual([]);
-  expect(seen.filter(call => call.endsWith(':GET')).length).toBeGreaterThan(0);
+  expect(misses()).toEqual([]);
+  expect(transcript.filter(call => call.endsWith(':hit'))).toHaveLength(2);
 });
 it('ignores corrupt cached rows and never persists fallback answers', async () => {
-  const puts: string[] = [];
-  const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
-    if (String(url).startsWith('/evaluations/')) {
-      if (init?.method === 'PUT') { puts.push(String(url)); return Response.json({}); }
-      return Response.json({ key_hash: 'x', engine: 'sf', value: { nope: true }, created_at: 'now' });
-    }
-    return Response.json({ ...body(String(url)), degraded: true });
-  }) as unknown as typeof fetch;
+  // A lax old row (stored via the legacy PUT path) fails read-through
+  // validation server-side and falls back to live inference; the degraded
+  // live Maia answer is not persisted either.
+  const sfKey = reviewKey('sf', nodes[0], settings);
+  const stored = new Map<string, StoredRow>([[cacheHash(sfKey), { engine: 'sf', key: sfKey, value: { nope: true } }]]);
+  const transcript: string[] = [];
+  const liveBody = (path: string) => ({ ...body(path), degraded: true });
+  const fetcher = vi.fn(readThroughFetcher(stored, liveBody, transcript));
   const coordinator = new ReviewCoordinator(fetcher);
   coordinator.foregroundAt([nodes[0]], settings); await flush();
   expect(coordinator.result('sf', nodes[0], settings)).toMatchObject({ depth: 12 });
-  expect(puts).toHaveLength(1);
+  // The corrupt row was overwritten with a valid one; the degraded Maia
+  // answer was never persisted.
+  expect((stored.get(cacheHash(sfKey))?.value as { depth?: number })?.depth).toBe(12);
+  expect([...stored.values()].filter(row => row.engine === 'maia')).toHaveLength(0);
+});
+it('falls back to live inference when a served row fails validation', async () => {
+  // A lax legacy row can pass the server's light checks yet fail the strict
+  // frontend parser (duplicated first move across ranks): the coordinator
+  // re-infers live once — healing the row — instead of recording a failure.
+  const sfKey = reviewKey('sf', nodes[0], settings);
+  const poison = {
+    engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null,
+    best_move: 'e2e4', score: { type: 'cp', value: 0 },
+    lines: [
+      { move: 'e2e4', score: { type: 'cp', value: 0 }, depth: 12 },
+      { move: 'e2e4', score: { type: 'cp', value: 0 }, depth: 12 },
+    ],
+  };
+  const stored = new Map<string, StoredRow>([[cacheHash(sfKey), { engine: 'sf', key: sfKey, value: poison }]]);
+  const transcript: string[] = [];
+  const fetcher = vi.fn(readThroughFetcher(stored, path => body(path), transcript));
+  const coordinator = new ReviewCoordinator(fetcher);
+  coordinator.foregroundSfOnly([nodes[0]], settings); await flush(); await flush();
+  expect(coordinator.result('sf', nodes[0], settings)).toMatchObject({ depth: 12 });
+  expect(coordinator.error('sf', nodes[0], settings)).toBeUndefined();
+  expect(transcript.filter(call => call === '/evaluate:hit')).toHaveLength(1);
+  expect(transcript.filter(call => call === '/evaluate:miss')).toHaveLength(1);
+  // The poisoned row was healed with the live body, not merely bypassed:
+  // distinct ranks, best move leading, deep-equal to live inference.
+  await flush();
+  const healed = stored.get(cacheHash(sfKey))?.value as { lines: { move: string }[]; best_move: string };
+  expect(new Set(healed.lines.map(line => line.move)).size).toBe(healed.lines.length);
+  expect(healed.best_move).toBe(healed.lines[0].move);
+  expect(healed).toEqual(body('/evaluate'));
+});
+it('primes around degraded Maia rows instead of caching them', async () => {
+  // A lax legacy degraded row served over GET must read as a miss: priming
+  // covers nothing for that node and caches nothing degraded.
+  const sfKey = reviewKey('sf', nodes[0], settings);
+  const maiaKey = reviewKey('maia', nodes[0], settings);
+  const evaluation = { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4', score: { type: 'cp', value: 0 }, lines: [{ move: 'e2e4', score: { type: 'cp', value: 0 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: -20 }, depth: 12 }] };
+  const degraded = { move: 'e2e4', top_moves: [], wdl: [0, 1, 0], model_used: '79m', degraded: true };
+  const server = new Map<string, { engine: string; value: unknown }>([
+    [cacheHash(sfKey), { engine: 'sf', value: evaluation }],
+    [cacheHash(maiaKey), { engine: 'maia', value: degraded }],
+  ]);
+  const fetcher = (async (url: string | URL | Request) => {
+    const hit = server.get(String(url).slice('/evaluations/'.length));
+    return hit
+      ? Response.json({ key_hash: 'x', engine: hit.engine, value: hit.value, created_at: 'now' })
+      : Response.json({ code: 'not_found' }, { status: 404 });
+  }) as unknown as typeof fetch;
+  const coordinator = new ReviewCoordinator(fetcher);
+  const coverage = await coordinator.primeLine([nodes[0]], settings, new AbortController().signal);
+  expect(coverage).toEqual({ covered: 0, total: 1 });
+  expect(coordinator.result('sf', nodes[0], settings)).toMatchObject({ depth: 12 });
+  expect(coordinator.result('maia', nodes[0], settings)).toBeUndefined();
 });
 describe('preemption', () => {
   const sfBody = {
@@ -349,6 +440,12 @@ it('primes memory from the server cache without inference', async () => {
       const hit = server.get(path.slice('/evaluations/'.length));
       return hit ? Response.json({ ...hit, key_hash: 'x', created_at: 'now' }) : Response.json({ code: 'not_found' }, { status: 404 });
     }
+    // Read-through emulation: live POSTs file their results for the prime.
+    if (path === '/evaluate' || path === '/move') {
+      const request = JSON.parse(init?.body as string) as { cache_hash: string };
+      const value = body(path);
+      server.set(request.cache_hash, { engine: path === '/evaluate' ? 'sf' : 'maia', value });
+    }
     live.push(path);
     return Response.json(body(path));
   }) as unknown as typeof fetch;
@@ -424,37 +521,26 @@ describe('batch timing traces', () => {
     }
   });
   it('attributes server-cache hits per engine so a settings change shows as one-sided misses', async () => {
-    const stored = new Map<string, { engine: string; value: unknown }>();
+    const stored = new Map<string, StoredRow>();
+    const transcript: string[] = [];
     const lines = [
       { move: 'e2e4', score: { type: 'cp', value: 0 }, depth: 12 },
       { move: 'd2d4', score: { type: 'cp', value: -20 }, depth: 12 },
     ];
-    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
-      if (String(url).startsWith('/evaluations/')) {
-        if (init?.method === 'PUT') {
-          const put = JSON.parse(init.body as string);
-          stored.set(String(url).split('/').pop()!, { engine: put.engine, value: put.value });
-          return Response.json({});
-        }
-        const hit = stored.get(String(url).split('/').pop()!);
-        return hit
-          ? Response.json({ key_hash: 'x', engine: hit.engine, value: hit.value, created_at: 'now' })
-          : Response.json({ code: 'not_found', message: 'missing' }, { status: 404 });
-      }
-      if (String(url) === '/evaluate') {
+    const liveBody = (path: string, request: Record<string, unknown>) => {
+      if (path === '/evaluate') {
         // Echo the requested search policy so explicit settings validate.
         let policy = SEARCH_POLICY;
-        try {
-          const request = JSON.parse(init?.body as string);
-          if (request.settings) policy = stockfishPolicy(request.settings);
-        } catch { /* keep the legacy policy */ }
-        return Response.json({
+        const settings = request.settings as Parameters<typeof stockfishPolicy>[0] | undefined;
+        if (settings) policy = stockfishPolicy(settings);
+        return {
           engine: 'Stockfish 19', search_policy: policy, depth: 12, terminal: null,
           best_move: 'e2e4', score: { type: 'cp', value: 0 }, lines,
-        });
+        };
       }
-      return Response.json(body(String(url)));
-    }) as unknown as typeof fetch;
+      return body(path);
+    };
+    const fetcher = vi.fn(readThroughFetcher(stored, liveBody, transcript));
     const first = new ReviewCoordinator(fetcher);
     first.startBatch(nodes, settings); await flush(); await flush(); await flush();
     expect(first.progress).toMatchObject({ running: false });
@@ -480,37 +566,27 @@ describe('batch timing traces', () => {
 });
 describe('play-time Maia persistence', () => {
   it('keys play replies identically to analysis batches for reuse', async () => {
-    const { maiaCacheKeyForMoveRequest, persistMaiaReply } = await import('./reviewCoordinator');
+    const { maiaCacheKeyForMoveRequest } = await import('./reviewCoordinator');
     const payload = { fen: nodes[0].fen, moves: nodes[0].moves, elo_maia: 1600, elo_user: 1600, model: '79m' as const };
     const { key, hash } = maiaCacheKeyForMoveRequest(payload);
     expect(key).toBe(reviewKey('maia', nodes[0], settings));
     expect(hash).toBe(cacheHash(key));
-    // Persisted play reply is served from the server cache without inference.
-    const stored = new Map<string, { engine: string; value: unknown }>();
+    // A play-time reply sent with those coordinates is filed read-through and
+    // later served to analysis without inference.
+    const stored = new Map<string, StoredRow>();
+    const transcript: string[] = [];
     const response = { move: 'e2e4', top_moves: [], wdl: [0, 1, 0] as [number, number, number], model_used: '79m' as const, degraded: false };
-    const saver = (async (url: string, init?: RequestInit) => {
-      if (String(url).startsWith('/evaluations/') && init?.method === 'PUT') {
-        const put = JSON.parse(init.body as string);
-        stored.set(String(url).split('/').pop()!, { engine: put.engine, value: put.value });
-        return Response.json({});
-      }
-      return Response.json({ code: 'not_found' }, { status: 404 });
-    }) as unknown as typeof fetch;
-    await persistMaiaReply(payload, response, saver);
+    const saver = readThroughFetcher(stored, path => (path === '/move' ? response : body(path)), transcript);
+    const { requestMove } = await import('./api');
+    await requestMove({ ...payload, maia_color: 'white' as const, cache_hash: hash, cache_key: key }, saver);
     expect(stored.size).toBe(1);
-    const loader = (async (url: string, init?: RequestInit) => {
-      if (String(url).startsWith('/evaluations/')) {
-        if (init?.method === 'PUT') return Response.json({});
-        const hit = stored.get(String(url).split('/').pop()!);
-        return hit ? Response.json({ ...hit, key_hash: 'x', created_at: 'now' }) : Response.json({ code: 'not_found' }, { status: 404 });
-      }
-      return Response.json(body(String(url)));
-    }) as unknown as typeof fetch;
-    const coordinator = new ReviewCoordinator(loader);
+    const coordinator = new ReviewCoordinator(saver);
     coordinator.foregroundAt([nodes[0]], settings);
     await flush();
+    expect(coordinator.result('sf', nodes[0], settings)).toMatchObject({ depth: 12 });
     expect(coordinator.result('maia', nodes[0], settings)).toMatchObject({ move: 'e2e4' });
-    expect(stored.size).toBe(1);
+    expect(transcript.filter(call => call === '/move:hit')).toHaveLength(1);
+    expect(transcript.filter(call => call === '/move:miss')).toHaveLength(1);
   });
   it('keys custom-start positions with initial_fen identically to batches', async () => {
     const { maiaCacheKeyForMoveRequest } = await import('./reviewCoordinator');
@@ -522,40 +598,33 @@ describe('play-time Maia persistence', () => {
     expect(key).toBe(reviewKey('maia', target, { eloMaia: 1800, eloUser: 1500, model: '5m' }));
   });
   it('never persists degraded fallback answers', async () => {
-    const { persistMaiaReply } = await import('./reviewCoordinator');
-    const puts: string[] = [];
-    const fetcher = (async (url: string, init?: RequestInit) => {
-      if (init?.method === 'PUT') puts.push(String(url));
-      return Response.json({});
-    }) as unknown as typeof fetch;
-    await persistMaiaReply(
-      { fen: nodes[0].fen, moves: [], elo_maia: 1600, elo_user: 1600, model: '79m' as const },
-      { move: 'e2e4', top_moves: [], wdl: [0, 1, 0], model_used: '5m', degraded: true },
-      fetcher,
-    );
-    expect(puts).toHaveLength(0);
+    // Degraded live answers flow through to the caller but are filed nowhere:
+    // a second coordinator still misses instead of being served the fallback.
+    const stored = new Map<string, StoredRow>();
+    const transcript: string[] = [];
+    const fetcher = vi.fn(readThroughFetcher(stored, path => ({ ...body(path), degraded: true }), transcript));
+    const first = new ReviewCoordinator(fetcher);
+    first.foregroundAt([nodes[0]], settings); await flush();
+    expect(first.result('maia', nodes[0], settings)).toMatchObject({ move: 'e2e4' });
+    expect(stored.size).toBe(1);
+    const second = new ReviewCoordinator(fetcher);
+    second.foregroundAt([nodes[0]], settings); await flush();
+    expect(second.result('maia', nodes[0], settings)).toMatchObject({ move: 'e2e4' });
+    expect(transcript.filter(call => call === '/move:hit')).toHaveLength(0);
+    expect(transcript.filter(call => call === '/move:miss')).toHaveLength(2);
   });
   it('supports per-node Maia identities so own games pin Maia moves', async () => {
-    const stored = new Map<string, { engine: string; value: unknown }>();
-    const fetcher = (async (url: string, init?: RequestInit) => {
-      if (String(url).startsWith('/evaluations/')) {
-        if (init?.method === 'PUT') {
-          const put = JSON.parse(init.body as string);
-          stored.set(String(url).split('/').pop()!, { engine: put.engine, value: put.value });
-          return Response.json({});
-        }
-        const hit = stored.get(String(url).split('/').pop()!);
-        return hit ? Response.json({ ...hit, key_hash: 'x', created_at: 'now' }) : Response.json({ code: 'not_found' }, { status: 404 });
-      }
-      if (String(url) === '/move') {
-        const request = JSON.parse(init?.body as string);
+    const stored = new Map<string, StoredRow>();
+    const transcript: string[] = [];
+    const fetcher = readThroughFetcher(stored, (path, request) => {
+      if (path === '/move') {
         // Echo the requested Elo back as the predicted move so per-node
         // identities are distinguishable through validated responses.
-        const move = request.elo_maia === 2000 ? 'd2d4' : 'e2e4';
-        return Response.json({ move, top_moves: [], wdl: [0, 1, 0], model_used: '79m', degraded: false });
+        const move = (request as { elo_maia?: number }).elo_maia === 2000 ? 'd2d4' : 'e2e4';
+        return { move, top_moves: [], wdl: [0, 1, 0], model_used: '79m', degraded: false };
       }
-      return Response.json(body(String(url)));
-    }) as unknown as typeof fetch;
+      return body(path);
+    }, transcript);
     const low = { ...settings, eloMaia: 1200, eloUser: 1200 };
     const high = { ...settings, eloMaia: 2000, eloUser: 2000 };
     // Even plies (white to move) follow the adjustable rating, odd plies stay pinned.
@@ -568,15 +637,10 @@ describe('play-time Maia persistence', () => {
     expect(coordinator.result('maia', nodes[1], low)?.move).toBe('e2e4');
     expect(coordinator.result('maia', nodes[0], low)).toBeUndefined();
     // Second run with the same split hits the server cache, zero live Maia inference.
-    const live: string[] = [];
-    const cached = (async (url: string, init?: RequestInit) => {
-      if (!String(url).startsWith('/evaluations/') && (init?.method ?? 'GET') === 'POST' && String(url) === '/move') live.push(String(url));
-      return fetcher(url, init);
-    }) as unknown as typeof fetch;
-    const second = new ReviewCoordinator(cached);
+    const second = new ReviewCoordinator(fetcher);
     second.startBatch(nodes.slice(0, 2), split);
     await flush(); await flush(); await flush();
-    expect(live).toHaveLength(0);
+    expect(transcript.filter(call => call === '/move:miss')).toHaveLength(2);
     expect(second.batchTimingSummary()).toMatchObject({ byEngine: { maia: { live: 0, serverHits: 2 } } });
   });
 });
