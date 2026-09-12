@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit && vite build",
+    "build:profiling": "tsc --noEmit && vite build --mode profiling --outDir dist-profiling",
     "test": "vitest run src",
     "test:browser": "MAIA_BUILD_DIR=dist-browser npm run build && playwright test",
     "test:browser:strict": "NODE_ENV=development npm run test:browser"
