@@ -446,6 +446,61 @@ function MoveAnalysis({
   );
 }
 
+// -|_ tween: hold the old value briefly (-), snap through the middle (|),
+// settle into the new value (_). Hold is skipped when retargeting mid-flight
+// so fast scrubbing follows without stacking delays.
+const BAR_HOLD_MS = 110;
+const BAR_SNAP_MS = 260;
+
+function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function useTweenedPercent(target: number): number {
+  const [display, setDisplay] = useState(target);
+  const displayRef = useRef(target);
+  // True while a hold is pending or a snap is running. A retarget that
+  // interrupts either skips its own hold so bursts follow without stacking
+  // delays; only a change from rest holds first.
+  const busyRef = useRef(false);
+  useEffect(() => {
+    if (
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    ) {
+      busyRef.current = false;
+      displayRef.current = target;
+      setDisplay(target);
+      return;
+    }
+    if (target === displayRef.current) return;
+    const from = displayRef.current;
+    const hold = busyRef.current ? 0 : BAR_HOLD_MS;
+    busyRef.current = true;
+    let raf = 0;
+    const holdId = window.setTimeout(() => {
+      const start = performance.now();
+      const tick = (now: number) => {
+        const t = Math.min(1, (now - start) / BAR_SNAP_MS);
+        const value = from + (target - from) * easeInOutCubic(t);
+        displayRef.current = value;
+        setDisplay(value);
+        if (t < 1) {
+          raf = requestAnimationFrame(tick);
+        } else {
+          busyRef.current = false;
+        }
+      };
+      raf = requestAnimationFrame(tick);
+    }, hold);
+    return () => {
+      window.clearTimeout(holdId);
+      cancelAnimationFrame(raf);
+    };
+  }, [target]);
+  return display;
+}
+
 export function StockfishBar({
   evaluation,
   orientation,
@@ -454,6 +509,7 @@ export function StockfishBar({
   orientation: "white" | "black";
 }) {
   const percent = evaluation ? whiteWin(evaluation.score) : 50;
+  const shown = useTweenedPercent(percent);
   const score = evaluation ? scoreValueText(evaluation.score) : "—";
   const description = !evaluation
     ? "No evaluation yet"
@@ -475,7 +531,7 @@ export function StockfishBar({
         aria-label={`${description}${evaluation ? ` · estimated White winning chance ${Math.round(percent)}%` : ""}`}
         title={description}
       >
-        <div className="balance-white" style={{ height: `${percent}%` }} />
+        <div className="balance-white" style={{ height: `${shown}%` }} />
         <strong className="balance-score" aria-hidden="true">
           {score}
         </strong>
