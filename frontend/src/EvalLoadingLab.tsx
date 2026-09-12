@@ -15,6 +15,9 @@ const FACES = [
 
 const PIECES = ["♟", "♞", "♝", "♜", "♛", "♚"] as const;
 
+// A genuinely pending evaluation, as the data layers produce it.
+const PENDING = { label: "Unreviewed", accuracy: null, loss: null } as const;
+
 function useCycle(length: number, ms: number) {
   const [index, setIndex] = useState(0);
   useEffect(() => {
@@ -60,28 +63,14 @@ function MorphBadge({ ms = 900 }: { ms?: number }) {
   );
 }
 
-/** 3 — Slot reel: the production loading state, rendered by the real QualityBadge. */
+/** 3 — Slot reel: the default loading state, rendered by the real QualityBadge. */
 function SlotBadge() {
-  return (
-    <QualityBadge
-      quality={{ label: "Unreviewed", accuracy: null, loss: null }}
-      reserveSpace
-    />
-  );
+  return <QualityBadge quality={{ ...PENDING }} reserveSpace loading="reel" />;
 }
 
-/** 4 — Shimmer chip: production-safe neutral pulse, matches skeleton-list. */
+/** 4 — Shimmer chip: the selectable calm alternative, rendered by the real QualityBadge. */
 function ShimmerBadge() {
-  return (
-    <span
-      className="quality lab-shimmer"
-      role="status"
-      aria-label="Evaluating…"
-      title="Evaluating…"
-    >
-      <span className="lab-shimmer-bar" aria-hidden="true" />
-    </span>
-  );
+  return <QualityBadge quality={{ ...PENDING }} reserveSpace loading="shimmer" />;
 }
 
 /** 5 — Escalation: ? → ?! → ??, dread building like the engine found something. */
@@ -222,15 +211,15 @@ export function EvalLoadingLab() {
         />
         <Row
           n="03"
-          name="Slot reel ✓ shipped"
-          blurb="The production loading state — this row renders the real QualityBadge, so what you see is what's live. A vertical strip of every verdict spins behind the badge window (CSS only, no JS timer)."
+          name="Slot reel ✓ default"
+          blurb="The default loading state — this row renders the real QualityBadge. A vertical strip of every verdict spins behind the badge window (CSS only, no JS timer). Switch to Shimmer or Original blank under Settings → Experimental."
           demo={<SlotBadge />}
           verdict="Casino energy, zero JS cost. Constant motion may distract while reading lines."
         />
         <Row
           n="04"
-          name="Shimmer chip (safe default)"
-          blurb="Neutral gray pulse matching the existing skeleton-list shimmer. No verdict spoilers."
+          name="Shimmer chip (selectable alternative)"
+          blurb="This row also renders the real QualityBadge — pick Shimmer under Settings → Experimental to use it. Neutral gray pulse matching the existing skeleton-list shimmer. No verdict spoilers."
           demo={<ShimmerBadge />}
           verdict="Production-safe and calm. Least fun, but the one that won't annoy on move 40."
         />

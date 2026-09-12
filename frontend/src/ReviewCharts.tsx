@@ -9,7 +9,11 @@ const qualityGlyphs = { Forced: 'F', Blunder: '??', Mistake: '?', Miss: 'M', Ina
 const loadingFaces: { glyph: string; cls: string }[] = (Object.keys(qualityGlyphs) as (keyof typeof qualityGlyphs)[]).map(label => ({ glyph: qualityGlyphs[label], cls: `quality-${label.toLowerCase()}` }));
 const loadingStrip = [...loadingFaces, ...loadingFaces, ...loadingFaces];
 
-export function QualityBadge({ quality, reserveSpace }: { quality?: Quality; reserveSpace?: boolean }) {
+// Pending-badge treatment while evaluations settle. Reel is the default;
+// shimmer and the original blank placeholder are opt-outs in Settings.
+export type BadgeLoading = 'reel' | 'shimmer' | 'placeholder';
+
+export function QualityBadge({ quality, reserveSpace, loading = 'reel' }: { quality?: Quality; reserveSpace?: boolean; loading?: BadgeLoading }) {
   if (!quality) {
     // Genuinely not loading (opponent moves, unevaluated lines): invisible
     // reserve box, so rows keep their shape without implying work is coming.
@@ -18,11 +22,12 @@ export function QualityBadge({ quality, reserveSpace }: { quality?: Quality; res
   }
   if (quality.label === 'Unreviewed') {
     // Genuinely pending: the data layers below only produce Unreviewed while
-    // evaluations are queued or running. A vertical strip of every real
-    // verdict spins behind the badge window; same box as a settled badge so
-    // rows never shift. Decorative (aria-hidden): the move text already
-    // carries meaning, and announcing per-move spinners would be noise.
+    // evaluations are queued or running. Same box as a settled badge either
+    // way, so rows never shift. Decorative (aria-hidden): the move text
+    // already carries meaning, and announcing per-move spinners would be noise.
     if (!reserveSpace) return null;
+    if (loading === 'placeholder') return <span className="quality quality-placeholder" aria-hidden="true">??</span>;
+    if (loading === 'shimmer') return <span className="quality quality-shimmer" aria-hidden="true" title="Evaluating…"><span className="quality-shimmer-bar" /></span>;
     return <span className="quality quality-slot" aria-hidden="true" title="Evaluating…"><span className="quality-slot-window"><span className="quality-slot-strip">{loadingStrip.map((face, index) => <span key={index} className={`quality-slot-cell ${face.cls}`}>{face.glyph}</span>)}</span></span></span>;
   }
   const label = quality.label;

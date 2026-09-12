@@ -40,7 +40,7 @@ import {
 import { Chess } from "chess.js";
 import { BoardThumbnail } from "./BoardThumbnail";
 import type { Review } from "./useReview";
-import { QualityBadge } from "./ReviewCharts";
+import { QualityBadge, type BadgeLoading } from "./ReviewCharts";
 import { getAnalysisRecords, isFreshRecord, lineHash } from "./analysisRecords";
 import {
   describeMove,
@@ -637,6 +637,7 @@ export function MovesPanel({
   historical,
   qualities,
   analysis = false,
+  badgeLoading = 'reel',
   original,
 }: {
   sans: string[];
@@ -647,6 +648,7 @@ export function MovesPanel({
   historical: boolean;
   qualities?: (Quality | undefined)[];
   analysis?: boolean;
+  badgeLoading?: BadgeLoading;
   original?: { sans: string[]; fromPly: number };
 }) {
   const active = useRef<HTMLButtonElement>(null);
@@ -693,7 +695,7 @@ export function MovesPanel({
       onClick={() => onView(index + 1)}
     >
       {number(index)} {san}{" "}
-      {qualities && <QualityBadge quality={qualities[index]} reserveSpace />}
+      {qualities && <QualityBadge quality={qualities[index]} reserveSpace loading={badgeLoading} />}
     </button>
   );
   return (

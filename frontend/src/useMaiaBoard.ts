@@ -22,6 +22,7 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
   if (state.mode !== mode) dispatch({ type: 'mode', mode });
   useEffect(() => { writeStorage(KEYS.settings, state.settings); }, [state.settings]);
   useEffect(() => { writeStorage(KEYS.feedback, state.feedback); }, [state.feedback]);
+  useEffect(() => { writeStorage(KEYS.badgeLoading, state.badgeLoading); }, [state.badgeLoading]);
   useEffect(() => { writeStorage(STOCKFISH_STORAGE_KEY, state.stockfish); }, [state.stockfish]);
   useEffect(() => { writeStorage(KEYS.analysis, state.inputs); }, [state.inputs]);
   useEffect(() => {

@@ -37,6 +37,19 @@ describe('feedback setting', () => {
   });
 });
 
+describe('badge loading setting', () => {
+  it('defaults to the reel and round-trips through storage', () => {
+    expect(initialState().badgeLoading).toBe('reel');
+    const shimmer = reducer(initialState(), { type: 'badge-loading', loading: 'shimmer' });
+    expect(shimmer.badgeLoading).toBe('shimmer');
+    expect(reducer(shimmer, { type: 'badge-loading', loading: 'shimmer' })).toBe(shimmer);
+    localStorage.setItem(KEYS.badgeLoading, JSON.stringify('placeholder'));
+    expect(initialState().badgeLoading).toBe('placeholder');
+    localStorage.setItem(KEYS.badgeLoading, JSON.stringify(true));
+    expect(initialState().badgeLoading).toBe('reel');
+  });
+});
+
 const evaluation = (move: string, value: number): Evaluation => ({
   engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: move,
   score: { type: 'cp', value },

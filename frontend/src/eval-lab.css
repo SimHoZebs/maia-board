@@ -21,9 +21,7 @@
 
 /* 03 slot reel ships in styles.css — row 03 renders the real QualityBadge. */
 
-/* 04 shimmer chip */
-.lab-shimmer { min-width: 22px; background: #333637; overflow: hidden; }
-.lab-shimmer-bar { display: block; width: 100%; height: 12px; border-radius: 4px; background: linear-gradient(90deg, #333637 25%, #4a4f50 50%, #333637 75%); background-size: 200% 100%; animation: skeleton-shimmer 1.2s ease-in-out infinite; }
+/* 03 slot reel and 04 shimmer ship in styles.css — those rows render the real QualityBadge. */
 
 /* 05 escalation: pulse as dread builds */
 @keyframes lab-dread {
@@ -48,5 +46,5 @@
 .lab-flip { animation: lab-flip-in 0.35s ease-out; }
 
 @media (prefers-reduced-motion: reduce) {
-  .lab-morph, .lab-shimmer-bar, .lab-escalate, .lab-hue, .lab-flip { animation: none; }
+  .lab-morph, .lab-escalate, .lab-hue, .lab-flip { animation: none; }
 }
