@@ -8,7 +8,7 @@ export type Settings = { userColor: MaiaColor; eloMaia: number; eloUser: number;
 export type Position = { fen: string; moves: string[]; sanMoves: string[]; lastMove?: [Key, Key] };
 export type Analysis = { initialFen: string; moves: string[]; sanMoves: string[]; timeline: Position[]; index: number; branchFromPly: number | null; branchMoves: string[]; perspective: MaiaColor; ownGame: boolean };
 export type Insight = { response: MoveResponse; fen: string; mode: Mode };
-export type StoredGame = { id: string; createdAt: string; moves: string[]; settings: Settings };
+export type StoredGame = { id: string; createdAt: string; moves: string[]; settings: Settings; result?: 'resigned' };
 export const defaultSettings: Settings = { userColor: 'white', eloMaia: 1600, eloUser: 1600, model: '79m', temperature: 1 };
 export const oppositeColor = (color: MaiaColor): MaiaColor => color === 'white' ? 'black' : 'white';
 export const sideName = (color: MaiaColor) => color === 'white' ? 'White' : 'Black';
@@ -93,6 +93,15 @@ export function exportExplored(analysis: Analysis): string {
 }
 export function gameResult(game: Chess): string {
   return game.isCheckmate() ? (game.turn() === 'w' ? 'Black wins' : 'White wins') : game.isDraw() ? 'Draw' : 'Unfinished';
+}
+export function isResigned(game: Pick<StoredGame, 'result'>): boolean {
+  return game.result === 'resigned';
+}
+// History and game-over banners share one reading: a resignation outranks the
+// board, which stays replayable underneath.
+export function storedGameResult(game: StoredGame): string {
+  if (isResigned(game)) return `${sideName(oppositeColor(game.settings.userColor))} wins · resignation`;
+  return gameResult(replay(game.moves));
 }
 // score_moves evaluates _history_after_move, then invert_wdl restores the choosing side.
 // https://github.com/CSSLab/maia3/blob/1e13597c42d4858b7cfd7cfdae01e297263364b2/maia3/uci.py

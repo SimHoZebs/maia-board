@@ -58,7 +58,7 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
   }, [state.flushNonce]);
   const mountedPlay = useRef(false);
   useEffect(() => {
-    writeStorage(KEYS.current, state.play.moves.length ? state.play : null);
+    writeStorage(KEYS.current, state.play.moves.length || state.play.result === 'resigned' ? state.play : null);
     if (!mountedPlay.current) { mountedPlay.current = true; return; }
     // Persist every live game, including empty ones, so the current-game
     // marker and refresh resumption always agree. Fresh untouched boards

@@ -120,6 +120,25 @@ func TestGameStoreGeneratesID(t *testing.T) {
 	}
 }
 
+func TestGameStoreResult(t *testing.T) {
+	store := testStore(t)
+	payload := gameFixture("a", "e2e4")
+	payload.Result = "resigned"
+	saved, err := store.Save(payload)
+	if err != nil || saved.Result != "resigned" {
+		t.Fatalf("saved = %+v, err = %v", saved, err)
+	}
+	got, err := store.Get("a")
+	if err != nil || got.Result != "resigned" {
+		t.Fatalf("get = %+v, err = %v", got, err)
+	}
+	bad := gameFixture("b", "e2e4")
+	bad.Result = "maia-wins"
+	if err := validateGamePayload(&bad); err == nil || err.Code != "invalid_result" {
+		t.Fatalf("expected invalid_result, got %v", err)
+	}
+}
+
 func TestGameStoreCurrentMarker(t *testing.T) {
 	store := testStore(t)
 	if id := store.CurrentID(); id != "" {
@@ -180,6 +199,7 @@ func TestGamesHTTP(t *testing.T) {
 		{"model", `{"user_color":"white","elo_maia":1,"elo_user":1,"model":"9m","moves":[]}`, "invalid_model", 400},
 		{"move shape", `{"user_color":"white","elo_maia":1,"elo_user":1,"model":"79m","moves":["e9"]}`, "invalid_move", 400},
 		{"created", `{"user_color":"white","elo_maia":1,"elo_user":1,"model":"79m","moves":[],"created_at":"yesterday"}`, "invalid_created_at", 400},
+		{"result", `{"user_color":"white","elo_maia":1,"elo_user":1,"model":"79m","moves":[],"result":"maia-wins"}`, "invalid_result", 400},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := post(tc.body)

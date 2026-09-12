@@ -59,11 +59,12 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
         const now = new Date().toISOString();
         const previous = gameStore.games.get(body.id ?? '');
         const same = previous && previous.user_color === body.user_color && previous.elo_maia === body.elo_maia
-          && previous.elo_user === body.elo_user && previous.model === body.model && JSON.stringify(previous.moves) === JSON.stringify(body.moves);
+          && previous.elo_user === body.elo_user && previous.model === body.model && JSON.stringify(previous.moves) === JSON.stringify(body.moves)
+          && (previous.result ?? '') === (body.result ?? '');
         const row = {
           id: body.id ?? `mock-${gameStore.games.size + 1}`, created_at: body.created_at || previous?.created_at || now,
           updated_at: same ? previous.updated_at : now, user_color: body.user_color, elo_maia: body.elo_maia,
-          elo_user: body.elo_user, model: body.model, moves: body.moves,
+          elo_user: body.elo_user, model: body.model, moves: body.moves, result: body.result ?? previous?.result ?? '',
         };
         gameStore.games.set(row.id, row);
         if (body.current) gameStore.currentId = row.id;
@@ -895,4 +896,27 @@ test('phone touch movement and board exploration', async ({ browser }) => {
   await piece(page, 'e4', 'white pawn');
   expect(app.errors).toEqual([]);
   await context.close();
+});
+
+test('resign ends the game, persists, and hides resume', async ({ page }) => {
+  const app = await boot(page);
+  await move(page, 'e2', 'e4');
+  await app.reply(0, 'e7e5');
+  await piece(page, 'e5', 'black pawn');
+  await page.locator('#resign').click();
+  await page.locator('#confirm-resign').click();
+  await expect(page.locator('.game-result')).toContainText('Black wins · resignation');
+  await expect(page.locator('#resign')).toHaveCount(0);
+  await expect(page.locator('#takeback')).toBeDisabled();
+  await move(page, 'd2', 'd4');
+  expect(await currentMoves(page)).toEqual(['e2e4', 'e7e5']);
+  await page.locator('#mode-history').click();
+  const card = page.locator('.saved-game').first();
+  await expect(card).toContainText('Black wins · resignation');
+  await expect(card.getByRole('button', { name: 'Resume' })).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator('.saved-game').first()).toContainText('Black wins · resignation');
+  await page.locator('#mode-play').click();
+  await expect(page.locator('.game-result')).toContainText('Black wins · resignation');
+  expect(app.errors).toEqual([]);
 });

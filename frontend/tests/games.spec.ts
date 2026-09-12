@@ -6,7 +6,7 @@ import { defaultSettings } from '../src/domain';
 
 type Row = {
   id: string; created_at: string; updated_at: string; user_color: string;
-  elo_maia: number; elo_user: number; model: string; moves: string[];
+  elo_maia: number; elo_user: number; model: string; moves: string[]; result?: string;
 };
 
 function stored(id: string, moves: string[] = []) {
@@ -39,7 +39,7 @@ async function bootGames(page: Page, seed: Record<string, unknown> = {}, offline
         const row: Row = {
           id: body.id ?? `server-${store.games.size + 1}`, created_at: body.created_at || previous?.created_at || now,
           updated_at: now, user_color: body.user_color, elo_maia: body.elo_maia, elo_user: body.elo_user,
-          model: body.model, moves: body.moves,
+          model: body.model, moves: body.moves, result: body.result ?? previous?.result,
         };
         store.games.set(row.id, row);
         if (body.current) store.currentId = row.id;

@@ -23,6 +23,11 @@ describe('server mapping', () => {
     // Unknown colors coerce like other legacy settings; the server never sends them.
     expect(toStoredGame({ ...row('c'), user_color: 'green' })).toMatchObject({ settings: { userColor: 'white' } });
   });
+  it('round-trips resignation results', () => {
+    expect(toStoredGame({ ...row('r', ['e2e4']), result: 'resigned' })).toMatchObject({ id: 'r', result: 'resigned' });
+    expect(toStoredGame({ ...row('u', ['e2e4']), result: 'unknown-future' })).toMatchObject({ id: 'u' });
+    expect(toStoredGame({ ...row('u', ['e2e4']), result: 'unknown-future' })?.result).toBeUndefined();
+  });
   it('fetches lists, saves, and deletes with server errors preserved', async () => {
     const list = { games: [row('a')], current_id: 'a', total: 1 };
     const fetchImpl = vi.fn()

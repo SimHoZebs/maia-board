@@ -105,11 +105,11 @@ func TestTemperatureMigrationAndRoundtrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.db.Close()
-	if err := migrateGameTemperature(store.db); err != nil {
+	if err := migrateGameSchema(store.db); err != nil {
 		t.Fatal(err)
 	}
 	old, err := store.Get("old")
-	if err != nil || old.Temperature != 0 {
+	if err != nil || old.Temperature != 0 || old.Result != "" {
 		t.Fatalf("old game: %+v %v", old, err)
 	}
 	elo := 1600
@@ -125,6 +125,14 @@ func TestTemperatureMigrationAndRoundtrip(t *testing.T) {
 	again, err := store.Save(payload)
 	if err != nil || again.UpdatedAt != saved.UpdatedAt {
 		t.Fatal("unchanged save changed recency", err)
+	}
+	resigned := gamePayload{ID: "old", UserColor: "white", EloMaia: &elo, EloUser: &elo, Model: "79m", Moves: []string{"e2e4"}, Result: "resigned"}
+	if _, err := store.Save(resigned); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get("old")
+	if err != nil || got.Result != "resigned" || len(got.Moves) != 1 {
+		t.Fatalf("resigned roundtrip: %+v %v", got, err)
 	}
 	rows, _, err := store.List(10)
 	if err != nil || len(rows) != 2 {

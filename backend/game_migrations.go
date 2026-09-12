@@ -2,7 +2,14 @@ package main
 
 import "database/sql"
 
-func migrateGameTemperature(db *sql.DB) error {
+func migrateGameSchema(db *sql.DB) error {
+	if err := ensureGameColumn(db, "temperature", "ALTER TABLE games ADD COLUMN temperature REAL NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	return ensureGameColumn(db, "result", "ALTER TABLE games ADD COLUMN result TEXT NOT NULL DEFAULT ''")
+}
+
+func ensureGameColumn(db *sql.DB, column, alter string) error {
 	rows, err := db.Query("PRAGMA table_info(games)")
 	if err != nil {
 		return err
@@ -16,7 +23,7 @@ func migrateGameTemperature(db *sql.DB) error {
 			rows.Close()
 			return err
 		}
-		if name == "temperature" {
+		if name == column {
 			found = true
 		}
 	}
@@ -26,7 +33,7 @@ func migrateGameTemperature(db *sql.DB) error {
 		return err
 	}
 	if !found {
-		_, err = db.Exec("ALTER TABLE games ADD COLUMN temperature REAL NOT NULL DEFAULT 0")
+		_, err = db.Exec(alter)
 	}
 	return err
 }

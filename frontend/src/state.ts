@@ -29,7 +29,7 @@ export type Action =
   | { type: 'new'; id: string; createdAt: string; resolvedColor?: 'white' | 'black' }
   | { type: 'settings'; settings: Partial<Settings>; id: string; createdAt: string }
   | { type: 'analysis-settings'; settings: Partial<Draft> }
-  | { type: 'takeback' } | { type: 'flip' }
+  | { type: 'takeback' } | { type: 'resign' } | { type: 'flip' }
   | { type: 'move'; from: Square; to: Square }
   | { type: 'preview'; uci: string | null } | { type: 'original' }
   | { type: 'promote'; piece: string | null }
@@ -50,7 +50,7 @@ export function currentPosition(state: State) {
 }
 export function maiaTurn(state: State): boolean {
   const game = replay(state.play.moves);
-  return state.started && toGroundColor(game.turn()) !== state.settings.userColor && !game.isGameOver();
+  return state.started && state.play.result !== 'resigned' && toGroundColor(game.turn()) !== state.settings.userColor && !game.isGameOver();
 }
 function queueRequest(state: State): State {
   const position = state.mode === 'play' ? positionOf(replay(state.play.moves)) : analysisLine(state.analysis);
@@ -68,7 +68,7 @@ function transition(state: State, changes: Partial<State>, resumePlay = true): S
 }
 function withPlay(state: State, play: StoredGame): State {
   const existed = state.saved.some(game => game.id === play.id);
-  const saved = play.moves.length || existed ? [play, ...state.saved.filter(game => game.id !== play.id)] : state.saved;
+  const saved = play.moves.length || play.result === 'resigned' || existed ? [play, ...state.saved.filter(game => game.id !== play.id)] : state.saved;
   return { ...state, play, saved };
 }
 function commitMove(state: State, from: Square, to: Square, promotion?: string): State {
@@ -168,16 +168,23 @@ export function reducer(state: State, action: Action): State {
     case 'preview': return { ...state, preview: action.uci };
     case 'import': return { ...state, importing: action.open };
     case 'takeback': {
-      if (state.mode !== 'play' || !state.play.moves.length) return state;
+      if (state.mode !== 'play' || !state.play.moves.length || state.play.result === 'resigned') return state;
       const game = replay(state.play.moves);
       const count = toGroundColor(game.turn()) === state.settings.userColor ? 2 : 1;
       for (let n = 0; n < count; n++) game.undo();
       return transition(withPlay(state, { ...state.play, moves: positionOf(game).moves }), { viewedPly: null });
     }
+    case 'resign': {
+      if (state.mode !== 'play' || !state.started || state.play.result === 'resigned') return state;
+      if (replay(state.play.moves).isGameOver()) return state;
+      // transition drops any in-flight Maia reply; its stale response is
+      // rejected by request identity in 'reply'.
+      return transition(withPlay(state, { ...state.play, result: 'resigned' }), { viewedPly: null }, false);
+    }
     case 'move': {
       const game = state.mode === 'play' ? replay(state.play.moves) : new Chess(currentPosition(state).fen);
       if (state.promotion || game.isGameOver() || (state.mode !== 'play' && state.mode !== 'analysis')) return state;
-      if (state.mode === 'play' && (!state.started || state.viewedPly !== null || state.request || toGroundColor(game.turn()) !== state.settings.userColor)) return state;
+      if (state.mode === 'play' && (!state.started || state.play.result === 'resigned' || state.viewedPly !== null || state.request || toGroundColor(game.turn()) !== state.settings.userColor)) return state;
       if (state.mode === 'analysis' && !state.analysisLoaded) return state;
       if (!game.moves({ verbose: true }).some(move => move.from === action.from && move.to === action.to)) return state;
       if (game.get(action.from)?.type === 'p' && /[18]$/.test(action.to)) return { ...state, promotion: { from: action.from, to: action.to } };

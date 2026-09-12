@@ -10,11 +10,11 @@ import {
 import {
   candidateSan,
   exportLine,
-  gameResult,
   loadLine,
   replay,
   sideName,
   START_FEN,
+  storedGameResult,
 } from "./domain";
 import type { Action, State } from "./state";
 import { downloadPgn, Rating } from "./BoardTools";
@@ -68,11 +68,19 @@ function isComplete(review: Review): boolean {
 }
 
 // Tab-bar action: the Analyze / Re-analyze / Restore button owns the right
-// end of the tab row. Status copy lives below in the controls section.
+// end of the tab row. While running it is replaced in place by the progress
+// status.
 function ReviewActionButton({ state, review }: { state: State; review: Review }) {
+  const progress = review.progress;
+  if (progress?.running) {
+    return (
+      <span role="status">
+        Analyzing {progress.done} of {progress.total}…
+      </span>
+    );
+  }
   const branch = state.analysis.branchFromPly !== null;
   if (branch) {
-    if (review.progress?.running) return null;
     return (
       <Button
         variant="primary"
@@ -84,8 +92,6 @@ function ReviewActionButton({ state, review }: { state: State; review: Review })
       </Button>
     );
   }
-  const progress = review.progress;
-  if (progress?.running) return null;
   if (
     isComplete(review) ||
     (review.coverage && review.coverage.covered === review.coverage.total)
@@ -212,8 +218,7 @@ export function InsightPanel({
     review.tooLong ||
     !!review.error ||
     !!review.progress?.failed ||
-    hasReviewStatus(review) ||
-    !!review.progress?.running;
+    hasReviewStatus(review);
   return (
     <aside className="panel insight-panel" aria-label="Game analysis">
       <div className="analysis-tabs analysis-section">
@@ -275,9 +280,6 @@ export function InsightPanel({
           </p>
         )}
         <ReviewStatus review={review} />
-        {review.progress?.running && (
-          <Button onClick={review.cancel}>Cancel analysis</Button>
-        )}
       </div>
       )}
       <div
@@ -754,7 +756,7 @@ export function SavedGames({
       <div id="saved-games">
         {state.saved.map((game, index) => {
           const position = replay(game.moves);
-          const result = gameResult(position);
+          const result = storedGameResult(game);
           return (
             <article className="saved-game" key={game.id}>
               <BoardThumbnail

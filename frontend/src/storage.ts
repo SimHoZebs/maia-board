@@ -14,7 +14,7 @@ export function restoreGame(value: unknown): StoredGame | undefined {
   if (typeof record.id !== 'string' || !Array.isArray(record.moves) || !record.moves.every(move => typeof move === 'string')) return;
   try {
     replay(record.moves);
-    return { id: record.id, moves: record.moves, createdAt: typeof record.createdAt === 'string' ? record.createdAt : new Date(0).toISOString(), settings: normalizeSettings(record.settings) };
+    return { id: record.id, moves: record.moves, createdAt: typeof record.createdAt === 'string' ? record.createdAt : new Date(0).toISOString(), settings: normalizeSettings(record.settings), ...(record.result === 'resigned' ? { result: 'resigned' as const } : {}) };
   } catch { return; }
 }
 export function loadSaved(): StoredGame[] {

@@ -3,7 +3,7 @@ import { readStorage, restoreGame, writeStorage } from './storage';
 
 export type ServerGame = {
   id: string; created_at: string; updated_at: string; user_color: string;
-  elo_maia: number; elo_user: number; model: string; moves: string[]; temperature?: number;
+  elo_maia: number; elo_user: number; model: string; moves: string[]; temperature?: number; result?: string;
 };
 
 export type GamesList = { games: ServerGame[]; current_id: string | null; total: number };
@@ -30,10 +30,12 @@ function isServerGame(value: unknown): value is ServerGame {
 }
 
 export function toStoredGame(row: ServerGame): StoredGame | undefined {
-  return restoreGame({
+  const base = restoreGame({
     id: row.id, createdAt: row.created_at, moves: row.moves,
     settings: { userColor: row.user_color, eloMaia: row.elo_maia, eloUser: row.elo_user, model: row.model, temperature: row.temperature },
+    ...(row.result === 'resigned' ? { result: 'resigned' } : {}),
   });
+  return base;
 }
 
 function toPayload(game: StoredGame, current: boolean) {
@@ -41,6 +43,7 @@ function toPayload(game: StoredGame, current: boolean) {
     id: game.id, created_at: game.createdAt, user_color: game.settings.userColor,
     elo_maia: game.settings.eloMaia, elo_user: game.settings.eloUser,
     model: game.settings.model, moves: game.moves, current, temperature: game.settings.temperature ?? 0,
+    ...(game.result === 'resigned' ? { result: 'resigned' } : {}),
   };
 }
 

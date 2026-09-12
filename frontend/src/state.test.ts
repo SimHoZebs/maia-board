@@ -253,3 +253,28 @@ describe('server sync', () => {
     expect(state.historyTotal).toBe(12);
   });
 });
+
+describe('resign', () => {
+  it('ends the game, retires the pending reply, and blocks further play', () => {
+    const pending = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
+    expect(pending.request).not.toBeNull();
+    const resigned = reducer(pending, { type: 'resign' });
+    expect(resigned.play.result).toBe('resigned');
+    expect(resigned.request).toBeNull();
+    expect(resigned.saved[0].result).toBe('resigned');
+    // Stale Maia reply is rejected by request identity.
+    expect(reducer(resigned, { type: 'reply', request: pending.request!, response })).toBe(resigned);
+    expect(reducer(resigned, { type: 'move', from: 'd2', to: 'd4' })).toBe(resigned);
+    expect(reducer(resigned, { type: 'takeback' })).toBe(resigned);
+    expect(reducer(resigned, { type: 'resign' })).toBe(resigned);
+  });
+  it('is a no-op before start or after checkmate', () => {
+    const fresh = initialState();
+    expect(reducer(fresh, { type: 'resign' })).toBe(fresh);
+    const mate = { id: 'mate', createdAt: '2026-09-10', moves: ['f2f3', 'e7e5', 'g2g4', 'd8h4'], settings: defaultSettings };
+    localStorage.setItem(KEYS.current, JSON.stringify(mate));
+    const over = initialState();
+    expect(replay(over.play.moves).isCheckmate()).toBe(true);
+    expect(reducer(over, { type: 'resign' })).toBe(over);
+  });
+});
