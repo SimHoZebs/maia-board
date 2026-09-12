@@ -1,0 +1,52 @@
+.lab-page main { max-width: 760px; margin: 24px auto 64px; }
+.lab-crumb { color: var(--muted); font-size: 13px; }
+.lab-page code { font-size: 12px; background: #333637; border-radius: 4px; padding: 1px 5px; }
+.lab-intro { max-width: 60ch; }
+.lab-row { border: 1px solid var(--line); border-radius: 8px; padding: 18px; margin: 16px 0; background: #282a2b; }
+.lab-row-head { display: flex; gap: 12px; align-items: baseline; }
+.lab-num { font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 750; font-size: 13px; }
+.lab-row-head h2 { margin: 0 0 4px; font-size: 16px; }
+.lab-row-head p { margin: 0 0 8px; font-size: 13px; }
+.lab-demo { display: grid; gap: 12px; margin-top: 8px; }
+.lab-demo-badges { display: flex; align-items: center; gap: 12px; min-height: 32px; }
+.lab-moves { display: flex; flex-wrap: wrap; gap: 2px; border-top: 1px solid var(--line); padding-top: 8px; }
+.lab-verdict { margin: 12px 0 0; font-size: 12px; color: var(--muted); }
+
+/* 02 morph: blur + scale into the next glyph */
+@keyframes lab-morph-in {
+  from { opacity: 0; filter: blur(4px); transform: scale(0.6); }
+  to { opacity: 1; filter: blur(0); transform: scale(1); }
+}
+.lab-morph { animation: lab-morph-in 0.35s ease-out; }
+
+/* 03 slot reel ships in styles.css — row 03 renders the real QualityBadge. */
+
+/* 04 shimmer chip */
+.lab-shimmer { min-width: 22px; background: #333637; overflow: hidden; }
+.lab-shimmer-bar { display: block; width: 100%; height: 12px; border-radius: 4px; background: linear-gradient(90deg, #333637 25%, #4a4f50 50%, #333637 75%); background-size: 200% 100%; animation: skeleton-shimmer 1.2s ease-in-out infinite; }
+
+/* 05 escalation: pulse as dread builds */
+@keyframes lab-dread {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.18); }
+}
+.lab-escalate { animation: lab-dread 0.5s ease-in-out infinite; }
+
+/* 06 piece shuffle: steady neutral tile */
+.lab-piece { background: #454746; font-size: 13px; }
+
+/* 07 hue spin */
+@keyframes lab-hue { to { filter: hue-rotate(360deg); } }
+.lab-hue { background: #286b89; animation: lab-hue 1.6s linear infinite; }
+
+/* 08 coin flip */
+.lab-flip-scene { display: inline-flex; perspective: 120px; }
+@keyframes lab-flip-in {
+  from { transform: rotateY(90deg); opacity: 0.4; }
+  to { transform: rotateY(0deg); opacity: 1; }
+}
+.lab-flip { animation: lab-flip-in 0.35s ease-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lab-morph, .lab-shimmer-bar, .lab-escalate, .lab-hue, .lab-flip { animation: none; }
+}

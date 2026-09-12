@@ -9,6 +9,7 @@ import {
   useNavigate,
 } from "react-router";
 import { App } from "./App";
+import { EvalLoadingLab } from "./EvalLoadingLab";
 import type { Mode } from "./domain";
 import type { Action, State } from "./state";
 import { useMaiaBoard } from "./useMaiaBoard";
@@ -134,6 +135,7 @@ export function BoardRouter() {
   );
   return (
     <Routes>
+      <Route path="/dev/eval-loading" element={<EvalLoadingLab />} />
       {destinations.map(({ path }) => (
         <Route key={path} path={path} element={workspace} />
       ))}

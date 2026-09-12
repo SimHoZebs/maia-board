@@ -3,16 +3,23 @@ import type { Review } from './useReview';
 import { scoreText, whiteWin, type Quality } from './reviewMetrics';
 import type { ReviewSide } from './reviewSummary';
 
+const qualityGlyphs = { Forced: 'F', Blunder: '??', Mistake: '?', Miss: 'M', Inaccuracy: '?!', Great: '!', Best: 'B', Good: 'G' } as const;
+// Slot-reel deck: every real verdict, so the loading spinner previews the
+// exact glyphs it can settle on. Order matches the lab page row 03.
+const loadingFaces: { glyph: string; cls: string }[] = (Object.keys(qualityGlyphs) as (keyof typeof qualityGlyphs)[]).map(label => ({ glyph: qualityGlyphs[label], cls: `quality-${label.toLowerCase()}` }));
+const loadingStrip = [...loadingFaces, ...loadingFaces, ...loadingFaces];
+
 export function QualityBadge({ quality, reserveSpace }: { quality?: Quality; reserveSpace?: boolean }) {
   if (!quality || quality.label === 'Unreviewed') {
-    // Invisible stand-in using the widest badge text, so the box (width and
-    // baseline) matches a real badge exactly and rows don't shift when
-    // evaluations land. Same component, same classes: one source of truth.
+    // Slot-reel loading state: a vertical strip of every real verdict spins
+    // behind the badge window while evaluations settle. Same box as a settled
+    // badge, so rows never shift. Decorative (aria-hidden): the move text
+    // already carries meaning, and announcing per-move spinners would be noise.
     if (!reserveSpace) return null;
-    return <span className="quality quality-placeholder" aria-hidden="true">??</span>;
+    return <span className="quality quality-slot" aria-hidden="true" title="Evaluating…"><span className="quality-slot-window"><span className="quality-slot-strip">{loadingStrip.map((face, index) => <span key={index} className={`quality-slot-cell ${face.cls}`}>{face.glyph}</span>)}</span></span></span>;
   }
   const label = quality.label;
-  return <span className={`quality quality-${label.toLowerCase()}`} title={`${label}${quality.accuracy == null ? '' : ` · ${quality.accuracy.toFixed(1)}% move accuracy`}`} aria-label={label}>{({ Forced: 'F', Blunder: '??', Mistake: '?', Miss: 'M', Inaccuracy: '?!', Great: '!', Best: 'B', Good: 'G' })[label]}</span>;
+  return <span className={`quality quality-${label.toLowerCase()}`} title={`${label}${quality.accuracy == null ? '' : ` · ${quality.accuracy.toFixed(1)}% move accuracy`}`} aria-label={label}>{qualityGlyphs[label]}</span>;
 }
 export function ReviewCharts({ review, ply, sans, onView, side }: { review: Review; ply: number; sans: string[]; onView: (ply: number) => void; side?: ReviewSide }) {
   const [tab, setTab] = useState<'evaluation' | 'accuracy'>('accuracy');
