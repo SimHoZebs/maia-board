@@ -6,7 +6,7 @@ export const START_FEN = new Chess().fen();
 export type Mode = 'play' | 'analysis' | 'history' | 'settings';
 export type Settings = { userColor: MaiaColor; eloMaia: number; eloUser: number; model: MaiaModel; temperature?: number };
 export type Position = { fen: string; moves: string[]; sanMoves: string[]; lastMove?: [Key, Key] };
-export type Analysis = { initialFen: string; moves: string[]; sanMoves: string[]; timeline: Position[]; index: number; branchFromPly: number | null; branchMoves: string[]; perspective: MaiaColor; ownGame: boolean };
+export type Analysis = { initialFen: string; moves: string[]; sanMoves: string[]; index: number; branchFromPly: number | null; branchMoves: string[]; perspective: MaiaColor; ownGame: boolean };
 export type Insight = { response: MoveResponse; fen: string; mode: Mode };
 export type StoredGame = { id: string; createdAt: string; moves: string[]; settings: Settings; result?: 'resigned' };
 export const defaultSettings: Settings = { userColor: 'white', eloMaia: 1600, eloUser: 1600, model: '79m', temperature: 1 };
@@ -64,10 +64,21 @@ export function loadLine(fen = '', pgn = ''): Analysis {
   const initialFen = new Chess(fen.trim() || pgn.match(/\[FEN\s+"([^"]+)"\]/i)?.[1] || START_FEN).fen();
   const moves = parsePgnMoves(pgn, new Chess(initialFen));
   const game = new Chess(initialFen);
-  const timeline = [positionOf(game)];
-  moves.forEach(move => { applyUci(game, move); timeline.push(positionOf(game)); });
-  return { initialFen, moves, sanMoves: game.history(), timeline, index: moves.length, branchFromPly: null, branchMoves: [],
+  moves.forEach(move => applyUci(game, move));
+  return { initialFen, moves, sanMoves: game.history(), index: moves.length, branchFromPly: null, branchMoves: [],
     perspective: new Chess(initialFen).turn() === 'w' ? 'white' : 'black', ownGame: false };
+}
+// Test helper: per-ply review nodes for a line. Production builds these
+// incrementally where needed (useReview) instead of paying for an eager
+// per-ply timeline on every load.
+export function testNodes(initialFen: string, moves: string[]): { initialFen: string; moves: string[]; fen: string }[] {
+  const game = new Chess(initialFen);
+  const nodes = [{ initialFen, moves: [] as string[], fen: game.fen() }];
+  moves.forEach((move, index) => {
+    applyUci(game, move);
+    nodes.push({ initialFen, moves: moves.slice(0, index + 1), fen: game.fen() });
+  });
+  return nodes;
 }
 export function exportLine(analysis: Analysis): string {
   const game = replay(analysis.moves, analysis.initialFen);

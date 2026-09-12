@@ -219,8 +219,8 @@ describe('legacy storage and analysis', () => {
     const line = loadLine(fen, '12... Kd7 13. e4');
     const restored = loadLine('', exportLine(line));
     expect(restored).toEqual(line);
-    expect(restored.timeline[1].moves).toEqual(['e8d7']);
-    expect(restored.timeline[2].fen).toBe(replay(restored.moves, fen).fen());
+    expect(restored.moves.slice(0, 1)).toEqual(['e8d7']);
+    expect(restored.sanMoves).toEqual(['Kd7', 'e4']);
   });
   it('parses comments, variations, UCI and PGN while rejecting illegal tokens', () => {
     expect(loadLine('', '1. e4 {comment} (1. d4 (1... d5)) e7e5 $1 2. Nf3 ; note\n*').moves).toEqual(['e2e4', 'e7e5', 'g1f3']);

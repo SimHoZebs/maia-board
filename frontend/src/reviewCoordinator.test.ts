@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { loadLine } from './domain';
+import { loadLine, testNodes } from './domain';
 import { cacheHash, JOB_STALL_MS, RESUME_ABORT_AFTER_HIDDEN_MS, ReviewCoordinator, reviewKey, type ReviewNode } from './reviewCoordinator';
 import { SEARCH_POLICY } from './reviewMetrics';
 import { stockfishPolicy } from './stockfishSettings';
 const settings = { eloMaia: 1600, eloUser: 1600, model: '79m' as const };
 const line = loadLine('', '1. e4 e5 2. Nf3');
-const nodes: ReviewNode[] = line.timeline.map(position => ({ ...position, initialFen: line.initialFen }));
+const nodes: ReviewNode[] = testNodes(line.initialFen, line.moves);
 const body = (url: string) => url === '/evaluate' ? { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4', score: { type: 'cp', value: 0 }, lines: [{ move: 'e2e4', score: { type: 'cp', value: 0 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: -20 }, depth: 12 }] } : { move: 'e2e4', top_moves: [], wdl: [0,1,0], model_used: '79m', degraded: false };
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 it('deduplicates in-flight requests and coalesces stale foreground positions', async () => {
@@ -57,7 +57,7 @@ it('runs a lazy batch to completion and keeps successful results', async () => {
 });
 it('synthesizes terminal draws from full history and never asks Maia', async () => {
   const terminal = loadLine('', '1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. Ng1 Ng8');
-  const node = { ...terminal.timeline.at(-1)!, initialFen: terminal.initialFen };
+  const node = testNodes(terminal.initialFen, terminal.moves).at(-1)!;
   const fetcher = vi.fn() as unknown as typeof fetch;
   const coordinator = new ReviewCoordinator(fetcher);
   coordinator.foregroundAt([node], settings); coordinator.startBatch([node], settings); await flush();
@@ -515,7 +515,7 @@ describe('play-time Maia persistence', () => {
   it('keys custom-start positions with initial_fen identically to batches', async () => {
     const { maiaCacheKeyForMoveRequest } = await import('./reviewCoordinator');
     const custom = loadLine('4k3/8/8/8/8/8/4P3/4K3 b - - 0 12', '12... Kd7');
-    const customNodes: ReviewNode[] = custom.timeline.map(position => ({ ...position, initialFen: custom.initialFen }));
+    const customNodes: ReviewNode[] = testNodes(custom.initialFen, custom.moves);
     const target = customNodes[1];
     const payload = { fen: target.fen, moves: target.moves, initial_fen: custom.initialFen, elo_maia: 1800, elo_user: 1500, model: '5m' as const };
     const { key } = maiaCacheKeyForMoveRequest(payload);

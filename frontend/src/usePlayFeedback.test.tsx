@@ -4,7 +4,7 @@ import { SEARCH_POLICY, type Evaluation } from './reviewMetrics';
 import { feedbackKey, lastUserPly, qualityAtPly } from './usePlayFeedback';
 import { initialState, reducer } from './state';
 import { KEYS } from './storage';
-import { loadLine } from './domain';
+import { loadLine, testNodes } from './domain';
 
 beforeEach(() => {
   const data = new Map<string, string>();
@@ -95,7 +95,7 @@ describe('sf-only foreground', () => {
       return Response.json(sfBody);
     }) as unknown as typeof fetch;
     const line = loadLine('', '1. e4 e5');
-    const nodes = line.timeline.map(position => ({ ...position, initialFen: line.initialFen }));
+    const nodes = testNodes(line.initialFen, line.moves);
     const settings = { eloMaia: 1600, eloUser: 1600, model: '79m' as const };
     const coordinator = new ReviewCoordinator(fetcher);
     coordinator.foregroundSfOnly([nodes[0], nodes[1]], settings);
@@ -115,14 +115,14 @@ describe('sf-only foreground', () => {
       return Response.json(sfBody);
     }) as unknown as typeof fetch;
     const terminal = loadLine('', '1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. Ng1 Ng8');
-    const terminalNode = { ...terminal.timeline.at(-1)!, initialFen: terminal.initialFen };
+    const terminalNode = testNodes(terminal.initialFen, terminal.moves).at(-1)!;
     const settings = { eloMaia: 1600, eloUser: 1600, model: '79m' as const };
     const quiet = new ReviewCoordinator(fetcher);
     quiet.foregroundSfOnly([terminalNode], settings);
     await flush();
     expect(quiet.result('sf', terminalNode, settings)?.terminal).toBe('draw');
     const line = loadLine('', '1. e4');
-    const nodes = line.timeline.map(position => ({ ...position, initialFen: line.initialFen }));
+    const nodes = testNodes(line.initialFen, line.moves);
     const coordinator = new ReviewCoordinator(fetcher);
     coordinator.foregroundSfOnly([nodes[0]], settings);
     await flush(); await flush();
@@ -169,7 +169,7 @@ async function settleEvaluate(harness: ReturnType<typeof playQueueHarness>) {
 describe('play queue', () => {
   const settings = { eloMaia: 1600, eloUser: 1600, model: '79m' as const };
   const line = loadLine('', '1. e4 e5 2. Nf3');
-  const nodes = line.timeline.map(position => ({ ...position, initialFen: line.initialFen }));
+  const nodes = testNodes(line.initialFen, line.moves);
   it('drains every position in ply order when play outruns evaluation', async () => {
     const harness = playQueueHarness();
     const coordinator = new ReviewCoordinator(harness.fetcher);

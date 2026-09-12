@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderToString } from 'react-dom/server';
 import { ErrorBoundary, PanelError } from './ErrorBoundary';
 import { fetchEvaluation } from './reviewCoordinator';
-import { loadLine } from './domain';
+import { loadLine, testNodes } from './domain';
 import { initialState, reducer } from './state';
 import { MaiaApiError } from './api';
 
@@ -51,7 +51,7 @@ describe('play request manual retry', () => {
 describe('fetchEvaluation messages', () => {
   it('maps network failures and unreadable bodies to friendly copy', async () => {
     const line = loadLine('', '1. e4');
-    const node = { ...line.timeline[0], initialFen: line.initialFen };
+    const node = testNodes(line.initialFen, line.moves)[0];
     const signal = new AbortController().signal;
     await expect(fetchEvaluation(node, signal, (async () => { throw new TypeError('down'); }) as unknown as typeof fetch))
       .rejects.toThrow('Stockfish is unreachable');
