@@ -35,7 +35,7 @@ import {
   Copy,
   Check,
   Trash2,
-  CornerDownRight,
+  CornerUpRight,
 } from "lucide-react";
 import { BoardThumbnail } from "./BoardThumbnail";
 import type { Review } from "./useReview";
@@ -604,7 +604,6 @@ export function MovesPanel({
   qualities,
   analysis = false,
   original,
-  tools,
 }: {
   sans: string[];
   ply: number;
@@ -615,7 +614,6 @@ export function MovesPanel({
   qualities?: (Quality | undefined)[];
   analysis?: boolean;
   original?: { sans: string[]; fromPly: number };
-  tools?: ReactNode;
 }) {
   const active = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -680,7 +678,7 @@ export function MovesPanel({
               {original.fromPly > 0 &&
                 move(original.sans[original.fromPly - 1], original.fromPly - 1)}
               <div className="variation-line" aria-label="Explored variation">
-                <CornerDownRight
+                <CornerUpRight
                   className="branch-connector"
                   size={14}
                   aria-hidden="true"
@@ -707,7 +705,6 @@ export function MovesPanel({
         )}
       </div>
       <div className="move-navigation">
-        <div className="board-actions">{tools}</div>
         <div className="nav-buttons">
           {[
             { id: "first", label: "First position", Icon: SkipBack, to: 0 },

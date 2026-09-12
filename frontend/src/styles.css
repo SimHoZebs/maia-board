@@ -30,8 +30,8 @@ p { line-height: 1.5; color: var(--muted); }
 .site-header .header-action { margin-left: auto; min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: 1px solid transparent; color: inherit; cursor: pointer; }
 .site-header .header-action:hover { background: #3b3d3d; }
 @media (max-width: 480px) { .site-header .brand { display: none; } .site-header nav { min-width: 0; } }
-.workspace { --board-size: min(100%, calc(100dvh - 286px), 680px); display: grid; justify-content: center; grid-template-columns: minmax(0, var(--board-size)); gap: 28px; }
-.workspace.analyzing { --board-size: min(calc(100vw - 518px), calc(100dvh - 346px), 680px); grid-template-columns: minmax(0, var(--board-size)) 400px; }
+.workspace { --board-size: min(100%, calc(100dvh - 330px), 680px); display: grid; justify-content: center; grid-template-columns: minmax(0, var(--board-size)); gap: 28px; }
+.workspace.analyzing { --board-size: min(calc(100vw - 518px), calc(100dvh - 390px), 680px); grid-template-columns: minmax(0, var(--board-size)) 400px; }
 .board-stage { min-width: 0; }
 .board-frame { width: 100%; aspect-ratio: 1; }
 .board, .cg-wrap { width: 100%; height: 100%; }
@@ -52,14 +52,16 @@ p { line-height: 1.5; color: var(--muted); }
 .move-list { position: relative; display: flex; align-items: center; gap: 2px; height: 40px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; white-space: nowrap; }
 .move-cell { flex: none; border-color: transparent; background: transparent; padding: 4px 6px; font-size: 14px; }
 .move-cell span { color: var(--muted); font-size: 12px; }
-.analysis-notation .move-list { align-items: flex-start; height: auto; min-height: 40px; padding: 4px 0; overflow-x: auto; overflow-y: hidden; }
-.original-line, .variation-line { display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 2px; width: max-content; flex: none; }
+.analysis-notation .move-list { align-items: flex-end; height: auto; min-height: 40px; padding: 4px 0; overflow-x: auto; overflow-y: hidden; }
+.original-line, .variation-line { display: flex; flex-wrap: nowrap; align-items: flex-end; gap: 2px; width: max-content; flex: none; }
 .original-move { display: inline-flex; align-items: center; gap: 4px; height: 32px; border: 1px solid transparent; background: transparent; padding: 4px 6px; color: var(--muted); font-size: 14px; white-space: nowrap; cursor: pointer; }
 .original-move span { font-size: 12px; }
-.branch-point { position: relative; flex: none; min-width: 0; height: 64px; }
-.variation-line { position: absolute; top: 32px; left: 10px; align-items: center; }
+.branch-point { position: relative; display: flex; align-items: flex-end; flex: none; min-width: 0; height: 64px; }
+.branch-point > button { height: 32px; }
+.variation-line { position: absolute; bottom: 32px; top: auto; left: 10px; align-items: center; }
 .branch-connector { flex: none; color: var(--muted); }
-.move-navigation { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.board-toolbar { display: flex; justify-content: flex-end; margin-bottom: 4px; min-height: 40px; }
+.move-navigation { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .nav-buttons { display: flex; gap: 2px; }
 .nav-buttons button, .board-actions button { width: 40px; height: 40px; min-height: 40px; min-width: 40px; display: inline-flex; align-items: center; justify-content: center; padding: 4px; border-color: transparent; background: transparent; }
 #analysis-index { display: block; text-align: right; margin-top: 2px; color: var(--muted); font-size: 10px; white-space: nowrap; }
@@ -146,9 +148,10 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 @media (min-width: 761px) {
   .workspace.game-over { grid-template-columns: minmax(0, min(calc(var(--board-size) + 206px), 100%)); }
   .board-stage.game-over { display: grid; grid-template-columns: minmax(0, 1fr) 190px; column-gap: 16px; align-items: start; }
+  .board-stage.game-over .board-toolbar { grid-column: 1 / -1; }
   .board-stage.game-over .player-strip { grid-column: 1 / -1; }
   .board-stage.game-over .board-frame { grid-column: 1; min-width: 0; }
-  .board-stage.game-over .game-result { grid-column: 2; grid-row: 2; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 14px; margin-top: 0; padding: 16px; align-self: start; }
+  .board-stage.game-over .game-result { grid-column: 2; grid-row: 3; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 14px; margin-top: 0; padding: 16px; align-self: start; }
   .board-stage.game-over .result-actions { flex-direction: column; margin-left: 0; }
   .board-stage.game-over .result-actions button { width: 100%; }
   .board-stage.game-over .notation { grid-column: 1 / -1; }
@@ -175,14 +178,16 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .dialog .saved-panel { margin: 20px 0; }
 .promotion-options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 @media (max-width: 760px) {
-  .app-shell { padding: 0 10px 20px; }
+  .app-shell { padding: 0 10px 20px; display: flex; flex-direction: column; min-height: 100dvh; }
+  main { flex: 1; display: flex; flex-direction: column; }
   .site-header { height: 56px; gap: 8px; justify-content: flex-start; margin-bottom: 8px; }
   .brand { font-size: 16px; }
   .site-header nav { gap: 0; }
   .site-header a { padding: 8px 10px; font-size: 13px; }
-  .workspace, .workspace.analyzing { display: flex; flex-direction: column; width: min(100%, 560px); margin: auto; gap: 12px; }
+  .workspace, .workspace.analyzing { display: flex; flex-direction: column; width: min(100%, 560px); margin: auto auto 0; gap: 12px; }
   .workspace.awaiting { display: none; }
-  .board-stage { width: min(100%, calc(100dvh - 300px)); margin: auto; }
+  .board-stage { width: min(100%, calc(100dvh - 344px)); margin: 0 auto; }
+  .workspace.analyzing .notation { position: sticky; bottom: 0; z-index: 5; background: #202122; padding-bottom: calc(4px + env(safe-area-inset-bottom)); }
   .player-strip { height: 34px; font-size: 13px; }
   .panel.insight-panel { margin-top: 0; width: 100%; padding: 6px 14px 14px; }
   .insight-panel section[aria-label="Maia analysis"] h2, .insight-panel section[aria-label="Stockfish evaluation"] h2 { font-size: 13px; }

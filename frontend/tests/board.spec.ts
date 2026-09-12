@@ -754,11 +754,22 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
       expect(box.top).toBeGreaterThanOrEqual(0); expect(box.bottom).toBeLessThanOrEqual(viewport.height);
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    const toolbarBoxes = await page.locator('.board-actions button, .nav-buttons button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height, top: r.top }; }));
-    for (const box of toolbarBoxes) {
+    const actionBoxes = await page.locator('.board-actions button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height, top: r.top }; }));
+    for (const box of actionBoxes) {
       expect(box.width).toBe(40); expect(box.height).toBe(40);
-      expect(box.top).toBe(toolbarBoxes[0].top);
+      expect(box.top).toBe(actionBoxes[0].top);
     }
+    const navBoxes = await page.locator('.nav-buttons button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height, top: r.top }; }));
+    for (const box of navBoxes) {
+      expect(box.width).toBe(40); expect(box.height).toBe(40);
+      expect(box.top).toBe(navBoxes[0].top);
+    }
+    // Board actions live above the board (less reachable on mobile);
+    // move navigation lives below it next to the move list.
+    const toolbar = (await page.locator('.board-toolbar').boundingBox())!;
+    const nav = (await page.locator('.move-navigation').boundingBox())!;
+    expect(toolbar.y + toolbar.height).toBeLessThanOrEqual(board!.y);
+    expect(nav.y).toBeGreaterThanOrEqual(board!.y + board!.height);
     const list = page.locator('#move-list');
     expect(await list.evaluate(el => el.scrollWidth > el.clientWidth && el.clientHeight <= 52)).toBe(true);
     await page.locator('#analysis-first').click();
@@ -806,7 +817,9 @@ for (const width of [320, 390]) {
     const origin = (await page.locator('.branch-point > button').boundingBox())!;
     const branch = (await variation.boundingBox())!;
     const continuation = (await page.locator('.original-move').first().boundingBox())!;
-    expect(branch.y).toBeGreaterThanOrEqual(origin.y + origin.height);
+    // Branches expand upwards: the variation sits above the origin move so
+    // the sticky move navigation below stays put.
+    expect(branch.y + branch.height).toBeLessThanOrEqual(origin.y + 1);
     expect(branch.x).toBeGreaterThan(origin.x);
     expect(continuation.y).toBe(origin.y);
     const toolbar = await page.locator('.move-navigation button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { y: r.y, width: r.width, height: r.height }; }));
@@ -856,13 +869,15 @@ for (const originPly of [0, 9, 12]) {
       if (el.previousElementSibling) before.push(el.previousElementSibling.tagName);
       const after = []; sibling = group.nextElementSibling;
       while (sibling) { after.push(sibling.className); sibling = sibling.nextElementSibling; }
-      return { before, after, top: el.getBoundingClientRect().top, parentBottom: el.previousElementSibling?.getBoundingClientRect().bottom, tailTop: group.nextElementSibling?.getBoundingClientRect().top, bottom: el.getBoundingClientRect().bottom };
+      return { before, after, top: el.getBoundingClientRect().top, parentTop: el.previousElementSibling?.getBoundingClientRect().top, tailTop: group.nextElementSibling?.getBoundingClientRect().top, bottom: el.getBoundingClientRect().bottom };
     });
     expect(placement.before).toEqual(Array(originPly).fill('BUTTON'));
     expect(placement.after).toHaveLength(12 - originPly);
     for (const cls of placement.after) expect(cls).toContain('original-move');
-    if (placement.parentBottom !== undefined) expect(placement.top).toBeGreaterThanOrEqual(placement.parentBottom);
-    if (placement.tailTop !== undefined) expect(placement.tailTop).toBeLessThan(placement.top);
+    // Upwards expansion: the variation sits above its origin move, and the
+    // original continuation stays on the origin (bottom) row below it.
+    if (placement.parentTop !== undefined) expect(placement.bottom).toBeLessThanOrEqual(placement.parentTop + 1);
+    if (placement.tailTop !== undefined) expect(placement.tailTop).toBeGreaterThan(placement.top);
     await page.screenshot({ path: info.outputPath(`branch-origin-${originPly}.png`), fullPage: true });
     await page.locator('#analysis-prev').click();
     await expect(page.locator('#analysis-index')).toHaveText(`Position ${originPly + 1} / ${originPly + 2}`);
@@ -910,7 +925,7 @@ test('analysis keeps one scrolling main row and adds height only for a branch', 
   const branchRows = await list.locator('.variation-line .move-cell').evaluateAll(elements => elements.map(el => el.getBoundingClientRect().y));
   expect(new Set(mainRows).size).toBe(1);
   expect(new Set(branchRows).size).toBe(1);
-  expect(branchRows[0]).toBe(mainRows[0] + 32);
+  expect(branchRows[0]).toBe(mainRows[0] - 32);
   await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
   await page.locator('#analysis-first').click();
   await page.locator('#analysis-next').click();
