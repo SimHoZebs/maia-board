@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { candidateSan, replay, START_FEN } from './domain';
+import { replay, START_FEN } from './domain';
 import { ReviewCoordinator, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
 import { reviewMove, type Evaluation, type Quality } from './reviewMetrics';
 import type { State } from './state';
@@ -19,20 +19,21 @@ function nodeFor(moves: string[]): ReviewNode {
   return { initialFen: START_FEN, moves, fen: replay(moves).fen() };
 }
 
-export type PlayFeedbackStatus = 'off' | 'empty' | 'pending' | 'ready' | 'error';
+// Retrospective quality for one committed ply: undefined for the opponent's
+// moves and for user moves still awaiting (or missing) evaluations, so the
+// move list shows no icon until Stockfish has weighed in.
+export function qualityAtPly(moves: string[], ply: number, userColor: 'white' | 'black',
+  lookup: (slice: string[]) => Evaluation | undefined): Quality | undefined {
+  if ((ply % 2 === 0) !== (userColor === 'white')) return undefined;
+  const before = lookup(moves.slice(0, ply));
+  const after = lookup(moves.slice(0, ply + 1));
+  if (!before || !after) return undefined;
+  return reviewMove(before, after, replay(moves.slice(0, ply)), moves[ply]);
+}
 
 export type PlayFeedback = {
   active: boolean;
-  status: PlayFeedbackStatus;
-  gameId: string;
-  userPly: number;
-  playedUci: string;
-  playedSan: string;
-  quality?: Quality;
-  before?: Evaluation;
-  after?: Evaluation;
-  error?: string;
-  retry: () => void;
+  qualities: (Quality | undefined)[];
 };
 
 export function usePlayFeedback(state: State): PlayFeedback {
@@ -45,58 +46,32 @@ export function usePlayFeedback(state: State): PlayFeedback {
   const settings: ReviewSettings = useMemo(() => ({
     eloMaia: state.settings.eloMaia, eloUser: state.settings.eloUser, model: state.settings.model, stockfish: state.stockfish,
   }), [state.settings.eloMaia, state.settings.eloUser, state.settings.model, settingsKey]);
-  const derived = useMemo(() => {
+  const latest = useMemo(() => {
     const userPly = lastUserPly(moves, state.settings.userColor);
     if (userPly < 0) return null;
-    const played = moves[userPly];
-    const beforeMoves = moves.slice(0, userPly);
-    const afterMoves = moves.slice(0, userPly + 1);
     return {
-      userPly, played,
-      beforeNode: nodeFor(beforeMoves),
-      afterNode: nodeFor(afterMoves),
-      key: feedbackKey(state.play.id, userPly, played),
+      userPly, played: moves[userPly],
+      beforeNode: nodeFor(moves.slice(0, userPly)),
+      afterNode: nodeFor(moves.slice(0, userPly + 1)),
+      key: feedbackKey(state.play.id, userPly, moves[userPly]),
     };
   }, [movesKey, state.play.id, state.settings.userColor]);
-  const rowKey = derived ? `${derived.key}|${settingsKey}` : null;
+  const rowKey = latest ? `${latest.key}|${settingsKey}` : null;
   useEffect(() => () => coordinator.suspend(), [coordinator]);
   useEffect(() => {
-    if (!active || !derived) {
+    if (!active || !latest) {
       if (!active) coordinator.suspend();
       else coordinator.clearForeground();
       return;
     }
-    coordinator.foregroundSfOnly([derived.beforeNode, derived.afterNode], settings);
+    coordinator.foregroundSfOnly([latest.beforeNode, latest.afterNode], settings);
     return () => coordinator.clearForeground();
   }, [coordinator, active, rowKey]);
-  const noop = useMemo(() => () => undefined, []);
-  if (!active) {
-    return { active: false, status: 'off', gameId: state.play.id, userPly: -1, playedUci: '', playedSan: '', retry: noop };
-  }
-  if (!derived) {
-    return { active: true, status: 'empty', gameId: state.play.id, userPly: -1, playedUci: '', playedSan: '', retry: noop };
-  }
-  const before = coordinator.result('sf', derived.beforeNode, settings);
-  const after = coordinator.result('sf', derived.afterNode, settings);
-  const error = coordinator.error('sf', derived.beforeNode, settings) ?? coordinator.error('sf', derived.afterNode, settings);
-  const retry = () => coordinator.retrySfOnly([derived.beforeNode, derived.afterNode], settings);
-  if (before && after) {
-    const game = replay(moves.slice(0, derived.userPly));
-    const quality = reviewMove(before, after, game, derived.played);
-    let playedSan: string;
-    try {
-      playedSan = replay(moves.slice(0, derived.userPly + 1)).history()[derived.userPly] ?? candidateSan(derived.beforeNode.fen, derived.played);
-    } catch {
-      playedSan = candidateSan(derived.beforeNode.fen, derived.played);
-    }
-    return { active: true, status: 'ready', gameId: state.play.id, userPly: derived.userPly,
-      playedUci: derived.played, playedSan, quality, before, after, retry };
-  }
-  if (error) {
-    return { active: true, status: 'error', gameId: state.play.id, userPly: derived.userPly,
-      playedUci: derived.played, playedSan: candidateSan(derived.beforeNode.fen, derived.played), error, retry };
-  }
-  return { active: true, status: 'pending', gameId: state.play.id, userPly: derived.userPly,
-    playedUci: derived.played, playedSan: candidateSan(derived.beforeNode.fen, derived.played),
-    before, after, retry };
+  // Read live from the coordinator cache each render (like useReview): the
+  // subscription above re-renders as evaluations settle, turning icons on.
+  const lookup = (slice: string[]) => coordinator.result('sf', nodeFor(slice), settings);
+  const qualities = active
+    ? moves.map((_, ply) => qualityAtPly(moves, ply, state.settings.userColor, lookup))
+    : [];
+  return { active, qualities };
 }

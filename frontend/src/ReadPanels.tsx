@@ -135,7 +135,7 @@ function StockfishBody({ fen, evaluation, played, previewUci, onPreview }: { fen
   </div>;
 }
 
-export function MovesPanel({ sans, ply, onView, onOriginalView, initialFen, historical, qualities, analysis = false, original, tools }: { sans: string[]; ply: number; onView: (ply: number | null) => void; onOriginalView?: (ply: number) => void; initialFen: string; historical: boolean; qualities?: Quality[]; analysis?: boolean; original?: { sans: string[]; fromPly: number }; tools?: ReactNode }) {
+export function MovesPanel({ sans, ply, onView, onOriginalView, initialFen, historical, qualities, analysis = false, original, tools }: { sans: string[]; ply: number; onView: (ply: number | null) => void; onOriginalView?: (ply: number) => void; initialFen: string; historical: boolean; qualities?: (Quality | undefined)[]; analysis?: boolean; original?: { sans: string[]; fromPly: number }; tools?: ReactNode }) {
   const active = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {

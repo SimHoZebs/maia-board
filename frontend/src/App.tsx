@@ -11,7 +11,6 @@ import { analysisLength, analysisLine, gameResult, oppositeColor, replay, sideNa
 import { toGroundColor } from './board-colors';
 import { currentPosition } from './state';
 import { usePlayFeedback } from './usePlayFeedback';
-import { PlayFeedback } from './PlayFeedback';
 import { useReview } from './useReview';
 import { reviewShapes } from './reviewArrows';
 import { SettingsPage } from './SettingsPage';
@@ -20,7 +19,7 @@ import { ErrorBoundary, PanelError } from './ErrorBoundary';
 export function App({ state, dispatch, children }: Props & { children: ReactNode }) {
   const { mode, settings, request, error } = state;
   const review = useReview(state);
-  const feedback = usePlayFeedback(state);
+  const moveFeedback = usePlayFeedback(state);
   const position = currentPosition(state);
   const game = new Chess(position.fen), live = replay(state.play.moves);
   const analysis = mode === 'analysis';
@@ -71,11 +70,10 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
             <div className={`board-frame${analysis && ready ? ' with-evaluation' : ''}`}><ErrorBoundary label="board" resetKey={boardResetKey} renderFallback={(error, retry) => <PanelError id="board-error" title="Board failed to render" message={error.message || 'Unknown rendering error.'} onRetry={retry} />}><ChessBoard position={position} orientation={orientation} enabled={enabled} thinking={!!request} interactionVersion={state.revision} shapes={shapes} onMove={(from, to) => dispatch({ type: 'move', from, to })} />{analysis && ready && <StockfishBar evaluation={review.current} orientation={orientation} />}</ErrorBoundary></div>
             {strip(orientation)}
             {ready && <>
-              <MovesPanel sans={full.sanMoves} ply={ply} initialFen={analysis ? state.analysis.initialFen : START_FEN} historical={historic} qualities={analysis ? review.qualities : undefined} onView={ply => dispatch({ type: 'view', ply })} onOriginalView={ply => { dispatch({ type: 'original' }); dispatch({ type: 'view', ply }); }} analysis={analysis}
+              <MovesPanel sans={full.sanMoves} ply={ply} initialFen={analysis ? state.analysis.initialFen : START_FEN} historical={historic} qualities={analysis ? review.qualities : moveFeedback.qualities} onView={ply => dispatch({ type: 'view', ply })} onOriginalView={ply => { dispatch({ type: 'original' }); dispatch({ type: 'view', ply }); }} analysis={analysis}
                 original={analysis && state.analysis.branchFromPly !== null ? { sans: state.analysis.sanMoves, fromPly: state.analysis.branchFromPly } : undefined}
                 tools={<><IconButton id="flip-board" label="Flip board" onClick={() => dispatch({ type: 'flip' })}><RotateCw size={16} aria-hidden="true" /></IconButton>{analysis && state.analysis.branchFromPly !== null && <IconButton id="return-original" label="Return to original" onClick={() => dispatch({ type: 'original' })}><Undo2 size={16} aria-hidden="true" /></IconButton>}{!analysis && <IconButton id="takeback" label="Takeback" disabled={!state.play.moves.length} onClick={() => dispatch({ type: 'takeback' })}><Undo2 size={16} aria-hidden="true" /></IconButton>}</>} />
               {!analysis && live.isGameOver() && <div className="game-result"><strong>{gameResult(live)}</strong><Button variant="primary" onClick={() => dispatch({ type: 'review' })}>Review game</Button></div>}
-              {!analysis && <PlayFeedback feedback={feedback} enabled={state.feedback} onToggle={enabled => dispatch({ type: 'feedback', enabled })} />}
             </>}
             <div id="error-banner" className="error-banner" role="alert" hidden={!error}>{error}{error && ready && !request && <Button id="retry-request" variant="quiet" onClick={() => dispatch({ type: 'retry' })}>Retry</Button>}</div>
           </section>

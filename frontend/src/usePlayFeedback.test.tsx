@@ -1,9 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderToString } from 'react-dom/server';
 import { ReviewCoordinator } from './reviewCoordinator';
-import { SEARCH_POLICY } from './reviewMetrics';
-import { PlayFeedback } from './PlayFeedback';
-import { feedbackKey, lastUserPly } from './usePlayFeedback';
+import { SEARCH_POLICY, type Evaluation } from './reviewMetrics';
+import { feedbackKey, lastUserPly, qualityAtPly } from './usePlayFeedback';
 import { initialState, reducer } from './state';
 import { KEYS } from './storage';
 import { loadLine } from './domain';
@@ -36,6 +34,48 @@ describe('feedback setting', () => {
     expect(reducer(on, { type: 'feedback', enabled: true })).toBe(on);
     localStorage.setItem(KEYS.feedback, JSON.stringify(true));
     expect(initialState().feedback).toBe(true);
+  });
+});
+
+const evaluation = (move: string, value: number): Evaluation => ({
+  engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: move,
+  score: { type: 'cp', value },
+  lines: [{ move, score: { type: 'cp', value }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: value - 20 }, depth: 12 }],
+});
+
+describe('per-ply qualities', () => {
+  const byMoves = (entries: [string[], Evaluation][]) => {
+    const map = new Map(entries.map(([slice, evaluation]) => [JSON.stringify(slice), evaluation]));
+    return (slice: string[]) => map.get(JSON.stringify(slice));
+  };
+  it('rates user plies and leaves opponent plies iconless', () => {
+    const moves = ['e2e4', 'e7e5'];
+    const lookup = byMoves([
+      [[], evaluation('e2e4', 20)],
+      [['e2e4'], evaluation('e7e5', 15)],
+      [['e2e4', 'e7e5'], evaluation('g1f3', 10)],
+    ]);
+    expect(qualityAtPly(moves, 0, 'white', lookup)?.label).toBe('Best');
+    expect(qualityAtPly(moves, 1, 'white', lookup)).toBeUndefined();
+    expect(qualityAtPly(moves, 1, 'black', lookup)?.label).toBe('Best');
+    expect(qualityAtPly(moves, 0, 'black', lookup)).toBeUndefined();
+  });
+  it('stays iconless while either evaluation is missing', () => {
+    const moves = ['e2e4'];
+    expect(qualityAtPly(moves, 0, 'white', byMoves([[[], evaluation('e2e4', 20)]]))).toBeUndefined();
+    expect(qualityAtPly(moves, 0, 'white', byMoves([[['e2e4'], evaluation('e2e4', 20)]]))).toBeUndefined();
+    expect(qualityAtPly(moves, 0, 'white', () => undefined)).toBeUndefined();
+  });
+  it('follows takebacks by ply alignment', () => {
+    const lookup = byMoves([
+      [[], evaluation('e2e4', 20)],
+      [['e2e4'], evaluation('e2e4', 20)],
+      [['d2d4'], evaluation('d2d4', 10)],
+    ]);
+    expect(qualityAtPly(['e2e4'], 0, 'white', lookup)?.label).toBe('Best');
+    // Same ply, different move: the old evaluation no longer applies.
+    expect(qualityAtPly(['d2d4'], 0, 'white', lookup)?.label).toBe('Good');
+    expect(qualityAtPly(['e2e4', 'e7e5'], 0, 'white', lookup)?.label).toBe('Best');
   });
 });
 
@@ -92,35 +132,5 @@ describe('sf-only foreground', () => {
     await flush(); await flush();
     expect(coordinator.result('sf', nodes[0], settings)?.depth).toBe(12);
     expect(urls).not.toContain('/move');
-  });
-});
-
-describe('play feedback panel', () => {
-  const ready = {
-    active: true as const, status: 'ready' as const, gameId: 'g', userPly: 0, playedUci: 'e2e4', playedSan: 'e4',
-    quality: { label: 'Best' as const, accuracy: 99.1, loss: 0 },
-    before: { engine: 'Stockfish 19' as const, search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'h7h5',
-      score: { type: 'cp' as const, value: 20 }, lines: [] },
-    after: { engine: 'Stockfish 19' as const, search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'h7h5',
-      score: { type: 'cp' as const, value: 15 }, lines: [] },
-    retry: () => undefined,
-  };
-  it('renders only retrospective fields, never best moves or lines', () => {
-    const html = renderToString(<PlayFeedback feedback={ready} enabled onToggle={() => undefined} />);
-    expect(html).toContain('e4');
-    expect(html).toContain('Best');
-    expect(html).toContain('+0.20');
-    expect(html).toContain('+0.15');
-    expect(html).toContain('99.1');
-    expect(html).toContain('% accuracy');
-    expect(html).not.toContain('h7h5');
-  });
-  it('shows error with retry and the off prompt', () => {
-    const errorHtml = renderToString(<PlayFeedback feedback={{ ...ready, status: 'error', error: 'Stockfish is busy.' }} enabled onToggle={() => undefined} />);
-    expect(errorHtml).toContain('Stockfish is busy.');
-    expect(errorHtml).toContain('Retry');
-    const offHtml = renderToString(<PlayFeedback feedback={{ ...ready, active: false, status: 'off' }} enabled={false} onToggle={() => undefined} />);
-    expect(offHtml).toContain('Evaluate my moves');
-    expect(offHtml).not.toContain('+0.20');
   });
 });
