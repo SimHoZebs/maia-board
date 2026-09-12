@@ -60,10 +60,18 @@ for (const width of [360, 1440]) test(`engine settings and Play temperature at $
   await expect(page.locator('#stockfish-time')).toHaveValue('0.75');
   await page.locator('#stockfish-time').fill('2');
   await page.locator('#stockfish-lines').fill('5');
+  await expect(page.getByRole('radio', { name: 'Stop after time' })).toBeChecked();
+  await expect(page.locator('#stockfish-depth')).toBeDisabled();
+  await page.getByRole('radio', { name: 'Reach depth' }).check();
   await page.locator('#stockfish-depth').fill('18');
   await page.reload();
+  await expect(page.getByRole('radio', { name: 'Reach depth' })).toBeChecked();
   await expect(page.locator('#stockfish-time')).toHaveValue('2');
   await expect(page.locator('#stockfish-lines')).toHaveValue('5');
+  await expect(page.locator('#stockfish-depth')).toHaveValue('18');
+  await page.getByRole('radio', { name: 'Stop after time' }).check();
+  await expect(page.locator('#stockfish-depth')).toBeDisabled();
+  await page.getByRole('radio', { name: 'Reach depth' }).check();
   await expect(page.locator('#stockfish-depth')).toHaveValue('18');
   expect(requests.filter(r => r.path === '/move')).toHaveLength(moveCount);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
