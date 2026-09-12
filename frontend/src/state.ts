@@ -31,6 +31,7 @@ export type Action =
   | { type: 'analysis-settings'; settings: Partial<Draft> }
   | { type: 'takeback' } | { type: 'resign' } | { type: 'flip' }
   | { type: 'move'; from: Square; to: Square }
+  | { type: 'explore'; uci: string }
   | { type: 'preview'; uci: string | null } | { type: 'original' }
   | { type: 'promote'; piece: string | null }
   | { type: 'inputs'; inputs: Partial<State['inputs']> }
@@ -191,6 +192,12 @@ export function reducer(state: State, action: Action): State {
       return commitMove(state, action.from, action.to);
     }
     case 'promote': return state.promotion && action.piece ? commitMove(state, state.promotion.from, state.promotion.to, action.piece) : { ...state, promotion: null };
+    case 'explore': {
+      if (state.mode !== 'analysis' || !state.analysisLoaded || state.promotion) return state;
+      if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(action.uci)) return state;
+      if (new Chess(currentPosition(state).fen).isGameOver()) return state;
+      return commitMove(state, action.uci.slice(0, 2) as Square, action.uci.slice(2, 4) as Square, action.uci[4]);
+    }
     case 'original': return transition(state, { analysis: { ...state.analysis, index: state.analysis.branchFromPly ?? state.analysis.index, branchFromPly: null, branchMoves: [] } }, false);
     case 'inputs': return { ...state, inputs: { ...state.inputs, ...action.inputs } };
     case 'load': {

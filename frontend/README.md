@@ -53,6 +53,8 @@ The Go server serves the resulting `dist` directory at `/app/static`. Set
   to narrowest so agreeing moves remain visible. The Maia and Stockfish sections
   carry matching red and blue markers, lead with comparable White-win heroes,
    present their top moves side by side, and highlight the move actually played.
+   Hovering or focusing a candidate previews its arrow; activating the
+   candidate explores that move on the board.
   Played blunders and mistakes also get ?? / ? destination badges on the board.
 - **History:** games from the server, with Resume for unfinished games,
   Analyze, Export, and Delete. Deleting the current saved game also clears its
@@ -117,7 +119,8 @@ official Chessground, with React owning its container and Chessground owning the
 descendants. A separate `setAutoShapes` effect draws translucent White next-played,
 Red Maia-top, and Blue Stockfish-best arrows with widths 12/8/4. Distinct SVG hashes
 preserve widest-first ordering when arrows coincide. Optional
-candidate previews use a thin gold arrow.
+candidate previews use a thin gold arrow; activating a candidate branches
+into that move.
 
 ## Review coordination and scoring
 

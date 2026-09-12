@@ -102,6 +102,21 @@ describe('task lifecycles', () => {
     expect(state.analysis.index).toBe(1);
     expect(state.analysis.moves).toHaveLength(3);
   });
+  it('explores candidate UCI moves without a promotion dialog', () => {
+    let state = reducer(started(), { type: 'mode', mode: 'analysis' });
+    state = reducer(state, { type: 'inputs', inputs: { pgn: '1. e4 e5 2. Nf3' } });
+    state = reducer(state, { type: 'load' });
+    state = reducer(state, { type: 'preview', uci: 'g8f6' });
+    state = reducer(state, { type: 'explore', uci: 'g8f6' });
+    expect(state.preview).toBeNull();
+    expect(state.analysis.branchFromPly).toBe(3);
+    expect(analysisLine(state.analysis).moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'g8f6']);
+    expect(state.analysis.index).toBe(4);
+    expect(state.promotion).toBeNull();
+    // Same UCI from either engine list lands on the same branch tip.
+    const replayed = reducer({ ...state, analysis: { ...state.analysis, index: 3, branchFromPly: null, branchMoves: [] } }, { type: 'explore', uci: 'g8f6' });
+    expect(analysisLine(replayed.analysis).moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'g8f6']);
+  });
   it('loads shared analysis links without resetting an identical line', () => {
     let state = reducer(initialState(), { type: 'mode', mode: 'analysis' });
     state = reducer(state, { type: 'inputs', inputs: { pgn: '1. e4 e5' } });

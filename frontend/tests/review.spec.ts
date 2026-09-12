@@ -151,7 +151,7 @@ test('overview summarizes the game and opens the decision before a selected mist
   await page.getByRole('button', { name: 'Review 2. Nf3 · White · Blunder', exact: true }).click();
   await expect(page.getByRole('tab', { name: 'Move analysis', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 5');
-  await expect(page.locator('#insight-content').getByRole('button', { name: 'Preview Nf3 (played)', exact: true })).toBeVisible();
+  await expect(page.locator('#insight-content').getByRole('button', { name: 'Explore Nf3 (played)', exact: true })).toBeVisible();
   await expect(page.locator('.balance-score')).toHaveText('+2.00');
   expect(app.errors).toEqual([]);
 });
@@ -178,7 +178,7 @@ test('overview supports keyboard tabs without stepping the board and links inacc
   await page.getByRole('button', { name: 'Review 1… e5 · Black · Inaccuracy', exact: true }).click();
   await expect(page.getByRole('tabpanel', { name: 'Move analysis', exact: true })).toBeVisible();
   await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 5');
-  await expect(page.locator('#insight-content').getByRole('button', { name: 'Preview e5 (played)', exact: true })).toBeVisible();
+  await expect(page.locator('#insight-content').getByRole('button', { name: 'Explore e5 (played)', exact: true })).toBeVisible();
   expect(app.errors).toEqual([]);
 });
 

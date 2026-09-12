@@ -399,8 +399,6 @@ function MoveAnalysis({
               {response.top_moves.slice(0, 5).map((candidate, index) => {
                 const san = candidateSan(insight.fen, candidate.move);
                 const isPlayed = candidate.move === played;
-                const preview = () =>
-                  dispatch({ type: "preview", uci: candidate.move });
                 return (
                   <CandidateRow
                     key={candidate.move}
@@ -409,9 +407,12 @@ function MoveAnalysis({
                     metric={`${Math.round(candidate.prob * 100)}%`}
                     isPlayed={isPlayed}
                     preview={{
-                      label: `Preview ${san}${isPlayed ? " (played)" : ""}`,
+                      label: `Explore ${san}${isPlayed ? " (played)" : ""}`,
                       active: state.preview === candidate.move,
-                      onPreview: preview,
+                      onPreview: () =>
+                        dispatch({ type: "preview", uci: candidate.move }),
+                      onSelect: () =>
+                        dispatch({ type: "explore", uci: candidate.move }),
                     }}
                   />
                 );
@@ -434,6 +435,7 @@ function MoveAnalysis({
             played={played}
             previewUci={state.preview}
             onPreview={(uci) => dispatch({ type: "preview", uci })}
+            onExplore={(uci) => dispatch({ type: "explore", uci })}
           />
         ) : (
           <p className="empty-copy">No analysis yet.</p>
@@ -488,12 +490,14 @@ function StockfishBody({
   played,
   previewUci,
   onPreview,
+  onExplore,
 }: {
   fen: string;
   evaluation: Evaluation;
   played?: string;
   previewUci: string | null;
   onPreview: (uci: string) => void;
+  onExplore: (uci: string) => void;
 }) {
   if (evaluation.terminal)
     return (
@@ -521,9 +525,10 @@ function StockfishBody({
               metric={scoreValueText(line.score)}
               isPlayed={isPlayed}
               preview={{
-                label: `Preview ${san}${isPlayed ? " (played)" : ""}`,
+                label: `Explore ${san}${isPlayed ? " (played)" : ""}`,
                 active: previewUci === line.move,
                 onPreview: () => onPreview(line.move),
+                onSelect: () => onExplore(line.move),
               }}
             />
           );
