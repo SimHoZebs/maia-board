@@ -97,7 +97,6 @@ test('whole game completes independently of viewing and updates the position bal
   await expect(page.locator('.review-charts, .win-hero')).toHaveCount(0);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await page.locator('#analysis-first').click();
-  await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
   await expect(page.locator('.move-cell .quality-great')).toHaveCount(2);
   await expect(page.locator('.move-cell .quality-mistake')).toHaveCount(1);
@@ -121,7 +120,7 @@ for (const width of [320, 1440]) {
         const rect = el.getBoundingClientRect(), style = getComputedStyle(el);
         return { top: rect.top, bottom: rect.bottom, border: parseFloat(style.borderTopWidth), contentTop: el.firstElementChild!.getBoundingClientRect().top };
       }));
-      expect(sections).toHaveLength(4);
+      expect(sections).toHaveLength(3);
       for (let index = 1; index < sections.length; index++) {
         expect(sections[index].border).toBe(1);
         expect(sections[index].top - sections[index - 1].bottom).toBeCloseTo(12, 0);
@@ -194,9 +193,10 @@ test('overview distinguishes empty games, no issues, and explored lines', async 
   await page.mouse.click(board.x + board.width * 3.5 / 8, board.y + board.height * 6.5 / 8);
   await page.mouse.click(board.x + board.width * 3.5 / 8, board.y + board.height * 4.5 / 8);
   await page.getByRole('tab', { name: 'Overview', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Explored line overview', exact: true })).toBeVisible();
+  await expect(page.locator('.tab-action').getByRole('button', { name: 'Analyze explored line' })).toBeVisible();
   await page.locator('#return-original').click();
-  await expect(page.getByRole('heading', { name: 'Game overview', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Game overview' })).toBeVisible();
+  await expect(page.getByText('No inaccuracies, mistakes, misses, or blunders found.', { exact: true })).toBeVisible();
   await page.locator('#mode-analysis').click();
   await page.locator('#analysis-pgn').fill('1. d4');
   await page.locator('#load-analysis').click();
@@ -271,7 +271,7 @@ test('overview shows only your moves with your decision points on the graphs', a
   await expect(page.locator('.accuracy-caption')).toHaveText('Partial accuracy');
   await expect(page.locator('.review-issue')).toHaveCount(0);
   await expect(page.locator('.chart-point i')).toHaveCount(1);
-  await expect(page.locator('.chart-point:disabled')).toHaveCount(3);
+  await expect(page.locator('.chart-point:disabled')).toHaveCount(0);
   await expect(page.locator('.chart-line')).toHaveCount(0);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
@@ -283,11 +283,13 @@ test('overview shows only your moves with your decision points on the graphs', a
   await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 5');
   await page.getByRole('tab', { name: 'Overview', exact: true }).click();
   await expect(page.locator('.chart-point i')).toHaveCount(2);
-  await expect(page.locator('.chart-line')).toHaveCount(0);
+  await expect(page.locator('.chart-line')).toHaveCount(1);
+  expect(await page.locator('.chart-point span').allTextContents()).toEqual(['1…', '2…']);
   await page.getByRole('tab', { name: 'Evaluation', exact: true }).click();
   await expect(page.locator('.chart-point i')).toHaveCount(2);
-  await expect(page.locator('.chart-line')).toHaveCount(0);
-  await expect(page.locator('.chart-point:disabled')).toHaveCount(3);
+  await expect(page.locator('.chart-line')).toHaveCount(1);
+  expect(await page.locator('.chart-point span').allTextContents()).toEqual(['1…', '2…']);
+  await expect(page.locator('.chart-point:disabled')).toHaveCount(0);
   await page.locator('#flip-board').click();
   await expect(page.getByRole('region', { name: 'Black accuracy', exact: true })).toContainText('Black · You');
   expect(app.errors).toEqual([]);
@@ -349,7 +351,6 @@ test('server-cached positions skip inference after reload', async ({ page }) => 
 test('completed analysis restores automatically across reload without inference', async ({ page }) => {
   const app = await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
-  await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
   expect(app.analyses).toHaveLength(1);
   const inferred = () => app.requests.filter(request => request.engine === '/move' || request.engine === '/evaluate').length;
@@ -365,7 +366,6 @@ test('completed analysis restores automatically across reload without inference'
 test('partially evicted analysis restores cached positions and gates the rest', async ({ page }) => {
   const app = await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
-  await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
   // Evict every Maia row server-side: Stockfish stays cached.
   for (const [hash, entry] of app.evaluations) if (entry.engine === 'maia') app.evaluations.delete(hash);
@@ -383,13 +383,12 @@ test('partially evicted analysis restores cached positions and gates the rest', 
 test('changed analysis settings mark the completed record stale', async ({ page }) => {
   const app = await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
-  await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
   expect(app.analyses).toHaveLength(1);
   await expect(page.locator('#analysis-rating')).toBeVisible();
   await page.locator('#analysis-rating').selectOption('1800');
   await expect(page.getByRole('button', { name: 'Analyze entire game' })).toBeVisible();
-  await expect(page.locator('.analysis-record')).toContainText('Last analyzed');
+  await expect(page.locator('.analysis-record')).toContainText('Previously Maia');
 });
 test('history rows show analyzed status from stored records', async ({ page }) => {
   const moves = ['e2e4', 'e7e5'];
@@ -436,18 +435,18 @@ test('cancel stops lazy batch scheduling while retaining completed position resu
   await expect.poll(() => held.length).toBe(2);
   await expect(page.getByRole('button', { name: 'Analyze entire game' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Cancel analysis' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'canceled' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Analyze entire game' })).toBeVisible();
   for (const route of held) await route.fulfill({ json: route.request().url().endsWith('/move') ? { move: 'e2e4', top_moves: [{ move: 'e2e4', prob: .6 }], wdl: [.2,.3,.5], model_used: '79m', degraded: false } : { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4', score: { type: 'cp', value: 20 }, lines: [{ move: 'e2e4', score: { type: 'cp', value: 20 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: 0 }, depth: 12 }] } });
   await page.locator('#analysis-first').click();
   await expect(lines(page)).toHaveCount(3);
   expect(held).toHaveLength(2);
-  await expect(page.getByRole('status').filter({ hasText: 'canceled' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Analyze entire game' })).toBeVisible();
 });
 for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900 }, { width: 360, height: 800 }, { width: 390, height: 844 }]) {
   test(`review geometry, arrows and balance ${viewport.width}x${viewport.height}`, async ({ page }, info) => {
     await page.setViewportSize(viewport); await bootReview(page); await atStart(page);
     await page.getByRole('button', { name: 'Analyze entire game' }).click();
-    await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
     await page.evaluate(() => { window.scrollTo(0, 0); document.querySelector('.insight-panel')!.scrollTop = 0; });
     const box = (await page.locator('#board').boundingBox())!;
     expect(box.width).toBeGreaterThan(300); expect(box.width).toBeCloseTo(box.height, 0);
@@ -455,7 +454,7 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
       expect(rect.top).toBeGreaterThanOrEqual(0); expect(rect.bottom).toBeLessThanOrEqual(viewport.height);
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    const row = await page.locator('.analysis-record p, .analysis-record button, .generation-settings').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; }));
+    const row = await page.locator('.analysis-tabs [role="tab"], .tab-action button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; }));
     expect(Math.max(...row.map(r => r.top))).toBeLessThan(Math.min(...row.map(r => r.bottom)));
     const bar = (await page.locator('.balance-track').boundingBox())!;
     expect(bar.height).toBeGreaterThan(bar.width * 5);
@@ -499,7 +498,7 @@ test('touch move selection updates the position balance', async ({ browser }) =>
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   const page = await context.newPage(); await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).tap();
-  await expect(page.getByRole('status').filter({ hasText: '10 / 10 analysis jobs' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
   await page.locator('.move-cell').nth(0).tap();
   await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 5');
   await page.locator('.move-cell').nth(1).tap();

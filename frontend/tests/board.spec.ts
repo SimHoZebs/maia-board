@@ -388,7 +388,8 @@ test('analysis load, navigation, export, request history, stale reply and mode r
   expect(app.requests[1].payload.initial_fen).toBe(fen);
   expect(replay(app.requests[1].payload.moves, fen).fen()).toBe(app.requests[1].payload.fen);
   await app.reply(1, 'e8d7');
-  await expect(page.locator('#insight-title')).toHaveText('Maia • 1600');
+  await expect(page.getByRole('heading', { name: 'Maia • 1600', exact: true })).toBeVisible();
+  await expect(page.locator('#analysis-rating')).toHaveValue('1600');
   await page.locator('#mode-play').click(); await move(page, 'd2', 'd4');
   await expect.poll(() => app.requests.length).toBe(3);
   await app.reply(2, 'd7d5'); await piece(page, 'd5', 'black pawn');
@@ -596,7 +597,8 @@ test('analysis candidate preview, independent rating, branch replay and labeled 
   await expect(page.locator('#analysis-rating')).toBeVisible();
   await page.locator('#analysis-rating').selectOption('2000');
   await expect(page.locator('#insight-content')).toHaveCount(0);
-  await expect(page.locator('#insight-title')).toHaveText('Maia • 2000');
+  await expect(page.getByRole('heading', { name: 'Maia • 2000', exact: true })).toBeVisible();
+  await expect(page.locator('#analysis-rating')).toHaveValue('2000');
   await expect.poll(() => app.requests.length).toBe(tip + 2);
   expect(app.requests[tip + 1].payload).toMatchObject({ elo_maia: 2000, elo_user: 2000 });
   for (const [id, filename, expected] of [['export-pgn', 'maia-analysis.pgn', '1. e4 e5 2. Nf3'], ['export-explored', 'maia-explored.pgn', '1. e4 e5 2. Nf3 Nf6 3. Bc4']]) {
@@ -619,6 +621,8 @@ test('history review, resume, export, delete, and just-finished game review', as
   const unfinished = record(['e2e4', 'e7e5'], 'white', 'unfinished');
   const app = await boot(page, { [KEYS.current]: mate, [KEYS.saved]: [mate, unfinished] });
   await expect(page.locator('.game-result')).toContainText('Black wins');
+  await expect(page.locator('.board-stage.game-over .game-result .side-dot.black')).toHaveCount(1);
+  await expect(page.locator('.board-stage.game-over')).toHaveCount(1);
   await page.getByRole('button', { name: 'Review game' }).click();
   await expect(page).toHaveURL('http://maia.test/analyze?moves=f2f3,e7e5,g2g4,d8h4');
   await expect(page.locator('#analysis-controls')).toHaveCount(0);
@@ -741,18 +745,19 @@ for (const width of [320, 390]) {
     expect(continuation.y).toBe(origin.y);
     const toolbar = await page.locator('.move-navigation button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { y: r.y, width: r.width, height: r.height }; }));
     for (const box of toolbar) { expect(box.y).toBe(toolbar[0].y); expect(box.width).toBe(32); expect(box.height).toBe(32); }
-    await expect(page.locator('#analysis-rating')).toBeVisible();
-    await expect(page.locator('.generation-settings').getByText('Maia rating', { exact: true })).toBeVisible();
+    await expect(page.locator('#insight-title #analysis-rating')).toBeVisible();
     await expect(page.locator('#analysis-rating')).toHaveAccessibleName('Maia rating');
-    await expect(page.locator('.analysis-generation summary')).toHaveCount(0);
+    await expect(page.locator('.insight-panel summary')).toHaveCount(0);
     await expect(page.getByText('Original', { exact: true })).toHaveCount(0);
     await expect(page.getByText('Exploring', { exact: true })).toHaveCount(0);
     await expect(page.getByText('Unreviewed', { exact: false })).toHaveCount(0);
     await expect(page.locator('.selected-quality, .quality-unreviewed')).toHaveCount(0);
-    await expect(page.locator('.analysis-generation').getByRole('button', { name: 'Analyze explored line' })).toBeVisible();
-    const generation = await page.locator('.analysis-generation button, .analysis-generation select').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { y: r.y, height: r.height }; }));
-    expect(generation).toHaveLength(2);
-    for (const box of generation) { expect(box.y).toBe(generation[0].y); expect(box.height).toBe(32); }
+    await expect(page.locator('.tab-action').getByRole('button', { name: 'Analyze explored line' })).toBeVisible();
+    const tabRow = await page.locator('.analysis-tabs [role="tab"], .tab-action button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { y: r.y, height: r.height }; }));
+    expect(tabRow).toHaveLength(3);
+    expect(Math.max(...tabRow.map(r => r.y))).toBeLessThan(Math.min(...tabRow.map(r => r.y + r.height)));
+    const ratingBox = (await page.locator('#analysis-rating').boundingBox())!;
+    expect(ratingBox.height).toBeLessThanOrEqual(32);
     const engines = (await page.locator('.engine-duo').boundingBox())!;
     const exports = (await page.locator('.analysis-actions').boundingBox())!;
     expect(exports.y).toBeGreaterThanOrEqual(engines.y + engines.height);

@@ -29,8 +29,7 @@ export function ReviewCharts({ review, ply, sans, onView, side }: { review: Revi
     const quality = index ? review.qualities[index - 1] : undefined;
     const before = index ? review.nodes[index - 1].fen.split(' ') : null;
     const mover = before ? (before[1] === 'w' ? 'white' : 'black') : null;
-    const turn = node.fen.split(' ')[1] === 'w' ? 'white' : 'black';
-    const outOfScope = !!side && (tab === 'evaluation' ? turn !== side : mover !== side);
+    const outOfScope = !!side && mover !== side;
     const value = outOfScope ? null : tab === 'evaluation' ? evaluation ? whiteWin(evaluation.score) : null : quality?.accuracy ?? null;
     const moveNumber = before ? `${before[5]}${before[1] === 'w' ? '.' : '…'}` : '0';
     const description = [
@@ -39,11 +38,19 @@ export function ReviewCharts({ review, ply, sans, onView, side }: { review: Revi
       tab === 'evaluation' && evaluation ? `${scoreText(evaluation)} · ${evaluation.terminal ? 'terminal result' : `depth ${evaluation.depth}`}` : null,
       quality && quality.label !== 'Unreviewed' ? quality.label : null,
     ].filter(Boolean).join(' · ');
-    return { node, value, description, evaluation, quality, moveNumber, mover, turn };
+    return { node, value, description, evaluation, quality, moveNumber, mover };
   });
-  const trackWidth = Math.max(264, points.length * 44);
   const yFor = (percent: number) => 110 - percent;
   const ticks = [100, 75, 50, 25, 0];
+  // With a known identity the graph carries only your moves: opponent
+  // positions leave the track entirely so your points sit adjacently and the
+  // line connects them. Without one (pasted lines) every ply stays.
+  const kept = points.flatMap((point, index) => {
+    if (side !== undefined && point.mover !== side) return [];
+    return [{ ...point, origIndex: index }];
+  });
+  const selectedPos = kept.findIndex(point => point.origIndex === selectedPly);
+  const trackWidth = Math.max(264, kept.length * 44);
   return <section className="review-charts" aria-label="Game review">
     <div className="chart-tabs" role="tablist" aria-label="Review chart">
       {tabs.map((item, index) => <button key={item.id} type="button" role="tab" id={`${id}-${item.id}`} aria-controls={`${id}-panel`} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} onClick={() => setTab(item.id)} onKeyDown={event => {
@@ -59,11 +66,10 @@ export function ReviewCharts({ review, ply, sans, onView, side }: { review: Revi
       <div className="chart-track" style={{ width: trackWidth }}>
         <svg aria-hidden="true" width="100%" height="120" viewBox={`0 0 ${trackWidth} 120`} preserveAspectRatio="none">
           {ticks.map(tick => <line key={tick} x1="0" x2={trackWidth} y1={yFor(tick)} y2={yFor(tick)} className={tick === 50 ? 'chart-midline' : 'chart-gridline'} />)}
-          {points.map((point, index) => index > 0 && point.value !== null && points[index - 1].value !== null ? <line key={index} x1={(index - 1) * 44 + 22} y1={110 - points[index - 1].value!} x2={index * 44 + 22} y2={110 - point.value} className="chart-line" /> : null)}
+          {kept.map((point, pos) => pos > 0 && point.value !== null && kept[pos - 1].value !== null ? <line key={point.origIndex} x1={(pos - 1) * 44 + 22} y1={110 - kept[pos - 1].value!} x2={pos * 44 + 22} y2={110 - point.value} className="chart-line" /> : null)}
         </svg>
-        {points.map((point, index) => {
-          const scopedOut = !!side && (tab === 'evaluation' ? point.turn !== side : point.mover !== side);
-          return <button key={index} type="button" ref={index === selectedPly ? selected : undefined} className="chart-point" disabled={(tab === 'accuracy' && index === 0) || scopedOut} aria-label={point.description} aria-current={index === selectedPly ? 'step' : undefined} title={point.description} onClick={() => onView(tab === 'accuracy' ? index - 1 : index)} style={{ left: index * 44 }}>{point.value !== null && <i className={tab === 'accuracy' && point.quality ? `chart-dot-${point.quality.label.toLowerCase()}` : undefined} style={{ top: 110 - point.value }} />}<span>{point.moveNumber}</span></button>;
+        {kept.map((point, pos) => {
+          return <button key={point.origIndex} type="button" ref={pos === selectedPos ? selected : undefined} className="chart-point" disabled={tab === 'accuracy' && point.origIndex === 0} aria-label={point.description} aria-current={pos === selectedPos ? 'step' : undefined} title={point.description} onClick={() => onView(tab === 'accuracy' ? point.origIndex - 1 : point.origIndex)} style={{ left: pos * 44 }}>{point.value !== null && <i className={tab === 'accuracy' && point.quality ? `chart-dot-${point.quality.label.toLowerCase()}` : undefined} style={{ top: 110 - point.value }} />}<span>{point.moveNumber}</span></button>;
         })}
       </div>
       </div>

@@ -23,12 +23,10 @@ export function ReviewOverview({
   const sideLabel = (color: ReviewSide) =>
     `${sideName(color)}${userSide === color ? " · You" : ""}`;
   return (
-    <section className="review-overview" aria-labelledby="overview-title">
-      <div className="overview-heading">
-        <h2 id="overview-title">
-          {branch ? "Explored line overview" : "Game overview"}
-        </h2>
-      </div>
+    <section
+      className="review-overview"
+      aria-label={branch ? "Explored line overview" : "Game overview"}
+    >
       {!summary.total ? (
         <p className="empty-copy">
           Play or load some moves to see an accuracy summary.

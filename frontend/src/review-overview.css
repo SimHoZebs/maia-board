@@ -1,7 +1,10 @@
-.analysis-tabs { display: flex; gap: 18px; }
+.analysis-tabs { display: flex; gap: 18px; align-items: center; }
+.analysis-tablist { display: flex; gap: 18px; align-items: center; }
 .analysis-tabs [role="tab"] { min-height: 32px; padding: 4px 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); font-size: 13px; }
 .analysis-tabs [role="tab"][aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
 .analysis-tabs [role="tab"]:hover { background: transparent; color: #eeeae3; }
+.tab-action { margin-left: auto; display: flex; align-items: center; }
+.tab-action button { flex-shrink: 0; white-space: nowrap; }
 .review-overview .review-charts { margin: 0 0 18px; }
 .review-overview .chart-tabs { margin-bottom: 8px; }
 .chart-point .chart-dot-inaccuracy { background: #7c691e; }
@@ -9,8 +12,7 @@
 .chart-point .chart-dot-blunder { background: #a63c3c; }
 .chart-point .chart-dot-great { background: #286b89; }
 .chart-point .chart-dot-best, .chart-point .chart-dot-good { background: #496336; }
-.overview-heading { display: flex; flex-direction: column; gap: 5px; margin-bottom: 16px; }
-.overview-heading h2 { margin: 0; }
+.review-overview .review-charts { margin: 0 0 18px; }
 .accuracy-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .accuracy-summary > :only-child { grid-column: 1 / -1; }
 .accuracy-card { display: flex; flex-direction: column; min-width: 0; padding: 12px 10px; border: 1px solid var(--line); border-radius: 5px; background: #202122; }

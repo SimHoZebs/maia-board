@@ -41,8 +41,8 @@ import { BoardThumbnail } from "./BoardThumbnail";
 import type { Review } from "./useReview";
 import { QualityBadge } from "./ReviewCharts";
 import { getAnalysisRecords, isFreshRecord, lineHash } from "./analysisRecords";
-  describeMove,
 import {
+  describeMove,
   scoreValueText,
   whiteWin,
   type Evaluation,
@@ -50,14 +50,26 @@ import {
 } from "./reviewMetrics";
 import { ReviewOverview } from "./ReviewOverview";
 
-function recordDate(completedAt: string): string {
-  return new Date(completedAt).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
+function reviewRecord(review: Review) {
+  return review.recordStatus.state === "fresh"
+    ? review.recordStatus.record
+    : review.recordStatus.state === "stale"
+      ? review.recordStatus.record
+      : undefined;
 }
 
-function ReviewLaunch({ state, review }: { state: State; review: Review }) {
+function isComplete(review: Review): boolean {
+  const progress = review.progress;
+  return !!progress &&
+    !progress.running &&
+    !progress.canceled &&
+    progress.done === progress.total &&
+    !progress.failed;
+}
+
+// Tab-bar action: the Analyze / Re-analyze / Restore button owns the right
+// end of the tab row. Status copy lives below in the controls section.
+function ReviewActionButton({ state, review }: { state: State; review: Review }) {
   const branch = state.analysis.branchFromPly !== null;
   if (branch) {
     if (review.progress?.running) return null;
@@ -73,63 +85,38 @@ function ReviewLaunch({ state, review }: { state: State; review: Review }) {
     );
   }
   const progress = review.progress;
-  const complete =
-    !!progress &&
-    !progress.running &&
-    !progress.canceled &&
-    progress.done === progress.total &&
-    !progress.failed;
   if (progress?.running) return null;
-  const record =
-    review.recordStatus.state === "fresh"
-      ? review.recordStatus.record
-      : review.recordStatus.state === "stale"
-        ? review.recordStatus.record
-        : undefined;
   if (
-    complete ||
+    isComplete(review) ||
     (review.coverage && review.coverage.covered === review.coverage.total)
   ) {
     return (
-      <div className="analysis-record">
-        <p role="status">
-          Analyzed{record ? ` · ${recordDate(record.completed_at)}` : ""}
-        </p>
-        <Button variant="quiet" onClick={review.start}>
-          Re-analyze
-        </Button>
-      </div>
+      <Button variant="primary" onClick={review.start}>
+        Re-analyze
+      </Button>
     );
   }
   if (progress && (progress.canceled || progress.failed > 0)) {
     return (
-      <div className="analysis-record">
-        <Button
-          variant="primary"
-          aria-label="Analyze entire game"
-          disabled={review.tooLong}
-          onClick={review.start}
-        >
-          Analyze
-        </Button>
-      </div>
+      <Button
+        variant="primary"
+        aria-label="Analyze entire game"
+        disabled={review.tooLong}
+        onClick={review.start}
+      >
+        Analyze
+      </Button>
     );
   }
-  if (review.coverage && record) {
+  if (review.coverage && reviewRecord(review)) {
     return (
-      <div className="analysis-record">
-        <p role="status">
-          Analyzed · {recordDate(record.completed_at)} ·{" "}
-          {review.coverage.covered} of {review.coverage.total} positions cached
-        </p>
-        <Button
-          variant="primary"
-          aria-label="Restore remaining"
-          onClick={review.start}
-        >
-          Restore
-        </Button>
-      </div>
+      <Button
+        variant="primary"
+        aria-label="Restore remaining"
+        onClick={review.start}
+      >
+        Restore
+      </Button>
     );
   }
   if (review.recordStatus.state === "fresh")
@@ -145,23 +132,56 @@ function ReviewLaunch({ state, review }: { state: State; review: Review }) {
       </Button>
     );
   return (
-    <div className="analysis-record">
-      {review.recordStatus.state === "stale" && record && (
-        <p>
-          Last analyzed {recordDate(record.completed_at)} · Maia{" "}
-          {record.settings.elo_maia}
-        </p>
-      )}
-      <Button
-        variant="primary"
-        aria-label="Analyze entire game"
-        disabled={review.tooLong}
-        onClick={review.start}
-      >
-        Analyze
-      </Button>
-    </div>
+    <Button
+      variant="primary"
+      aria-label="Analyze entire game"
+      disabled={review.tooLong}
+      onClick={review.start}
+    >
+      Analyze
+    </Button>
   );
+}
+
+function hasReviewStatus(review: Review): boolean {
+  if (review.progress?.running) return false;
+  if (
+    isComplete(review) ||
+    (review.coverage && review.coverage.covered === review.coverage.total)
+  )
+    return false;
+  const record = reviewRecord(review);
+  if (review.coverage && record) return true;
+  if (review.recordStatus.state === "stale" && record) return true;
+  return false;
+}
+
+function ReviewStatus({ review }: { review: Review }) {
+  if (review.progress?.running) return null;
+  if (
+    isComplete(review) ||
+    (review.coverage && review.coverage.covered === review.coverage.total)
+  )
+    return null;
+  const record = reviewRecord(review);
+  if (review.coverage && record) {
+    return (
+      <div className="analysis-record">
+        <p role="status">
+          {review.coverage.covered} of {review.coverage.total} positions
+          cached
+        </p>
+      </div>
+    );
+  }
+  if (review.recordStatus.state === "stale" && record) {
+    return (
+      <div className="analysis-record">
+        <p>Previously Maia {record.settings.elo_maia}</p>
+      </div>
+    );
+  }
+  return null;
 }
 
 export function InsightPanel({
@@ -188,13 +208,20 @@ export function InsightPanel({
     moveTab.current?.focus({ preventScroll: true });
     document.getElementById("board")?.scrollIntoView({ block: "start" });
   };
+  const showControls =
+    review.tooLong ||
+    !!review.error ||
+    !!review.progress?.failed ||
+    hasReviewStatus(review) ||
+    !!review.progress?.running;
   return (
     <aside className="panel insight-panel" aria-label="Game analysis">
-      <div
-        className="analysis-tabs analysis-section"
-        role="tablist"
-        aria-label="Game analysis views"
-      >
+      <div className="analysis-tabs analysis-section">
+        <div
+          role="tablist"
+          aria-label="Game analysis views"
+          className="analysis-tablist"
+        >
         {tabs.map((item, index) => (
           <button
             key={item.id}
@@ -231,7 +258,12 @@ export function InsightPanel({
             {item.label}
           </button>
         ))}
+        </div>
+        <div className="tab-action">
+          <ReviewActionButton state={state} review={review} />
+        </div>
       </div>
+      {showControls && (
       <div className="analysis-section analysis-controls-section">
         {review.tooLong && (
           <p role="status">Review supports up to 256 moves (plies).</p>
@@ -242,34 +274,12 @@ export function InsightPanel({
             <Button onClick={review.retry}>Retry failed</Button>
           </p>
         )}
-        <div className="analysis-generation">
-          <ReviewLaunch state={state} review={review} />
-          <fieldset
-            className="generation-settings"
-            aria-label="Analysis settings"
-            disabled={review.progress?.running}
-          >
-            <Rating
-              id="analysis-rating"
-              label="Maia rating"
-              value={state.analysisSettings.eloMaia}
-              onChange={(eloMaia) =>
-                dispatch({ type: "analysis-settings", settings: { eloMaia } })
-              }
-            />
-          </fieldset>
-        </div>
-        {review.progress && (
-          <div role="status">
-            {review.progress.done} / {review.progress.total} analysis jobs{" "}
-            {review.progress.failed ? `· ${review.progress.failed} failed` : ""}{" "}
-            {review.progress.canceled ? "· canceled" : ""}
-            {review.progress.running && (
-              <Button onClick={review.cancel}>Cancel analysis</Button>
-            )}
-          </div>
+        <ReviewStatus review={review} />
+        {review.progress?.running && (
+          <Button onClick={review.cancel}>Cancel analysis</Button>
         )}
       </div>
+      )}
       <div
         className="analysis-section"
         role="tabpanel"
@@ -321,6 +331,7 @@ function MoveAnalysis({
   const insight = response ? { fen: node.fen } : undefined;
   const played =
     review.nodes[state.analysis.index + 1]?.moves[state.analysis.index];
+  const evaluation = review.current;
   // Verdict for the move that reached this position, in plain English above
   // the two engine panels. Nothing renders pre-first-move or pre-review.
   const arrival = state.analysis.index - 1;
@@ -335,7 +346,6 @@ function MoveAnalysis({
         bestSan: bestUci ? candidateSan(review.nodes[arrival].fen, bestUci) : undefined,
       })
     : null;
-  const evaluation = review.current;
   return (
     <>
       {verdict && (
@@ -348,7 +358,21 @@ function MoveAnalysis({
         label="Maia analysis"
         titleId="insight-title"
         dotClass="source-maia"
-        title={`Maia • ${review.maiaElo}`}
+        title={
+          <>
+            Maia •{" "}
+            <Rating
+              inline
+              id="analysis-rating"
+              label="Maia rating"
+              value={state.analysisSettings.eloMaia}
+              disabled={review.progress?.running}
+              onChange={(eloMaia) =>
+                dispatch({ type: "analysis-settings", settings: { eloMaia } })
+              }
+            />
+          </>
+        }
       >
         {review.maiaStale && (
           <p role="status">
@@ -409,7 +433,8 @@ function MoveAnalysis({
           <p className="empty-copy">No analysis yet.</p>
         )}
       </EngineSection>
-    </div>
+      </div>
+    </>
   );
 }
 

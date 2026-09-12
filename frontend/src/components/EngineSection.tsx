@@ -2,8 +2,9 @@ import type { ReactNode } from 'react';
 
 // One engine column in the analysis insight panel (Maia or Stockfish). Owns
 // the section + heading + source-dot shape; the body (context line, estimates,
-// candidate lists, empty copy) stays with the caller.
-export function EngineSection({ label, titleId, dotClass, title, children }: { label: string; titleId?: string; dotClass: 'source-maia' | 'source-stockfish'; title: string; children: ReactNode }) {
+// candidate lists, empty copy) stays with the caller. The title can carry an
+// inline control (the Maia rating owns its Elo here).
+export function EngineSection({ label, titleId, dotClass, title, children }: { label: string; titleId?: string; dotClass: 'source-maia' | 'source-stockfish'; title: ReactNode; children: ReactNode }) {
   return <section aria-label={label}>
     <h2 id={titleId}><span className={`source-dot ${dotClass}`} aria-hidden="true" /> {title}</h2>
     {children}
