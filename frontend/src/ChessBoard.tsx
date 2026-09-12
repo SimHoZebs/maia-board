@@ -16,9 +16,18 @@ export function ChessBoard({ position, orientation, enabled, thinking, interacti
   const callback = useRef(onMove);
   const generation = useRef(0);
   const [gesture, resync] = useReducer(n => n + 1, 0);
+  // First-render identity: the constructor below mounts once, so it must open
+  // on the loaded line's final position instead of the default startpos.
+  const initial = useRef<{ fen: string; orientation: Color } | null>(null);
+  if (initial.current === null) initial.current = { fen: position.fen, orientation };
+  // Previous FEN for single-step detection: one legal move animates, a game
+  // load (many pieces away) snaps instantly instead of sliding everything.
+  const prevFen = useRef<string | null>(null);
   useLayoutEffect(() => { callback.current = onMove; });
   useLayoutEffect(() => {
     const ground = Chessground(container.current!, {
+      fen: initial.current!.fen,
+      orientation: initial.current!.orientation,
       addDimensionsCssVarsTo: container.current!.closest<HTMLElement>('.board-frame') ?? undefined,
       viewOnly: false, coordinates: true, animation: { enabled: true, duration: 220 },
       // Hold-and-drag (press, hold, move, release) shares the board with
@@ -33,6 +42,7 @@ export function ChessBoard({ position, orientation, enabled, thinking, interacti
       drawable: { brushes: reviewBrushes },
     });
     api.current = ground;
+    prevFen.current = initial.current!.fen;
     // Chessground memoizes its bounding rect until scroll/resize. Any layout
     // shift (setup opening, banners, fonts) would otherwise offset every click,
     // so refresh the memo whenever the board resizes.
@@ -49,7 +59,23 @@ export function ChessBoard({ position, orientation, enabled, thinking, interacti
     const version = ++generation.current;
     const game = new Chess(position.fen);
     ground.cancelMove();
-    ground.set({ fen: position.fen, orientation, turnColor: toGroundColor(game.turn()),
+    // Adjacent plies slide; game loads jump many pieces at once and must snap
+    // instead of animating every piece from the previous line's tip.
+    const prev = prevFen.current;
+    prevFen.current = position.fen;
+    let singleStep = true;
+    if (prev !== null && prev !== position.fen) {
+      singleStep = false;
+      try {
+        const from = new Chess(prev);
+        for (const candidate of from.moves({ verbose: true })) {
+          const probe = new Chess(prev);
+          probe.move({ from: candidate.from, to: candidate.to, promotion: candidate.promotion });
+          if (probe.fen() === position.fen) { singleStep = true; break; }
+        }
+      } catch { singleStep = false; }
+    }
+    ground.set({ fen: position.fen, orientation, turnColor: toGroundColor(game.turn()), animation: { enabled: singleStep },
       lastMove: lastMove ? lastMove.split(',') as Key[] : undefined,
       movable: { free: false, color: enabled ? toGroundColor(game.turn()) : undefined, dests: enabled ? legalDests(game) : new Map(), showDests: true,
         events: { after(from, to) {
@@ -63,6 +89,9 @@ export function ChessBoard({ position, orientation, enabled, thinking, interacti
         } },
       },
     });
+    // The instant set above persists `enabled: false`; restore sliding for
+    // subsequent single-ply navigation. No fen means the render path, no anim.
+    if (!singleStep) ground.set({ animation: { enabled: true } });
   }, [position.fen, orientation, enabled, lastMove, gesture, interactionVersion]);
   useLayoutEffect(() => {
     api.current?.setAutoShapes(shapes ?? (preview ? [{ orig: preview.slice(0, 2) as Key, dest: preview.slice(2, 4) as Key, brush: 'candidate' }] : []));
