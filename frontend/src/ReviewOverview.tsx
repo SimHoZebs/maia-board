@@ -11,12 +11,14 @@ export function ReviewOverview({
   userSide,
   branch,
   onInspect,
+  onGraphView,
 }: {
   review: Review;
   ply: number;
   userSide?: ReviewSide;
   branch: boolean;
   onInspect: (beforePly: number) => void;
+  onGraphView: (ply: number) => void;
 }) {
   const summary = summarizeReview(review.nodes, review.qualities, userSide);
   const complete = summary.reviewed === summary.total;
@@ -41,7 +43,7 @@ export function ReviewOverview({
               .map((node, index) =>
                 candidateSan(review.nodes[index].fen, node.moves[index]),
               )}
-            onView={onInspect}
+            onView={onGraphView}
             side={userSide}
           />
           <div className="accuracy-summary">

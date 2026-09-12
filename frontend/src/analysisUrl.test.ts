@@ -23,7 +23,7 @@ describe('analysis URLs', () => {
     expect(parsed).toEqual(line);
     expect(analysisSearch(line)).toContain('fen=');
   });
-  it('rejects tampered links back to the import dialog', () => {
+  it('rejects tampered links back to the importer', () => {
     expect(parseAnalysisSearch('?fen=not-a-fen')).toBeUndefined();
     expect(parseAnalysisSearch('?moves=e2e4,zzz9')).toBeUndefined();
     expect(parseAnalysisSearch('?moves=e2e5')).toBeUndefined();

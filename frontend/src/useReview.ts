@@ -140,7 +140,7 @@ export function useReview(state: State) {
     // commit nulls the batch first, and a stale render-time snapshot would
     // record the previous settings' completion under the new settings.
     const live = coordinator.progress;
-    if (!active || !mainLine || !live || live.running || live.canceled || live.done !== live.total) return;
+    if (!active || !mainLine || !live || live.running || live.done !== live.total) return;
     if (recordStatus.state === 'fresh' && recordStatus.record?.line_hash === hash && isFreshRecord(recordStatus.record, settings)) return;
     const key = `${hash}|${settingsKey}|${live.failed}`;
     if (recorded.current === key || coordinator.batchDegraded()) return;
@@ -194,7 +194,7 @@ export function useReview(state: State) {
     maiaElo: displayedIdentity.eloMaia, maiaModel: displayedIdentity.model,
     maiaWantedElo: maiaIdentity.eloMaia, maiaWantedModel: maiaIdentity.model, maiaStale,
     error: active ? coordinator.error('sf', current, settings) || coordinator.error('maia', current, settings) || (currentPly > 0 ? coordinator.error('sf', nodes[currentPly - 1], settings) : undefined) : undefined,
-    progress, recordStatus, start: startBatchAtCurrent, cancel: () => coordinator.cancelBatch(), retry: () => coordinator.retry(),
+    progress, recordStatus, start: startBatchAtCurrent, retry: () => coordinator.retry(),
     tooLong: nodes.length > 257 };
 }
 export type Review = ReturnType<typeof useReview>;

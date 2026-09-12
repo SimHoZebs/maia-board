@@ -109,7 +109,7 @@ export class ReviewCoordinator {
   private foreground: Record<Engine, Job[]> = { sf: [], maia: [] };
   private running: Partial<Record<Engine, Job>> = {};
   private controllers: Partial<Record<Engine, AbortController>> = {};
-  private batch: { nodes: ReviewNode[]; settings: ReviewSettings; cursor: Record<Engine, number>; total: number; completed: Set<string>; canceled: boolean; degradedMaia: boolean } | null = null;
+  private batch: { nodes: ReviewNode[]; settings: ReviewSettings; cursor: Record<Engine, number>; total: number; completed: Set<string>; degradedMaia: boolean } | null = null;
   private listeners = new Set<() => void>();
   private active = true;
   version = 0;
@@ -174,10 +174,9 @@ export class ReviewCoordinator {
   startBatch(nodes: ReviewNode[], settings: ReviewSettings) {
     if (nodes.length > 257) return;
     const total = nodes.reduce((count, node) => count + (terminalEvaluation(replay(node.moves, node.initialFen)) ? 0 : 2), 0);
-    this.batch = { nodes, settings, total, cursor: { sf: 0, maia: 0 }, completed: new Set(), canceled: false, degradedMaia: false };
+    this.batch = { nodes, settings, total, cursor: { sf: 0, maia: 0 }, completed: new Set(), degradedMaia: false };
     this.active = true; this.pump('sf'); this.pump('maia'); this.emit();
   }
-  cancelBatch() { if (this.batch) this.batch.canceled = true; this.emit(); }
   // True once a fallback Maia answer settles inside the running batch.
   // Read at completion time: degraded rows expire from memory within seconds
   // and are never persisted server-side, so a post-hoc cache peek would miss
@@ -186,11 +185,11 @@ export class ReviewCoordinator {
   get progress() {
     if (!this.batch) return null;
     const failed = this.batch.nodes.reduce((count, node) => count + Number(!!this.error('sf', node, this.batch!.settings)) + Number(!!this.error('maia', node, this.batch!.settings)), 0);
-    return { done: this.batch.completed.size, total: this.batch.total, failed, running: !this.batch.canceled && this.batch.completed.size < this.batch.total, canceled: this.batch.canceled };
+    return { done: this.batch.completed.size, total: this.batch.total, failed, running: this.batch.completed.size < this.batch.total };
   }
   retry() {
     this.failures.clear();
-    if (this.batch) { this.batch.cursor = { sf: 0, maia: 0 }; this.batch.completed.clear(); this.batch.canceled = false; this.batch.degradedMaia = false; }
+    if (this.batch) { this.batch.cursor = { sf: 0, maia: 0 }; this.batch.completed.clear(); this.batch.degradedMaia = false; }
     this.pump('sf'); this.pump('maia'); this.emit();
   }
   private finished(job: Job) { return !!this.cache[job.engine].peek(job.key) || this.failures.has(job.key); }
@@ -198,7 +197,7 @@ export class ReviewCoordinator {
     const foreground = this.foreground[engine].find(job => !this.finished(job));
     if (foreground) return foreground;
     const batch = this.batch;
-    if (!batch || batch.canceled) return;
+    if (!batch) return;
     // Peek without consuming: an aborted or superseded job stays at the cursor
     // and is retried later instead of being lost. Only finished work advances it.
     while (batch.cursor[engine] < batch.nodes.length) {

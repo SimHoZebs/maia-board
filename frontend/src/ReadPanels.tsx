@@ -17,7 +17,7 @@ import {
   storedGameResult,
 } from "./domain";
 import type { Action, State } from "./state";
-import { downloadPgn, Rating } from "./BoardTools";
+import { copyText, Rating } from "./BoardTools";
 import {
   Button,
   CandidateList,
@@ -32,8 +32,8 @@ import {
   SkipBack,
   SkipForward,
   Play,
-  Search,
-  Download,
+  Copy,
+  Check,
   Trash2,
   CornerDownRight,
 } from "lucide-react";
@@ -62,7 +62,6 @@ function isComplete(review: Review): boolean {
   const progress = review.progress;
   return !!progress &&
     !progress.running &&
-    !progress.canceled &&
     progress.done === progress.total &&
     !progress.failed;
 }
@@ -102,7 +101,7 @@ function ReviewActionButton({ state, review }: { state: State; review: Review })
       </Button>
     );
   }
-  if (progress && (progress.canceled || progress.failed > 0)) {
+  if (progress && progress.failed > 0) {
     return (
       <Button
         variant="primary"
@@ -214,6 +213,11 @@ export function InsightPanel({
     moveTab.current?.focus({ preventScroll: true });
     document.getElementById("board")?.scrollIntoView({ block: "start" });
   };
+  // Graph points move the viewed position without leaving the Overview tab:
+  // the selection marker follows and the board updates underneath.
+  const viewInPlace = (ply: number) => {
+    dispatch({ type: "view", ply });
+  };
   const showControls =
     review.tooLong ||
     !!review.error ||
@@ -311,6 +315,7 @@ export function InsightPanel({
             }
             branch={state.analysis.branchFromPly !== null}
             onInspect={inspect}
+            onGraphView={viewInPlace}
           />
         )}
       </div>
@@ -698,6 +703,23 @@ export function SavedGames({
   analysisOnly?: boolean;
 }) {
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const copyTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+    },
+    [],
+  );
+  const copyGame = (game: { id: string; moves: string[] }) =>
+    void copyText(exportLine(loadLine("", game.moves.join(" ")))).then(
+      (ok) => {
+        if (!ok) return;
+        setCopiedId(game.id);
+        if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+        copyTimer.current = window.setTimeout(() => setCopiedId(null), 2000);
+      },
+    );
   // Line-level analyzed lookup, memoized on the saved list plus the current
   // analysis settings: the badge must agree with the detail view, which
   // compares records against global analysisSettings (History→Analyze keeps
@@ -738,18 +760,20 @@ export function SavedGames({
   );
   return (
     <section className="saved-panel" aria-label="Saved games">
-      {!analysisOnly && (
-        <div className="saved-heading">
-          <h1>History</h1>
-          {state.syncPending > 0 && <span role="status">Syncing…</span>}
-          {state.historyTotal !== null &&
-            state.historyTotal > state.saved.length && (
-              <span>
-                Showing {state.saved.length} of {state.historyTotal}
-              </span>
-            )}
-        </div>
-      )}
+      {!analysisOnly &&
+        (state.syncPending > 0 ||
+          (state.historyTotal !== null &&
+            state.historyTotal > state.saved.length)) && (
+          <div className="saved-heading">
+            {state.syncPending > 0 && <span role="status">Syncing…</span>}
+            {state.historyTotal !== null &&
+              state.historyTotal > state.saved.length && (
+                <span>
+                  Showing {state.saved.length} of {state.historyTotal}
+                </span>
+              )}
+          </div>
+        )}
       {!state.saved.length && (
         <p className="empty-copy">Your games will appear here.</p>
       )}
@@ -759,29 +783,36 @@ export function SavedGames({
           const result = storedGameResult(game);
           return (
             <article className="saved-game" key={game.id}>
-              <BoardThumbnail
-                fen={position.fen()}
-                orientation={game.settings.userColor}
-              />
-              <div className="saved-details">
-                <time dateTime={game.createdAt}>
-                  {new Date(game.createdAt).toLocaleString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                    year: "numeric",
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })}
-                </time>
-                <h2>
-                  {sideName(game.settings.userColor)} · Maia{" "}
-                  {game.settings.eloMaia}
-                </h2>
-                <p>
-                  {result}
-                  {analyzedLines.has(badgeHashes[index]) && " · Analyzed"}
-                </p>
-              </div>
+              <button
+                type="button"
+                className="saved-open"
+                aria-label={`Analyze game · ${result}`}
+                onClick={() => dispatch({ type: "review", id: game.id })}
+              >
+                <BoardThumbnail
+                  fen={position.fen()}
+                  orientation={game.settings.userColor}
+                />
+                <div className="saved-details">
+                  <time dateTime={game.createdAt}>
+                    {new Date(game.createdAt).toLocaleString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}
+                  </time>
+                  <h2>
+                    {sideName(game.settings.userColor)} · Maia{" "}
+                    {game.settings.eloMaia}
+                  </h2>
+                  <p>
+                    {result}
+                    {analyzedLines.has(badgeHashes[index]) && " · Analyzed"}
+                  </p>
+                </div>
+              </button>
               <div className="actions saved-actions">
                 {!analysisOnly && result === "Unfinished" && (
                   <IconButton
@@ -792,24 +823,14 @@ export function SavedGames({
                     <Play size={16} aria-hidden="true" />
                   </IconButton>
                 )}
-                <IconButton
-                  label="Analyze"
-                  onClick={() => dispatch({ type: "review", id: game.id })}
-                >
-                  <Search size={16} aria-hidden="true" />
-                </IconButton>
                 {!analysisOnly && (
                   <>
-                    <IconButton
-                      label="Export"
-                      onClick={() =>
-                        downloadPgn(
-                          exportLine(loadLine("", game.moves.join(" "))),
-                          "maia-game.pgn",
-                        )
-                      }
-                    >
-                      <Download size={16} aria-hidden="true" />
+                    <IconButton label="Copy PGN" onClick={() => copyGame(game)}>
+                      {copiedId === game.id ? (
+                        <Check size={16} aria-hidden="true" />
+                      ) : (
+                        <Copy size={16} aria-hidden="true" />
+                      )}
                     </IconButton>
                     <IconButton
                       label="Delete"
@@ -824,6 +845,11 @@ export function SavedGames({
           );
         })}
       </div>
+      {copiedId !== null && (
+        <span role="status" className="visually-hidden">
+          PGN copied to clipboard
+        </span>
+      )}
       {deleting && (
         <Dialog title="Delete saved game?" onCancel={() => setDeleting(null)}>
           <h2>Delete saved game?</h2>

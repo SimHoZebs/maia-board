@@ -6,7 +6,7 @@ import { Button } from './components';
 import { resolveSide } from './randomSide';
 import { SavedGames } from './ReadPanels';
 import { ErrorBoundary, PanelError } from './ErrorBoundary';
-import { Rating, downloadPgn } from './BoardTools';
+import { Rating, copyText } from './BoardTools';
 
 export type Props = { state: State; dispatch: Dispatch<Action> };
 export function PlayControls({ state, dispatch }: Props) {
@@ -43,40 +43,33 @@ function ImportForm({ state, dispatch }: Props) {
       }}>Load {source === 'pgn' ? 'game' : 'position'}</Button>
     </>}
     {state.error && <p role="alert">{state.error}</p>}
-    {state.analysisLoaded && <Button onClick={() => dispatch({ type: 'import', open: false })}>Cancel</Button>}
   </section>;
 }
 export function AnalysisControls(props: Props) {
   if (props.state.mode !== 'analysis' || !props.state.importing) return null;
-  return props.state.analysisLoaded ? <Dialog title="Change game" onCancel={() => props.dispatch({ type: 'import', open: false })}><ImportForm {...props} /></Dialog> : <ImportForm {...props} />;
+  return <ImportForm {...props} />;
 }
 export function AnalysisActions({ state, dispatch }: Props) {
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<'pgn' | 'explored' | 'link' | null>(null);
   const timer = useRef<number | null>(null);
   useEffect(() => () => { if (timer.current !== null) window.clearTimeout(timer.current); }, []);
-  const copyLink = async () => {
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-    } catch {
-      // execCommand is deprecated but remains the fallback for insecure LAN
-      // origins where the async clipboard is unavailable.
-      const field = document.createElement('textarea');
-      try {
-        field.value = window.location.href;
-        document.body.appendChild(field);
-        field.select();
-        document.execCommand('copy');
-      } finally {
-        field.remove();
-      }
-    }
-    setCopied(true);
+  const flash = (key: 'pgn' | 'explored' | 'link') => {
+    setCopied(key);
     if (timer.current !== null) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => setCopied(false), 2000);
+    timer.current = window.setTimeout(() => setCopied(null), 2000);
   };
+  const copyPgn = (explored: boolean) =>
+    void copyText(explored ? exportExplored(state.analysis) : exportLine(state.analysis)).then(ok => {
+      if (ok) flash(explored ? 'explored' : 'pgn');
+    });
+  const copyLink = () =>
+    void copyText(window.location.href).then(ok => {
+      if (ok) flash('link');
+    });
   return <div className="analysis-actions">
-    <Button id="export-pgn" variant="quiet" onClick={() => downloadPgn(exportLine(state.analysis), 'maia-analysis.pgn')}>Export original PGN</Button>
-    <Button id="copy-analysis-link" variant="quiet" onClick={() => void copyLink()}>{copied ? 'Link copied' : 'Copy link'}</Button>
-    {state.analysis.branchFromPly !== null && <Button id="export-explored" variant="quiet" onClick={() => downloadPgn(exportExplored(state.analysis), 'maia-explored.pgn')}>Export explored PGN</Button>}
+    <Button id="new-analysis" variant="quiet" onClick={() => dispatch({ type: 'unload' })}>New analysis</Button>
+    <Button id="copy-pgn" variant="quiet" onClick={() => copyPgn(false)}>{copied === 'pgn' ? 'PGN copied' : 'Copy PGN'}</Button>
+    <Button id="copy-analysis-link" variant="quiet" onClick={() => copyLink()}>{copied === 'link' ? 'Link copied' : 'Copy link'}</Button>
+    {state.analysis.branchFromPly !== null && <Button id="copy-explored-pgn" variant="quiet" onClick={() => copyPgn(true)}>{copied === 'explored' ? 'Explored PGN copied' : 'Copy explored PGN'}</Button>}
   </div>;
 }

@@ -30,28 +30,20 @@ function DestinationNav({
   state: State;
   dispatch: (action: Action) => void;
 }) {
-  // The Analyze tab deep-links the loaded game so it is copyable; the bare
-  // path is only the empty importer.
-  const analyzeTo = state.analysisLoaded
-    ? analysisPath(state.analysis)
-    : "/analyze";
+  // The Analyze tab returns to the importer: tapping it while a line is
+  // loaded unloads that line instead of reopening it behind a dialog.
   return (
     <nav aria-label="Destination">
       {destinations.map(({ mode: destMode, path, label }) => (
         <NavLink
           id={`mode-${destMode}`}
           key={destMode}
-          to={destMode === "analysis" ? analyzeTo : path}
+          to={path}
           end
-          onClick={() => {
-            // The tab is the game chooser: reopen it when already analyzing a game.
-            if (
-              destMode === "analysis" &&
-              state.mode === "analysis" &&
-              state.analysisLoaded &&
-              !state.importing
-            ) {
-              dispatch({ type: "import", open: true });
+          onClick={(event) => {
+            if (destMode === "analysis" && state.analysisLoaded) {
+              event.preventDefault();
+              dispatch({ type: "unload" });
             }
           }}
         >
@@ -128,6 +120,7 @@ export function BoardRouter() {
       // Never push the destination already shown: Back must leave analysis.
       if (action.type === "review" && mode !== "analysis")
         void navigate(pathFor("analysis"));
+      if (action.type === "unload") void navigate(pathFor("analysis"));
       if (action.type === "saved" && mode !== "play")
         void navigate(pathFor("play"));
       boardDispatch(action);

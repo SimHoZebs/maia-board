@@ -107,7 +107,7 @@ effect cleanup and request-identity guard.
 Analysis exploration uses one temporary branch: `branchFromPly` marks its origin
 in the original game and `branchMoves` holds its moves. Both colors can move;
 editing an earlier scratch position replaces its continuation. Starting elsewhere
-requires Return to original first. Original and explored PGN exports are separate.
+requires Return to original first. Original and explored PGN copies are separate.
 The branch and viewed position are ephemeral. The four v1 storage keys and their
 record formats are preserved; analysis preferences last for the current session.
 
@@ -130,8 +130,8 @@ Scrubbing replaces queued foreground work. Results are read only by their exact
 position/settings key; completed obsolete requests cannot replace another
 position's displayed results. Aborted batch nodes stay at the cursor and replay
 later, so progress always completes. Batch snapshots survive index navigation and are
-canceled by line loads/edits, rating/model changes, or leaving Analyze. Cancel
-retains completed results. Batches support at most 256 plies (257 positions).
+discarded by line loads/edits, rating/model changes, or leaving Analyze.
+Batches support at most 256 plies (257 positions).
 
 Separate successful-result caches retain the 512 most recently used entries for
 each engine. Stockfish keys include normalized initial FEN, complete move history,
@@ -174,7 +174,7 @@ Playwright intercepts a static `dist-browser` build and `/move` and `/evaluate` 
 requires no running server. Both production React and development StrictMode
 exercise gameplay, stale responses, imports, exploration, dialogs, touch, and
 layout. Review fixtures also use native browser fetch, inspect rendered coincident
-and mixed arrow SVGs, navigate graphs, test batch completion/cancellation and
+and mixed arrow SVGs, navigate graphs, test batch completion and
 terminal handling, and resolve both random-side outcomes. Geometry checks cover
 1366×768, 1440×900, 360×800, and 390×844, with
 screenshots under ignored `test-results/`. Screenshots wait for piece animations

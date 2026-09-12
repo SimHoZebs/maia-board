@@ -10,6 +10,23 @@ const SEARCH_POLICY = stockfishPolicy(defaultStockfishSettings);
 
 const record = (moves: string[], color: 'white' | 'black' = 'white', id = 'fixture'): StoredGame => ({ id, createdAt: '2026-09-10T00:00:00Z', moves, settings: { ...defaultSettings, userColor: color } });
 
+// Capture clipboard writes: the fixtures serve plain HTTP, where the async
+// clipboard API is unavailable, so the app would take its execCommand
+// fallback instead of a readable clipboard.
+async function stubClipboard(page: Page) {
+  await page.addInitScript(() => {
+    const writes: string[] = [];
+    (window as unknown as { copiedTexts: string[] }).copiedTexts = writes;
+    Object.defineProperty(window.navigator, 'clipboard', {
+      value: { writeText: (text: string) => { writes.push(text); return Promise.resolve(); } },
+      configurable: true,
+    });
+  });
+}
+async function copiedTexts(page: Page) {
+  return page.evaluate(() => (window as unknown as { copiedTexts: string[] }).copiedTexts.join('\n'));
+}
+
 async function boot(page: Page, storage: Record<string, unknown> = {}, start = true, path = '/', extraInit?: () => void, expectBoard = true) {
   const requests: { route: Route; payload: MoveRequest }[] = [];
   const gameStore = { games: new Map<string, any>(), currentId: null as string | null };
@@ -360,7 +377,8 @@ for (const color of ['white', 'black'] as const) {
   });
 }
 
-test('analysis load, navigation, export, request history, stale reply and mode reuse', async ({ page }) => {
+test('analysis load, navigation, copy, request history, stale reply and mode reuse', async ({ page }) => {
+  await stubClipboard(page);
   const app = await boot(page);
   await page.locator('#mode-analysis').click();
   await page.locator('#analysis-pgn').fill('1. e4 e5 2. Nf3');
@@ -375,11 +393,9 @@ test('analysis load, navigation, export, request history, stale reply and mode r
   await expect(page.getByRole('button', { name: 'Analyze entire game' })).toBeEnabled();
   await piece(page, 'g1', 'white knight');
   await page.locator('#analysis-next').click();
-  const downloadEvent = page.waitForEvent('download');
-  await page.locator('#export-pgn').click();
-  const download = await downloadEvent;
-  expect(download.suggestedFilename()).toBe('maia-analysis.pgn');
-  expect(await readFile((await download.path())!, 'utf8')).toContain('1. e4 e5 2. Nf3');
+  await page.locator('#copy-pgn').click();
+  await expect(page.locator('#copy-pgn')).toHaveText('PGN copied');
+  await expect.poll(() => copiedTexts(page)).toContain('1. e4 e5 2. Nf3');
   const fen = '4k3/8/8/8/8/8/4P3/4K3 w - - 0 1';
   await page.locator('#mode-analysis').click();
   await page.getByRole('button', { name: 'FEN', exact: true }).click();
@@ -553,7 +569,8 @@ test('setup disappears; draft cancel preserves a reply arriving while historical
   await expect(page.locator('.player-strip').filter({ hasText: 'Maia' })).toContainText('1800');
 });
 
-test('analysis candidate preview, independent rating, branch replay and labeled exports', async ({ page }, testInfo) => {
+test('analysis candidate preview, independent rating, branch replay and PGN copies', async ({ page }, testInfo) => {
+  await stubClipboard(page);
   const app = await boot(page);
   await page.locator('#mode-analysis').click();
   await expect(page.locator('#analysis-controls')).toBeVisible();
@@ -591,9 +608,6 @@ test('analysis candidate preview, independent rating, branch replay and labeled 
   }
   expect(tip).toBeGreaterThanOrEqual(1);
   expect(replay(app.requests[tip].payload.moves).fen()).toBe(app.requests[tip].payload.fen);
-  await page.locator('#mode-analysis').click();
-  await page.keyboard.press('Escape');
-  expect(app.requests).toHaveLength(tip + 1);
   await app.reply(tip, 'b8c6');
   await expect(page.locator('#analysis-rating')).toBeVisible();
   await page.locator('#analysis-rating').selectOption('2000');
@@ -602,12 +616,10 @@ test('analysis candidate preview, independent rating, branch replay and labeled 
   await expect(page.locator('#analysis-rating')).toHaveValue('2000');
   await expect.poll(() => app.requests.length).toBe(tip + 2);
   expect(app.requests[tip + 1].payload).toMatchObject({ elo_maia: 2000, elo_user: 2000 });
-  for (const [id, filename, expected] of [['export-pgn', 'maia-analysis.pgn', '1. e4 e5 2. Nf3'], ['export-explored', 'maia-explored.pgn', '1. e4 e5 2. Nf3 Nf6 3. Bc4']]) {
-    const downloading = page.waitForEvent('download');
+  for (const [id, expected] of [['copy-pgn', '1. e4 e5 2. Nf3'], ['copy-explored-pgn', '1. e4 e5 2. Nf3 Nf6 3. Bc4']]) {
     await page.locator(`#${id}`).click();
-    const file = await downloading;
-    expect(file.suggestedFilename()).toBe(filename);
-    expect(await readFile((await file.path())!, 'utf8')).toContain(expected);
+    await expect(page.locator(`#${id}`)).toHaveText(/copied/i);
+    await expect.poll(() => copiedTexts(page)).toContain(expected);
   }
   await page.locator('#return-original').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 4');
@@ -617,7 +629,8 @@ test('analysis candidate preview, independent rating, branch replay and labeled 
   expect(app.errors).toEqual([]);
 });
 
-test('history review, resume, export, delete, and just-finished game review', async ({ page }) => {
+test('history review, resume, copy, delete, and just-finished game review', async ({ page }) => {
+  await stubClipboard(page);
   const mate = record(['f2f3', 'e7e5', 'g2g4', 'd8h4'], 'white', 'mate');
   const unfinished = record(['e2e4', 'e7e5'], 'white', 'unfinished');
   const app = await boot(page, { [KEYS.current]: mate, [KEYS.saved]: [mate, unfinished] });
@@ -633,9 +646,9 @@ test('history review, resume, export, delete, and just-finished game review', as
   await expect(cards).toHaveCount(2);
   await expect(cards.first()).toContainText('White · Maia 1600');
   await expect(cards.first().getByRole('button', { name: 'Resume' })).toHaveCount(0);
-  const downloading = page.waitForEvent('download');
-  await cards.first().getByRole('button', { name: 'Export' }).click();
-  expect(await readFile((await (await downloading).path())!, 'utf8')).toContain('Qh4#');
+  await cards.first().getByRole('button', { name: 'Copy PGN' }).click();
+  await expect(page.locator('.saved-panel [role="status"]')).toHaveText('PGN copied to clipboard');
+  await expect.poll(() => copiedTexts(page)).toContain('Qh4#');
   await cards.last().getByRole('button', { name: 'Resume' }).click();
   await expect(page).toHaveURL('http://maia.test/play');
   await piece(page, 'e5', 'black pawn');
@@ -656,15 +669,20 @@ test('analysis entry sources and input keyboard isolation', async ({ page }) => 
   const app = await boot(page, { [KEYS.saved]: [record(['d2d4', 'd7d5'])] });
   await page.locator('#mode-analysis').click();
   await page.getByRole('button', { name: 'History', exact: true }).last().click();
-  await page.locator('.saved-game').getByRole('button', { name: 'Analyze', exact: true }).click();
+  await page.locator('.saved-game .saved-open').click();
   await expect(page).toHaveURL('http://maia.test/analyze?moves=d2d4,d7d5');
   await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
-  await page.locator('#mode-analysis').click();
-  await page.locator('#analysis-pgn').fill('1. e4');
+  // Arrow keys on the rating select must not step the board.
+  await page.locator('#analysis-rating').focus();
   await page.keyboard.press('ArrowLeft');
   await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
-  await page.keyboard.press('Escape');
-  await expect(page.locator('#mode-analysis')).toBeFocused();
+  // The Analyze tab returns to the importer instead of reopening the line.
+  await page.locator('#mode-analysis').click();
+  await expect(page).toHaveURL('http://maia.test/analyze');
+  await expect(page.locator('#analysis-pgn')).toBeVisible();
+  await page.locator('#analysis-pgn').fill('1. e4');
+  await page.locator('#load-analysis').click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 2');
   await page.locator('#mode-analysis').click();
   await page.locator('#analysis-controls').getByRole('button', { name: 'Starting position', exact: true }).click();
   await page.locator('#load-analysis').click();
@@ -675,6 +693,39 @@ test('analysis entry sources and input keyboard isolation', async ({ page }) => 
   await app.reply(currentIndex, 'e2e4');
   await expect(page.locator('.win-hero')).toHaveCount(0);
   await expect(page.locator('section[aria-label="Maia analysis"] .candidate-list')).toContainText('e4');
+});
+
+test('tapping a history game opens its analysis', async ({ page }) => {
+  const app = await boot(page, { [KEYS.saved]: [record(['e2e4', 'e7e5'], 'white', 'g1')] });
+  await page.locator('#mode-history').click();
+  await expect(page.locator('.saved-game')).toHaveCount(1);
+  await page.locator('.saved-game .saved-open').click();
+  await expect(page).toHaveURL('http://maia.test/analyze?moves=e2e4,e7e5');
+  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
+  await piece(page, 'e5', 'black pawn');
+  expect(app.errors).toEqual([]);
+});
+
+test('new analysis and the Analyze tab return to the importer', async ({ page }) => {
+  const app = await boot(page);
+  await page.locator('#mode-analysis').click();
+  await page.locator('#analysis-pgn').fill('1. e4 e5');
+  await page.locator('#load-analysis').click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
+  await page.getByRole('button', { name: 'New analysis', exact: true }).click();
+  await expect(page).toHaveURL('http://maia.test/analyze');
+  await expect(page.locator('#analysis-controls')).toBeVisible();
+  await expect(page.locator('#analysis-index')).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator('#analysis-controls')).toBeVisible();
+  await expect(page.locator('#analysis-index')).toHaveCount(0);
+  await page.locator('#analysis-pgn').fill('1. e4');
+  await page.locator('#load-analysis').click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 2');
+  await page.locator('#mode-analysis').click();
+  await expect(page).toHaveURL('http://maia.test/analyze');
+  await expect(page.locator('#analysis-controls')).toBeVisible();
+  expect(app.errors).toEqual([]);
 });
 
 for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900 }, { width: 360, height: 800 }, { width: 390, height: 844 }]) {

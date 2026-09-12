@@ -34,8 +34,7 @@ export type Action =
   | { type: 'preview'; uci: string | null } | { type: 'original' }
   | { type: 'promote'; piece: string | null }
   | { type: 'inputs'; inputs: Partial<State['inputs']> }
-  | { type: 'import'; open: boolean }
-  | { type: 'load' } | { type: 'url-line'; initialFen: string; moves: string[] } | { type: 'step'; delta: number } | { type: 'view'; ply: number | null } | { type: 'analyze' }
+  | { type: 'load' } | { type: 'unload' } | { type: 'url-line'; initialFen: string; moves: string[] } | { type: 'step'; delta: number } | { type: 'view'; ply: number | null } | { type: 'analyze' }
   | { type: 'saved'; id: string } | { type: 'review'; id?: string } | { type: 'delete'; id: string }
   | { type: 'reply'; request: Request; response: MoveResponse }
   | { type: 'failure'; request: Request; error: unknown }
@@ -89,8 +88,9 @@ function commitMove(state: State, from: Square, to: Square, promotion?: string):
 }
 export type AnalysisSnapshot = { initialFen: string; moves: string[]; index: number; perspective: MaiaColor; ownGame: boolean; gameId?: string };
 // The loaded analysis line survives refresh independently of the import-form
-// inputs: the snapshot is the board, the inputs are the dialog text. Typing
-// without loading never overwrites it, so boot precedence needs no rule.
+// inputs: the snapshot is the board, the inputs are the importer's text.
+// Typing without loading never overwrites it, so boot precedence needs no
+// rule.
 export function readSnapshot(): { analysis: Analysis; gameId?: string } | undefined {
   const stored = readStorage<Partial<AnalysisSnapshot>>(KEYS.snapshot);
   if (!stored || typeof stored.initialFen !== 'string' || !Array.isArray(stored.moves) || !stored.moves.every(move => typeof move === 'string')) return;
@@ -166,7 +166,7 @@ export function reducer(state: State, action: Action): State {
     case 'analysis-settings': return transition(state, { analysisSettings: { ...state.analysisSettings, ...action.settings } }, false);
     case 'flip': return { ...state, flipped: !state.flipped };
     case 'preview': return { ...state, preview: action.uci };
-    case 'import': return { ...state, importing: action.open };
+    case 'unload': return transition(state, { analysisLoaded: false, importing: true, analysisSourceId: null }, false);
     case 'takeback': {
       if (state.mode !== 'play' || !state.play.moves.length || state.play.result === 'resigned') return state;
       const game = replay(state.play.moves);

@@ -50,7 +50,7 @@ for (const width of [360, 1440]) test(`engine settings and Play temperature at $
   const gameId = current.id;
   const moveCount = requests.filter(r => r.path === '/move').length;
   await page.locator('#mode-settings').click();
-  await expect(page.getByRole('heading', { name: 'Stockfish settings' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Stockfish', exact: true })).toBeVisible();
   await expect(page.locator('#maia-temperature')).toHaveCount(0);
   await expect(page.locator('#board')).toHaveCount(0);
   await page.locator('#stockfish-time').fill('');
@@ -60,12 +60,10 @@ for (const width of [360, 1440]) test(`engine settings and Play temperature at $
   await expect(page.locator('#stockfish-time')).toHaveValue('0.75');
   await page.locator('#stockfish-time').fill('2');
   await page.locator('#stockfish-lines').fill('5');
-  await page.getByText('Advanced', { exact: true }).click();
   await page.locator('#stockfish-depth').fill('18');
   await page.reload();
   await expect(page.locator('#stockfish-time')).toHaveValue('2');
   await expect(page.locator('#stockfish-lines')).toHaveValue('5');
-  await page.getByText('Advanced', { exact: true }).click();
   await expect(page.locator('#stockfish-depth')).toHaveValue('18');
   expect(requests.filter(r => r.path === '/move')).toHaveLength(moveCount);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

@@ -5,6 +5,7 @@
 .analysis-tabs [role="tab"]:hover { background: transparent; color: #eeeae3; }
 .tab-action { margin-left: auto; display: flex; align-items: center; }
 .tab-action button { flex-shrink: 0; white-space: nowrap; }
+.tab-action [role="status"] { flex-shrink: 0; white-space: nowrap; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .review-overview .review-charts { margin: 0 0 18px; }
 .review-overview .chart-tabs { margin-bottom: 8px; }
 .chart-point .chart-dot-inaccuracy { background: #7c691e; }

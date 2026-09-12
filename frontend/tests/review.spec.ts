@@ -224,11 +224,9 @@ for (const width of [1440, 360]) test(`overview restores accuracy and evaluation
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath(`overview-graphs-${width}.png`), fullPage: true });
   await page.locator('.chart-point').nth(3).click();
-  await expect(page.getByRole('tab', { name: 'Move analysis', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Overview', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 5');
-  await expect(page.locator('#insight-content').getByRole('button', { name: 'Preview Nf3 (played)', exact: true })).toBeVisible();
-  await expect(page.locator('.review-charts')).toHaveCount(0);
-  await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+  await expect(page.locator('.review-charts')).toHaveCount(1);
   await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/2\. Nf3/);
   await page.getByRole('tab', { name: 'Move accuracy', exact: true }).focus();
   await page.keyboard.press('ArrowRight');
@@ -238,9 +236,10 @@ for (const width of [1440, 360]) test(`overview restores accuracy and evaluation
   await expect(page.locator('.chart-line')).toHaveCount(4);
   await expect(page.locator('.chart-point').nth(4)).toHaveAccessibleName(/2… Nc6 · Black.*White winning chance.*-6\.80/);
   await page.locator('.chart-point').nth(4).click();
-  await expect(page.getByRole('tab', { name: 'Move analysis', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Overview', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
   await expect(page.locator('.balance-score')).toHaveText('-6.80');
+  await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/2… Nc6/);
   expect(app.errors).toEqual([]);
 });
 
@@ -424,23 +423,23 @@ test('current position balance replaces the win-rate sections', async ({ page })
   await expect(page.getByText('Unreviewed', { exact: false })).toHaveCount(0);
   await expect(page.locator('[title*="Unreviewed"], [aria-label*="Unreviewed"], .quality-unreviewed')).toHaveCount(0);
 });
-test('cancel stops lazy batch scheduling while retaining completed position results', async ({ page }) => {
+test('analysis progress replaces the analyze button while running without a cancel option', async ({ page }) => {
   await bootReview(page);
   await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 16' })).toBeVisible();
-  await expect(page.locator('#insight-content')).toHaveCount(1);
   const held: Route[] = [];
   await page.route('http://maia.test/move', route => { held.push(route); });
   await page.route('http://maia.test/evaluate', route => { held.push(route); });
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect.poll(() => held.length).toBe(2);
   await expect(page.getByRole('button', { name: 'Analyze entire game' })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Cancel analysis' }).click();
-  await expect(page.getByRole('button', { name: 'Analyze entire game' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel analysis' })).toHaveCount(0);
+  await expect(page.locator('.tab-action').getByRole('status')).toHaveText(/Analyzing \d+ of \d+…/);
+  await page.unroute('http://maia.test/move');
+  await page.unroute('http://maia.test/evaluate');
   for (const route of held) await route.fulfill({ json: route.request().url().endsWith('/move') ? { move: 'e2e4', top_moves: [{ move: 'e2e4', prob: .6 }], wdl: [.2,.3,.5], model_used: '79m', degraded: false } : { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4', score: { type: 'cp', value: 20 }, lines: [{ move: 'e2e4', score: { type: 'cp', value: 20 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: 0 }, depth: 12 }] } });
-  await page.locator('#analysis-first').click();
-  await expect(lines(page)).toHaveCount(3);
-  expect(held).toHaveLength(2);
-  await expect(page.getByRole('button', { name: 'Analyze entire game' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  await expect(page.locator('.tab-action').getByRole('status')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cancel analysis' })).toHaveCount(0);
 });
 for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900 }, { width: 360, height: 800 }, { width: 390, height: 844 }]) {
   test(`review geometry, arrows and balance ${viewport.width}x${viewport.height}`, async ({ page }, info) => {

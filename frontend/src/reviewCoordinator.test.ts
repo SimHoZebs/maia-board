@@ -33,12 +33,12 @@ it('keys include full history, initial position, ratings and model', () => {
   expect(reviewKey('sf', nodes[0], settings)).toBe(reviewKey('sf', nodes[0], { ...settings, eloMaia: 1700 }));
   expect(reviewKey('sf', nodes[0], settings)).not.toBe(reviewKey('sf', nodes[1], settings));
 });
-it('runs a lazy batch to completion and keeps successful results after cancellation', async () => {
+it('runs a lazy batch to completion and keeps successful results', async () => {
   const fetcher = vi.fn(async url => Response.json(body(String(url)))) as typeof fetch;
   const coordinator = new ReviewCoordinator(fetcher);
   coordinator.startBatch(nodes, settings); await flush(); await flush();
   expect(coordinator.progress).toMatchObject({ done: 8, total: 8, running: false });
-  coordinator.cancelBatch(); expect(coordinator.result('sf', nodes[2], settings)?.depth).toBe(12);
+  expect(coordinator.result('sf', nodes[2], settings)?.depth).toBe(12);
 });
 it('synthesizes terminal draws from full history and never asks Maia', async () => {
   const terminal = loadLine('', '1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. Ng1 Ng8');
@@ -60,7 +60,7 @@ it('bounds busy retries and requires explicit retry after failure', async () => 
     expect(coordinator.error('sf', nodes[0], settings)).toBe('Busy'); coordinator.suspend();
   } finally { vi.useRealTimers(); }
 });
-it('prioritizes interactive navigation over the next batch node and cancels the remaining snapshot', async () => {
+it('prioritizes interactive navigation over the next batch node and suspends the remaining snapshot', async () => {
   const requests: string[] = [], releases: (() => void)[] = [];
   const fetcher = vi.fn(async (url, init) => {
     if (!init?.body) return Response.json({ code: 'not_found', message: 'missing' }, { status: 404 });
@@ -73,9 +73,9 @@ it('prioritizes interactive navigation over the next batch node and cancels the 
   coordinator.foregroundAt([nodes[3], nodes[2]], settings);
   releases.splice(0).forEach(resolve => resolve()); await flush();
   expect(requests.slice(2)).toEqual(['/evaluate:3', '/move:3']);
-  coordinator.cancelBatch(); coordinator.clearForeground();
+  coordinator.suspend();
   releases.splice(0).forEach(resolve => resolve()); await flush();
-  expect(requests).toHaveLength(4); expect(coordinator.progress?.canceled).toBe(true);
+  expect(requests).toHaveLength(4); expect(coordinator.progress).toBeNull();
   // The interrupted batch node was preempted, not completed: its partial work
   // is discarded while the navigated-to position keeps its results.
   expect(coordinator.result('sf', nodes[0], settings)).toBeUndefined();

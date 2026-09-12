@@ -9,9 +9,27 @@ export function Rating({ value, onChange, id = 'elo-maia', label = 'Maia rating'
   if (inline) return select;
   return <label className="field"><span>{label}</span>{select}</label>;
 }
-export function downloadPgn(pgn: string, filename: string) {
-  const url = URL.createObjectURL(new Blob([pgn], { type: 'application/x-chess-pgn' }));
-  const link = document.createElement('a');
-  link.href = url; link.download = filename; link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Clipboard API unavailable or denied: fall through to execCommand,
+    // which remains the path for insecure LAN origins.
+  }
+  try {
+    const field = document.createElement('textarea');
+    try {
+      field.value = text;
+      document.body.appendChild(field);
+      field.select();
+      return document.execCommand('copy');
+    } finally {
+      field.remove();
+    }
+  } catch {
+    return false;
+  }
 }

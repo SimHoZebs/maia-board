@@ -20,8 +20,8 @@ export function analysisPath(analysis: Pick<Analysis, 'initialFen' | 'moves'>): 
 
 // Bare `/analyze` (no params) yields undefined: keep current/snapshot state.
 // Present-but-empty (`?moves=`) is a real empty line. Anything invalid also
-// yields undefined so a tampered link falls back to the snapshot or import
-// dialog instead of failing.
+// yields undefined so a tampered link falls back to the snapshot or importer
+// instead of failing.
 export function parseAnalysisSearch(search: string): UrlLine | undefined {
   const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
   if (!params.has('fen') && !params.has('moves')) return undefined;

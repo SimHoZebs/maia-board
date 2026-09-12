@@ -19,8 +19,7 @@ export function SettingsPage({ state, dispatch }: Props) {
   const update = (patch: Partial<typeof settings>) => dispatch({ type: 'stockfish-settings', settings: patch });
   return <section className="engine-settings panel" aria-labelledby="settings-title">
     <p className="settings-eyebrow">ANALYSIS ENGINE</p>
-    <h1 id="settings-title">Stockfish settings</h1>
-    <p className="settings-intro">Choose how much time Stockfish spends exploring each position.</p>
+    <h1 id="settings-title">Stockfish</h1>
     <div className="settings-control">
       <label className="field" htmlFor="stockfish-time">Search time <span>Seconds per position</span>
         <NumberSetting id="stockfish-time" min={0.25} max={30} step={0.25} value={settings.time_ms / 1000} onChange={seconds => update({ time_ms: Math.round(seconds * 1000) })} />
@@ -33,12 +32,12 @@ export function SettingsPage({ state, dispatch }: Props) {
       </label>
       <p>Compare up to five alternatives. More lines share the available search time.</p>
     </div>
-    <details className="advanced-config"><summary>Advanced</summary>
+    <div className="settings-control">
       <label className="field" htmlFor="stockfish-depth">Target depth
         <NumberSetting id="stockfish-depth" min={0} max={40} step={1} value={settings.depth} onChange={depth => update({ depth })} />
       </label>
       <p>Depth counts individual moves by either side. Set 0 for no depth target. Search stops at the time limit even if the target has not been reached.</p>
-    </details>
+    </div>
     <footer className="settings-footer"><span>Saved automatically in this browser</span><Button onClick={() => update(defaultStockfishSettings)}>Reset defaults</Button></footer>
   </section>;
 }
