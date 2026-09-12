@@ -536,33 +536,21 @@ export function MovesPanel({
       {(first + index) % 2 ? "…" : "."}
     </span>
   );
-  const move = (san: string, index: number) => {
-    // Reserve badge width up front: qualities fill in as evaluations settle,
-    // and mounting the badge late would grow the row and push the selected
-    // move out of the centered scroll position.
-    const quality = qualities?.[index];
-    const reviewed = !!quality && quality.label !== "Unreviewed";
-    return (
-      <button
-        ref={ply === index + 1 ? active : undefined}
-        className="move-cell"
-        aria-current={ply === index + 1 ? "step" : undefined}
-        key={index}
-        onClick={() => onView(index + 1)}
-      >
-        {number(index)} {san}{" "}
-        {qualities &&
-          (reviewed ? (
-            <QualityBadge quality={quality} />
-          ) : (
-            <span
-              className="quality quality-placeholder"
-              aria-hidden="true"
-            />
-          ))}
-      </button>
-    );
-  };
+  // Every move reserves its badge box up front through the shared
+  // QualityBadge: qualities fill in as evaluations settle, and mounting the
+  // badge late would shift the row and push the selected move out of view.
+  const move = (san: string, index: number) => (
+    <button
+      ref={ply === index + 1 ? active : undefined}
+      className="move-cell"
+      aria-current={ply === index + 1 ? "step" : undefined}
+      key={index}
+      onClick={() => onView(index + 1)}
+    >
+      {number(index)} {san}{" "}
+      {qualities && <QualityBadge quality={qualities[index]} reserveSpace />}
+    </button>
+  );
   return (
     <section
       className={`notation${analysis ? " analysis-notation" : ""}`}

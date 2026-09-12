@@ -3,8 +3,14 @@ import type { Review } from './useReview';
 import { scoreText, whiteWin, type Quality } from './reviewMetrics';
 import type { ReviewSide } from './reviewSummary';
 
-export function QualityBadge({ quality }: { quality?: Quality }) {
-  if (!quality || quality.label === 'Unreviewed') return null;
+export function QualityBadge({ quality, reserveSpace }: { quality?: Quality; reserveSpace?: boolean }) {
+  if (!quality || quality.label === 'Unreviewed') {
+    // Invisible stand-in using the widest badge text, so the box (width and
+    // baseline) matches a real badge exactly and rows don't shift when
+    // evaluations land. Same component, same classes: one source of truth.
+    if (!reserveSpace) return null;
+    return <span className="quality quality-placeholder" aria-hidden="true">??</span>;
+  }
   const label = quality.label;
   return <span className={`quality quality-${label.toLowerCase()}`} title={`${label}${quality.accuracy == null ? '' : ` · ${quality.accuracy.toFixed(1)}% move accuracy`}`} aria-label={label}>{({ Forced: 'F', Blunder: '??', Mistake: '?', Inaccuracy: '?!', Great: '!', Best: 'B', Good: 'G' })[label]}</span>;
 }
