@@ -179,6 +179,12 @@ export class ReviewCoordinator {
   private cache = { sf: new Lru<Evaluation>(), maia: new Lru<MoveResponse>() };
   private failures = new Map<string, string>();
   private foreground: Record<Engine, Job[]> = { sf: [], maia: [] };
+  // FIFO queue for play-mode Stockfish move feedback. Unlike foreground
+  // replacement (LIFO, preemptive: right for analysis scrubbing, where only
+  // the viewed position matters), every committed user ply needs an eventual
+  // evaluation, so playing faster than one eval must enqueue rather than
+  // supersede. Served in ply order after the foreground, before the batch.
+  private playQueue: Job[] = [];
   private running: Partial<Record<Engine, Job>> = {};
   private startedAt: Partial<Record<Engine, number>> = {};
   private controllers: Partial<Record<Engine, AbortController>> = {};
@@ -252,7 +258,33 @@ export class ReviewCoordinator {
     for (const node of nodes) this.failures.delete(reviewKey('sf', node, resolveSettings(settings, node)));
     this.foregroundSfOnly(nodes, settings);
   }
-  suspend() { this.active = false; this.clearForeground(); this.batch = null; this.emit(); }
+  // Reconcile the play queue with the current line in ply order: drop queued
+  // (never running) jobs the line no longer needs — takebacks, new games,
+  // Stockfish policy changes — and append missing ones. Past failures for
+  // still-desired positions are cleared so the next sync retries them instead
+  // of leaving a permanent hole in the move list. Never aborts: the running
+  // job is cheaper to finish (~750ms) than to discard and starve.
+  syncPlayQueue(nodes: ReviewNode[], settings: SettingsInput) {
+    this.active = true;
+    this.foreground.maia = [];
+    const desired = new Map<string, Job>();
+    for (const node of nodes) {
+      const job = this.job('sf', node, resolveSettings(settings, node));
+      if (job && !desired.has(job.key)) desired.set(job.key, job);
+    }
+    for (const key of desired.keys()) this.failures.delete(key);
+    this.playQueue = this.playQueue.filter(queued => desired.has(queued.key) && !this.finished(queued));
+    for (const job of desired.values()) {
+      if (this.finished(job)) continue;
+      if (this.running.sf?.key === job.key) continue;
+      if (this.playQueue.some(queued => queued.key === job.key)) continue;
+      this.playQueue.push(job);
+    }
+    this.pump('sf');
+    this.emit();
+  }
+  clearPlayQueue() { this.playQueue = []; }
+  suspend() { this.active = false; this.clearForeground(); this.clearPlayQueue(); this.batch = null; this.emit(); }
   startBatch(nodes: ReviewNode[], settings: SettingsInput) {
     if (nodes.length > 257) return;
     const total = nodes.reduce((count, node) => count + (terminalEvaluation(replay(node.moves, node.initialFen)) ? 0 : 2), 0);
@@ -354,6 +386,16 @@ export class ReviewCoordinator {
   private next(engine: Engine): Job | undefined {
     const foreground = this.foreground[engine].find(job => !this.finished(job));
     if (foreground) return foreground;
+    // Play feedback drains oldest-first. Finished heads (cached while queued,
+    // or failed) are shifted, never executed; an aborted job stays queued and
+    // is retried, mirroring the batch cursor's peek-without-consume rule.
+    if (engine === 'sf') {
+      while (this.playQueue.length) {
+        const head = this.playQueue[0];
+        if (this.finished(head)) { this.playQueue.shift(); continue; }
+        return head;
+      }
+    }
     const batch = this.batch;
     if (!batch) return;
     // Peek without consuming: an aborted or superseded job stays at the cursor
@@ -405,6 +447,9 @@ export class ReviewCoordinator {
       const aborted = signal.aborted;
       delete this.running[engine];
       delete this.startedAt[engine];
+      // Settled queue jobs leave the queue; aborted ones stay for retry. A
+      // pruned-while-running job is already gone, so it is never resurrected.
+      if (!aborted && engine === 'sf') this.playQueue = this.playQueue.filter(queued => queued.key !== job.key);
       if (!aborted && this.inBatch(job)) this.batch!.completed.add(job.key);
       this.pump(engine); this.emit(); this.maybeLogBatchSummary();
     });

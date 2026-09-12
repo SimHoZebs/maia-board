@@ -134,3 +134,98 @@ describe('sf-only foreground', () => {
     expect(urls).not.toContain('/move');
   });
 });
+
+type PlayGate = { resolve: (response: Response) => void; reject: (error: unknown) => void; signal: AbortSignal | null | undefined };
+function playQueueHarness(failFirst = 0) {
+  const calls: { url: string; moves?: number; signal: AbortSignal | null | undefined }[] = [];
+  const gates = new Map<string, PlayGate>();
+  let failures = failFirst;
+  const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    const path = String(url).split('?')[0];
+    const signal = init?.signal ?? null;
+    if (path.startsWith('/evaluations/')) {
+      if (init?.method === 'PUT') return Response.json({ key_hash: 'x', engine: 'sf', created_at: 'now' });
+      return Response.json({ code: 'not_found', message: 'missing' }, { status: 404 });
+    }
+    let moves: number | undefined;
+    try { moves = JSON.parse(init?.body as string).moves.length; } catch { moves = undefined; }
+    calls.push({ url: path, moves, signal });
+    if (failures > 0) { failures--; return Response.json({ message: 'busy' }, { status: 500 }); }
+    return new Promise<Response>((resolve, reject) => {
+      gates.set(path, { resolve, reject, signal });
+      signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+    });
+  }) as unknown as typeof fetch;
+  return { fetcher, calls, gates };
+}
+async function settleEvaluate(harness: ReturnType<typeof playQueueHarness>) {
+  const gate = harness.gates.get('/evaluate');
+  expect(gate, 'no hanging /evaluate call').toBeDefined();
+  harness.gates.delete('/evaluate');
+  gate!.resolve(Response.json(sfBody));
+  await flush(); await flush();
+}
+
+describe('play queue', () => {
+  const settings = { eloMaia: 1600, eloUser: 1600, model: '79m' as const };
+  const line = loadLine('', '1. e4 e5 2. Nf3');
+  const nodes = line.timeline.map(position => ({ ...position, initialFen: line.initialFen }));
+  it('drains every position in ply order when play outruns evaluation', async () => {
+    const harness = playQueueHarness();
+    const coordinator = new ReviewCoordinator(harness.fetcher);
+    // User opens with e4; only its before/after are desired.
+    coordinator.syncPlayQueue(nodes.slice(0, 2), settings);
+    await flush(); await flush();
+    expect(harness.calls.map(call => call.moves)).toEqual([0]);
+    // Maia replies e5 and the user instantly plays Nf3, before the first
+    // eval settles. FIFO keeps the running search and queues the rest.
+    coordinator.syncPlayQueue(nodes.slice(0, 4), settings);
+    await flush();
+    expect(harness.calls.map(call => call.moves)).toEqual([0]);
+    expect(harness.calls[0].signal?.aborted).toBe(false);
+    for (let i = 0; i < 4; i++) await settleEvaluate(harness);
+    expect(harness.calls.map(call => call.moves)).toEqual([0, 1, 2, 3]);
+    for (const node of nodes.slice(0, 4)) {
+      expect(coordinator.result('sf', node, settings)?.depth).toBe(12);
+    }
+    coordinator.suspend();
+  });
+  it('prunes takebacks without aborting the running search', async () => {
+    const harness = playQueueHarness();
+    const coordinator = new ReviewCoordinator(harness.fetcher);
+    coordinator.syncPlayQueue(nodes.slice(0, 4), settings);
+    await flush(); await flush();
+    expect(harness.calls.map(call => call.moves)).toEqual([0]);
+    // Takeback to 1. e4: queued positions 2 and 3 drop, running 0 continues.
+    coordinator.syncPlayQueue(nodes.slice(0, 2), settings);
+    await flush();
+    expect(harness.calls[0].signal?.aborted).toBe(false);
+    await settleEvaluate(harness);
+    await settleEvaluate(harness);
+    await flush();
+    expect(harness.calls.map(call => call.moves)).toEqual([0, 1]);
+    expect(coordinator.result('sf', nodes[1], settings)?.depth).toBe(12);
+    expect(coordinator.result('sf', nodes[2], settings)).toBeUndefined();
+    coordinator.suspend();
+  });
+  it('retries failed positions on the next sync instead of leaving a hole', async () => {
+    const harness = playQueueHarness(1);
+    const coordinator = new ReviewCoordinator(harness.fetcher);
+    coordinator.syncPlayQueue(nodes.slice(0, 2), settings);
+    await flush(); await flush(); await flush();
+    // The failed head leaves the queue while the lane moves on to the next.
+    expect(coordinator.error('sf', nodes[0], settings)).toBeDefined();
+    expect(harness.calls.map(call => call.moves)).toEqual([0, 1]);
+    await settleEvaluate(harness);
+    expect(coordinator.result('sf', nodes[1], settings)?.depth).toBe(12);
+    expect(coordinator.result('sf', nodes[0], settings)).toBeUndefined();
+    // The next sync (e.g. the following move) retries the failed position.
+    coordinator.syncPlayQueue(nodes.slice(0, 2), settings);
+    await flush(); await flush();
+    expect(harness.calls.map(call => call.moves)).toEqual([0, 1, 0]);
+    await settleEvaluate(harness);
+    expect(coordinator.result('sf', nodes[0], settings)?.depth).toBe(12);
+    expect(coordinator.error('sf', nodes[0], settings)).toBeUndefined();
+    coordinator.suspend();
+  });
+});

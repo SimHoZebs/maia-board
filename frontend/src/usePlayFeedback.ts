@@ -46,27 +46,25 @@ export function usePlayFeedback(state: State): PlayFeedback {
   const settings: ReviewSettings = useMemo(() => ({
     eloMaia: state.settings.eloMaia, eloUser: state.settings.eloUser, model: state.settings.model, stockfish: state.stockfish,
   }), [state.settings.eloMaia, state.settings.eloUser, state.settings.model, settingsKey]);
-  const latest = useMemo(() => {
-    const userPly = lastUserPly(moves, state.settings.userColor);
-    if (userPly < 0) return null;
-    return {
-      userPly, played: moves[userPly],
-      beforeNode: nodeFor(moves.slice(0, userPly)),
-      afterNode: nodeFor(moves.slice(0, userPly + 1)),
-      key: feedbackKey(state.play.id, userPly, moves[userPly]),
-    };
-  }, [movesKey, state.play.id, state.settings.userColor]);
-  const rowKey = latest ? `${latest.key}|${settingsKey}` : null;
+  // Every committed user ply needs its before/after pair evaluated, not just
+  // the latest: requesting only the tip aborts the running eval on fast play
+  // and the superseded move never gets an icon. Sync the full line in ply
+  // order into the coordinator's FIFO queue; reconciliation prunes takebacks
+  // and policy changes without ever aborting the running search.
+  const queuedKey = `${state.play.id}|${movesKey}|${state.settings.userColor}|${settingsKey}`;
   useEffect(() => () => coordinator.suspend(), [coordinator]);
   useEffect(() => {
-    if (!active || !latest) {
-      if (!active) coordinator.suspend();
-      else coordinator.clearForeground();
+    if (!active) {
+      coordinator.suspend();
       return;
     }
-    coordinator.foregroundSfOnly([latest.beforeNode, latest.afterNode], settings);
-    return () => coordinator.clearForeground();
-  }, [coordinator, active, rowKey]);
+    const nodes: ReviewNode[] = [];
+    moves.forEach((_, ply) => {
+      if ((ply % 2 === 0) !== (state.settings.userColor === 'white')) return;
+      nodes.push(nodeFor(moves.slice(0, ply)), nodeFor(moves.slice(0, ply + 1)));
+    });
+    coordinator.syncPlayQueue(nodes, settings);
+  }, [coordinator, active, queuedKey, settings]);
   // Read live from the coordinator cache each render (like useReview): the
   // subscription above re-renders as evaluations settle, turning icons on.
   const lookup = (slice: string[]) => coordinator.result('sf', nodeFor(slice), settings);
