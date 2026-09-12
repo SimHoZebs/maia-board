@@ -79,7 +79,7 @@ than python-chess's broader `claim_draw=True`. Automatic fivefold repetition
 and the 75-move rule are also covered by python-chess's outcome check.
 
 `lines` contains up to the requested number of ranked root moves (two for legacy
-requests). `best_move` and `score` come from
+requests), with distinct first moves across ranks. `best_move` and `score` come from
 the first line. Each depth is the engine's actual reported search depth;
 top-level depth is the minimum across returned lines. The helper selects the
 deepest iteration containing exact scores for all requested root lines. It

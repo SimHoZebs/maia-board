@@ -375,6 +375,17 @@ it('rejects empty lines for non-terminal evaluations', async () => {
   const fetcher = (async () => Response.json(bad)) as typeof fetch;
   await expect(fetchEvaluation(nodes[0], new AbortController().signal, fetcher)).rejects.toThrow('incomplete evaluation');
 });
+it('rejects duplicated first moves across ranks', async () => {
+  const { fetchEvaluation } = await import('./reviewCoordinator');
+  // The exact shape the worker once persisted for 2...Nc6 positions: ranks 3
+  // and 4 echo b8c6, marking two rows played and ghosting the list.
+  const line = { move: 'b8c6', score: { type: 'cp', value: -65 }, depth: 12 };
+  const bad = { engine: 'Stockfish 19', search_policy: stockfishPolicy({ time_ms: 750, lines: 4, depth: 0 }), depth: 12, terminal: null,
+    best_move: 'g8f6', score: { type: 'cp', value: -92 },
+    lines: [{ move: 'g8f6', score: { type: 'cp', value: -92 }, depth: 12 }, { move: 'f8c5', score: { type: 'cp', value: -88 }, depth: 12 }, line, { ...line }] };
+  const fetcher = (async () => Response.json(bad)) as typeof fetch;
+  await expect(fetchEvaluation(nodes[0], new AbortController().signal, fetcher, { time_ms: 750, lines: 4, depth: 0 })).rejects.toThrow('incomplete evaluation');
+});
 describe('batch timing traces', () => {
   it('records one live row per job with ply and policy, never double counting', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {});

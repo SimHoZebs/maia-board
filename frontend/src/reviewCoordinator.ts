@@ -103,6 +103,11 @@ export function parseEvaluation(body: unknown, settings?: StockfishSettings): Ev
   } else {
     if (value.lines.length < 1 || value.lines.length > (settings?.lines ?? 2)) throw new Error('Stockfish returned an incomplete evaluation.');
     if (typeof value.best_move !== 'string' || value.best_move !== value.lines[0].move) throw new Error('Stockfish returned an incomplete evaluation.');
+    // Ranks must be distinct moves. A duplicated first move marks two rows
+    // "played" and, through duplicate React keys, strands a stale row in the
+    // list on navigation. Rejecting here turns cached corrupt rows into
+    // misses, so live re-inference overwrites them with clean data.
+    if (new Set(value.lines.map(line => line.move)).size !== value.lines.length) throw new Error('Stockfish returned an incomplete evaluation.');
     if (!value.lines.every(line => typeof line.move === 'string' && isScore(line.score) && Number.isInteger(line.depth) && line.depth >= 1)) throw new Error('Stockfish returned an incomplete evaluation.');
     const depths = value.lines.map(line => line.depth);
     if (value.depth < Math.min(...depths) || value.depth < 1) throw new Error('Stockfish returned an incomplete evaluation.');

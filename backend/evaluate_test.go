@@ -57,6 +57,12 @@ func TestEvaluationHelper(t *testing.T) {
 		_ = json.NewEncoder(os.Stdout).Encode(evaluationResponse{Engine: "Stockfish 19", SearchPolicy: request.Settings.policy(), Terminal: &terminal, Score: evaluationScore{Type: "cp"}, Lines: []evaluationLine{}})
 	case "position_mismatch", "invalid_position", "invalid_fen", "engine_unavailable":
 		_ = json.NewEncoder(os.Stdout).Encode(apiError{mode, "/secret/path"})
+	case "duplicates", "wrongbest":
+		best := "g8f6"
+		if mode == "wrongbest" {
+			best = "f8c5"
+		}
+		fmt.Fprintf(os.Stdout, `{"engine":"Stockfish 19","search_policy":"sf19-n100k-ms750-mpv2-t1-h64-v1","depth":12,"terminal":null,"best_move":"%s","score":{"type":"cp","value":-92},"lines":[{"move":"g8f6","score":{"type":"cp","value":-92},"depth":12},{"move":"g8f6","score":{"type":"cp","value":-92},"depth":12}]}`, best)
 	default:
 		fmt.Print(`{"engine":"Stockfish 19","search_policy":"sf19-n100k-ms750-mpv2-t1-h64-v1","depth":0,"terminal":"draw","best_move":null,"score":{"type":"cp","value":0},"lines":[]}`)
 	}
@@ -89,6 +95,8 @@ func TestEvaluateHTTP(t *testing.T) {
 		{"semantic", valid, "invalid_position", "invalid_position", 400},
 		{"unavailable", valid, "engine_unavailable", "engine_unavailable", 502},
 		{"bad helper", valid, "bad", "engine_unavailable", 502},
+		{"duplicate lines", valid, "duplicates", "engine_unavailable", 502},
+		{"wrong best move", valid, "wrongbest", "engine_unavailable", 502},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &server{evaluator: fakeEvaluator(t, tc.mode)}

@@ -401,7 +401,7 @@ function MoveAnalysis({
                 const isPlayed = candidate.move === played;
                 return (
                   <CandidateRow
-                    key={candidate.move}
+                    key={`${candidate.move}:${index}`}
                     index={index}
                     san={san}
                     metric={`${Math.round(candidate.prob * 100)}%`}
@@ -575,7 +575,7 @@ function StockfishBody({
           const isPlayed = line.move === played;
           return (
             <CandidateRow
-              key={line.move}
+              key={`${line.move}:${index}`}
               index={index}
               san={san}
               metric={scoreValueText(line.score)}

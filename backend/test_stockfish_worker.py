@@ -89,6 +89,30 @@ class StockfishTests(unittest.TestCase):
         self.assertEqual(result["best_move"], "e2e4")
         self.assertEqual([line["move"] for line in result["lines"]], ["e2e4", "d2d4"])
 
+    def test_duplicate_pv_first_moves_repair(self):
+        engine = MagicMock()
+        engine.id = {"name": "Stockfish 19"}
+        def report(depth, rank, move, **extra):
+            return dict(depth=depth, multipv=rank, pv=[chess.Move.from_uci(move)],
+                        score=chess.engine.PovScore(chess.engine.Cp(20), chess.WHITE), **extra)
+        # Deepest complete iteration echoes e2e4 across ranks 1-2: fall back to
+        # the deepest depth with distinct first moves.
+        engine.analysis.return_value.__enter__.return_value = [
+            report(4, 1, "e2e4"), report(4, 2, "d2d4"),
+            report(5, 1, "e2e4"), report(5, 2, "e2e4")]
+        with patch("chess.engine.SimpleEngine.popen_uci", return_value=engine):
+            result = evaluate({"fen": chess.STARTING_FEN}, "/unused")
+        self.assertEqual(result["depth"], 4)
+        self.assertEqual(result["best_move"], "e2e4")
+        self.assertEqual([line["move"] for line in result["lines"]], ["e2e4", "d2d4"])
+        # Every complete iteration duplicated: drop repeats, best still first.
+        engine.analysis.return_value.__enter__.return_value = [
+            report(4, 1, "e2e4"), report(4, 2, "e2e4")]
+        with patch("chess.engine.SimpleEngine.popen_uci", return_value=engine):
+            result = evaluate({"fen": chess.STARTING_FEN}, "/unused")
+        self.assertEqual(result["best_move"], "e2e4")
+        self.assertEqual([line["move"] for line in result["lines"]], ["e2e4"])
+
     def test_mates_and_terminal_without_engine(self):
         for fen, winner in [("7k/5Q2/6K1/8/8/8/8/8 w - - 0 1", "white"),
                             ("8/8/8/8/8/6k1/5q2/7K b - - 0 1", "black")]:

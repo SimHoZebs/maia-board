@@ -117,8 +117,31 @@ def evaluate(request, binary):
         complete = [depth for depth, lines in iterations.items() if len(lines) == count]
         if not complete:
             raise RuntimeError("no complete exact engine result")
-        lines = iterations[max(complete)]
-        result["lines"] = [lines[rank] for rank in range(1, count + 1)]
+        # Ranks must show distinct first moves. Transient reports can echo one
+        # rank's PV into another at the same depth; keeping those duplicates
+        # marks two rows "played" downstream and corrupts keyed list
+        # reconciliation on navigation. Prefer the deepest depth with a full
+        # distinct set.
+        deepest = max(complete)
+        lines = None
+        for depth in sorted(complete, reverse=True):
+            ranked = [iterations[depth][rank] for rank in range(1, count + 1)]
+            if len({line["move"] for line in ranked}) == count:
+                lines = ranked
+                break
+        if lines is None:
+            # Every complete iteration reused a move across ranks: keep the
+            # deepest depth's ranks in order, dropping repeats. Rank 1 always
+            # survives, so best_move still leads.
+            seen = set()
+            lines = []
+            for rank in range(1, count + 1):
+                line = iterations[deepest][rank]
+                if line["move"] in seen:
+                    continue
+                seen.add(line["move"])
+                lines.append(line)
+        result["lines"] = lines
         result.update(best_move=result["lines"][0]["move"], score=result["lines"][0]["score"],
                       depth=min(line["depth"] for line in result["lines"]))
         report_timing(request, policy, multipv, started, spawn_ms, search_ms, result["depth"], count)

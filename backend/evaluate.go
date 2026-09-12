@@ -218,6 +218,26 @@ func (e *Evaluator) run(parent context.Context, request evaluationRequest) (*eva
 	if result.Engine != "Stockfish 19" || result.SearchPolicy != request.Settings.policy() || result.Lines == nil {
 		return nil, errors.New("invalid worker response")
 	}
+	// Ranks must be distinct moves with the best move leading: a duplicated
+	// first move marks two rows "played" downstream and corrupts keyed list
+	// reconciliation on navigation. Reject loudly so the evaluation fails
+	// into retry instead of rendering corrupt rows.
+	seen := make(map[string]struct{}, len(result.Lines))
+	for _, line := range result.Lines {
+		if line.Move == "" {
+			return nil, errors.New("invalid worker response")
+		}
+		if _, dup := seen[line.Move]; dup {
+			return nil, errors.New("invalid worker response")
+		}
+		seen[line.Move] = struct{}{}
+	}
+	if len(result.Lines) > 0 && (result.BestMove == nil || *result.BestMove != result.Lines[0].Move) {
+		return nil, errors.New("invalid worker response")
+	}
+	if result.Terminal == nil && len(result.Lines) == 0 {
+		return nil, errors.New("invalid worker response")
+	}
 	return &result, nil
 }
 
