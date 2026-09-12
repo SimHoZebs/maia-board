@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Chess } from 'chess.js';
 import { applyUci, replay, START_FEN } from './domain';
-import { ReviewCoordinator, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
+import { ReviewCoordinator, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
 import { reviewMove, type Evaluation, type Quality } from './reviewMetrics';
 import type { State } from './state';
 
@@ -39,8 +39,12 @@ export type PlayFeedback = {
 
 export function usePlayFeedback(state: State): PlayFeedback {
   const [coordinator] = useState(() => new ReviewCoordinator());
-  useSyncExternalStore(coordinator.subscribe, coordinator.snapshot, coordinator.snapshot);
   const active = state.mode === 'play' && state.started && state.feedback;
+  // The inactive coordinator is suspended with nothing displayed from it, so
+  // don't subscribe: analysis-side settles must not re-render the play tree
+  // (and vice versa in useReview). Resubscribing on activation re-reads the
+  // snapshot, so no update is missed across the switch.
+  useSyncExternalStore(active ? coordinator.subscribe : subscribeNone, coordinator.snapshot, coordinator.snapshot);
   const moves = state.play.moves;
   const movesKey = JSON.stringify(moves);
   const settingsKey = JSON.stringify(state.stockfish);

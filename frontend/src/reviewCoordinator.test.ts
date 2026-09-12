@@ -29,6 +29,19 @@ it('deduplicates in-flight requests and coalesces stale foreground positions', a
   expect(requests.at(-1)).toBe('/evaluate:2');
   coordinator.suspend(); releases.splice(0).forEach(resolve => resolve()); await flush();
 });
+it('coalesces synchronous emits into one subscriber notification', async () => {
+  const fetcher = vi.fn(() => new Promise<Response>(() => {})) as unknown as typeof fetch;
+  const coordinator = new ReviewCoordinator(fetcher);
+  const calls = vi.fn();
+  coordinator.subscribe(calls);
+  coordinator.startBatch(nodes, settings);
+  coordinator.suspend();
+  coordinator.retry();
+  expect(calls).not.toHaveBeenCalled();
+  await flush();
+  expect(calls).toHaveBeenCalledTimes(1);
+  expect(coordinator.snapshot()).toBe(1);
+});
 it('keys include full history, initial position, ratings and model', () => {
   expect(reviewKey('maia', nodes[0], settings)).not.toBe(reviewKey('maia', nodes[0], { ...settings, eloMaia: 1700 }));
   expect(reviewKey('sf', nodes[0], settings)).toBe(reviewKey('sf', nodes[0], { ...settings, eloMaia: 1700 }));

@@ -173,6 +173,13 @@ export async function fetchEvaluation(node: ReviewNode, signal: AbortSignal, fet
   }
   return parseEvaluation(body, settings);
 }
+// No-op subscription for hooks whose coordinator is inactive (suspended with
+// nothing displayed from it): cross-engine settles must not re-render the
+// other mode's tree. Resubscribing on activation re-reads the snapshot, so no
+// update is missed across the switch.
+export function subscribeNone(): () => void {
+  return () => undefined;
+}
 // Each lane has one in-flight job. Foreground replacement coalesces scrubbing;
 // batch work is pulled one node at a time only when the foreground is empty.
 export class ReviewCoordinator {
@@ -203,8 +210,21 @@ export class ReviewCoordinator {
   version = 0;
   constructor(private fetcher: typeof fetch = (input, init) => fetch(input, init)) {}
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
-  snapshot = () => this.version;
-  private emit() { this.version++; this.listeners.forEach(listener => listener()); }
+  snapshot = () => this.version;  // One notification per microtask, not per state change: a batch drain
+  // settles dozens of jobs in one task, and every settle previously
+  // re-rendered the whole App. Listeners still observe every change, only
+  // batched — progress and icons land a frame later at most. Late
+  // subscribers are still notified: the flush iterates the live set.
+  private emitScheduled = false;
+  private emit() {
+    if (this.emitScheduled) return;
+    this.emitScheduled = true;
+    void Promise.resolve().then(() => {
+      this.emitScheduled = false;
+      this.version++;
+      [...this.listeners].forEach(listener => listener());
+    });
+  }
   result<E extends Engine>(engine: E, node: ReviewNode, settings: ReviewSettings): (E extends 'sf' ? Evaluation : MoveResponse) | undefined {
     return this.cache[engine].peek(reviewKey(engine, node, settings)) as (E extends 'sf' ? Evaluation : MoveResponse) | undefined;
   }

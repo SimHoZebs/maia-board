@@ -3,7 +3,7 @@ import { Chess } from 'chess.js';
 import { analysisLength, analysisLine, applyUci, positionOf, replay } from './domain';
 import type { MaiaModel } from './api';
 import type { State } from './state';
-import { ReviewCoordinator, type ReviewNode } from './reviewCoordinator';
+import { ReviewCoordinator, subscribeNone, type ReviewNode } from './reviewCoordinator';
 import { maiaRarity, reviewMove, terminalEvaluation } from './reviewMetrics';
 import { getAnalysisRecords, isFreshRecord, lineHash, putAnalysisRecord, type AnalysisRecord, type RecordSettings } from './analysisRecords';
 
@@ -57,8 +57,12 @@ export function isMaiaPosition(node: Pick<ReviewNode, 'fen' | 'moves' | 'initial
 
 export function useReview(state: State) {
   const [coordinator] = useState(() => new ReviewCoordinator());
-  useSyncExternalStore(coordinator.subscribe, coordinator.snapshot, coordinator.snapshot);
   const active = state.mode === 'analysis' && state.analysisLoaded;
+  // Unsubscribed while inactive (see subscribeNone): the suspended analysis
+  // coordinator's settles must not re-render the play tree. Index-independent
+  // memos below still read the cache synchronously during render, so nothing
+  // displayed goes stale; resubscribing on activation re-reads the snapshot.
+  useSyncExternalStore(active ? coordinator.subscribe : subscribeNone, coordinator.snapshot, coordinator.snapshot);
   const line = analysisLine(state.analysis, analysisLength(state.analysis));
   const lineKey = JSON.stringify([line.initialFen, line.moves]);
   const settingsKey = JSON.stringify([state.analysisSettings.eloMaia, state.analysisSettings.model, state.stockfish]);
