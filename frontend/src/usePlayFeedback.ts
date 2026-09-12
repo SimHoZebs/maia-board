@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { replay, START_FEN } from './domain';
+import { Chess } from 'chess.js';
+import { applyUci, replay, START_FEN } from './domain';
 import { ReviewCoordinator, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
 import { reviewMove, type Evaluation, type Quality } from './reviewMetrics';
 import type { State } from './state';
@@ -65,11 +66,37 @@ export function usePlayFeedback(state: State): PlayFeedback {
     });
     coordinator.syncPlayQueue(nodes, settings);
   }, [coordinator, active, queuedKey, settings]);
-  // Read live from the coordinator cache each render (like useReview): the
-  // subscription above re-renders as evaluations settle, turning icons on.
-  const lookup = (slice: string[]) => coordinator.result('sf', nodeFor(slice), settings);
-  const qualities = active
-    ? moves.map((_, ply) => qualityAtPly(moves, ply, state.settings.userColor, lookup))
-    : [];
+  // Read live from the coordinator cache as evaluations settle (the
+  // subscription above re-renders, turning icons on). One incremental pass,
+  // memoized: the game is replayed once with every prefix position captured,
+  // instead of replaying from move 0 separately per ply per render
+  // (quadratic in game length). Recomputes only when the moves, settings,
+  // user color, or cache contents change; unrelated renders reuse it.
+  const userColor = state.settings.userColor;
+  const cacheVersion = coordinator.snapshot();
+  const qualities = useMemo(() => {
+    if (!active) return [];
+    const game = new Chess(START_FEN);
+    const prefixes: string[][] = [[]];
+    const fens: string[] = [game.fen()];
+    for (const uci of moves) {
+      try {
+        applyUci(game, uci);
+      } catch {
+        break;
+      }
+      prefixes.push(moves.slice(0, prefixes.length));
+      fens.push(game.fen());
+    }
+    const valid = fens.length - 1;
+    const node = (ply: number): ReviewNode => ({ initialFen: START_FEN, moves: prefixes[ply], fen: fens[ply] });
+    return moves.map((_, ply) => {
+      if ((ply % 2 === 0) !== (userColor === 'white') || ply >= valid) return undefined;
+      const before = coordinator.result('sf', node(ply), settings);
+      const after = coordinator.result('sf', node(ply + 1), settings);
+      if (!before || !after) return undefined;
+      return reviewMove(before, after, new Chess(fens[ply]), moves[ply]);
+    });
+  }, [active, moves, settings, userColor, cacheVersion, coordinator]);
   return { active, qualities };
 }
