@@ -746,7 +746,7 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
   test(`workspace geometry and horizontal notation ${viewport.width}x${viewport.height}`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport);
     const long = Array.from({ length: 18 }, () => ['g1f3', 'g8f6', 'f3g1', 'f6g8']).flat();
-    await boot(page, { [KEYS.current]: record(long) });
+    await boot(page, { [KEYS.current]: record(long), [KEYS.bottomNav]: true });
     const board = await page.locator('#board').boundingBox();
     expect(board!.width).toBeGreaterThan(viewport.width < 760 ? 300 : 380);
     expect(Math.abs(board!.width - board!.height)).toBeLessThan(1);
@@ -798,7 +798,7 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
 for (const width of [320, 390]) {
   test(`compact analysis variation notation at ${width}px`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: 844 });
-    await boot(page, {}, false, '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6');
+    await boot(page, { [KEYS.bottomNav]: true }, false, '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6');
     await page.locator('#analysis-first').click();
     await page.locator('#analysis-next').click();
     await move(page, 'c7', 'c5');
@@ -855,7 +855,7 @@ for (const width of [320, 390]) {
 for (const originPly of [0, 9, 12]) {
   test(`variation is inserted at its origin ply ${originPly}`, async ({ page }, info) => {
     await page.setViewportSize({ width: 320, height: 844 });
-    await boot(page, {}, false, '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6,b5a4,g8f6,e1g1,f8e7,f1e1,b7b5');
+    await boot(page, { [KEYS.bottomNav]: true }, false, '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6,b5a4,g8f6,e1g1,f8e7,f1e1,b7b5');
     await page.locator('#analysis-first').click();
     for (let index = 0; index < originPly; index++) await page.locator('#analysis-next').click();
     await move(page, originPly === 9 ? 'd7' : 'd2', originPly === 9 ? 'd6' : 'd4');
@@ -906,7 +906,7 @@ test('tapping an original move after the branch exits the branch', async ({ page
 
 test('analysis keeps one scrolling main row and adds height only for a branch', async ({ page }, info) => {
   await page.setViewportSize({ width: 320, height: 844 });
-  await boot(page, {}, false, '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6,b5a4,g8f6,e1g1,f8e7,f1e1,b7b5');
+  await boot(page, { [KEYS.bottomNav]: true }, false, '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6,b5a4,g8f6,e1g1,f8e7,f1e1,b7b5');
   const list = page.locator('#move-list');
   const height = await list.evaluate(el => el.clientHeight);
   expect(height).toBe(40);
@@ -936,6 +936,26 @@ test('analysis keeps one scrolling main row and adds height only for a branch', 
   await page.screenshot({ path: info.outputPath('horizontal-variation.png'), fullPage: true });
   await page.locator('#return-original').click();
   expect(await list.evaluate(el => el.clientHeight)).toBe(height);
+});
+
+test('default layout keeps tools in the move row and branches downward', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await boot(page);
+  // Original layout: no toolbar above the board; flip shares the move row.
+  await expect(page.locator('.board-toolbar')).toHaveCount(0);
+  await expect(page.locator('.move-navigation .board-actions #flip-board')).toBeVisible();
+  const row = await page.locator('.move-navigation button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { y: r.y, width: r.width, height: r.height }; }));
+  for (const box of row) { expect(box.y).toBe(row[0].y); expect(box.width).toBe(40); expect(box.height).toBe(40); }
+  await page.goto('http://maia.test/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6');
+  await page.locator('#analysis-first').click();
+  await page.locator('#analysis-next').click();
+  await move(page, 'c7', 'c5');
+  const variation = page.getByLabel('Explored variation', { exact: true });
+  await expect(variation).toBeVisible();
+  const origin = (await page.locator('.branch-point > button').boundingBox())!;
+  const branch = (await variation.boundingBox())!;
+  expect(branch.y).toBeGreaterThanOrEqual(origin.y + origin.height);
+  await expect(page.locator('.move-navigation .board-actions #flip-board')).toBeVisible();
 });
 
 test('complete game navigation keeps board size stable', async ({ page }) => {

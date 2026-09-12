@@ -37,6 +37,17 @@ describe('feedback setting', () => {
   });
 });
 
+describe('bottom navigation setting', () => {
+  it('defaults off and round-trips through storage', () => {
+    expect(initialState().bottomNav).toBe(false);
+    const on = reducer(initialState(), { type: 'bottom-nav', enabled: true });
+    expect(on.bottomNav).toBe(true);
+    expect(reducer(on, { type: 'bottom-nav', enabled: true })).toBe(on);
+    localStorage.setItem(KEYS.bottomNav, JSON.stringify(true));
+    expect(initialState().bottomNav).toBe(true);
+  });
+});
+
 describe('badge loading setting', () => {
   it('defaults to the reel and round-trips through storage', () => {
     expect(initialState().badgeLoading).toBe('reel');

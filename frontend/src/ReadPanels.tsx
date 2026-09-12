@@ -36,6 +36,7 @@ import {
   Check,
   Trash2,
   CornerUpRight,
+  CornerDownRight,
 } from "lucide-react";
 import { Chess } from "chess.js";
 import { BoardThumbnail } from "./BoardThumbnail";
@@ -639,6 +640,8 @@ export function MovesPanel({
   analysis = false,
   badgeLoading = 'reel',
   original,
+  tools,
+  branchUp = false,
 }: {
   sans: string[];
   ply: number;
@@ -650,6 +653,8 @@ export function MovesPanel({
   analysis?: boolean;
   badgeLoading?: BadgeLoading;
   original?: { sans: string[]; fromPly: number };
+  tools?: ReactNode;
+  branchUp?: boolean;
 }) {
   const active = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -714,11 +719,19 @@ export function MovesPanel({
               {original.fromPly > 0 &&
                 move(original.sans[original.fromPly - 1], original.fromPly - 1)}
               <div className="variation-line" aria-label="Explored variation">
-                <CornerUpRight
-                  className="branch-connector"
-                  size={14}
-                  aria-hidden="true"
-                />
+                {branchUp ? (
+                  <CornerUpRight
+                    className="branch-connector"
+                    size={14}
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <CornerDownRight
+                    className="branch-connector"
+                    size={14}
+                    aria-hidden="true"
+                  />
+                )}
                 {sans
                   .slice(original.fromPly)
                   .map((san, index) => move(san, original.fromPly + index))}
@@ -741,6 +754,7 @@ export function MovesPanel({
         )}
       </div>
       <div className="move-navigation">
+        {tools && <div className="board-actions">{tools}</div>}
         <div className="nav-buttons">
           {[
             { id: "first", label: "First position", Icon: SkipBack, to: 0 },

@@ -72,5 +72,9 @@ export function SettingsPage({ state, dispatch }: Props) {
         ))}
       </div>
     </div>
+    <div className="settings-control">
+      <label className="settings-check" htmlFor="bottom-nav"><input id="bottom-nav" type="checkbox" checked={state.bottomNav} onChange={event => dispatch({ type: 'bottom-nav', enabled: event.target.checked })} /> Bottom navigation</label>
+      <p>On phones, pin the move list and navigation to the bottom of the screen, move the board tools above the board, and grow explored branches upward. Off by default.</p>
+    </div>
   </section>;
 }
