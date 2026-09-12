@@ -57,7 +57,7 @@ p { line-height: 1.5; color: var(--muted); }
 .branch-connector { flex: none; color: var(--muted); }
 .move-navigation { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .nav-buttons { display: flex; gap: 2px; }
-.nav-buttons button, .board-actions button { width: 32px; height: 32px; min-height: 32px; min-width: 32px; display: inline-flex; align-items: center; justify-content: center; padding: 4px; border-color: transparent; background: transparent; }
+.nav-buttons button, .board-actions button { width: 40px; height: 40px; min-height: 40px; min-width: 40px; display: inline-flex; align-items: center; justify-content: center; padding: 4px; border-color: transparent; background: transparent; }
 #analysis-index { display: block; text-align: right; margin-top: 2px; color: var(--muted); font-size: 10px; white-space: nowrap; }
 .board-actions { display: flex; gap: 2px; }
 #new-game { margin-left: auto; }

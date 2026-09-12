@@ -691,7 +691,7 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     const toolbarBoxes = await page.locator('.board-actions button, .nav-buttons button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height, top: r.top }; }));
     for (const box of toolbarBoxes) {
-      expect(box.width).toBe(32); expect(box.height).toBe(32);
+      expect(box.width).toBe(40); expect(box.height).toBe(40);
       expect(box.top).toBe(toolbarBoxes[0].top);
     }
     const list = page.locator('#move-list');
@@ -745,7 +745,7 @@ for (const width of [320, 390]) {
     expect(branch.x).toBeGreaterThan(origin.x);
     expect(continuation.y).toBe(origin.y);
     const toolbar = await page.locator('.move-navigation button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { y: r.y, width: r.width, height: r.height }; }));
-    for (const box of toolbar) { expect(box.y).toBe(toolbar[0].y); expect(box.width).toBe(32); expect(box.height).toBe(32); }
+    for (const box of toolbar) { expect(box.y).toBe(toolbar[0].y); expect(box.width).toBe(40); expect(box.height).toBe(40); }
     await expect(page.locator('#insight-title #analysis-rating')).toBeVisible();
     await expect(page.locator('#analysis-rating')).toHaveAccessibleName('Maia rating');
     await expect(page.locator('.insight-panel summary')).toHaveCount(0);
