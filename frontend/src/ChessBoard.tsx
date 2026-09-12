@@ -21,6 +21,13 @@ export function ChessBoard({ position, orientation, enabled, thinking, interacti
     const ground = Chessground(container.current!, {
       addDimensionsCssVarsTo: container.current!.closest<HTMLElement>('.board-frame') ?? undefined,
       viewOnly: false, coordinates: true, animation: { enabled: true, duration: 220 },
+      // Hold-and-drag (press, hold, move, release) shares the board with
+      // tap-tap: draggable stays enabled for the press path while selectable
+      // keeps the tap path. blockTouchScroll keeps a touch drag on the piece
+      // instead of scrolling the page.
+      blockTouchScroll: true,
+      draggable: { enabled: true, distance: 4, autoDistance: true, showGhost: true },
+      selectable: { enabled: true },
       premovable: { enabled: false },
       movable: { free: false, rookCastle: false },
       drawable: { brushes: reviewBrushes },

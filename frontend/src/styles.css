@@ -36,6 +36,10 @@ p { line-height: 1.5; color: var(--muted); }
 .board-frame { width: 100%; aspect-ratio: 1; }
 .board, .cg-wrap { width: 100%; height: 100%; }
 .board { overflow: hidden; }
+/* Hold-and-drag owns the touch gesture while on the board: without this the
+   browser may steal a touch drag as a page scroll instead of a piece move. */
+#board cg-board { touch-action: none; }
+#board cg-board piece.dragging { cursor: grabbing; }
 .cg-wrap coords { font-family: inherit; font-size: 11px; font-weight: 700; }
 .player-strip { height: 32px; display: flex; align-items: center; gap: 9px; font-size: 14px; }
 .player-strip strong { font-weight: 600; }

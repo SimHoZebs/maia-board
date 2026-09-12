@@ -335,6 +335,20 @@ for (const color of ['white', 'black'] as const) for (const drag of [false, true
   });
 }
 
+for (const drag of [false, true]) {
+  test(`invalid ${drag ? 'drag' : 'click'} snaps back to the original square`, async ({ page }) => {
+    const app = await boot(page);
+    // e2-e5 is not a legal pawn move: the piece must end up back on e2,
+    // no Maia request may fire, and no move may persist.
+    await move(page, 'e2', 'e5', drag);
+    await piece(page, 'e2', 'white pawn');
+    await piece(page, 'e5', null);
+    expect(app.requests).toHaveLength(0);
+    expect(await currentMoves(page)).toEqual([]);
+    expect(app.errors).toEqual([]);
+  });
+}
+
 const special = {
   castle: { white: ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4', 'f8c5', 'd2d3', 'g8f6'], black: ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4', 'f8c5', 'd2d3', 'g8f6', 'e1g1'] },
   ep: { white: ['e2e4', 'a7a6', 'e4e5', 'd7d5'], black: ['a2a3', 'e7e5', 'a3a4', 'e5e4', 'd2d4'] },
