@@ -852,6 +852,25 @@ test('analysis keeps one scrolling main row and adds height only for a branch', 
   expect(await list.evaluate(el => el.clientHeight)).toBe(height);
 });
 
+test('complete game navigation keeps board size stable', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const mate = record(['f2f3', 'e7e5', 'g2g4', 'd8h4'], 'white', 'mate');
+  await boot(page, { [KEYS.current]: mate, [KEYS.saved]: [mate] });
+  await expect(page.locator('.game-result')).toBeVisible();
+  const size = () => page.locator('#board').evaluate(el => {
+    const r = el.getBoundingClientRect();
+    return { width: r.width, height: r.height };
+  });
+  const tip = await size();
+  await page.locator('#analysis-prev').click();
+  await expect(page.getByRole('button', { name: 'Return to game' })).toBeVisible();
+  expect(await size()).toEqual(tip);
+  await page.locator('#analysis-first').click();
+  expect(await size()).toEqual(tip);
+  await page.locator('#analysis-last').click();
+  expect(await size()).toEqual(tip);
+});
+
 test('phone touch movement and board exploration', async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   const page = await context.newPage();

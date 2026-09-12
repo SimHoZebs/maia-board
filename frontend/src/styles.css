@@ -30,9 +30,6 @@ p { line-height: 1.5; color: var(--muted); }
 .site-header .header-action:hover { background: #3b3d3d; }
 @media (max-width: 480px) { .site-header .brand { display: none; } .site-header nav { min-width: 0; } }
 .workspace { --board-size: min(100%, calc(100dvh - 286px), 680px); display: grid; justify-content: center; grid-template-columns: minmax(0, var(--board-size)); gap: 28px; }
-.workspace.historical { --board-size: min(100%, calc(100dvh - 336px), 680px); }
-.workspace.finished { --board-size: min(100%, calc(100dvh - 366px), 680px); }
-.workspace.finished.historical { --board-size: min(100%, calc(100dvh - 416px), 680px); }
 .workspace.analyzing { --board-size: min(calc(100vw - 518px), calc(100dvh - 346px), 680px); grid-template-columns: minmax(0, var(--board-size)) 400px; }
 .board-stage { min-width: 0; }
 .board-frame { width: 100%; aspect-ratio: 1; }
