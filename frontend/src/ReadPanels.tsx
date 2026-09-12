@@ -380,11 +380,7 @@ function MoveAnalysis({
           </>
         }
       >
-        {review.maiaLocked ? (
-          <p role="note">
-            Maia&apos;s move at the game Elo{review.gameElo ? ` (${review.gameElo})` : ""} · view one of your moves to adjust the analysis rating.
-          </p>
-        ) : review.maiaStale ? (
+        {review.maiaStale && (
           <p role="status">
             Showing Maia {review.maiaElo}
             {review.maiaModel !== review.maiaWantedModel
@@ -396,7 +392,7 @@ function MoveAnalysis({
               : ""}
             …
           </p>
-        ) : null}
+        )}
         {response && insight ? (
           <div id="insight-content">
             <CandidateList>
