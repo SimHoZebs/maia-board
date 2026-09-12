@@ -198,6 +198,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .chart-point span { position: absolute; bottom: 4px; left: 0; right: 0; font-size: 10px; color: var(--muted); }
 .quality { display: inline-flex; min-width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 4px; background: #454746; color: #eee !important; font-size: 11px; font-weight: 750; }
 .quality-blunder { background: #a63c3c; }.quality-mistake { background: #985920; }.quality-inaccuracy { background: #7c691e; }.quality-great { background: #286b89; }.quality-best, .quality-good { background: #496336; }
+.quality-placeholder { visibility: hidden; background: transparent; }
 .source-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }.source-maia { background: #ef4444; }.source-stockfish { background: #3b82f6; }.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }.win-hero { display: flex; align-items: baseline; gap: 8px; margin: 8px 0 2px; }.win-hero strong { font-size: 21px; font-weight: 750; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }.win-hero span { font-size: 12px; color: var(--muted); }
 .insight-panel section[aria-label="Maia analysis"] h2, .insight-panel section[aria-label="Stockfish evaluation"] h2 { font-size: 14px; }
 @media (max-width: 760px) { .insight-panel { max-height: none; overflow: visible; }.side-options { gap: 5px; }.side-options label { padding: 0 8px; font-size: 13px; } }
