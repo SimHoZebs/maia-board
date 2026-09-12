@@ -125,6 +125,31 @@ Operator configuration: `PYTHON` (default `python3`), `STOCKFISH_WORKER`
 (default `/app/stockfish_worker.py`), and `STOCKFISH_BINARY`
 (default `/app/stockfish`).
 
+## Timing traces
+
+No metrics endpoint exists; diagnosis uses three log streams, all keyed by
+plies (the in-game position index, the x-axis for second-half cliffs):
+
+- Server log, one line per request: `evaluate status=… plies=… policy=…
+  duration_ms=… depth=… lines=…` and `move status=… plies=… model=…
+  degraded=… duration_ms=…`. Read with `docker logs` (Komodo keeps them).
+- Worker lines in the same server log: `stockfish_timing outcome=ok
+  policy=… multipv=… plies=… total_ms=… spawn_ms=… search_ms=… depth=…
+  lines=…`, plus `outcome=error` with `total_ms` on failures. They split
+  each evaluation into process-spawn vs actual search.
+- Browser console, one line per completed whole-game batch: `[review]
+  batch timing` with per-engine live count/avg/max, server-cache and memory
+  hit counts, first-half vs second-half live averages, and per-ply
+  `liveMsByPly`. The coordinator also keeps the raw rows in memory as
+  `timings` (`{engine, ply, detail, source, ms, retries, batched, failed?}`).
+
+How to read them: flat-but-slow `search_ms` near `time_ms` points at the
+search budget (time/lines/depth); `spawn_ms`-dominated cost points at
+fork/exec pressure; a fast first half with `memHits`/`serverHits` followed
+by slow `live` rows points at one-sided cache invalidation (a settings
+change keeps the other engine's keys); rising `liveMsByPly` with plies on
+the Maia lane points at history-length cost.
+
 ## Build provenance and redistribution
 
 The separate `stockfish-build` Docker stage derives from the pinned

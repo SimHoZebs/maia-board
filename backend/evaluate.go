@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"os/exec"
 	"syscall"
@@ -59,7 +60,23 @@ func (s *server) evaluate(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 405, "method_not_allowed", "POST is required")
 		return
 	}
+	started := time.Now()
+	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+	w = rec
 	var request evaluationRequest
+	var result *evaluationResponse
+	defer func() {
+		policy := SearchPolicy
+		if request.Settings != nil {
+			policy = request.Settings.policy()
+		}
+		depth, lines := -1, -1
+		if result != nil {
+			depth, lines = result.Depth, len(result.Lines)
+		}
+		log.Printf("evaluate status=%d plies=%d policy=%s duration_ms=%d depth=%d lines=%d",
+			rec.status, len(request.Moves), policy, time.Since(started).Milliseconds(), depth, lines)
+	}()
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {

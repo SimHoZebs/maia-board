@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { loadLine } from './domain';
 import { cacheHash, JOB_STALL_MS, RESUME_ABORT_AFTER_HIDDEN_MS, ReviewCoordinator, reviewKey, type ReviewNode } from './reviewCoordinator';
 import { SEARCH_POLICY } from './reviewMetrics';
+import { stockfishPolicy } from './stockfishSettings';
 const settings = { eloMaia: 1600, eloUser: 1600, model: '79m' as const };
 const line = loadLine('', '1. e4 e5 2. Nf3');
 const nodes: ReviewNode[] = line.timeline.map(position => ({ ...position, initialFen: line.initialFen }));
@@ -373,4 +374,83 @@ it('rejects empty lines for non-terminal evaluations', async () => {
   const bad = { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4', score: { type: 'cp', value: 0 }, lines: [] };
   const fetcher = (async () => Response.json(bad)) as typeof fetch;
   await expect(fetchEvaluation(nodes[0], new AbortController().signal, fetcher)).rejects.toThrow('incomplete evaluation');
+});
+describe('batch timing traces', () => {
+  it('records one live row per job with ply and policy, never double counting', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      const fetcher = vi.fn(async url => Response.json(body(String(url)))) as typeof fetch;
+      const coordinator = new ReviewCoordinator(fetcher);
+      coordinator.startBatch(nodes, settings); await flush(); await flush(); await flush();
+      expect(coordinator.progress).toMatchObject({ done: 8, total: 8, running: false });
+      const rows = coordinator.timings.filter(timing => timing.batched);
+      expect(rows).toHaveLength(8);
+      expect(rows.every(timing => timing.source === 'live' && !timing.failed)).toBe(true);
+      expect(rows.filter(timing => timing.engine === 'sf').map(timing => timing.ply).sort()).toEqual([0, 1, 2, 3]);
+      expect(rows.find(timing => timing.engine === 'sf')?.detail).toBe(SEARCH_POLICY);
+      const summary = coordinator.batchTimingSummary();
+      expect(summary).toMatchObject({
+        total: 8, done: 8, failed: 0,
+        byEngine: { sf: { live: 4, memHits: 0, serverHits: 0 }, maia: { live: 4, memHits: 0, serverHits: 0 } },
+      });
+      expect(summary?.byEngine.sf.liveMsByPly.map(([ply]) => ply)).toEqual([0, 1, 2, 3]);
+      expect(info).toHaveBeenCalledWith('[review] batch timing', expect.any(String));
+    } finally {
+      info.mockRestore();
+    }
+  });
+  it('attributes server-cache hits per engine so a settings change shows as one-sided misses', async () => {
+    const stored = new Map<string, { engine: string; value: unknown }>();
+    const lines = [
+      { move: 'e2e4', score: { type: 'cp', value: 0 }, depth: 12 },
+      { move: 'd2d4', score: { type: 'cp', value: -20 }, depth: 12 },
+    ];
+    const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).startsWith('/evaluations/')) {
+        if (init?.method === 'PUT') {
+          const put = JSON.parse(init.body as string);
+          stored.set(String(url).split('/').pop()!, { engine: put.engine, value: put.value });
+          return Response.json({});
+        }
+        const hit = stored.get(String(url).split('/').pop()!);
+        return hit
+          ? Response.json({ key_hash: 'x', engine: hit.engine, value: hit.value, created_at: 'now' })
+          : Response.json({ code: 'not_found', message: 'missing' }, { status: 404 });
+      }
+      if (String(url) === '/evaluate') {
+        // Echo the requested search policy so explicit settings validate.
+        let policy = SEARCH_POLICY;
+        try {
+          const request = JSON.parse(init?.body as string);
+          if (request.settings) policy = stockfishPolicy(request.settings);
+        } catch { /* keep the legacy policy */ }
+        return Response.json({
+          engine: 'Stockfish 19', search_policy: policy, depth: 12, terminal: null,
+          best_move: 'e2e4', score: { type: 'cp', value: 0 }, lines,
+        });
+      }
+      return Response.json(body(String(url)));
+    }) as unknown as typeof fetch;
+    const first = new ReviewCoordinator(fetcher);
+    first.startBatch(nodes, settings); await flush(); await flush(); await flush();
+    expect(first.progress).toMatchObject({ running: false });
+    expect(stored.size).toBe(8);
+    // Same game, same settings, fresh memory: every job is a server hit, zero inference.
+    const second = new ReviewCoordinator(fetcher);
+    second.startBatch(nodes, settings); await flush(); await flush(); await flush();
+    expect(second.progress).toMatchObject({ running: false });
+    expect(second.batchTimingSummary()).toMatchObject({
+      byEngine: { sf: { live: 0, serverHits: 4, memHits: 0 }, maia: { live: 0, serverHits: 4, memHits: 0 } },
+    });
+    // Stockfish lines 2→4 changes only the SF policy: Maia still hits, SF re-runs live.
+    const stockfish4 = { ...settings, stockfish: { time_ms: 750, lines: 4, depth: 0 } };
+    const third = new ReviewCoordinator(fetcher);
+    third.startBatch(nodes, stockfish4); await flush(); await flush(); await flush();
+    expect(third.progress).toMatchObject({ running: false });
+    const summary = third.batchTimingSummary();
+    expect(summary).toMatchObject({
+      byEngine: { sf: { live: 4, serverHits: 0 }, maia: { live: 0, serverHits: 4 } },
+    });
+    expect(third.timings.find(timing => timing.engine === 'sf')?.detail).toBe('sf19-ms750-mpv4-d0-t1-h64-v2');
+  });
 });

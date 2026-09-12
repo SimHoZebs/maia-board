@@ -7,6 +7,29 @@ import { stockfishPolicy, type StockfishSettings } from './stockfishSettings';
 export type ReviewNode = { initialFen: string; moves: string[]; fen: string };
 export type ReviewSettings = { eloMaia: number; eloUser: number; model: MaiaModel; stockfish?: StockfishSettings };
 export type Engine = 'sf' | 'maia';
+// Per-position timing trace for batch slowdown diagnosis. `ply` is the
+// in-game position index (node.moves.length), the x-axis for second-half
+// cliffs. `detail` carries the engine identity that explains the cost:
+// the full Stockfish search policy (mpv/time/depth) or Maia model@elo.
+// `source` separates real inference (`live`) from `server-cache` and
+// `memory` hits: a batch that starts fast then crawls is the signature of
+// a settings change that invalidated one engine's cache half (e.g. Stockfish
+// lines 2→4 keeps every Maia key but misses every SF key).
+export type JobSource = 'memory' | 'server-cache' | 'live';
+export type JobTiming = {
+  engine: Engine; ply: number; detail: string;
+  source: JobSource; ms: number; retries: number; batched: boolean; failed?: boolean;
+};
+export type EngineTimingSummary = {
+  live: number; liveAvgMs: number; liveMaxMs: number;
+  serverHits: number; memHits: number; failed: number;
+  firstHalfAvgMs: number | null; secondHalfAvgMs: number | null;
+  liveMsByPly: [number, number][];
+};
+export type BatchTimingSummary = {
+  total: number; done: number; failed: number;
+  byEngine: Record<Engine, EngineTimingSummary>;
+};
 type Result = Evaluation | MoveResponse;
 type Job = { key: string; engine: Engine; node: ReviewNode; settings: ReviewSettings };
 // Stall budgets. Maia inference may legally run up to the backend's 120s move
@@ -121,6 +144,15 @@ export class ReviewCoordinator {
   private batch: { nodes: ReviewNode[]; settings: ReviewSettings; cursor: Record<Engine, number>; total: number; completed: Set<string>; degradedMaia: boolean } | null = null;
   private listeners = new Set<() => void>();
   private active = true;
+  // Timing ring for the current/last batch plus foreground jobs. Inspect in
+  // DevTools via the coordinator (e.g. `timings.filter(t => t.engine === 'sf')`)
+  // or read the one-line `[review] batch timing` summary logged on completion.
+  timings: JobTiming[] = [];
+  private summaryLogged = false;
+  // Keys that ran live inference during the current batch run. A batch-lane
+  // skip over one of these is just cursor catch-up after its own completion,
+  // not a cache hit, so it must not record a memory row.
+  private executedKeys = new Set<string>();
   version = 0;
   constructor(private fetcher: typeof fetch = (input, init) => fetch(input, init)) {}
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
@@ -184,6 +216,7 @@ export class ReviewCoordinator {
     if (nodes.length > 257) return;
     const total = nodes.reduce((count, node) => count + (terminalEvaluation(replay(node.moves, node.initialFen)) ? 0 : 2), 0);
     this.batch = { nodes, settings, total, cursor: { sf: 0, maia: 0 }, completed: new Set(), degradedMaia: false };
+    this.timings = []; this.summaryLogged = false; this.executedKeys = new Set();
     this.active = true; this.pump('sf'); this.pump('maia'); this.emit();
   }
   // True once a fallback Maia answer settles inside the running batch.
@@ -196,6 +229,46 @@ export class ReviewCoordinator {
     const failed = this.batch.nodes.reduce((count, node) => count + Number(!!this.error('sf', node, this.batch!.settings)) + Number(!!this.error('maia', node, this.batch!.settings)), 0);
     return { done: this.batch.completed.size, total: this.batch.total, failed, running: this.batch.completed.size < this.batch.total };
   }
+  private recordTiming(job: Job, source: JobSource, ms: number, retries: number, failed = false) {
+    const inBatch = this.batch?.nodes.some(node => reviewKey(job.engine, node, this.batch!.settings) === job.key) ?? false;
+    this.timings.push({
+      engine: job.engine, ply: job.node.moves.length,
+      detail: job.engine === 'sf' ? stockfishPolicy(job.settings.stockfish) : `${job.settings.model}@${job.settings.eloMaia}`,
+      source, ms: Math.max(0, Math.round(ms)), retries, batched: inBatch, ...(failed ? { failed: true as const } : {}),
+    });
+    if (this.timings.length > 2048) this.timings.splice(0, this.timings.length - 2048);
+  }
+  // Aggregates the current batch's timings for the completion log and tests.
+  // firstHalfAvgMs vs secondHalfAvgMs splits live jobs by ply order: a slow
+  // second half here reproduces the reported cliff independent of cache skew.
+  batchTimingSummary(): BatchTimingSummary | null {
+    if (!this.batch) return null;
+    const live = this.progress!;
+    const byEngine = Object.fromEntries((['sf', 'maia'] as const).map(engine => {
+      const rows = this.timings.filter(timing => timing.engine === engine && timing.batched && !timing.failed);
+      const liveRows = rows.filter(timing => timing.source === 'live').sort((a, b) => a.ply - b.ply);
+      const liveMs = liveRows.map(timing => timing.ms);
+      const avg = (values: number[]) => values.length ? Math.round(values.reduce((a, b) => a + b, 0) / values.length) : null;
+      const half = Math.ceil(liveMs.length / 2);
+      return [engine, {
+        live: liveMs.length,
+        liveAvgMs: avg(liveMs) ?? 0,
+        liveMaxMs: liveMs.length ? Math.max(...liveMs) : 0,
+        serverHits: rows.filter(timing => timing.source === 'server-cache').length,
+        memHits: rows.filter(timing => timing.source === 'memory').length,
+        failed: this.timings.filter(timing => timing.engine === engine && timing.batched && timing.failed).length,
+        firstHalfAvgMs: avg(liveMs.slice(0, half)),
+        secondHalfAvgMs: avg(liveMs.slice(half)),
+        liveMsByPly: liveRows.map(timing => [timing.ply, timing.ms] as [number, number]),
+      } satisfies EngineTimingSummary];
+    })) as Record<Engine, EngineTimingSummary>;
+    return { total: live.total, done: live.done, failed: live.failed, byEngine };
+  }
+  private maybeLogBatchSummary() {
+    if (!this.batch || this.summaryLogged || this.batch.completed.size < this.batch.total) return;
+    this.summaryLogged = true;
+    console.info('[review] batch timing', JSON.stringify(this.batchTimingSummary()));
+  }
   retry() {
     // Abort in-flight lanes first: a wedged job (socket dead, promise never
     // settling) would otherwise keep `running` set and the pumps below would
@@ -204,6 +277,7 @@ export class ReviewCoordinator {
     for (const engine of ['sf', 'maia'] as const) this.controllers[engine]?.abort();
     this.failures.clear();
     if (this.batch) { this.batch.cursor = { sf: 0, maia: 0 }; this.batch.completed.clear(); this.batch.degradedMaia = false; }
+    this.timings = []; this.summaryLogged = false; this.executedKeys = new Set();
     this.pump('sf'); this.pump('maia'); this.emit();
   }
   // Re-establish progress after the tab returns from the background. Aborts
@@ -237,6 +311,8 @@ export class ReviewCoordinator {
       if (!job) { batch.cursor[engine]++; continue; }
       if (this.finished(job)) {
         batch.completed.add(job.key); batch.cursor[engine]++;
+        // Cursor catch-up after this run's own live completion is not a hit.
+        if (!this.executedKeys.has(job.key)) this.recordTiming(job, 'memory', 0, 0);
         // Memory-served fallback answers must flag the batch too: without
         // re-execution the settle handler never sees them, yet the batch
         // results still contain degraded rows unfit for recording.
@@ -255,8 +331,10 @@ export class ReviewCoordinator {
     this.running[engine] = job;
     this.startedAt[engine] = Date.now();
     const signal = controller.signal;
-    void this.execute(job, signal).then(result => {
+    void this.execute(job, signal).then(({ result, source, retries }) => {
       if (signal.aborted) return;
+      this.executedKeys.add(job.key);
+      this.recordTiming(job, source, Date.now() - (this.startedAt[engine] ?? Date.now()), retries);
       if (engine === 'sf') this.cache.sf.set(job.key, result as Evaluation);
       else {
         const degraded = (result as MoveResponse).degraded;
@@ -265,6 +343,8 @@ export class ReviewCoordinator {
       }
     }).catch(error => {
       if (signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return;
+      this.executedKeys.add(job.key);
+      this.recordTiming(job, 'live', Date.now() - (this.startedAt[engine] ?? Date.now()), 0, true);
       this.failures.set(job.key, error instanceof Error ? error.message : 'Analysis failed.');
       if (this.failures.size > 512) this.failures.delete(this.failures.keys().next().value!);
     }).finally(() => {
@@ -273,7 +353,7 @@ export class ReviewCoordinator {
       delete this.running[engine];
       delete this.startedAt[engine];
       if (!aborted && this.batch?.nodes.some(node => reviewKey(engine, node, this.batch!.settings) === job.key)) this.batch.completed.add(job.key);
-      this.pump(engine); this.emit();
+      this.pump(engine); this.emit(); this.maybeLogBatchSummary();
     });
   }
   // Prime memory caches from the server eval cache without inference. Reads
@@ -373,14 +453,16 @@ export class ReviewCoordinator {
     })();
   }
 
-  private async execute(job: Job, signal: AbortSignal): Promise<Result> {
+  private async execute(job: Job, signal: AbortSignal): Promise<{ result: Result; source: 'server-cache' | 'live'; retries: number }> {
     // Retry only busy responses, at most twice. Waiting remains in this lane so
     // another request cannot overtake a server job that has not been released.
+    let retries = 0;
     const retryFetch: typeof fetch = async (input, init) => {
       for (let attempt = 0; ; attempt++) {
         signal.throwIfAborted();
         const response = await this.fetcher(input, { ...init, signal });
         if (response.status !== 503 || attempt === 2) return response;
+        retries++;
         const header = response.headers.get('Retry-After');
         const seconds = header ? Number(header) : 1;
         const delay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(header!) - Date.now();
@@ -394,16 +476,16 @@ export class ReviewCoordinator {
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
       return undefined;
     });
-    if (hit) return hit;
+    if (hit) return { result: hit, source: 'server-cache', retries };
     if (job.engine === 'sf') {
       const result = await fetchEvaluation(job.node, signal, retryFetch, job.settings.stockfish);
       this.storeServerCache(job, result);
-      return result;
+      return { result, source: 'live', retries };
     }
     const result = await requestMove({ fen: job.node.fen, moves: job.node.moves, initial_fen: job.node.initialFen, elo_maia: job.settings.eloMaia, elo_user: job.settings.eloUser, model: job.settings.model, maia_color: new Chess(job.node.fen).turn() === 'w' ? 'white' : 'black' }, retryFetch, signal);
     // Fallback answers expire in memory within seconds; persisting them would
     // let a degraded stand-in masquerade as the requested model indefinitely.
     if (!result.degraded) this.storeServerCache(job, result);
-    return result;
+    return { result, source: 'live', retries };
   }
 }

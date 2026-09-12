@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var uciMovePattern = regexp.MustCompile(`^[a-h][1-8][a-h][1-8][qrbn]?$`)
@@ -148,7 +149,15 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	started := time.Now()
+	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+	w = rec
 	var request moveRequest
+	model, degraded := "", false
+	defer func() {
+		log.Printf("move status=%d plies=%d model=%s degraded=%t duration_ms=%d",
+			rec.status, len(request.Moves), model, degraded, time.Since(started).Milliseconds())
+	}()
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
@@ -160,7 +169,7 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "request body must contain one JSON object")
 		return
 	}
-	engineRequest, model, err := validateMoveRequest(request)
+	engineRequest, validated, err := validateMoveRequest(request)
 	if err != nil {
 		var reqErr *requestError
 		if errors.As(err, &reqErr) {
@@ -170,8 +179,9 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", "request validation failed")
 		return
 	}
+	model = validated
 
-	result, used, degraded, err := s.pool.predict(r.Context(), model, engineRequest)
+	result, used, fallback, err := s.pool.predict(r.Context(), model, engineRequest)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrWorkerBusy):
@@ -188,6 +198,7 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	model, degraded = used, fallback
 	response := moveResponse{Move: result.Move, WDL: result.WDL, ModelUsed: used, Degraded: degraded}
 	for _, candidate := range result.Candidates {
 		response.TopMoves = append(response.TopMoves, topMove{Move: candidate.Move, Prob: candidate.Policy})
@@ -306,6 +317,23 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+// statusRecorder captures the response status so handlers can log one
+// per-request timing line (method/path/status/duration) for analysis
+// slowdown diagnosis. Full-game reviews issue one /move + one /evaluate
+// per ply, so `docker logs` (Komodo) shows the per-ply latency curve:
+// a second-half cliff points at ply-correlated cost (history length,
+// hash pressure, thermal), while flat-but-slow lines point at the
+// search budget itself (time_ms/lines/depth).
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
 }
 
 func getenv(key, fallback string) string {
