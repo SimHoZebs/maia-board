@@ -75,7 +75,7 @@ export function ReviewOverview({
                         <QualityBadge
                           quality={{ label, accuracy: null, loss: null }}
                         />
-                        {label === "Inaccuracy" ? "Inaccuracies" : `${label}s`}
+                        {label === "Inaccuracy" ? "Inaccuracies" : label === "Miss" ? "Misses" : `${label}s`}
                       </dt>
                       <dd>{side.issues[label]}</dd>
                     </div>
@@ -132,8 +132,8 @@ export function ReviewOverview({
           ) : (
             <p className="empty-copy">
               {complete
-                ? "No inaccuracies, mistakes, or blunders found."
-                : "Inaccuracies, mistakes, and blunders will appear here as moves are reviewed."}
+                ? "No inaccuracies, mistakes, misses, or blunders found."
+                : "Inaccuracies, mistakes, misses, and blunders will appear here as moves are reviewed."}
             </p>
           )}
         </>

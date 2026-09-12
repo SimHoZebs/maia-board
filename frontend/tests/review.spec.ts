@@ -188,7 +188,7 @@ test('overview distinguishes empty games, no issues, and explored lines', async 
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
   await page.getByRole('tab', { name: 'Overview', exact: true }).click();
-  await expect(page.getByText('No inaccuracies, mistakes, or blunders found.', { exact: true })).toBeVisible();
+  await expect(page.getByText('No inaccuracies, mistakes, misses, or blunders found.', { exact: true })).toBeVisible();
   await page.getByRole('tab', { name: 'Move analysis', exact: true }).click();
   const board = (await page.locator('#board cg-board').boundingBox())!;
   await page.mouse.click(board.x + board.width * 3.5 / 8, board.y + board.height * 6.5 / 8);

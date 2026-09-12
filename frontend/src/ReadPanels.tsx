@@ -41,6 +41,7 @@ import { BoardThumbnail } from "./BoardThumbnail";
 import type { Review } from "./useReview";
 import { QualityBadge } from "./ReviewCharts";
 import { getAnalysisRecords, isFreshRecord, lineHash } from "./analysisRecords";
+  describeMove,
 import {
   scoreValueText,
   whiteWin,
@@ -320,9 +321,29 @@ function MoveAnalysis({
   const insight = response ? { fen: node.fen } : undefined;
   const played =
     review.nodes[state.analysis.index + 1]?.moves[state.analysis.index];
+  // Verdict for the move that reached this position, in plain English above
+  // the two engine panels. Nothing renders pre-first-move or pre-review.
+  const arrival = state.analysis.index - 1;
+  const arrivalUci = arrival >= 0 ? review.nodes[arrival + 1]?.moves[arrival] : undefined;
+  const bestUci = arrival >= 0 ? review.evaluations[arrival]?.best_move ?? undefined : undefined;
+  const verdict = arrivalUci
+    ? describeMove({
+        san: candidateSan(review.nodes[arrival].fen, arrivalUci),
+        quality: review.qualities[arrival],
+        rarity: review.rarities?.[arrival],
+        elo: review.maiaElo,
+        bestSan: bestUci ? candidateSan(review.nodes[arrival].fen, bestUci) : undefined,
+      })
+    : null;
   const evaluation = review.current;
   return (
-    <div className="engine-duo">
+    <>
+      {verdict && (
+        <p className="move-verdict" role="status">
+          {verdict}
+        </p>
+      )}
+      <div className="engine-duo">
       <EngineSection
         label="Maia analysis"
         titleId="insight-title"

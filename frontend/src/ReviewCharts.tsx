@@ -12,7 +12,7 @@ export function QualityBadge({ quality, reserveSpace }: { quality?: Quality; res
     return <span className="quality quality-placeholder" aria-hidden="true">??</span>;
   }
   const label = quality.label;
-  return <span className={`quality quality-${label.toLowerCase()}`} title={`${label}${quality.accuracy == null ? '' : ` · ${quality.accuracy.toFixed(1)}% move accuracy`}`} aria-label={label}>{({ Forced: 'F', Blunder: '??', Mistake: '?', Inaccuracy: '?!', Great: '!', Best: 'B', Good: 'G' })[label]}</span>;
+  return <span className={`quality quality-${label.toLowerCase()}`} title={`${label}${quality.accuracy == null ? '' : ` · ${quality.accuracy.toFixed(1)}% move accuracy`}`} aria-label={label}>{({ Forced: 'F', Blunder: '??', Mistake: '?', Miss: 'M', Inaccuracy: '?!', Great: '!', Best: 'B', Good: 'G' })[label]}</span>;
 }
 export function ReviewCharts({ review, ply, sans, onView, side }: { review: Review; ply: number; sans: string[]; onView: (ply: number) => void; side?: ReviewSide }) {
   const [tab, setTab] = useState<'evaluation' | 'accuracy'>('accuracy');

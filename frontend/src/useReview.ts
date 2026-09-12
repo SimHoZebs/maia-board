@@ -3,7 +3,7 @@ import { analysisLength, analysisLine, applyUci, positionOf, replay } from './do
 import type { MaiaModel } from './api';
 import type { State } from './state';
 import { ReviewCoordinator, type ReviewNode } from './reviewCoordinator';
-import { reviewMove, terminalEvaluation } from './reviewMetrics';
+import { maiaRarity, reviewMove, terminalEvaluation } from './reviewMetrics';
 import { getAnalysisRecords, isFreshRecord, lineHash, putAnalysisRecord, type AnalysisRecord, type RecordSettings } from './analysisRecords';
 
 export type RecordStatus = { state: 'checking' | 'fresh' | 'stale' | 'none'; record?: AnalysisRecord };
@@ -153,6 +153,10 @@ export function useReview(state: State) {
   const evaluations = nodes.map(node => coordinator.result('sf', node, settings));
   const game = replay([], line.initialFen);
   const qualities = line.moves.map((move, index) => { const quality = reviewMove(evaluations[index], evaluations[index + 1], game, move); applyUci(game, move); return quality; });
+  // Additive difficulty axis: Maia probability ratio of the played move at the
+  // review elo. Same batch settings for every ply, so the anchor is uniform.
+  const maiaResults = nodes.map(node => coordinator.result('maia', node, settings));
+  const rarities = line.moves.map((move, index) => maiaRarity(maiaResults[index], move));
   const current = nodes[currentPly];
   // Displayed Maia prefers the fresh (global) result when it exists; otherwise
   // it falls back to the remembered per-move identity so unvisited moves keep
@@ -186,7 +190,7 @@ export function useReview(state: State) {
     });
     coordinator.startBatch(nodes, settings);
   };
-  return { nodes, evaluations, qualities, coverage, current: evaluations[currentPly], maia: maiaForCurrent,
+  return { nodes, evaluations, qualities, rarities, coverage, current: evaluations[currentPly], maia: maiaForCurrent,
     maiaElo: displayedIdentity.eloMaia, maiaModel: displayedIdentity.model,
     maiaWantedElo: maiaIdentity.eloMaia, maiaWantedModel: maiaIdentity.model, maiaStale,
     error: active ? coordinator.error('sf', current, settings) || coordinator.error('maia', current, settings) || (currentPly > 0 ? coordinator.error('sf', nodes[currentPly - 1], settings) : undefined) : undefined,
