@@ -84,6 +84,37 @@ export function useReview(state: State) {
   }
   useEffect(() => { return () => coordinator.suspend(); }, [coordinator, active, lineKey, settingsKey, state.analysis.moves, state.analysis.branchMoves]);
   useEffect(() => {
+    // Mobile background freezes timers and sockets while promises stay
+    // pending: the running lane would never settle and progress would stall
+    // with no failure to retry. On return, re-issue jobs that straddled the
+    // freeze; healthy jobs are left alone. This never starts new work (see
+    // resume), so restores still never infer.
+    let hiddenAt = 0;
+    const shown = (fallbackMs: number) => {
+      const hiddenMs = fallbackMs || (hiddenAt ? Date.now() - hiddenAt : 0);
+      hiddenAt = 0;
+      coordinator.resume(hiddenMs);
+    };
+    const onHidden = () => { hiddenAt = Date.now(); };
+    const onVisibility = () => {
+      if (document.hidden) onHidden();
+      else shown(0);
+    };
+    const onShown = () => shown(0);
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onHidden);
+    window.addEventListener('pageshow', onShown);
+    window.addEventListener('focus', onShown);
+    window.addEventListener('online', onShown);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onHidden);
+      window.removeEventListener('pageshow', onShown);
+      window.removeEventListener('focus', onShown);
+      window.removeEventListener('online', onShown);
+    };
+  }, [coordinator]);
+  useEffect(() => {
     coordinator.clearForeground();
     if (!active || nodes.length > 257) return;
     const timer = setTimeout(() => coordinator.foregroundAt([nodes[state.analysis.index], ...(state.analysis.index ? [nodes[state.analysis.index - 1]] : [])], settings), 200);

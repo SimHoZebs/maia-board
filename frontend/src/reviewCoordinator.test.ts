@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { loadLine } from './domain';
-import { cacheHash, ReviewCoordinator, reviewKey, type ReviewNode } from './reviewCoordinator';
+import { cacheHash, JOB_STALL_MS, RESUME_ABORT_AFTER_HIDDEN_MS, ReviewCoordinator, reviewKey, type ReviewNode } from './reviewCoordinator';
 import { SEARCH_POLICY } from './reviewMetrics';
 const settings = { eloMaia: 1600, eloUser: 1600, model: '79m' as const };
 const line = loadLine('', '1. e4 e5 2. Nf3');
@@ -36,7 +36,8 @@ it('keys include full history, initial position, ratings and model', () => {
 it('runs a lazy batch to completion and keeps successful results', async () => {
   const fetcher = vi.fn(async url => Response.json(body(String(url)))) as typeof fetch;
   const coordinator = new ReviewCoordinator(fetcher);
-  coordinator.startBatch(nodes, settings); await flush(); await flush();
+  // Three cycles: the cache-probe timeout race costs extra microtask hops.
+  coordinator.startBatch(nodes, settings); await flush(); await flush(); await flush();
   expect(coordinator.progress).toMatchObject({ done: 8, total: 8, running: false });
   expect(coordinator.result('sf', nodes[2], settings)?.depth).toBe(12);
 });
@@ -243,21 +244,81 @@ describe('preemption', () => {
     expect(resumed).toHaveLength(4);
     expect(resumed.every(call => !call.signal?.aborted)).toBe(true);
   });
+  it('retries wedged lanes when the user retries instead of leaving Retry dead', async () => {
+    const helpers = deferredFetcher();
+    const coordinator = new ReviewCoordinator(helpers.fetcher);
+    coordinator.startBatch(nodes, settings);
+    await flush();
+    const running = helpers.calls.filter(call => call.url === '/evaluate' || call.url === '/move');
+    expect(running).toHaveLength(2);
+    // The sockets died without settling: no failure is recorded, so without
+    // an abort the lanes would stay occupied and the pumps would no-op.
+    coordinator.retry();
+    expect(running.every(call => call.signal?.aborted)).toBe(true);
+    await flush();
+    // Aborted jobs are neither failures nor completions: they re-issue from
+    // the reset cursor.
+    expect(coordinator.progress?.failed ?? 0).toBe(0);
+    expect(helpers.calls.filter(call => call.url === '/evaluate' || call.url === '/move')).toHaveLength(4);
+    for (let i = 0; i < 12 && coordinator.progress?.running; i++) {
+      await settle('/evaluate', helpers).catch(() => undefined);
+      await settle('/move', helpers).catch(() => undefined);
+    }
+    expect(coordinator.progress).toMatchObject({ running: false, failed: 0 });
+    expect(coordinator.result('sf', nodes[0], settings)).toMatchObject({ depth: 12 });
+  });
+  it('re-issues jobs that straddled backgrounding and leaves healthy jobs alone', async () => {
+    const helpers = deferredFetcher();
+    const coordinator = new ReviewCoordinator(helpers.fetcher);
+    coordinator.startBatch(nodes, settings);
+    await flush();
+    const running = helpers.calls.filter(call => call.url === '/evaluate' || call.url === '/move');
+    expect(running).toHaveLength(2);
+    coordinator.resume(0);
+    expect(running.every(call => !call.signal?.aborted)).toBe(true);
+    expect(helpers.calls.filter(call => call.url === '/evaluate' || call.url === '/move')).toHaveLength(2);
+    coordinator.resume(RESUME_ABORT_AFTER_HIDDEN_MS + 1);
+    expect(running.every(call => call.signal?.aborted)).toBe(true);
+    await flush();
+    expect(helpers.calls.filter(call => call.url === '/evaluate' || call.url === '/move')).toHaveLength(4);
+    for (let i = 0; i < 12 && coordinator.progress?.running; i++) {
+      await settle('/evaluate', helpers).catch(() => undefined);
+      await settle('/move', helpers).catch(() => undefined);
+    }
+    expect(coordinator.progress).toMatchObject({ running: false, failed: 0 });
+  });
+  it('re-issues jobs that outlived the stall budget even without backgrounding', async () => {
+    const helpers = deferredFetcher();
+    const coordinator = new ReviewCoordinator(helpers.fetcher);
+    coordinator.startBatch(nodes, settings);
+    await flush();
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now + JOB_STALL_MS + 1);
+    try {
+      coordinator.resume(0);
+    } finally {
+      clock.mockRestore();
+    }
+    const running = helpers.calls.filter(call => call.url === '/evaluate' || call.url === '/move');
+    expect(running.every(call => call.signal?.aborted)).toBe(true);
+    await flush();
+    expect(helpers.calls.filter(call => call.url === '/evaluate' || call.url === '/move')).toHaveLength(4);
+  });
 });
 it('flags batches with degraded Maia answers and clears the flag on retry', async () => {
   const degraded = vi.fn(async url => Response.json({ ...body(String(url)), degraded: true })) as typeof fetch;
   const coordinator = new ReviewCoordinator(degraded);
-  coordinator.startBatch(nodes, settings); await flush(); await flush();
+  coordinator.startBatch(nodes, settings); await flush(); await flush(); await flush();
   expect(coordinator.progress).toMatchObject({ running: false });
   expect(coordinator.batchDegraded()).toBe(true);
   coordinator.retry();
-  await flush(); await flush();
+  await flush(); await flush(); await flush();
   // The retry serves degraded answers from memory without re-execution, yet
   // the batch results still contain fallback rows, so the flag holds.
   expect(coordinator.batchDegraded()).toBe(true);
   expect(coordinator.progress).toMatchObject({ running: false });
   const clean = new ReviewCoordinator(vi.fn(async url => Response.json(body(String(url)))) as typeof fetch);
-  clean.startBatch(nodes, settings); await flush(); await flush();
+  clean.startBatch(nodes, settings); await flush(); await flush(); await flush();
   expect(clean.batchDegraded()).toBe(false);
 });
 it('primes memory from the server cache without inference', async () => {
@@ -288,6 +349,24 @@ it('primes memory from the server cache without inference', async () => {
   expect(coverage).toEqual({ covered: nodes.length, total: nodes.length });
   expect(second.result('sf', nodes[2], settings)).toMatchObject({ depth: 12 });
   expect(second.result('maia', nodes[2], settings)).toMatchObject({ move: 'e2e4' });
+});
+it('treats cache probe timeouts as misses instead of wedging the prime', async () => {
+  vi.useFakeTimers();
+  try {
+    const live: string[] = [];
+    const fetcher = (async (url: string | URL | Request) => {
+      if (String(url).startsWith('/evaluations/')) return new Promise<Response>(() => {});
+      live.push(String(url));
+      return Response.json(body(String(url)));
+    }) as unknown as typeof fetch;
+    const coordinator = new ReviewCoordinator(fetcher);
+    const pending = coordinator.primeLine(nodes, settings, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await expect(pending).resolves.toEqual({ covered: 0, total: nodes.length });
+    expect(live).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 it('rejects empty lines for non-terminal evaluations', async () => {
   const { fetchEvaluation } = await import('./reviewCoordinator');

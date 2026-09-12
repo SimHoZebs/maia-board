@@ -9,6 +9,14 @@ export type ReviewSettings = { eloMaia: number; eloUser: number; model: MaiaMode
 export type Engine = 'sf' | 'maia';
 type Result = Evaluation | MoveResponse;
 type Job = { key: string; engine: Engine; node: ReviewNode; settings: ReviewSettings };
+// Stall budgets. Maia inference may legally run up to the backend's 120s move
+// window, so a lane is only declared stale past that plus margin. Mobile
+// background freezes (timers and sockets stall while promises stay pending)
+// are detected on return instead: jobs that straddled a long hide are
+// re-issued, since their sockets may be dead while the promises never settle.
+export const JOB_STALL_MS = 150_000;
+export const RESUME_ABORT_AFTER_HIDDEN_MS = 10_000;
+const CACHE_PROBE_MS = 30_000;
 export const MAIA_REF = '1e13597c42d4858b7cfd7cfdae01e297263364b2';
 export function reviewKey(engine: Engine, node: ReviewNode, settings: ReviewSettings): string {
   return JSON.stringify([new Chess(node.initialFen).fen(), node.moves, engine === 'sf' ? stockfishPolicy(settings.stockfish) : [settings.eloMaia, settings.eloUser, settings.model, MAIA_REF]]);
@@ -108,6 +116,7 @@ export class ReviewCoordinator {
   private failures = new Map<string, string>();
   private foreground: Record<Engine, Job[]> = { sf: [], maia: [] };
   private running: Partial<Record<Engine, Job>> = {};
+  private startedAt: Partial<Record<Engine, number>> = {};
   private controllers: Partial<Record<Engine, AbortController>> = {};
   private batch: { nodes: ReviewNode[]; settings: ReviewSettings; cursor: Record<Engine, number>; total: number; completed: Set<string>; degradedMaia: boolean } | null = null;
   private listeners = new Set<() => void>();
@@ -188,8 +197,31 @@ export class ReviewCoordinator {
     return { done: this.batch.completed.size, total: this.batch.total, failed, running: this.batch.completed.size < this.batch.total };
   }
   retry() {
+    // Abort in-flight lanes first: a wedged job (socket dead, promise never
+    // settling) would otherwise keep `running` set and the pumps below would
+    // no-op, leaving Retry a dead button. Aborted jobs are not marked failed
+    // or completed; the finally handler re-pumps them from the reset cursor.
+    for (const engine of ['sf', 'maia'] as const) this.controllers[engine]?.abort();
     this.failures.clear();
     if (this.batch) { this.batch.cursor = { sf: 0, maia: 0 }; this.batch.completed.clear(); this.batch.degradedMaia = false; }
+    this.pump('sf'); this.pump('maia'); this.emit();
+  }
+  // Re-establish progress after the tab returns from the background. Aborts
+  // jobs that straddled a long hide (their sockets may be dead while the
+  // promises never settle) or outlived the stall budget, then re-pumps both
+  // lanes. Aborted jobs stay at the cursor and retry; nothing is marked
+  // failed. Never starts new work: with no in-memory batch (e.g. after a
+  // reload) this only re-pumps an empty foreground, so restores still never
+  // infer.
+  resume(hiddenMs = 0) {
+    if (!this.active) return;
+    const now = Date.now();
+    for (const engine of ['sf', 'maia'] as const) {
+      if (!this.running[engine] || this.startedAt[engine] === undefined) continue;
+      if (hiddenMs > RESUME_ABORT_AFTER_HIDDEN_MS || now - this.startedAt[engine]! > JOB_STALL_MS) {
+        this.controllers[engine]?.abort();
+      }
+    }
     this.pump('sf'); this.pump('maia'); this.emit();
   }
   private finished(job: Job) { return !!this.cache[job.engine].peek(job.key) || this.failures.has(job.key); }
@@ -221,6 +253,7 @@ export class ReviewCoordinator {
     const controller = new AbortController();
     this.controllers[engine] = controller;
     this.running[engine] = job;
+    this.startedAt[engine] = Date.now();
     const signal = controller.signal;
     void this.execute(job, signal).then(result => {
       if (signal.aborted) return;
@@ -238,6 +271,7 @@ export class ReviewCoordinator {
       if (this.controllers[engine]?.signal === signal) delete this.controllers[engine];
       const aborted = signal.aborted;
       delete this.running[engine];
+      delete this.startedAt[engine];
       if (!aborted && this.batch?.nodes.some(node => reviewKey(engine, node, this.batch!.settings) === job.key)) this.batch.completed.add(job.key);
       this.pump(engine); this.emit();
     });
@@ -288,12 +322,25 @@ export class ReviewCoordinator {
   }
   private async readServerCache(job: Job, signal: AbortSignal): Promise<Result | undefined> {
     let response: Response;
+    // Cache probes are fast SQLite lookups; a probe that never settles (dead
+    // socket after backgrounding) must degrade to a miss, never wedge the
+    // lane or a prime. The race timer rejects independently of the fetcher so
+    // it also covers fetchers that ignore the abort signal. A timeout falls
+    // through to live inference, which re-probes before inferring.
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      response = await this.fetcher(`/evaluations/${cacheHash(job.key)}`, { signal });
+      response = await Promise.race([
+        this.fetcher(`/evaluations/${cacheHash(job.key)}`, { signal }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new DOMException('Timed out', 'TimeoutError')), CACHE_PROBE_MS);
+        }),
+      ]);
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
       if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
       return undefined;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
     }
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
     if (response.status === 404) return undefined;

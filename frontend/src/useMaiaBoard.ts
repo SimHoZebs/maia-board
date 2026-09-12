@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useRef } from 'react';
-import { requestMove } from './api';
+import { MaiaApiError, requestMove } from './api';
 import { initialState, reducer, snapshotOf } from './state';
 import { KEYS, loadSaved, readStorage, restoreGame, writeStorage } from './storage';
 import {
@@ -120,15 +120,25 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
     if (!request) return;
     const controller = new AbortController();
     let active = true;
+    // A request whose socket dies (mobile background, dropped LAN) may never
+    // settle: without a stall budget the spinner wedges with no failure to
+    // retry. Past the backend's 120s move window plus margin, fail into the
+    // error banner so Retry can re-issue. Cleanup aborts set active false
+    // first, so only the stall path dispatches.
+    const stalled = window.setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), 150_000);
     // StrictMode's setup/cleanup rehearsal must not launch duplicate inference.
     queueMicrotask(() => {
       if (!active) return;
       void requestMove(request.payload, fetch, controller.signal).then(
-        response => { if (active) dispatch({ type: 'reply', request, response }); },
-        error => { if (active) dispatch({ type: 'failure', request, error }); },
+        response => { window.clearTimeout(stalled); if (active) dispatch({ type: 'reply', request, response }); },
+        error => {
+          window.clearTimeout(stalled);
+          if (!active) return;
+          dispatch({ type: 'failure', request, error: error instanceof DOMException ? new MaiaApiError('server_unreachable', 'The Maia server could not be reached.') : error });
+        },
       );
     });
-    return () => { active = false; controller.abort(); };
+    return () => { active = false; window.clearTimeout(stalled); controller.abort(); };
   }, [state.request]);
   return { state, dispatch };
 }
