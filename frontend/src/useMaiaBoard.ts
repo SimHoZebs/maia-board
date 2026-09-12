@@ -1,5 +1,6 @@
 import { useEffect, useReducer, useRef } from 'react';
 import { MaiaApiError, requestMove } from './api';
+import { persistMaiaReply } from './reviewCoordinator';
 import { initialState, reducer, snapshotOf } from './state';
 import { KEYS, loadSaved, readStorage, restoreGame, writeStorage } from './storage';
 import {
@@ -130,7 +131,19 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
     queueMicrotask(() => {
       if (!active) return;
       void requestMove(request.payload, fetch, controller.signal).then(
-        response => { window.clearTimeout(stalled); if (active) dispatch({ type: 'reply', request, response }); },
+        response => {
+          window.clearTimeout(stalled);
+          if (!active) return;
+          // Play-time Maia compute is saved for later analysis reuse under the
+          // identical cache key batches use, so reviewing at the same Elo hits
+          // the server cache instead of re-inferring. Analysis singles are
+          // intentionally not persisted here: on Maia-locked positions the
+          // single lane is global-only while batches use the pinned game Elo,
+          // so persisting singles would cache rows under an identity batches
+          // never read. Batches persist with the correct per-node identity.
+          if (request.mode === 'play') void persistMaiaReply(request.payload, response, fetch);
+          dispatch({ type: 'reply', request, response });
+        },
         error => {
           window.clearTimeout(stalled);
           if (!active) return;

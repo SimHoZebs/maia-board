@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { backfillMaiaMemory, maiaIdentityOf, sameMaiaIdentity, selectMaiaDisplay } from './useReview';
+import { backfillMaiaMemory, isMaiaPosition, maiaIdentityOf, sameMaiaIdentity, selectMaiaDisplay } from './useReview';
+import { loadLine } from './domain';
 
 describe('maia per-move identity', () => {
   it('compares elo and model', () => {
@@ -24,5 +25,24 @@ describe('maia per-move identity', () => {
     expect(selectMaiaDisplay({ memory: old, global: fresh, fresh: undefined, stale: { move: 'e2e4' } })).toEqual({ identity: old, useFresh: false });
     expect(selectMaiaDisplay({ memory: old, global: fresh, fresh: { move: 'd2d4' }, stale: { move: 'e2e4' } })).toEqual({ identity: fresh, useFresh: true });
     expect(selectMaiaDisplay({ memory: old, global: fresh, fresh: undefined, stale: undefined })).toEqual({ identity: fresh, useFresh: true });
+  });
+
+  it('pins Maia moves by side to move, never terminals or non-own lines', () => {
+    const line = loadLine('', '1. e4 e5 2. Nf3');
+    const nodes = line.timeline.map(position => ({ ...position, initialFen: line.initialFen }));
+    // White user: even plies (white to move) are adjustable, odd are Maia's.
+    expect(isMaiaPosition(nodes[0], 'white', true)).toBe(false);
+    expect(isMaiaPosition(nodes[1], 'white', true)).toBe(true);
+    expect(isMaiaPosition(nodes[2], 'white', true)).toBe(false);
+    // Black user: inverse.
+    expect(isMaiaPosition(nodes[0], 'black', true)).toBe(true);
+    expect(isMaiaPosition(nodes[1], 'black', true)).toBe(false);
+    // Non-own lines never pin.
+    expect(isMaiaPosition(nodes[1], 'white', false)).toBe(false);
+    // Terminals never pin even on Maia's side.
+    const mate = loadLine('', '1. f3 e5 2. g4 Qh4#');
+    const mateNode = { ...mate.timeline.at(-1)!, initialFen: mate.initialFen };
+    expect(isMaiaPosition(mateNode, 'white', true)).toBe(false);
+    expect(isMaiaPosition(mateNode, 'black', true)).toBe(false);
   });
 });

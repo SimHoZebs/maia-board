@@ -175,6 +175,20 @@ describe('task lifecycles', () => {
     expect(reviewed.analysis.perspective).toBe('black');
     expect(reviewed.analysis.ownGame).toBe(true);
   });
+  it('defaults analysis Elo/model to the reviewed game and pins its source', () => {
+    const game = { id: 'elo-game', createdAt: '2026-09-10', moves: ['e2e4', 'e7e5'], settings: { ...defaultSettings, eloMaia: 2000, eloUser: 2000, model: '5m' as const } };
+    const base = { ...initialState(), saved: [game] };
+    expect(base.analysisSettings.eloMaia).toBe(1600);
+    const reviewed = reducer(base, { type: 'review', id: 'elo-game' });
+    expect(reviewed.analysisSettings.eloMaia).toBe(2000);
+    expect(reviewed.analysisSettings.model).toBe('5m');
+    expect(reviewed.analysisSourceId).toBe('elo-game');
+    // Reviewing the live game without an id still seeds from play settings.
+    const live = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
+    const liveReviewed = reducer(live, { type: 'review' });
+    expect(liveReviewed.analysisSettings.eloMaia).toBe(live.play.settings.eloMaia);
+    expect(liveReviewed.analysisSourceId).toBe(live.play.id);
+  });
   it('maps choosing-side WDL to absolute colors for both request turns', () => {
     expect(absoluteWdl(START_FEN, response.wdl)).toEqual([0.5, 0.3, 0.2]);
     expect(absoluteWdl(replay(['e2e4']).fen(), response.wdl)).toEqual([0.2, 0.3, 0.5]);

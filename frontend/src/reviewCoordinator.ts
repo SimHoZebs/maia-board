@@ -7,6 +7,14 @@ import { stockfishPolicy, type StockfishSettings } from './stockfishSettings';
 export type ReviewNode = { initialFen: string; moves: string[]; fen: string };
 export type ReviewSettings = { eloMaia: number; eloUser: number; model: MaiaModel; stockfish?: StockfishSettings };
 export type Engine = 'sf' | 'maia';
+// A batch may need different Maia identities per position (own games pin
+// Maia's moves to the game Elo while the user's moves follow the adjustable
+// analysis rating). Callers pass either one shared settings object or a
+// resolver returning the settings for each node.
+export type SettingsInput = ReviewSettings | ((node: ReviewNode) => ReviewSettings);
+function resolveSettings(input: SettingsInput, node: ReviewNode): ReviewSettings {
+  return typeof input === 'function' ? input(node) : input;
+}
 // Per-position timing trace for batch slowdown diagnosis. `ply` is the
 // in-game position index (node.moves.length), the x-axis for second-half
 // cliffs. `detail` carries the engine identity that explains the cost:
@@ -88,6 +96,34 @@ export function cacheHash(key: string): string {
   return (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0');
 }
 
+// Play-time Maia replies carry the same top_moves/WDL compute as analysis
+// batches. Persisting them under the identical reviewKey lets later analysis
+// at the same Elo reuse them instead of re-inferring. Degraded fallback
+// answers are never persisted (matching batch behavior).
+export function maiaCacheKeyForMoveRequest(payload: { fen: string; moves: string[]; initial_fen?: string; elo_maia: number; elo_user: number; model: MaiaModel }): { key: string; hash: string } {
+  const node: ReviewNode = { initialFen: payload.initial_fen ?? new Chess().fen(), moves: payload.moves, fen: payload.fen };
+  const settings: ReviewSettings = { eloMaia: payload.elo_maia, eloUser: payload.elo_user, model: payload.model };
+  const key = reviewKey('maia', node, settings);
+  return { key, hash: cacheHash(key) };
+}
+
+export async function persistMaiaReply(
+  payload: { fen: string; moves: string[]; initial_fen?: string; elo_maia: number; elo_user: number; model: MaiaModel },
+  response: MoveResponse,
+  fetcher: typeof fetch = fetch,
+): Promise<void> {
+  if (response.degraded) return;
+  try {
+    const { key, hash } = maiaCacheKeyForMoveRequest(payload);
+    await fetcher(`/evaluations/${hash}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ engine: 'maia', key, value: response }),
+    });
+  } catch {
+    // Best-effort: the live game continues even when the cache is unreachable.
+  }
+}
+
 export function parseEvaluation(body: unknown, settings?: StockfishSettings): Evaluation {
   if (!body || typeof body !== 'object') throw new Error('Stockfish returned an incomplete evaluation.');
   const value = body as Evaluation & { engine?: unknown; search_policy?: unknown };
@@ -146,7 +182,7 @@ export class ReviewCoordinator {
   private running: Partial<Record<Engine, Job>> = {};
   private startedAt: Partial<Record<Engine, number>> = {};
   private controllers: Partial<Record<Engine, AbortController>> = {};
-  private batch: { nodes: ReviewNode[]; settings: ReviewSettings; cursor: Record<Engine, number>; total: number; completed: Set<string>; degradedMaia: boolean } | null = null;
+  private batch: { nodes: ReviewNode[]; settings: SettingsInput; cursor: Record<Engine, number>; total: number; completed: Set<string>; degradedMaia: boolean } | null = null;
   private listeners = new Set<() => void>();
   private active = true;
   // Timing ring for the current/last batch plus foreground jobs. Inspect in
@@ -175,11 +211,11 @@ export class ReviewCoordinator {
     }
     return { engine, node, settings, key: reviewKey(engine, node, settings) };
   }
-  foregroundAt(nodes: ReviewNode[], settings: ReviewSettings) {
+  foregroundAt(nodes: ReviewNode[], settings: SettingsInput) {
     this.active = true;
     for (const engine of ['sf', 'maia'] as const) {
       this.foreground[engine] = nodes.slice(0, engine === 'sf' ? 2 : 1).flatMap(node => {
-        const job = this.job(engine, node, settings); return job ? [job] : [];
+        const job = this.job(engine, node, resolveSettings(settings, node)); return job ? [job] : [];
       });
       // Preempt in-flight batch work only when the viewed position still needs
       // results: lanes are single-slot and one slow inference would otherwise
@@ -198,11 +234,11 @@ export class ReviewCoordinator {
   // Play-mode move feedback: Stockfish only, never Maia. A dedicated
   // coordinator per hook owns this lane so play evaluations cannot contend
   // with real play replies on the Maia workers or leak into analysis.
-  foregroundSfOnly(nodes: ReviewNode[], settings: ReviewSettings) {
+  foregroundSfOnly(nodes: ReviewNode[], settings: SettingsInput) {
     this.active = true;
     this.foreground.maia = [];
     this.foreground.sf = nodes.slice(0, 2).flatMap(node => {
-      const job = this.job('sf', node, settings); return job ? [job] : [];
+      const job = this.job('sf', node, resolveSettings(settings, node)); return job ? [job] : [];
     });
     const running = this.running.sf;
     const waiting = this.foreground.sf.some(job => !this.finished(job));
@@ -212,12 +248,12 @@ export class ReviewCoordinator {
     this.pump('sf');
     this.emit();
   }
-  retrySfOnly(nodes: ReviewNode[], settings: ReviewSettings) {
-    for (const node of nodes) this.failures.delete(reviewKey('sf', node, settings));
+  retrySfOnly(nodes: ReviewNode[], settings: SettingsInput) {
+    for (const node of nodes) this.failures.delete(reviewKey('sf', node, resolveSettings(settings, node)));
     this.foregroundSfOnly(nodes, settings);
   }
   suspend() { this.active = false; this.clearForeground(); this.batch = null; this.emit(); }
-  startBatch(nodes: ReviewNode[], settings: ReviewSettings) {
+  startBatch(nodes: ReviewNode[], settings: SettingsInput) {
     if (nodes.length > 257) return;
     const total = nodes.reduce((count, node) => count + (terminalEvaluation(replay(node.moves, node.initialFen)) ? 0 : 2), 0);
     this.batch = { nodes, settings, total, cursor: { sf: 0, maia: 0 }, completed: new Set(), degradedMaia: false };
@@ -229,13 +265,24 @@ export class ReviewCoordinator {
   // and are never persisted server-side, so a post-hoc cache peek would miss
   // them and mislabel fallback batches as clean.
   batchDegraded() { return this.batch?.degradedMaia ?? false; }
+  private batchKey(engine: Engine, node: ReviewNode): string | null {
+    if (!this.batch) return null;
+    return reviewKey(engine, node, resolveSettings(this.batch.settings, node));
+  }
+  private inBatch(job: Job): boolean {
+    if (!this.batch) return false;
+    return this.batch.nodes.some(node => this.batchKey(job.engine, node) === job.key);
+  }
   get progress() {
     if (!this.batch) return null;
-    const failed = this.batch.nodes.reduce((count, node) => count + Number(!!this.error('sf', node, this.batch!.settings)) + Number(!!this.error('maia', node, this.batch!.settings)), 0);
+    const failed = this.batch.nodes.reduce((count, node) => {
+      const settings = resolveSettings(this.batch!.settings, node);
+      return count + Number(!!this.error('sf', node, settings)) + Number(!!this.error('maia', node, settings));
+    }, 0);
     return { done: this.batch.completed.size, total: this.batch.total, failed, running: this.batch.completed.size < this.batch.total };
   }
   private recordTiming(job: Job, source: JobSource, ms: number, retries: number, failed = false) {
-    const inBatch = this.batch?.nodes.some(node => reviewKey(job.engine, node, this.batch!.settings) === job.key) ?? false;
+    const inBatch = this.inBatch(job);
     this.timings.push({
       engine: job.engine, ply: job.node.moves.length,
       detail: job.engine === 'sf' ? stockfishPolicy(job.settings.stockfish) : `${job.settings.model}@${job.settings.eloMaia}`,
@@ -312,7 +359,8 @@ export class ReviewCoordinator {
     // Peek without consuming: an aborted or superseded job stays at the cursor
     // and is retried later instead of being lost. Only finished work advances it.
     while (batch.cursor[engine] < batch.nodes.length) {
-      const job = this.job(engine, batch.nodes[batch.cursor[engine]], batch.settings);
+      const node = batch.nodes[batch.cursor[engine]];
+      const job = this.job(engine, node, resolveSettings(batch.settings, node));
       if (!job) { batch.cursor[engine]++; continue; }
       if (this.finished(job)) {
         batch.completed.add(job.key); batch.cursor[engine]++;
@@ -344,7 +392,7 @@ export class ReviewCoordinator {
       else {
         const degraded = (result as MoveResponse).degraded;
         this.cache.maia.set(job.key, result as MoveResponse, degraded ? 30_000 : Infinity);
-        if (degraded && this.batch?.nodes.some(node => reviewKey(engine, node, this.batch!.settings) === job.key)) this.batch.degradedMaia = true;
+        if (degraded && this.inBatch(job)) this.batch!.degradedMaia = true;
       }
     }).catch(error => {
       if (signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return;
@@ -357,7 +405,7 @@ export class ReviewCoordinator {
       const aborted = signal.aborted;
       delete this.running[engine];
       delete this.startedAt[engine];
-      if (!aborted && this.batch?.nodes.some(node => reviewKey(engine, node, this.batch!.settings) === job.key)) this.batch.completed.add(job.key);
+      if (!aborted && this.inBatch(job)) this.batch!.completed.add(job.key);
       this.pump(engine); this.emit(); this.maybeLogBatchSummary();
     });
   }
@@ -365,19 +413,20 @@ export class ReviewCoordinator {
   // only: positions missing server-side stay missing for an explicit,
   // user-gated batch, so evicted rows can never trigger automatic engine
   // work. Terminals resolve locally and count as covered.
-  async primeLine(nodes: ReviewNode[], settings: ReviewSettings, signal: AbortSignal): Promise<{ covered: number; total: number }> {
+  async primeLine(nodes: ReviewNode[], settings: SettingsInput, signal: AbortSignal): Promise<{ covered: number; total: number }> {
     const terminals = new Set<ReviewNode>();
     const pending: Job[] = [];
     for (const node of nodes) {
+      const resolved = resolveSettings(settings, node);
       const terminal = terminalEvaluation(replay(node.moves, node.initialFen));
       if (terminal) {
         terminals.add(node);
-        this.cache.sf.set(reviewKey('sf', node, settings), { ...terminal, search_policy: stockfishPolicy(settings.stockfish) });
+        this.cache.sf.set(reviewKey('sf', node, resolved), { ...terminal, search_policy: stockfishPolicy(resolved.stockfish) });
         continue;
       }
       for (const engine of ['sf', 'maia'] as const) {
-        const key = reviewKey(engine, node, settings);
-        if (!this.cache[engine].peek(key)) pending.push({ engine, node, settings, key });
+        const key = reviewKey(engine, node, resolved);
+        if (!this.cache[engine].peek(key)) pending.push({ engine, node, settings: resolved, key });
       }
     }
     const lanes = Array.from({ length: Math.min(8, pending.length) }, async () => {
@@ -399,8 +448,9 @@ export class ReviewCoordinator {
     await Promise.all(lanes);
     let covered = 0;
     for (const node of nodes) {
-      if (this.cache.sf.peek(reviewKey('sf', node, settings)) &&
-        (terminals.has(node) || this.cache.maia.peek(reviewKey('maia', node, settings)))) covered++;
+      const resolved = resolveSettings(settings, node);
+      if (this.cache.sf.peek(reviewKey('sf', node, resolved)) &&
+        (terminals.has(node) || this.cache.maia.peek(reviewKey('maia', node, resolved)))) covered++;
     }
     this.emit();
     return { covered, total: nodes.length };

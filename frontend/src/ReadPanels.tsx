@@ -113,27 +113,25 @@ function ReviewActionButton({ state, review }: { state: State; review: Review })
       </Button>
     );
   }
-  if (review.coverage && reviewRecord(review)) {
+  // Partial cache (including play-time saves with no analysis record yet) is
+  // usable immediately: the batch server-hits cached positions and only
+  // infers the missing ones. Never gate this behind the record lookup.
+  if (review.coverage && review.coverage.covered < review.coverage.total) {
     return (
       <Button
         variant="primary"
-        aria-label="Restore remaining"
+        aria-label="Analyze entire game"
+        disabled={review.tooLong}
         onClick={review.start}
       >
-        Restore
+        Analyze
       </Button>
     );
   }
-  if (review.recordStatus.state === "fresh")
+  if (review.recordStatus.state === "checking" || review.recordStatus.state === "fresh")
     return (
       <Button variant="primary" aria-label="Loading analysis" disabled>
         Loading…
-      </Button>
-    );
-  if (review.recordStatus.state === "checking")
-    return (
-      <Button variant="primary" aria-label="Checking analysis" disabled>
-        Checking…
       </Button>
     );
   return (
@@ -155,8 +153,10 @@ function hasReviewStatus(review: Review): boolean {
     (review.coverage && review.coverage.covered === review.coverage.total)
   )
     return false;
+  // Partial cache is worth surfacing with or without a record: play-time
+  // saves are usable before any batch ever completes.
+  if (review.coverage && review.coverage.covered < review.coverage.total) return true;
   const record = reviewRecord(review);
-  if (review.coverage && record) return true;
   if (review.recordStatus.state === "stale" && record) return true;
   return false;
 }
@@ -168,8 +168,7 @@ function ReviewStatus({ review }: { review: Review }) {
     (review.coverage && review.coverage.covered === review.coverage.total)
   )
     return null;
-  const record = reviewRecord(review);
-  if (review.coverage && record) {
+  if (review.coverage && review.coverage.covered < review.coverage.total) {
     return (
       <div className="analysis-record">
         <p role="status">
@@ -179,6 +178,7 @@ function ReviewStatus({ review }: { review: Review }) {
       </div>
     );
   }
+  const record = reviewRecord(review);
   if (review.recordStatus.state === "stale" && record) {
     return (
       <div className="analysis-record">
@@ -370,9 +370,9 @@ function MoveAnalysis({
             <Rating
               inline
               id="analysis-rating"
-              label="Maia rating"
-              value={state.analysisSettings.eloMaia}
-              disabled={review.progress?.running}
+              label={review.maiaLocked ? "Maia rating (game Elo)" : "Maia rating"}
+              value={review.maiaLocked ? review.maiaElo : state.analysisSettings.eloMaia}
+              disabled={review.maiaLocked || review.progress?.running}
               onChange={(eloMaia) =>
                 dispatch({ type: "analysis-settings", settings: { eloMaia } })
               }
@@ -380,7 +380,11 @@ function MoveAnalysis({
           </>
         }
       >
-        {review.maiaStale && (
+        {review.maiaLocked ? (
+          <p role="note">
+            Maia&apos;s move at the game Elo{review.gameElo ? ` (${review.gameElo})` : ""} · view one of your moves to adjust the analysis rating.
+          </p>
+        ) : review.maiaStale ? (
           <p role="status">
             Showing Maia {review.maiaElo}
             {review.maiaModel !== review.maiaWantedModel
@@ -392,7 +396,7 @@ function MoveAnalysis({
               : ""}
             …
           </p>
-        )}
+        ) : null}
         {response && insight ? (
           <div id="insight-content">
             <CandidateList>

@@ -230,7 +230,14 @@ export function reducer(state: State, action: Action): State {
       const play = action.id ? state.saved.find(game => game.id === action.id) : state.play;
       if (!play) return state;
       const analysis = loadLine('', play.moves.join(' '));
-      return transition(state, { mode: 'analysis', analysis: { ...analysis, perspective: play.settings.userColor, ownGame: true }, analysisLoaded: true, importing: false, analysisSourceId: action.id ?? null }, false);
+      // Analysis defaults to the Elo the game was played at, so the first
+      // review reuses play-time Maia compute instead of re-inferring at a
+      // stale global rating. Changing the rating later only affects the
+      // user's own moves (see useReview); Maia's moves stay pinned. The
+      // source id is always the game id (not null) so the pinned Elo survives
+      // starting a new game while the analysis stays open.
+      return transition(state, { mode: 'analysis', analysis: { ...analysis, perspective: play.settings.userColor, ownGame: true }, analysisLoaded: true, importing: false, analysisSourceId: action.id ?? play.id,
+        analysisSettings: { ...state.analysisSettings, eloMaia: play.settings.eloMaia, model: play.settings.model } }, false);
     }
     case 'delete': {
       const saved = state.saved.filter(game => game.id !== action.id);

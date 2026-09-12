@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { Chess } from 'chess.js';
 import { analysisLength, analysisLine, applyUci, positionOf, replay } from './domain';
 import type { MaiaModel } from './api';
 import type { State } from './state';
@@ -41,6 +42,19 @@ export function backfillMaiaMemory(prevMem: Record<number, MaiaIdentity>, prev: 
   return out;
 }
 
+// Pure side classification, tested without React: in an own-game main line,
+// positions where the side to move is not the user's are Maia's moves and stay
+// pinned to the game Elo. Terminals are never Maia positions (no Maia row
+// exists for them) so the rating stays adjustable there. Everything else
+// (non-own lines, branches) is adjustable.
+export function isMaiaPosition(node: Pick<ReviewNode, 'fen' | 'moves' | 'initialFen'>, userColor: 'white' | 'black', ownGame: boolean): boolean {
+  if (!ownGame) return false;
+  try {
+    if (terminalEvaluation(replay(node.moves, node.initialFen))) return false;
+    return (new Chess(node.fen).turn() === 'w' ? 'white' : 'black') !== userColor;
+  } catch { return false; }
+}
+
 export function useReview(state: State) {
   const [coordinator] = useState(() => new ReviewCoordinator());
   useSyncExternalStore(coordinator.subscribe, coordinator.snapshot, coordinator.snapshot);
@@ -52,13 +66,40 @@ export function useReview(state: State) {
   const maiaKey = JSON.stringify([state.analysisSettings.eloMaia, state.analysisSettings.model]);
   const maiaIdentity: MaiaIdentity = useMemo(() => maiaIdentityOf(state.analysisSettings), [maiaKey]);
   const currentPly = state.analysis.index;
+  const mainLine = state.analysis.branchFromPly === null;
+  // Own-game pinning: Maia's moves stay at the game Elo/model while the
+  // user's moves follow the adjustable analysis rating. Non-own lines (pasted
+  // PGN/FEN) and explored branches stay fully adjustable.
+  const ownGame = state.analysis.ownGame && mainLine;
+  const gameForLine = ownGame
+    ? (state.analysisSourceId
+      ? (state.saved.find(game => game.id === state.analysisSourceId)
+        ?? (state.play.id === state.analysisSourceId ? state.play : null))
+      : state.play)
+    : null;
+  const pinnedKey = gameForLine ? JSON.stringify([gameForLine.settings.eloMaia, gameForLine.settings.eloUser, gameForLine.settings.model, gameForLine.settings.userColor]) : '';
+  const pinnedSettings: RecordSettings | null = useMemo(() => gameForLine
+    ? { eloMaia: gameForLine.settings.eloMaia, eloUser: gameForLine.settings.eloUser, model: gameForLine.settings.model, stockfish: state.stockfish }
+    : null, [pinnedKey, settingsKey]);
+  const pinnedIdentity: MaiaIdentity | null = useMemo(() => gameForLine
+    ? { eloMaia: gameForLine.settings.eloMaia, model: gameForLine.settings.model }
+    : null, [pinnedKey]);
+  const combinedKey = `${settingsKey}|${pinnedKey}|${ownGame ? 1 : 0}`;
+  const userColorForLine = gameForLine?.settings.userColor;
+  const isMaiaNode = (node: ReviewNode): boolean => {
+    if (!ownGame || !userColorForLine) return false;
+    return isMaiaPosition(node, userColorForLine, ownGame);
+  };
+  const settingsForNode = useMemo(() => {
+    if (!pinnedSettings) return (_node: ReviewNode) => settings;
+    return (node: ReviewNode) => (isMaiaNode(node) ? pinnedSettings : settings);
+  }, [settings, pinnedSettings, pinnedKey, ownGame, userColorForLine]);
   const [maiaMemory, setMaiaMemory] = useState<Record<number, MaiaIdentity>>({});
   const [prevMaia, setPrevMaia] = useState<MaiaIdentity>(maiaIdentity);
   // Last committed ply, for batched rating+navigate updates where the first
   // render with the new identity already carries the navigated index.
   const lastPlyRef = useRef(currentPly);
   useEffect(() => { lastPlyRef.current = currentPly; }, [currentPly]);
-  const mainLine = state.analysis.branchFromPly === null;
   const nodes = useMemo(() => {
     const game = replay([], line.initialFen);
     const nodes: ReviewNode[] = [{ ...positionOf(game), initialFen: line.initialFen }];
@@ -73,16 +114,38 @@ export function useReview(state: State) {
   // with the new identity backfills before any later navigation can reassign
   // the invalidation to the wrong index. Batched rating+navigate commits also
   // invalidate the pre-batch index so neither position keeps stale results.
+  // Own games: only the user's moves follow the adjustable rating. Maia's
+  // moves stay pinned to the game Elo, so pinned plies are re-seeded with the
+  // game identity instead of the old global one and never invalidated.
   if (!sameMaiaIdentity(prevMaia, maiaIdentity)) {
     const atChange = lastPlyRef.current;
     setPrevMaia(maiaIdentity);
     setMaiaMemory(prevMem => {
       let next = backfillMaiaMemory(prevMem, prevMaia, maiaIdentity, currentPly, nodes.length);
       if (atChange !== currentPly && atChange >= 0 && atChange < nodes.length) next = { ...next, [atChange]: maiaIdentity };
+      if (pinnedIdentity) {
+        for (let i = 0; i < nodes.length; i++) {
+          try {
+            if (isMaiaNode(nodes[i])) next = { ...next, [i]: pinnedIdentity };
+          } catch { /* keep backfilled identity */ }
+        }
+        // A rating change while viewing one of Maia's moves must not
+        // invalidate that pinned position.
+        if (currentPly >= 0 && currentPly < nodes.length) {
+          try {
+            if (isMaiaNode(nodes[currentPly])) next = { ...next, [currentPly]: pinnedIdentity };
+          } catch { /* keep */ }
+        }
+        if (atChange >= 0 && atChange < nodes.length) {
+          try {
+            if (isMaiaNode(nodes[atChange])) next = { ...next, [atChange]: pinnedIdentity };
+          } catch { /* keep */ }
+        }
+      }
       return next;
     });
   }
-  useEffect(() => { return () => coordinator.suspend(); }, [coordinator, active, lineKey, settingsKey, state.analysis.moves, state.analysis.branchMoves]);
+  useEffect(() => { return () => coordinator.suspend(); }, [coordinator, active, lineKey, combinedKey, state.analysis.moves, state.analysis.branchMoves]);
   useEffect(() => {
     // Mobile background freezes timers and sockets while promises stay
     // pending: the running lane would never settle and progress would stall
@@ -117,9 +180,9 @@ export function useReview(state: State) {
   useEffect(() => {
     coordinator.clearForeground();
     if (!active || nodes.length > 257) return;
-    const timer = setTimeout(() => coordinator.foregroundAt([nodes[state.analysis.index], ...(state.analysis.index ? [nodes[state.analysis.index - 1]] : [])], settings), 200);
+    const timer = setTimeout(() => coordinator.foregroundAt([nodes[state.analysis.index], ...(state.analysis.index ? [nodes[state.analysis.index - 1]] : [])], settingsForNode), 200);
     return () => { clearTimeout(timer); coordinator.clearForeground(); };
-  }, [coordinator, active, nodes, state.analysis.index, settings]);
+  }, [coordinator, active, nodes, state.analysis.index, combinedKey]);
   const hash = useMemo(() => lineHash(line.initialFen, line.moves), [lineKey]);
   const [recordStatus, setRecordStatus] = useState<RecordStatus>({ state: 'checking' });
   useEffect(() => {
@@ -141,26 +204,32 @@ export function useReview(state: State) {
   }, [active, mainLine, hash, settingsKey]);
   const recorded = useRef<string | null>(null);
   const progress = coordinator.progress;
-  const primeKey = `${hash}|${settingsKey}`;
+  const primeKey = `${hash}|${combinedKey}`;
   const [primedKey, setPrimedKey] = useState<string | null>(null);
   useEffect(() => {
-    // Auto-prime fully cached lines: reads only, so a fresh record restores
-    // itself with zero inference. Partial coverage stays for an explicit,
-    // user-gated batch over exactly the missing positions.
-    if (!active || !mainLine || recordStatus.state !== 'fresh' || primedKey === primeKey) return;
+    // Prime from the server cache on every load: reads only, never inference,
+    // so evicted/missing rows simply stay missing for the explicit,
+    // user-gated batch. Records are not a gate here — play-time Stockfish and
+    // Maia saves must be usable the moment the analysis opens. Own games prime
+    // with split identities so Maia's pinned moves restore from play-time
+    // saves at the game Elo.
+    if (!active || !mainLine || primedKey === primeKey) return;
     const controller = new AbortController();
-    void coordinator.primeLine(nodes, settings, controller.signal).then(
+    void coordinator.primeLine(nodes, settingsForNode, controller.signal).then(
       () => setPrimedKey(primeKey),
       () => { /* Superseded by navigation or settings change; the next key reprimes. */ },
     );
     return () => controller.abort();
-  }, [active, mainLine, hash, settingsKey, recordStatus, primedKey]);
+  }, [active, mainLine, hash, combinedKey, primedKey]);
   // Coverage is counted live from memory so LRU turnover after priming shows
   // up honestly instead of freezing the prime-time number.
   const coverage = active && mainLine && primedKey === primeKey ? {
     total: nodes.length,
-    covered: nodes.filter(node => coordinator.result('sf', node, settings) &&
-      (terminalEvaluation(replay(node.moves, node.initialFen)) || coordinator.result('maia', node, settings))).length,
+    covered: nodes.filter(node => {
+      const s = settingsForNode(node);
+      return coordinator.result('sf', node, s) &&
+        (terminalEvaluation(replay(node.moves, node.initialFen)) || coordinator.result('maia', node, s));
+    }).length,
   } : null;
   useEffect(() => {
     // Record main-line batches once per outcome: failures stay visible via
@@ -181,27 +250,33 @@ export function useReview(state: State) {
       () => { recorded.current = null; },
     );
   }, [active, mainLine, progress, hash, settingsKey, recordStatus]);
-  const evaluations = nodes.map(node => coordinator.result('sf', node, settings));
+  const evaluations = nodes.map(node => coordinator.result('sf', node, settingsForNode(node)));
   const game = replay([], line.initialFen);
   const qualities = line.moves.map((move, index) => { const quality = reviewMove(evaluations[index], evaluations[index + 1], game, move); applyUci(game, move); return quality; });
-  // Additive difficulty axis: Maia probability ratio of the played move at the
-  // review elo. Same batch settings for every ply, so the anchor is uniform.
-  const maiaResults = nodes.map(node => coordinator.result('maia', node, settings));
+  // Additive difficulty axis: Maia probability ratio of the played move.
+  // Own games anchor each ply to its responsible Elo: the user's moves to the
+  // adjustable analysis rating, Maia's moves to the pinned game Elo.
+  const maiaResults = nodes.map(node => coordinator.result('maia', node, settingsForNode(node)));
   const rarities = line.moves.map((move, index) => maiaRarity(maiaResults[index], move));
   const current = nodes[currentPly];
+  const currentIsMaia = !!current && isMaiaNode(current);
+  // Pinned display for Maia's own moves: always the game identity, never stale.
+  const pinnedForCurrent = currentIsMaia && pinnedSettings ? coordinator.result('maia', current, pinnedSettings) : undefined;
   // Displayed Maia prefers the fresh (global) result when it exists; otherwise
   // it falls back to the remembered per-move identity so unvisited moves keep
   // their old Elo visible while the new one fetches in the background.
   const memForCurrent = maiaMemory[currentPly] ?? maiaIdentity;
-  const freshForCurrent = active && current ? coordinator.result('maia', current, settings) : undefined;
+  const freshForCurrent = active && current && !currentIsMaia ? coordinator.result('maia', current, settings) : undefined;
   const oldSettings: RecordSettings = { ...settings, eloMaia: memForCurrent.eloMaia, eloUser: memForCurrent.eloMaia, model: memForCurrent.model };
-  const staleForCurrent = !sameMaiaIdentity(memForCurrent, maiaIdentity) && !freshForCurrent && current
+  const staleForCurrent = !currentIsMaia && !sameMaiaIdentity(memForCurrent, maiaIdentity) && !freshForCurrent && current
     ? (active ? coordinator.result('maia', current, oldSettings) : undefined)
     : undefined;
-  const selection = selectMaiaDisplay({ memory: maiaMemory[currentPly], global: maiaIdentity, fresh: freshForCurrent, stale: staleForCurrent });
-  const displayedIdentity = selection.useFresh ? maiaIdentity : (maiaMemory[currentPly] ?? maiaIdentity);
-  const maiaForCurrent = selection.useFresh ? freshForCurrent : staleForCurrent;
-  const maiaStale = !sameMaiaIdentity(displayedIdentity, maiaIdentity);
+  const selection = currentIsMaia
+    ? { identity: pinnedIdentity!, useFresh: true }
+    : selectMaiaDisplay({ memory: maiaMemory[currentPly], global: maiaIdentity, fresh: freshForCurrent, stale: staleForCurrent });
+  const displayedIdentity = currentIsMaia ? pinnedIdentity! : (selection.useFresh ? maiaIdentity : (maiaMemory[currentPly] ?? maiaIdentity));
+  const maiaForCurrent = currentIsMaia ? pinnedForCurrent : (selection.useFresh ? freshForCurrent : staleForCurrent);
+  const maiaStale = currentIsMaia ? false : !sameMaiaIdentity(displayedIdentity, maiaIdentity);
   // Once the fresh result lands (or the stale row is gone) the display already
   // reads fresh; sync memory so the next rating change backfills correctly.
   useEffect(() => {
@@ -216,15 +291,25 @@ export function useReview(state: State) {
   const startBatchAtCurrent = () => {
     setMaiaMemory(() => {
       const next: Record<number, MaiaIdentity> = {};
-      for (let i = 0; i < nodes.length; i++) next[i] = maiaIdentity;
+      for (let i = 0; i < nodes.length; i++) {
+        try {
+          if (pinnedIdentity && isMaiaNode(nodes[i])) next[i] = pinnedIdentity;
+          else next[i] = maiaIdentity;
+        } catch { next[i] = maiaIdentity; }
+      }
       return next;
     });
-    coordinator.startBatch(nodes, settings);
+    coordinator.startBatch(nodes, settingsForNode);
   };
+  const currentSettings = current ? settingsForNode(current) : settings;
+  const prevSettings = currentPly > 0 ? settingsForNode(nodes[currentPly - 1]) : null;
   return { nodes, evaluations, qualities, rarities, coverage, current: evaluations[currentPly], maia: maiaForCurrent,
     maiaElo: displayedIdentity.eloMaia, maiaModel: displayedIdentity.model,
-    maiaWantedElo: maiaIdentity.eloMaia, maiaWantedModel: maiaIdentity.model, maiaStale,
-    error: active ? coordinator.error('sf', current, settings) || coordinator.error('maia', current, settings) || (currentPly > 0 ? coordinator.error('sf', nodes[currentPly - 1], settings) : undefined) : undefined,
+    maiaWantedElo: currentIsMaia ? pinnedIdentity!.eloMaia : maiaIdentity.eloMaia,
+    maiaWantedModel: currentIsMaia ? pinnedIdentity!.model : maiaIdentity.model,
+    maiaStale, maiaLocked: currentIsMaia,
+    gameElo: gameForLine?.settings.eloMaia,
+    error: active && current ? coordinator.error('sf', current, currentSettings) || coordinator.error('maia', current, currentSettings) || (currentPly > 0 && prevSettings ? coordinator.error('sf', nodes[currentPly - 1], prevSettings) : undefined) : undefined,
     progress, recordStatus, start: startBatchAtCurrent, retry: () => coordinator.retry(),
     tooLong: nodes.length > 257 };
 }

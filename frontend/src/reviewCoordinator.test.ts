@@ -465,3 +465,105 @@ describe('batch timing traces', () => {
     expect(third.timings.find(timing => timing.engine === 'sf')?.detail).toBe('sf19-ms750-mpv4-d0-t1-h64-v2');
   });
 });
+describe('play-time Maia persistence', () => {
+  it('keys play replies identically to analysis batches for reuse', async () => {
+    const { maiaCacheKeyForMoveRequest, persistMaiaReply } = await import('./reviewCoordinator');
+    const payload = { fen: nodes[0].fen, moves: nodes[0].moves, elo_maia: 1600, elo_user: 1600, model: '79m' as const };
+    const { key, hash } = maiaCacheKeyForMoveRequest(payload);
+    expect(key).toBe(reviewKey('maia', nodes[0], settings));
+    expect(hash).toBe(cacheHash(key));
+    // Persisted play reply is served from the server cache without inference.
+    const stored = new Map<string, { engine: string; value: unknown }>();
+    const response = { move: 'e2e4', top_moves: [], wdl: [0, 1, 0] as [number, number, number], model_used: '79m' as const, degraded: false };
+    const saver = (async (url: string, init?: RequestInit) => {
+      if (String(url).startsWith('/evaluations/') && init?.method === 'PUT') {
+        const put = JSON.parse(init.body as string);
+        stored.set(String(url).split('/').pop()!, { engine: put.engine, value: put.value });
+        return Response.json({});
+      }
+      return Response.json({ code: 'not_found' }, { status: 404 });
+    }) as unknown as typeof fetch;
+    await persistMaiaReply(payload, response, saver);
+    expect(stored.size).toBe(1);
+    const loader = (async (url: string, init?: RequestInit) => {
+      if (String(url).startsWith('/evaluations/')) {
+        if (init?.method === 'PUT') return Response.json({});
+        const hit = stored.get(String(url).split('/').pop()!);
+        return hit ? Response.json({ ...hit, key_hash: 'x', created_at: 'now' }) : Response.json({ code: 'not_found' }, { status: 404 });
+      }
+      return Response.json(body(String(url)));
+    }) as unknown as typeof fetch;
+    const coordinator = new ReviewCoordinator(loader);
+    coordinator.foregroundAt([nodes[0]], settings);
+    await flush();
+    expect(coordinator.result('maia', nodes[0], settings)).toMatchObject({ move: 'e2e4' });
+    expect(stored.size).toBe(1);
+  });
+  it('keys custom-start positions with initial_fen identically to batches', async () => {
+    const { maiaCacheKeyForMoveRequest } = await import('./reviewCoordinator');
+    const custom = loadLine('4k3/8/8/8/8/8/4P3/4K3 b - - 0 12', '12... Kd7');
+    const customNodes: ReviewNode[] = custom.timeline.map(position => ({ ...position, initialFen: custom.initialFen }));
+    const target = customNodes[1];
+    const payload = { fen: target.fen, moves: target.moves, initial_fen: custom.initialFen, elo_maia: 1800, elo_user: 1500, model: '5m' as const };
+    const { key } = maiaCacheKeyForMoveRequest(payload);
+    expect(key).toBe(reviewKey('maia', target, { eloMaia: 1800, eloUser: 1500, model: '5m' }));
+  });
+  it('never persists degraded fallback answers', async () => {
+    const { persistMaiaReply } = await import('./reviewCoordinator');
+    const puts: string[] = [];
+    const fetcher = (async (url: string, init?: RequestInit) => {
+      if (init?.method === 'PUT') puts.push(String(url));
+      return Response.json({});
+    }) as unknown as typeof fetch;
+    await persistMaiaReply(
+      { fen: nodes[0].fen, moves: [], elo_maia: 1600, elo_user: 1600, model: '79m' as const },
+      { move: 'e2e4', top_moves: [], wdl: [0, 1, 0], model_used: '5m', degraded: true },
+      fetcher,
+    );
+    expect(puts).toHaveLength(0);
+  });
+  it('supports per-node Maia identities so own games pin Maia moves', async () => {
+    const stored = new Map<string, { engine: string; value: unknown }>();
+    const fetcher = (async (url: string, init?: RequestInit) => {
+      if (String(url).startsWith('/evaluations/')) {
+        if (init?.method === 'PUT') {
+          const put = JSON.parse(init.body as string);
+          stored.set(String(url).split('/').pop()!, { engine: put.engine, value: put.value });
+          return Response.json({});
+        }
+        const hit = stored.get(String(url).split('/').pop()!);
+        return hit ? Response.json({ ...hit, key_hash: 'x', created_at: 'now' }) : Response.json({ code: 'not_found' }, { status: 404 });
+      }
+      if (String(url) === '/move') {
+        const request = JSON.parse(init?.body as string);
+        // Echo the requested Elo back as the predicted move so per-node
+        // identities are distinguishable through validated responses.
+        const move = request.elo_maia === 2000 ? 'd2d4' : 'e2e4';
+        return Response.json({ move, top_moves: [], wdl: [0, 1, 0], model_used: '79m', degraded: false });
+      }
+      return Response.json(body(String(url)));
+    }) as unknown as typeof fetch;
+    const low = { ...settings, eloMaia: 1200, eloUser: 1200 };
+    const high = { ...settings, eloMaia: 2000, eloUser: 2000 };
+    // Even plies (white to move) follow the adjustable rating, odd plies stay pinned.
+    const split = (node: ReviewNode) => (node.moves.length % 2 === 0 ? high : low);
+    const coordinator = new ReviewCoordinator(fetcher);
+    coordinator.startBatch(nodes.slice(0, 2), split);
+    await flush(); await flush(); await flush();
+    expect(coordinator.progress).toMatchObject({ running: false });
+    expect(coordinator.result('maia', nodes[0], high)?.move).toBe('d2d4');
+    expect(coordinator.result('maia', nodes[1], low)?.move).toBe('e2e4');
+    expect(coordinator.result('maia', nodes[0], low)).toBeUndefined();
+    // Second run with the same split hits the server cache, zero live Maia inference.
+    const live: string[] = [];
+    const cached = (async (url: string, init?: RequestInit) => {
+      if (!String(url).startsWith('/evaluations/') && (init?.method ?? 'GET') === 'POST' && String(url) === '/move') live.push(String(url));
+      return fetcher(url, init);
+    }) as unknown as typeof fetch;
+    const second = new ReviewCoordinator(cached);
+    second.startBatch(nodes.slice(0, 2), split);
+    await flush(); await flush(); await flush();
+    expect(live).toHaveLength(0);
+    expect(second.batchTimingSummary()).toMatchObject({ byEngine: { maia: { live: 0, serverHits: 2 } } });
+  });
+});
