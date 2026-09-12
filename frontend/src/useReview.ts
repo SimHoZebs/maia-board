@@ -250,14 +250,31 @@ export function useReview(state: State) {
       () => { recorded.current = null; },
     );
   }, [active, mainLine, progress, hash, settingsKey, recordStatus]);
-  const evaluations = nodes.map(node => coordinator.result('sf', node, settingsForNode(node)));
-  const game = replay([], line.initialFen);
-  const qualities = line.moves.map((move, index) => { const quality = reviewMove(evaluations[index], evaluations[index + 1], game, move); applyUci(game, move); return quality; });
+  // Index-independent derivations, memoized: evaluations, qualities, and
+  // rarities depend only on the line, settings, and cache contents — not on
+  // the viewed position. Without this every arrow-key step recomputes the
+  // full quality loop (a legal-move generation per ply), putting a
+  // game-length-scaled hitch between the keypress and the board update.
+  const cacheVersion = coordinator.snapshot();
+  const evaluations = useMemo(
+    () => nodes.map(node => coordinator.result('sf', node, settingsForNode(node))),
+    [nodes, settingsForNode, cacheVersion, coordinator],
+  );
+  const maiaResults = useMemo(
+    () => nodes.map(node => coordinator.result('maia', node, settingsForNode(node))),
+    [nodes, settingsForNode, cacheVersion, coordinator],
+  );
+  const qualities = useMemo(() => {
+    const game = replay([], line.initialFen);
+    return line.moves.map((move, index) => { const quality = reviewMove(evaluations[index], evaluations[index + 1], game, move); applyUci(game, move); return quality; });
+  }, [line.initialFen, line.moves, evaluations]);
   // Additive difficulty axis: Maia probability ratio of the played move.
   // Own games anchor each ply to its responsible Elo: the user's moves to the
   // adjustable analysis rating, Maia's moves to the pinned game Elo.
-  const maiaResults = nodes.map(node => coordinator.result('maia', node, settingsForNode(node)));
-  const rarities = line.moves.map((move, index) => maiaRarity(maiaResults[index], move));
+  const rarities = useMemo(
+    () => line.moves.map((move, index) => maiaRarity(maiaResults[index], move)),
+    [line.moves, maiaResults],
+  );
   const current = nodes[currentPly];
   const currentIsMaia = !!current && isMaiaNode(current);
   // Pinned display for Maia's own moves: always the game identity, never stale.
