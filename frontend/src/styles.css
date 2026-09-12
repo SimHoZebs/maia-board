@@ -126,6 +126,15 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .candidate-list li.played .candidate-reading { background: #414b35; border-color: #899d6b; }
 .candidate-list .metric { color: var(--accent); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .candidate-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.skeleton-list { display: grid; margin: 0; padding: 0; }
+.skeleton-row { display: flex; gap: 6px; align-items: center; border-bottom: 1px solid var(--line); padding: 4px 0; min-height: 41px; }
+.skeleton-rank { width: 12px; height: 12px; border-radius: 3px; background: #333637; flex: none; }
+.skeleton-bar { display: block; height: 12px; border-radius: 4px; background: linear-gradient(90deg, #333637 25%, #424646 50%, #333637 75%); background-size: 200% 100%; animation: skeleton-shimmer 1.2s ease-in-out infinite; }
+.skeleton-san { flex: 1; min-width: 0; }
+.skeleton-metric { width: 38px; flex: none; }
+.skeleton-verdict { margin: 0 0 12px; }
+.skeleton-verdict .skeleton-bar { height: 14px; width: 92%; }
+@keyframes skeleton-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 .engine-duo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
 .move-verdict { margin: 0 0 12px; font-size: 14px; line-height: 1.5; }
 .engine-duo > section { min-width: 0; }

@@ -37,6 +37,7 @@ import {
   Trash2,
   CornerUpRight,
 } from "lucide-react";
+import { Chess } from "chess.js";
 import { BoardThumbnail } from "./BoardThumbnail";
 import type { Review } from "./useReview";
 import { QualityBadge } from "./ReviewCharts";
@@ -148,14 +149,7 @@ function ReviewActionButton({ state, review }: { state: State; review: Review })
 
 function hasReviewStatus(review: Review): boolean {
   if (review.progress?.running) return false;
-  if (
-    isComplete(review) ||
-    (review.coverage && review.coverage.covered === review.coverage.total)
-  )
-    return false;
-  // Partial cache is worth surfacing with or without a record: play-time
-  // saves are usable before any batch ever completes.
-  if (review.coverage && review.coverage.covered < review.coverage.total) return true;
+  if (isComplete(review)) return false;
   const record = reviewRecord(review);
   if (review.recordStatus.state === "stale" && record) return true;
   return false;
@@ -163,21 +157,7 @@ function hasReviewStatus(review: Review): boolean {
 
 function ReviewStatus({ review }: { review: Review }) {
   if (review.progress?.running) return null;
-  if (
-    isComplete(review) ||
-    (review.coverage && review.coverage.covered === review.coverage.total)
-  )
-    return null;
-  if (review.coverage && review.coverage.covered < review.coverage.total) {
-    return (
-      <div className="analysis-record">
-        <p role="status">
-          {review.coverage.covered} of {review.coverage.total} positions
-          cached
-        </p>
-      </div>
-    );
-  }
+  if (isComplete(review)) return null;
   const record = reviewRecord(review);
   if (review.recordStatus.state === "stale" && record) {
     return (
@@ -324,6 +304,28 @@ export function InsightPanel({
   );
 }
 
+function SkeletonList({ label, rows = 3 }: { label: string; rows?: number }) {
+  return (
+    <div className="skeleton-list" role="status" aria-label={label}>
+      {Array.from({ length: rows }, (_, index) => (
+        <div className="skeleton-row" key={index} aria-hidden="true">
+          <span className="skeleton-rank" />
+          <span className="skeleton-bar skeleton-san" />
+          <span className="skeleton-bar skeleton-metric" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SkeletonText({ label }: { label: string }) {
+  return (
+    <p className="skeleton-verdict" role="status" aria-label={label}>
+      <span className="skeleton-bar" aria-hidden="true" />
+    </p>
+  );
+}
+
 function MoveAnalysis({
   state,
   dispatch,
@@ -352,12 +354,40 @@ function MoveAnalysis({
         bestSan: bestUci ? candidateSan(node.fen, bestUci) : undefined,
       })
     : null;
+  // Loading signals: a missing result with no recorded error is in-flight
+  // (foreground fetch, prime, or batch) rather than genuinely absent. The
+  // foreground lane fetches the viewed position on every navigation, so the
+  // current position is never an "empty" state — it is either ready, failed,
+  // or loading. Terminals never have a Maia row, so they stay empty instead
+  // of skeleton-loading forever.
+  const hasError = !!review.error;
+  let terminalPosition = !!evaluation?.terminal;
+  if (!terminalPosition) {
+    try {
+      terminalPosition = new Chess(node.fen).isGameOver();
+    } catch {
+      terminalPosition = false;
+    }
+  }
+  const maiaLoading = !response && !hasError && !terminalPosition;
+  const sfLoading = !evaluation && !hasError;
+  // The verdict needs the *next* position's evaluation too, which the
+  // foreground lane never fetches (current + previous only) — it arrives via
+  // prime or an explicit batch. Gating on those lanes keeps the skeleton from
+  // spinning forever on an unbatched ply whose `after` side was never
+  // requested, and clears it when a batch settles (even with failures, which
+  // surface through the Retry banner instead).
+  const batchRunning = !!review.progress?.running;
+  const verdictLoading =
+    !!played && !verdict && !hasError && (sfLoading || batchRunning);
   return (
     <>
-      {verdict && (
+      {verdict ? (
         <p className="move-verdict" role="status">
           {verdict}
         </p>
+      ) : (
+        verdictLoading && <SkeletonText label="Loading move verdict" />
       )}
       <div className="engine-duo">
       <EngineSection
@@ -419,6 +449,8 @@ function MoveAnalysis({
               })}
             </CandidateList>
           </div>
+        ) : maiaLoading ? (
+          <SkeletonList label="Loading Maia moves" rows={3} />
         ) : (
           <p className="empty-copy">No analysis yet.</p>
         )}
@@ -437,6 +469,8 @@ function MoveAnalysis({
             onPreview={(uci) => dispatch({ type: "preview", uci })}
             onExplore={(uci) => dispatch({ type: "explore", uci })}
           />
+        ) : sfLoading ? (
+          <SkeletonList label="Loading Stockfish lines" rows={2} />
         ) : (
           <p className="empty-copy">No analysis yet.</p>
         )}

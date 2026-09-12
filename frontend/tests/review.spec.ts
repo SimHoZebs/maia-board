@@ -372,7 +372,7 @@ test('partially evicted analysis restores cached positions and gates the rest', 
   const movesBefore = inferred('/move'), evalsBefore = inferred('/evaluate');
   await page.reload();
   await expect(page.getByRole('button', { name: 'Analyze entire game' })).toBeVisible();
-  await expect(page.getByRole('status').filter({ hasText: /of \d+ positions cached/ })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: /of \d+ positions cached/ })).toHaveCount(0);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
   // Exactly the five evicted Maia positions re-infer; Stockfish never does.
