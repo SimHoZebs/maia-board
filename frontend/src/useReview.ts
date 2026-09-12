@@ -223,14 +223,27 @@ export function useReview(state: State) {
   }, [active, mainLine, hash, combinedKey, primedKey]);
   // Coverage is counted live from memory so LRU turnover after priming shows
   // up honestly instead of freezing the prime-time number.
-  const coverage = active && mainLine && primedKey === primeKey ? {
-    total: nodes.length,
-    covered: nodes.filter(node => {
-      const s = settingsForNode(node);
-      return coordinator.result('sf', node, s) &&
-        (terminalEvaluation(replay(node.moves, node.initialFen)) || coordinator.result('maia', node, s));
-    }).length,
-  } : null;
+  // Coverage and the derivations below all key on the coordinator's cache
+  // version: any settled evaluation bumps it, so results refresh exactly
+  // when cache contents change and reuse otherwise.
+  const cacheVersion = coordinator.snapshot();
+  // Terminal flags are per-line, not per-render: replaying every prefix and
+  // generating legal moves per node on each render is quadratic and dominated
+  // the analysis render (per the DevTools profile). Compute once per line.
+  const terminalByPly = useMemo(
+    () => nodes.map(node => terminalEvaluation(replay(node.moves, node.initialFen)) !== undefined),
+    [nodes],
+  );
+  const coverage = useMemo(() => {
+    if (!(active && mainLine && primedKey === primeKey)) return null;
+    let covered = 0;
+    for (let index = 0; index < nodes.length; index++) {
+      const s = settingsForNode(nodes[index]);
+      if (coordinator.result('sf', nodes[index], s) &&
+        (terminalByPly[index] || coordinator.result('maia', nodes[index], s))) covered++;
+    }
+    return { total: nodes.length, covered };
+  }, [active, mainLine, primedKey, primeKey, nodes, settingsForNode, terminalByPly, cacheVersion, coordinator]);
   useEffect(() => {
     // Record main-line batches once per outcome: failures stay visible via
     // retry (a clean retry records under its own key), restores skip when the
@@ -250,12 +263,12 @@ export function useReview(state: State) {
       () => { recorded.current = null; },
     );
   }, [active, mainLine, progress, hash, settingsKey, recordStatus]);
-  // Index-independent derivations, memoized: evaluations, qualities, and
-  // rarities depend only on the line, settings, and cache contents — not on
-  // the viewed position. Without this every arrow-key step recomputes the
-  // full quality loop (a legal-move generation per ply), putting a
-  // game-length-scaled hitch between the keypress and the board update.
-  const cacheVersion = coordinator.snapshot();
+  // Index-independent derivations, memoized (sharing cacheVersion above):
+  // evaluations, qualities, and rarities depend only on the line, settings,
+  // and cache contents — not on the viewed position. Without this every
+  // arrow-key step recomputes the full quality loop (a legal-move generation
+  // per ply), putting a game-length-scaled hitch between the keypress and
+  // the board update.
   const evaluations = useMemo(
     () => nodes.map(node => coordinator.result('sf', node, settingsForNode(node))),
     [nodes, settingsForNode, cacheVersion, coordinator],
