@@ -283,8 +283,17 @@ export function useReview(state: State) {
   );
   const qualities = useMemo(() => {
     const game = replay([], line.initialFen);
-    return line.moves.map((move, index) => { const quality = reviewMove(evaluations[index], evaluations[index + 1], game, move); applyUci(game, move); return quality; });
-  }, [line.initialFen, line.moves, evaluations]);
+    // 'Unreviewed' means genuinely pending only while a batch is running.
+    // With no batch (before Analyze, after completion, failures included)
+    // nothing is incoming, so those moves report no quality and their badges
+    // stay blank instead of spinning forever.
+    const pending = !!progress && progress.running;
+    return line.moves.map((move, index) => {
+      const quality = reviewMove(evaluations[index], evaluations[index + 1], game, move);
+      applyUci(game, move);
+      return quality.label === 'Unreviewed' && !pending ? undefined : quality;
+    });
+  }, [line.initialFen, line.moves, evaluations, progress]);
   // Additive difficulty axis: Maia probability ratio of the played move.
   // Own games anchor each ply to its responsible Elo: the user's moves to the
   // adjustable analysis rating, Maia's moves to the pinned game Elo.

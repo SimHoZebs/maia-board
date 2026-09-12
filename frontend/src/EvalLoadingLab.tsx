@@ -62,7 +62,12 @@ function MorphBadge({ ms = 900 }: { ms?: number }) {
 
 /** 3 — Slot reel: the production loading state, rendered by the real QualityBadge. */
 function SlotBadge() {
-  return <QualityBadge reserveSpace />;
+  return (
+    <QualityBadge
+      quality={{ label: "Unreviewed", accuracy: null, loss: null }}
+      reserveSpace
+    />
+  );
 }
 
 /** 4 — Shimmer chip: production-safe neutral pulse, matches skeleton-list. */

@@ -21,7 +21,7 @@ export type ReviewIssue = {
   accuracy: number;
 };
 
-export function summarizeReview(nodes: readonly Pick<ReviewNode, 'fen' | 'moves'>[], qualities: readonly Quality[], onlySide?: ReviewSide) {
+export function summarizeReview(nodes: readonly Pick<ReviewNode, 'fen' | 'moves'>[], qualities: readonly (Quality | undefined)[], onlySide?: ReviewSide) {
   const sides: SideSummary[] = (['white', 'black'] as const).map(color => ({
     color, total: 0, reviewed: 0, accuracy: null,
     issues: { Inaccuracy: 0, Mistake: 0, Miss: 0, Blunder: 0 },

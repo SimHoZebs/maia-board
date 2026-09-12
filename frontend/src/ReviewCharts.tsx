@@ -10,11 +10,18 @@ const loadingFaces: { glyph: string; cls: string }[] = (Object.keys(qualityGlyph
 const loadingStrip = [...loadingFaces, ...loadingFaces, ...loadingFaces];
 
 export function QualityBadge({ quality, reserveSpace }: { quality?: Quality; reserveSpace?: boolean }) {
-  if (!quality || quality.label === 'Unreviewed') {
-    // Slot-reel loading state: a vertical strip of every real verdict spins
-    // behind the badge window while evaluations settle. Same box as a settled
-    // badge, so rows never shift. Decorative (aria-hidden): the move text
-    // already carries meaning, and announcing per-move spinners would be noise.
+  if (!quality) {
+    // Genuinely not loading (opponent moves, unevaluated lines): invisible
+    // reserve box, so rows keep their shape without implying work is coming.
+    if (!reserveSpace) return null;
+    return <span className="quality quality-placeholder" aria-hidden="true">??</span>;
+  }
+  if (quality.label === 'Unreviewed') {
+    // Genuinely pending: the data layers below only produce Unreviewed while
+    // evaluations are queued or running. A vertical strip of every real
+    // verdict spins behind the badge window; same box as a settled badge so
+    // rows never shift. Decorative (aria-hidden): the move text already
+    // carries meaning, and announcing per-move spinners would be noise.
     if (!reserveSpace) return null;
     return <span className="quality quality-slot" aria-hidden="true" title="Evaluating…"><span className="quality-slot-window"><span className="quality-slot-strip">{loadingStrip.map((face, index) => <span key={index} className={`quality-slot-cell ${face.cls}`}>{face.glyph}</span>)}</span></span></span>;
   }

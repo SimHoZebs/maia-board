@@ -94,11 +94,16 @@ export function usePlayFeedback(state: State): PlayFeedback {
     }
     const valid = fens.length - 1;
     const node = (ply: number): ReviewNode => ({ initialFen: START_FEN, moves: prefixes[ply], fen: fens[ply] });
+    // Sentinel for the user's plies while their queued evaluations settle.
+    const awaitingEval: Quality = { label: 'Unreviewed', accuracy: null, loss: null };
     return moves.map((_, ply) => {
       if ((ply % 2 === 0) !== (userColor === 'white') || ply >= valid) return undefined;
       const before = coordinator.result('sf', node(ply), settings);
       const after = coordinator.result('sf', node(ply + 1), settings);
-      if (!before || !after) return undefined;
+      // The user's plies are queued above, so missing evaluations are
+      // genuinely loading. Opponent plies are never evaluated — they stay
+      // undefined and their badges stay blank instead of spinning forever.
+      if (!before || !after) return awaitingEval;
       return reviewMove(before, after, new Chess(fens[ply]), moves[ply]);
     });
   }, [active, moves, settings, userColor, cacheVersion, coordinator]);
