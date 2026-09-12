@@ -83,14 +83,14 @@ export function InsightPanel({ state, dispatch, review, children }: { state: Sta
 }
 
 function MoveAnalysis({ state, dispatch, review }: { state: State; dispatch: Dispatch<Action>; review: Review }) {
-  const { analysisSettings } = state;
   const response = review.maia;
   const node = review.nodes[state.analysis.index];
   const insight = response ? { fen: node.fen } : undefined;
   const played = review.nodes[state.analysis.index + 1]?.moves[state.analysis.index];
   const evaluation = review.current;
   return <div className="engine-duo">
-    <EngineSection label="Maia analysis" titleId="insight-title" dotClass="source-maia" title={`Maia • ${analysisSettings.eloMaia}`}>
+    <EngineSection label="Maia analysis" titleId="insight-title" dotClass="source-maia" title={`Maia • ${review.maiaElo}`}>
+      {review.maiaStale && <p role="status">Showing Maia {review.maiaElo}{review.maiaModel !== review.maiaWantedModel ? ` (${review.maiaModel})` : ''} · updating to {review.maiaWantedElo}{review.maiaModel !== review.maiaWantedModel ? ` (${review.maiaWantedModel})` : ''}…</p>}
       {response && insight ? <div id="insight-content">
         <CandidateList>
           {response.top_moves.slice(0, 5).map((candidate, index) => {
