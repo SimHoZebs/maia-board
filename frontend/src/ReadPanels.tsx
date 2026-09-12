@@ -332,18 +332,17 @@ function MoveAnalysis({
   const played =
     review.nodes[state.analysis.index + 1]?.moves[state.analysis.index];
   const evaluation = review.current;
-  // Verdict for the move that reached this position, in plain English above
-  // the two engine panels. Nothing renders pre-first-move or pre-review.
-  const arrival = state.analysis.index - 1;
-  const arrivalUci = arrival >= 0 ? review.nodes[arrival + 1]?.moves[arrival] : undefined;
-  const bestUci = arrival >= 0 ? review.evaluations[arrival]?.best_move ?? undefined : undefined;
-  const verdict = arrivalUci
+  // Verdict for the move played FROM this position: the same temporal
+  // reference as the candidate lists (which mark it "(played)") and the
+  // arrows. Nothing renders past the final position or pre-review.
+  const bestUci = review.evaluations[state.analysis.index]?.best_move ?? undefined;
+  const verdict = played
     ? describeMove({
-        san: candidateSan(review.nodes[arrival].fen, arrivalUci),
-        quality: review.qualities[arrival],
-        rarity: review.rarities?.[arrival],
+        san: candidateSan(node.fen, played),
+        quality: review.qualities[state.analysis.index],
+        rarity: review.rarities?.[state.analysis.index],
         elo: review.maiaElo,
-        bestSan: bestUci ? candidateSan(review.nodes[arrival].fen, bestUci) : undefined,
+        bestSan: bestUci ? candidateSan(node.fen, bestUci) : undefined,
       })
     : null;
   return (
