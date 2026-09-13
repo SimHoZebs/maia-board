@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Chess } from 'chess.js';
 import { applyUci, replay, START_FEN } from './domain';
-import { ReviewCoordinator, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
+import { ReviewCoordinator, reviewKey, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
 import { reviewMove, type Evaluation, type Quality } from './reviewMetrics';
 import type { State } from './state';
 
@@ -96,14 +96,19 @@ export function usePlayFeedback(state: State): PlayFeedback {
     const node = (ply: number): ReviewNode => ({ initialFen: START_FEN, moves: prefixes[ply], fen: fens[ply] });
     // Sentinel for the user's plies while their queued evaluations settle.
     const awaitingEval: Quality = { label: 'Unreviewed', accuracy: null, loss: null };
+    // Same contract as analysis: the coordinator's pending set decides what
+    // may still arrive. Opponent plies never enter any lane, so they stay
+    // blank even mid-batch.
+    const pending = coordinator.sfPendingKeys();
     return moves.map((_, ply) => {
       if ((ply % 2 === 0) !== (userColor === 'white') || ply >= valid) return undefined;
       const before = coordinator.result('sf', node(ply), settings);
       const after = coordinator.result('sf', node(ply + 1), settings);
-      // The user's plies are queued above, so missing evaluations are
-      // genuinely loading. Opponent plies are never evaluated — they stay
-      // undefined and their badges stay blank instead of spinning forever.
-      if (!before || !after) return awaitingEval;
+      if (!before || !after) {
+        const beforeKey = reviewKey('sf', node(ply), settings);
+        const afterKey = reviewKey('sf', node(ply + 1), settings);
+        return pending.has(beforeKey) || pending.has(afterKey) ? awaitingEval : undefined;
+      }
       return reviewMove(before, after, new Chess(fens[ply]), moves[ply]);
     });
   }, [active, moves, settings, userColor, cacheVersion, coordinator]);

@@ -3,7 +3,7 @@ import { Chess } from 'chess.js';
 import { analysisLength, analysisLine, applyUci, positionOf, replay } from './domain';
 import type { MaiaModel } from './api';
 import type { State } from './state';
-import { ReviewCoordinator, subscribeNone, type ReviewNode } from './reviewCoordinator';
+import { ReviewCoordinator, reviewKey, subscribeNone, type ReviewNode } from './reviewCoordinator';
 import { maiaRarity, reviewMove, terminalEvaluation } from './reviewMetrics';
 import { getAnalysisRecords, isFreshRecord, lineHash, putAnalysisRecord, type AnalysisRecord, type RecordSettings } from './analysisRecords';
 
@@ -302,17 +302,20 @@ export function useReview(state: State) {
   );
   const qualities = useMemo(() => {
     const game = replay([], line.initialFen);
-    // 'Unreviewed' means genuinely pending only while a batch is running.
-    // With no batch (before Analyze, after completion, failures included)
-    // nothing is incoming, so those moves report no quality and their badges
-    // stay blank instead of spinning forever.
-    const pending = !!progress && progress.running;
+    // Contract with QualityBadge: 'Unreviewed' survives only while a verdict
+    // may still arrive. The coordinator's pending set covers every lane
+    // (batch, foreground, play queue, server restore), so there is no
+    // per-source condition here to fall behind when a new one appears.
+    const pending = coordinator.sfPendingKeys();
     return line.moves.map((move, index) => {
       const quality = reviewMove(evaluations[index], evaluations[index + 1], game, move);
       applyUci(game, move);
-      return quality.label === 'Unreviewed' && !pending ? undefined : quality;
+      if (quality.label !== 'Unreviewed') return quality;
+      const before = reviewKey('sf', nodes[index], settingsForNode(nodes[index]));
+      const after = reviewKey('sf', nodes[index + 1], settingsForNode(nodes[index + 1]));
+      return pending.has(before) || pending.has(after) ? quality : undefined;
     });
-  }, [line.initialFen, line.moves, evaluations, progress]);
+  }, [line.initialFen, line.moves, nodes, evaluations, settingsForNode, cacheVersion, coordinator]);
   // Additive difficulty axis: Maia probability ratio of the played move.
   // Own games anchor each ply to its responsible Elo: the user's moves to the
   // adjustable analysis rating, Maia's moves to the pinned game Elo.

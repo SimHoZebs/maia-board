@@ -21,10 +21,11 @@ export function QualityBadge({ quality, reserveSpace, loading = 'reel' }: { qual
     return <span className="quality quality-placeholder" aria-hidden="true">??</span>;
   }
   if (quality.label === 'Unreviewed') {
-    // Genuinely pending: the data layers below only produce Unreviewed while
-    // evaluations are queued or running. Same box as a settled badge either
-    // way, so rows never shift. Decorative (aria-hidden): the move text
-    // already carries meaning, and announcing per-move spinners would be noise.
+    // Genuinely pending: producers emit Unreviewed only while the
+    // coordinator's pending set says a verdict may still arrive. Same box
+    // as a settled badge either way, so rows never shift. Decorative
+    // (aria-hidden): the move text already carries meaning, and announcing
+    // per-move spinners would be noise.
     if (!reserveSpace) return null;
     if (loading === 'placeholder') return <span className="quality quality-placeholder" aria-hidden="true">??</span>;
     if (loading === 'shimmer') return <span className="quality quality-shimmer" aria-hidden="true" title="Evaluating…"><span className="quality-shimmer-bar" /></span>;

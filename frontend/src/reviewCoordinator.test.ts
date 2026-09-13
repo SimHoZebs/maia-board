@@ -115,6 +115,65 @@ it('keys include full history, initial position, ratings and model', () => {
   expect(reviewKey('sf', nodes[0], settings)).toBe(reviewKey('sf', nodes[0], { ...settings, eloMaia: 1700 }));
   expect(reviewKey('sf', nodes[0], settings)).not.toBe(reviewKey('sf', nodes[1], settings));
 });
+describe('sfPendingKeys', () => {
+  const sfKey = (node: ReviewNode) => reviewKey('sf', node, settings);
+  const gate = () => {
+    const releases: (() => void)[] = [];
+    const fetcher = vi.fn(async (url, init) => {
+      if (!init?.body) return Response.json({ code: 'not_found', message: 'missing' }, { status: 404 });
+      await new Promise<void>(resolve => releases.push(resolve));
+      return Response.json(body(String(url)));
+    }) as typeof fetch;
+    return { releases, coordinator: new ReviewCoordinator(fetcher) };
+  };
+  it('covers queued and running jobs, dropping each as it settles', async () => {
+    const { releases, coordinator } = gate();
+    coordinator.syncPlayQueue([nodes[0], nodes[1]], settings); await flush();
+    expect(coordinator.sfPendingKeys()).toEqual(new Set([sfKey(nodes[0]), sfKey(nodes[1])]));
+    releases.splice(0, 1).forEach(resolve => resolve()); await flush();
+    expect(coordinator.sfPendingKeys()).toEqual(new Set([sfKey(nodes[1])]));
+    coordinator.suspend(); releases.splice(0).forEach(resolve => resolve()); await flush();
+    expect(coordinator.sfPendingKeys()).toEqual(new Set());
+  });
+  it('covers batch-future nodes and clears on completion', async () => {
+    const { releases, coordinator } = gate();
+    coordinator.startBatch(nodes, settings); await flush();
+    expect(coordinator.sfPendingKeys()).toEqual(new Set(nodes.map(sfKey)));
+    for (let i = 0; i < 20 && coordinator.progress?.running; i++) { releases.splice(0).forEach(resolve => resolve()); await flush(); }
+    expect(coordinator.progress).toMatchObject({ running: false });
+    expect(coordinator.sfPendingKeys()).toEqual(new Set());
+  });
+  it('excludes failed keys once the lane gives up', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn(async () => Response.json({ message: 'Busy' }, { status: 503, headers: { 'Retry-After': '1' } })) as typeof fetch;
+      const coordinator = new ReviewCoordinator(fetcher);
+      coordinator.foregroundAt([nodes[0]], settings);
+      expect(coordinator.sfPendingKeys()).toEqual(new Set([sfKey(nodes[0])]));
+      await vi.runAllTimersAsync(); await flush();
+      expect(coordinator.error('sf', nodes[0], settings)).toBe('Busy');
+      expect(coordinator.sfPendingKeys()).toEqual(new Set());
+      coordinator.suspend();
+    } finally { vi.useRealTimers(); }
+  });
+  it('tracks prime restores in flight and releases on completion', async () => {
+    const releases: (() => void)[] = [];
+    const fetcher = vi.fn(async (url, init) => {
+      if (String(url).startsWith('/evaluations/')) {
+        await new Promise<void>(resolve => releases.push(resolve));
+        return Response.json({ code: 'not_found', message: 'missing' }, { status: 404 });
+      }
+      return Response.json(body(String(url)));
+    }) as typeof fetch;
+    const coordinator = new ReviewCoordinator(fetcher);
+    const primed = coordinator.primeLine(nodes, settings, new AbortController().signal);
+    await flush();
+    expect(coordinator.sfPendingKeys()).toEqual(new Set(nodes.map(sfKey)));
+    releases.splice(0).forEach(resolve => resolve());
+    await expect(primed).resolves.toEqual({ covered: 0, total: nodes.length });
+    expect(coordinator.sfPendingKeys()).toEqual(new Set());
+  });
+});
 it('runs a lazy batch to completion and keeps successful results', async () => {
   const fetcher = vi.fn(async url => Response.json(body(String(url)))) as typeof fetch;
   const coordinator = new ReviewCoordinator(fetcher);

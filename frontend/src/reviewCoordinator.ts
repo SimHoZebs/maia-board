@@ -255,6 +255,9 @@ export class ReviewCoordinator {
   private playQueue: Job[] = [];
   private running: Partial<Record<Engine, Job>> = {};
   private startedAt: Partial<Record<Engine, number>> = {};
+  // Server-restore probes in flight, refcounted by key: overlapping primes
+  // for the same position must not clear each other on completion.
+  private primeInflight = new Map<string, { count: number; engine: Engine }>();
   private controllers: Partial<Record<Engine, AbortController>> = {};
   private batch: { nodes: ReviewNode[]; settings: SettingsInput; cursor: Record<Engine, number>; total: number; completed: Set<string>; degradedMaia: boolean } | null = null;
   private listeners = new Set<() => void>();
@@ -397,6 +400,25 @@ export class ReviewCoordinator {
       return count + Number(!!this.error('sf', node, settings)) + Number(!!this.error('maia', node, settings));
     }, 0);
     return { done: this.batch.completed.size, total: this.batch.total, failed, running: this.batch.completed.size < this.batch.total };
+  }
+  // The single source of truth for "a verdict may still arrive": queued,
+  // running, waiting behind the batch cursor, or being restored from the
+  // server. Settled and failed keys are excluded, so badges go quiet instead
+  // of spinning forever — and the UI needs no per-lane condition that can
+  // fall behind when a new async source appears.
+  sfPendingKeys(): Set<string> {
+    const out = new Set<string>();
+    if (this.running.sf && !this.finished(this.running.sf)) out.add(this.running.sf.key);
+    for (const job of [...this.foreground.sf, ...this.playQueue]) if (!this.finished(job)) out.add(job.key);
+    const batch = this.batch;
+    if (batch && batch.completed.size < batch.total) {
+      for (const node of batch.nodes) {
+        const key = reviewKey('sf', node, resolveSettings(batch.settings, node));
+        if (!batch.completed.has(key) && !this.failures.has(key) && !this.cache.sf.peek(key)) out.add(key);
+      }
+    }
+    for (const [key, entry] of this.primeInflight) if (entry.engine === 'sf' && entry.count > 0) out.add(key);
+    return out;
   }
   private recordTiming(job: Job, source: JobSource, ms: number, retries: number, failed = false) {
     const inBatch = this.inBatch(job);
@@ -559,31 +581,51 @@ export class ReviewCoordinator {
         if (!this.cache[engine].peek(key)) pending.push({ engine, node, settings: resolved, key });
       }
     }
-    const lanes = Array.from({ length: Math.min(8, pending.length) }, async () => {
-      while (pending.length) {
-        signal.throwIfAborted();
-        const job = pending.shift()!;
-        const hit = await this.readServerCache(job, signal).catch(error => {
-          if (error instanceof DOMException && error.name === 'AbortError') throw error;
-          return undefined;
-        });
-        // Degraded rows are rejected at the probe, so a validated hit is
-        // safe to keep indefinitely.
-        if (hit) {
-          if (job.engine === 'sf') this.cache.sf.set(job.key, hit as Evaluation);
-          else this.cache.maia.set(job.key, hit as MoveResponse, Infinity);
-        }
-      }
-    });
-    await Promise.all(lanes);
-    let covered = 0;
-    for (const node of nodes) {
-      const resolved = resolveSettings(settings, node);
-      if (this.cache.sf.peek(reviewKey('sf', node, resolved)) &&
-        (terminals.has(node) || this.cache.maia.peek(reviewKey('maia', node, resolved)))) covered++;
+    // In-flight restores count as pending work (see sfPendingKeys): a history
+    // game loading its saved evaluations is genuinely loading. Refcounted so
+    // overlapping primes for the same key cannot clear each other, and
+    // released in a finally so aborts never leak a stuck spinner.
+    const restoring = pending.map(job => ({ key: job.key, engine: job.engine }));
+    for (const job of restoring) {
+      const entry = this.primeInflight.get(job.key);
+      this.primeInflight.set(job.key, { count: (entry?.count ?? 0) + 1, engine: job.engine });
     }
+    // Notify now so badges animate for the whole restore, not just after the
+    // first probe settles.
     this.emit();
-    return { covered, total: nodes.length };
+    try {
+      const lanes = Array.from({ length: Math.min(8, pending.length) }, async () => {
+        while (pending.length) {
+          signal.throwIfAborted();
+          const job = pending.shift()!;
+          const hit = await this.readServerCache(job, signal).catch(error => {
+            if (error instanceof DOMException && error.name === 'AbortError') throw error;
+            return undefined;
+          });
+          // Degraded rows are rejected at the probe, so a validated hit is
+          // safe to keep indefinitely.
+          if (hit) {
+            if (job.engine === 'sf') this.cache.sf.set(job.key, hit as Evaluation);
+            else this.cache.maia.set(job.key, hit as MoveResponse, Infinity);
+          }
+        }
+      });
+      await Promise.all(lanes);
+      let covered = 0;
+      for (const node of nodes) {
+        const resolved = resolveSettings(settings, node);
+        if (this.cache.sf.peek(reviewKey('sf', node, resolved)) &&
+          (terminals.has(node) || this.cache.maia.peek(reviewKey('maia', node, resolved)))) covered++;
+      }
+      return { covered, total: nodes.length };
+    } finally {
+      for (const job of restoring) {
+        const left = (this.primeInflight.get(job.key)?.count ?? 1) - 1;
+        if (left <= 0) this.primeInflight.delete(job.key);
+        else this.primeInflight.set(job.key, { count: left, engine: job.engine });
+      }
+      this.emit();
+    }
   }
   // Read-only server probe used only by primeLine: positions missing
   // server-side stay missing for an explicit, user-gated batch, so evicted
