@@ -197,7 +197,7 @@ test('overview distinguishes empty games, no issues, and explored lines', async 
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
   await page.getByRole('tab', { name: 'Overview', exact: true }).click();
-  await expect(page.getByText('No inaccuracies, mistakes, misses, or blunders found.', { exact: true })).toBeVisible();
+  await expect(page.getByText('No inaccuracies, mistakes, misses, blunders, or skulls found.', { exact: true })).toBeVisible();
   await page.getByRole('tab', { name: 'Move analysis', exact: true }).click();
   const board = (await page.locator('#board cg-board').boundingBox())!;
   await page.mouse.click(board.x + board.width * 3.5 / 8, board.y + board.height * 6.5 / 8);
@@ -206,7 +206,7 @@ test('overview distinguishes empty games, no issues, and explored lines', async 
   await expect(page.locator('.tab-action').getByRole('button', { name: 'Analyze explored line' })).toBeVisible();
   await page.locator('#return-original').click();
   await expect(page.getByRole('region', { name: 'Game overview' })).toBeVisible();
-  await expect(page.getByText('No inaccuracies, mistakes, misses, or blunders found.', { exact: true })).toBeVisible();
+  await expect(page.getByText('No inaccuracies, mistakes, misses, blunders, or skulls found.', { exact: true })).toBeVisible();
   await page.locator('#mode-analysis').click();
   await page.locator('#analysis-pgn').fill('1. d4');
   await page.locator('#load-analysis').click();

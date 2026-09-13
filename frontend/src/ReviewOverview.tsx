@@ -132,8 +132,8 @@ export function ReviewOverview({
           ) : (
             <p className="empty-copy">
               {complete
-                ? "No inaccuracies, mistakes, misses, or blunders found."
-                : "Inaccuracies, mistakes, misses, and blunders will appear here as moves are reviewed."}
+                ? "No inaccuracies, mistakes, misses, blunders, or skulls found."
+                : "Inaccuracies, mistakes, misses, blunders, and skulls will appear here as moves are reviewed."}
             </p>
           )}
         </>

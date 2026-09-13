@@ -3,7 +3,7 @@ import type { Review } from './useReview';
 import { scoreText, whiteWin, type Quality } from './reviewMetrics';
 import type { ReviewSide } from './reviewSummary';
 
-const qualityGlyphs = { Forced: 'F', Blunder: '??', Mistake: '?', Miss: 'M', Inaccuracy: '?!', Great: '!', Best: 'B', Good: 'G' } as const;
+export const qualityGlyphs = { Forced: 'F', Skull: '💀', Blunder: '??', Mistake: '?', Miss: 'M', Inaccuracy: '?!', Great: '!', Best: 'B', Good: 'G' } as const;
 // Slot-reel deck: every real verdict, so the loading spinner previews the
 // exact glyphs it can settle on. Order matches the lab page row 03.
 const loadingFaces: { glyph: string; cls: string }[] = (Object.keys(qualityGlyphs) as (keyof typeof qualityGlyphs)[]).map(label => ({ glyph: qualityGlyphs[label], cls: `quality-${label.toLowerCase()}` }));

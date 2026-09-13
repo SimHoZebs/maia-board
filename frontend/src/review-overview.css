@@ -11,6 +11,7 @@
 .chart-point .chart-dot-inaccuracy { background: #7c691e; }
 .chart-point .chart-dot-mistake, .chart-point .chart-dot-miss { background: #985920; }
 .chart-point .chart-dot-blunder { background: #a63c3c; }
+.chart-point .chart-dot-skull { background: #7f1d1d; }
 .chart-point .chart-dot-great { background: #286b89; }
 .chart-point .chart-dot-best, .chart-point .chart-dot-good { background: #496336; }
 .review-overview .review-charts { margin: 0 0 18px; }

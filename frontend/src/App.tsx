@@ -41,8 +41,8 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
   const arrowMoves = { actual: review.nodes[ply + 1]?.moves[ply], maia: review.maiaCurrent?.top_moves[0]?.move, stockfish: review.current?.best_move };
   const playedQuality = analysis && ready && ply > 0 ? review.qualities[ply - 1] : undefined;
   const playedUci = analysis && ready && ply > 0 ? review.nodes[ply]?.moves[ply - 1] : undefined;
-  const badge = playedQuality && (playedQuality.label === 'Blunder' || playedQuality.label === 'Mistake') && playedUci
-    ? { square: playedUci.slice(2, 4) as Key, glyph: (playedQuality.label === 'Blunder' ? '??' : '?') as '??' | '?' } : null;
+  const badge = playedQuality && (playedQuality.label === 'Skull' || playedQuality.label === 'Blunder' || playedQuality.label === 'Mistake') && playedUci
+    ? { square: playedUci.slice(2, 4) as Key, glyph: (playedQuality.label === 'Skull' ? '💀' : playedQuality.label === 'Blunder' ? '??' : '?') as '💀' | '??' | '?' } : null;
   const shapes = analysis && ready ? reviewShapes(arrowMoves, { actual: true, maia: true, stockfish: true }, state.preview, badge) : [];
   // Narrow-boundary reset keys: new content deserves a fresh render attempt
   // instead of a stale panel fallback. Board navigation, game loads, and

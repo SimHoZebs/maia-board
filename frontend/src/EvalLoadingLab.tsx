@@ -10,6 +10,7 @@ const FACES = [
   { label: "Mistake", glyph: "?", cls: "quality-mistake" },
   { label: "Miss", glyph: "M", cls: "quality-miss" },
   { label: "Blunder", glyph: "??", cls: "quality-blunder" },
+  { label: "Skull", glyph: "💀", cls: "quality-skull" },
   { label: "Forced", glyph: "F", cls: "quality-forced" },
 ] as const;
 

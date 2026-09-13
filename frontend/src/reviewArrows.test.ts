@@ -22,3 +22,8 @@ it('marks blunder and mistake destinations with label badges', () => {
   expect(reviewShapes({ actual: null, maia: null, stockfish: null }, { actual: true, maia: true, stockfish: true }, null, { square: 'z9', glyph: '??' } as unknown as SquareBadge)).toEqual([]);
   expect(reviewShapes({ actual: null, maia: null, stockfish: null }, { actual: true, maia: true, stockfish: true }, null, { square: 'f3', glyph: '!' } as unknown as SquareBadge)).toEqual([]);
 });
+it('marks skull destinations with the shared dark-red badge', () => {
+  const skull = reviewShapes({ actual: null, maia: null, stockfish: null }, { actual: true, maia: true, stockfish: true }, null, { square: 'g3', glyph: '💀' });
+  expect(skull).toHaveLength(1);
+  expect(skull[0]).toMatchObject({ orig: 'g3', label: { text: '💀', fill: '#7f1d1d' } });
+});

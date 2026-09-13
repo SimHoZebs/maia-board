@@ -4,7 +4,7 @@ export const SEARCH_POLICY = 'sf19-n100k-ms750-mpv2-t1-h64-v1';
 export const REVIEW_METHOD = 'maia-board-review-v1';
 export type Score = { type: 'cp' | 'mate'; value: number; winning_side?: 'white' | 'black' };
 export type Evaluation = { engine: 'Stockfish 19'; search_policy: string; depth: number; terminal: null | 'white_win' | 'black_win' | 'draw'; best_move: string | null; score: Score; lines: { move: string; score: Score; depth: number }[] };
-export type Quality = { label: 'Forced' | 'Blunder' | 'Mistake' | 'Miss' | 'Inaccuracy' | 'Great' | 'Best' | 'Good' | 'Unreviewed'; accuracy: number | null; loss: number | null };
+export type Quality = { label: 'Forced' | 'Skull' | 'Blunder' | 'Mistake' | 'Miss' | 'Inaccuracy' | 'Great' | 'Best' | 'Good' | 'Unreviewed'; accuracy: number | null; loss: number | null };
 // Additive Maia difficulty axis, measured against the top move rather than
 // 100%: r = prob(played) / prob(top). A 13% move under a 15% top (r = 0.87)
 // is the same band as the top itself, while a 12% rank-1 in a wide opening
@@ -33,6 +33,7 @@ export function describeMove(args: { san: string; quality: Quality | undefined; 
   if (quality.label === 'Forced') return `${san} was the only legal move.`;
   const rare = rarity?.label ?? 'Unknown';
   if (quality.label === 'Miss') return bestSan ? `${san} missed the win — ${bestSan} kept the winning position.` : `${san} missed a win that was on the board.`;
+  if (quality.label === 'Skull') return bestSan ? `${san} allowed mate — ${bestSan} held the position.` : `${san} allowed mate.`;
   if (quality.label === 'Great') return rare === 'Unseen'
     ? `Brilliant — ${san} was the only good move, and almost nobody at ${elo} finds it.`
     : `Great — ${san} was the only good move in the position, and you found it.`;
@@ -69,6 +70,16 @@ export function classifyLoss(loss: number): 'Blunder' | 'Mistake' | 'Inaccuracy'
 export const MISS_AVAILABLE = 80;
 export const MISS_CAP = 60;
 export const MISS_ALIVE_FLOOR = 40;
+// Mate allowed when avoidable: the mover had no forced mate against them
+// (best play survives) but the played move lets the opponent force mate.
+// Winner resolution mirrors whiteWin: explicit winning_side, else mate-value
+// sign. Checked before Miss (disjoint: Miss needs winB >= 80, which is never
+// a losing mate) and before classifyLoss, whose win% delta is blind to
+// mate-to-mate (0 - 0) and lost-cp-to-mate (< 5) cases.
+export function isMateFor(score: Score, side: 'white' | 'black'): boolean {
+  if (score.type !== 'mate') return false;
+  return (score.winning_side ?? (score.value > 0 ? 'white' : 'black')) === side;
+}
 export function reviewMove(before: Evaluation | undefined, after: Evaluation | undefined, game: Chess, played: string): Quality {
   if (!before || !after) return { label: 'Unreviewed', accuracy: null, loss: null };
   const legal = game.moves().length;
@@ -78,6 +89,9 @@ export function reviewMove(before: Evaluation | undefined, after: Evaluation | u
   const [first, second] = before.lines;
   const best = played === before.best_move;
   const winA = pov(after.score);
+  const mover = game.turn() === 'w' ? 'white' : 'black';
+  const opp = mover === 'white' ? 'black' : 'white';
+  if (!best && isMateFor(after.score, opp) && !isMateFor(before.score, opp)) return { label: 'Skull', accuracy: 0, loss };
   if (!best && pov(before.score) >= MISS_AVAILABLE && winA <= MISS_CAP && winA >= MISS_ALIVE_FLOOR) return { label: 'Miss', accuracy: moveAccuracy(loss), loss };
   const great = best && loss <= 1 && legal >= 2 && before.score.type === 'cp' && after.score.type === 'cp' && first?.move === played && second?.move !== played && first.score.type === 'cp' && second?.score.type === 'cp' && pov(first.score) - pov(second.score) >= 10;
   return { label: classifyLoss(loss) ?? (great ? 'Great' : best ? 'Best' : 'Good'), accuracy: moveAccuracy(loss), loss };
