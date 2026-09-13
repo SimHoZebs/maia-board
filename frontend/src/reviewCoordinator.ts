@@ -22,7 +22,9 @@ function resolveSettings(input: SettingsInput, node: ReviewNode): ReviewSettings
 // `source` separates real inference (`live`) from `server-cache` and
 // `memory` hits: a batch that starts fast then crawls is the signature of
 // a settings change that invalidated one engine's cache half (e.g. Stockfish
-// lines 2→4 keeps every Maia key but misses every SF key).
+// time 750→2000 keeps every Maia key but misses every SF key). Line-count
+// changes are asymmetric: fewer lines reuse larger-mpv rows sliced down
+// (4→2 hits, approximately), while more lines always re-run (2→4 misses).
 export type JobSource = 'memory' | 'server-cache' | 'live';
 export type JobTiming = {
   engine: Engine; ply: number; detail: string;
@@ -134,6 +136,52 @@ export function parseEvaluation(body: unknown, settings?: StockfishSettings): Ev
     if (!sameScore(value.score, value.lines[0].score)) throw new Error('Stockfish returned an incomplete evaluation.');
   }
   return value;
+}
+
+// Superset reuse (downward only). A cached mpvM row with identical time and
+// depth settings approximately satisfies an mpvN request (M > N): same
+// nominal depth, prefix sliced, policy re-stamped to the requested one. By
+// product decision this approximation is served as exact; upward reuse is
+// never allowed (fewer lines cannot serve more), and derived rows are
+// read-time only — never persisted — so canonical stored rows stay native
+// searches.
+function witnessSettings(settings: ReviewSettings, lines: number): ReviewSettings | null {
+  const sf = settings.stockfish;
+  if (!sf || !Number.isInteger(lines) || lines <= sf.lines || lines > 5) return null;
+  return { ...settings, stockfish: { ...sf, lines } };
+}
+
+function sliceSupersetEvaluation(value: unknown, node: ReviewNode, want: ReviewSettings, witness: ReviewSettings): Evaluation | undefined {
+  const wantLines = want.stockfish?.lines;
+  if (wantLines === undefined) return undefined;
+  let parsed: Evaluation;
+  try {
+    parsed = parseEvaluation(value, witness.stockfish);
+  } catch {
+    return undefined;
+  }
+  // Terminals resolve locally per policy and never need this path.
+  if (parsed.terminal !== null) return undefined;
+  // A row may legitimately hold fewer lines than its policy when the
+  // position has few legal moves: the usable prefix is min(want, legal).
+  let legal = 0;
+  try {
+    legal = new Chess(node.fen).moves().length;
+  } catch {
+    return undefined;
+  }
+  const expected = Math.min(wantLines, legal);
+  if (expected < 1 || parsed.lines.length < expected) return undefined;
+  const sliced = parsed.lines.slice(0, expected);
+  if (new Set(sliced.map(line => line.move)).size !== sliced.length) return undefined;
+  return {
+    ...parsed,
+    search_policy: stockfishPolicy(want.stockfish),
+    lines: sliced,
+    best_move: sliced[0].move,
+    score: sliced[0].score,
+    depth: Math.min(...sliced.map(line => line.depth)),
+  };
 }
 
 export async function fetchEvaluation(node: ReviewNode, signal: AbortSignal, fetcher: typeof fetch = fetch, settings?: StockfishSettings, cache?: { hash: string; key: string }): Promise<Evaluation & { cached?: boolean }> {
@@ -536,17 +584,29 @@ export class ReviewCoordinator {
   // Read-only server probe used only by primeLine: positions missing
   // server-side stay missing for an explicit, user-gated batch, so evicted
   // rows can never trigger automatic engine work. The live path (execute)
-  // no longer probes: POST /evaluate and POST /move are read-through.
+  // probes only for downward supersets (see probeSuperset); exact lookups
+  // ride the read-through POST /evaluate and POST /move instead.
   private async readServerCache(job: Job, signal: AbortSignal): Promise<Result | undefined> {
+    const exact = await this.probeEvaluation(cacheHash(job.key), signal);
+    if (exact) {
+      const hit = this.validStoredRow(exact, job);
+      if (hit) return hit;
+    }
+    // Exact miss: Stockfish may still reuse a larger-mpv row sliced down.
+    if (job.engine === 'sf') return this.probeSuperset(job, signal);
+    return undefined;
+  }
+  // Single cache probe with a fast-miss contract: 404/unreadable/non-OK
+  // degrade to undefined, aborts rethrow. A probe that never settles (dead
+  // socket after backgrounding) must degrade to a miss, never wedge the
+  // caller: the race timer rejects independently of the fetcher so it also
+  // covers fetchers that ignore the abort signal.
+  private async probeEvaluation(hash: string, signal: AbortSignal): Promise<{ engine?: unknown; value?: unknown } | undefined> {
     let response: Response;
-    // Cache probes are fast SQLite lookups; a probe that never settles (dead
-    // socket after backgrounding) must degrade to a miss, never wedge a prime.
-    // The race timer rejects independently of the fetcher so it also covers
-    // fetchers that ignore the abort signal.
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       response = await Promise.race([
-        this.fetcher(`/evaluations/${cacheHash(job.key)}`, { signal }),
+        this.fetcher(`/evaluations/${hash}`, { signal }),
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => reject(new DOMException('Timed out', 'TimeoutError')), CACHE_PROBE_MS);
         }),
@@ -559,15 +619,16 @@ export class ReviewCoordinator {
       if (timer !== undefined) clearTimeout(timer);
     }
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
-    if (response.status === 404) return undefined;
+    if (!response.ok) return undefined;
     let body: unknown;
     try {
       body = await response.json();
     } catch {
       return undefined;
     }
-    if (!response.ok) return undefined;
-    const record = body as { engine?: unknown; value?: unknown };
+    return body as { engine?: unknown; value?: unknown };
+  }
+  private validStoredRow(record: { engine?: unknown; value?: unknown }, job: Job): Result | undefined {
     if (record.engine !== job.engine) return undefined;
     try {
       // Degraded Maia rows are stand-ins, never canonical: a lax legacy row
@@ -579,8 +640,45 @@ export class ReviewCoordinator {
       return undefined;
     }
   }
+  private peekSuperset(job: Job): Evaluation | undefined {
+    if (job.engine !== 'sf' || !job.settings.stockfish) return undefined;
+    for (let lines = job.settings.stockfish.lines + 1; lines <= 5; lines++) {
+      const witness = witnessSettings(job.settings, lines);
+      if (!witness) continue;
+      const hit = this.cache.sf.peek(reviewKey('sf', job.node, witness));
+      if (!hit) continue;
+      const sliced = sliceSupersetEvaluation(hit, job.node, job.settings, witness);
+      if (sliced) return sliced;
+    }
+    return undefined;
+  }
+  // Downward-only server fallback: probe larger-mpv rows for the same
+  // position and time/depth, concurrently so the added latency stays one
+  // probe round. The smallest sufficient mpv wins, since it is closest to a
+  // native search. Nothing is written back: derived rows stay read-time only.
+  private async probeSuperset(job: Job, signal: AbortSignal): Promise<Evaluation | undefined> {
+    const want = job.settings.stockfish?.lines;
+    if (job.engine !== 'sf' || want === undefined) return undefined;
+    const candidates: { witness: ReviewSettings; hash: string }[] = [];
+    for (let lines = want + 1; lines <= 5; lines++) {
+      const witness = witnessSettings(job.settings, lines);
+      if (witness) candidates.push({ witness, hash: cacheHash(reviewKey('sf', job.node, witness)) });
+    }
+    const settled = await Promise.all(candidates.map(async ({ witness, hash }) => {
+      let record: { engine?: unknown; value?: unknown } | undefined;
+      try {
+        record = await this.probeEvaluation(hash, signal);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') throw error;
+        return undefined;
+      }
+      if (!record || record.engine !== 'sf') return undefined;
+      return sliceSupersetEvaluation(record.value, job.node, job.settings, witness);
+    }));
+    return settled.find((sliced): sliced is Evaluation => sliced !== undefined);
+  }
 
-  private async execute(job: Job, signal: AbortSignal): Promise<{ result: Result; source: 'server-cache' | 'live'; retries: number }> {
+  private async execute(job: Job, signal: AbortSignal): Promise<{ result: Result; source: 'server-cache' | 'live' | 'memory'; retries: number }> {
     // Retry only busy responses, at most twice. Waiting remains in this lane so
     // another request cannot overtake a server job that has not been released.
     let retries = 0;
@@ -602,8 +700,24 @@ export class ReviewCoordinator {
     // Read-through: the POST carries the cache coordinates the old code
     // used for its separate GET probe + PUT write-back, so one request
     // covers lookup, inference, and persistence. The backend reports hits
-    // via X-Eval-Cache; anything else is live inference.
+    // via X-Eval-Cache; anything else is live inference. Before paying for
+    // inference, Stockfish consults downward supersets (memory, then server):
+    // a larger-mpv row sliced down satisfies fewer requested lines.
     if (job.engine === 'sf') {
+      const mem = this.peekSuperset(job);
+      if (mem) {
+        this.cache.sf.set(job.key, mem);
+        return { result: mem, source: 'memory', retries };
+      }
+      // No extra await when supersets are inapplicable (legacy settings
+      // without stockfish): the lane keeps its exact previous timing.
+      if (job.settings.stockfish) {
+        const sup = await this.probeSuperset(job, signal);
+        if (sup) {
+          this.cache.sf.set(job.key, sup);
+          return { result: sup, source: 'server-cache', retries };
+        }
+      }
       const result = await fetchEvaluation(job.node, signal, retryFetch, job.settings.stockfish, { hash: cacheHash(job.key), key: job.key });
       return { result, source: result.cached ? 'server-cache' : 'live', retries };
     }

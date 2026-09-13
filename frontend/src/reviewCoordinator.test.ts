@@ -564,6 +564,126 @@ describe('batch timing traces', () => {
     expect(third.timings.find(timing => timing.engine === 'sf')?.detail).toBe('sf19-ms750-mpv4-d0-t1-h64-v2');
   });
 });
+describe('stockfish superset reuse', () => {
+  const CANDIDATES = ['e2e4', 'd2d4', 'g1f3', 'c2c4', 'b1c3'];
+  const sf2 = { ...settings, stockfish: { time_ms: 750, lines: 2, depth: 0 } };
+  const sf4 = { ...settings, stockfish: { time_ms: 750, lines: 4, depth: 0 } };
+  // Echoes the requested search policy with one line per requested mpv, so
+  // explicit settings validate — mirroring the worker's min(mpv, legal).
+  const liveBody = (path: string, request: Record<string, unknown>) => {
+    if (path === '/evaluate') {
+      const wanted = request.settings as { time_ms: number; lines: number; depth: number };
+      const policy = stockfishPolicy(wanted);
+      const count = Math.min(wanted.lines, 4);
+      const lines = CANDIDATES.slice(0, count).map((move, index) => ({ move, score: { type: 'cp', value: -index * 10 }, depth: 12 }));
+      return { engine: 'Stockfish 19', search_policy: policy, depth: 12, terminal: null, best_move: lines[0].move, score: lines[0].score, lines };
+    }
+    return body(path);
+  };
+  const posts = (fetcher: ReturnType<typeof vi.fn>) =>
+    fetcher.mock.calls.map(([url]) => String(url)).filter(url => url === '/evaluate' || url === '/move');
+  const evalPosts = (fetcher: ReturnType<typeof vi.fn>) => posts(fetcher).filter(url => url === '/evaluate');
+  it('primes and batches fewer lines from larger-mpv rows with zero inference', async () => {
+    const stored = new Map<string, StoredRow>();
+    const transcript: string[] = [];
+    const fetcher = vi.fn(readThroughFetcher(stored, liveBody, transcript));
+    const first = new ReviewCoordinator(fetcher);
+    first.startBatch(nodes, sf4); await flush(); await flush(); await flush();
+    expect(first.progress).toMatchObject({ running: false });
+    expect(evalPosts(fetcher)).toHaveLength(4);
+    // Fresh memory: priming for 2 lines reuses the 4-line rows read-only.
+    const second = new ReviewCoordinator(fetcher);
+    const calls = fetcher.mock.calls.length;
+    const evalBeforePrime = evalPosts(fetcher).length;
+    const coverage = await second.primeLine(nodes, sf2, new AbortController().signal);
+    expect(coverage).toEqual({ covered: nodes.length, total: nodes.length });
+    expect(evalPosts(fetcher)).toHaveLength(evalBeforePrime); // prime never POSTs
+    expect(fetcher.mock.calls.length).toBeGreaterThan(calls); // only GET probes
+    const sliced = second.result('sf', nodes[0], sf2);
+    expect(sliced?.lines.map(line => line.move)).toEqual(['e2e4', 'd2d4']);
+    expect(sliced?.search_policy).toBe(stockfishPolicy(sf2.stockfish));
+    expect(sliced?.best_move).toBe('e2e4');
+    // Analyzing at 2 lines completes off the primed memory: zero inference.
+    const before = posts(fetcher).length;
+    second.startBatch(nodes, sf2); await flush(); await flush(); await flush();
+    expect(second.progress).toMatchObject({ running: false, failed: 0 });
+    expect(posts(fetcher)).toHaveLength(before);
+    expect(second.batchTimingSummary()).toMatchObject({ byEngine: { sf: { live: 0 }, maia: { live: 0 } } });
+  });
+  it('serves unprimed batches from server supersets without POST inference', async () => {
+    const stored = new Map<string, StoredRow>();
+    const transcript: string[] = [];
+    const fetcher = vi.fn(readThroughFetcher(stored, liveBody, transcript));
+    const first = new ReviewCoordinator(fetcher);
+    first.startBatch(nodes, sf4); await flush(); await flush(); await flush();
+    expect(first.progress).toMatchObject({ running: false });
+    // No priming: the batch itself falls back to server superset GETs.
+    const second = new ReviewCoordinator(fetcher);
+    const evalBefore = evalPosts(fetcher).length;
+    second.startBatch(nodes, sf2); await flush(); await flush(); await flush();
+    expect(second.progress).toMatchObject({ running: false, failed: 0 });
+    expect(evalPosts(fetcher)).toHaveLength(evalBefore);
+    expect(second.batchTimingSummary()).toMatchObject({ byEngine: { sf: { live: 0, serverHits: 4 } } });
+    expect(second.result('sf', nodes[2], sf2)?.lines).toHaveLength(2);
+  });
+  it('still misses when time or depth differ, and never serves upward', async () => {
+    const stored = new Map<string, StoredRow>();
+    const transcript: string[] = [];
+    const fetcher = vi.fn(readThroughFetcher(stored, liveBody, transcript));
+    const first = new ReviewCoordinator(fetcher);
+    first.startBatch(nodes, sf4); await flush(); await flush(); await flush();
+    expect(first.progress).toMatchObject({ running: false });
+    // Same lines, different time: superset must not apply.
+    const slower = { ...settings, stockfish: { time_ms: 2000, lines: 2, depth: 0 } };
+    const second = new ReviewCoordinator(fetcher);
+    const coverage = await second.primeLine(nodes, slower, new AbortController().signal);
+    expect(coverage.covered).toBe(0);
+    expect(second.result('sf', nodes[0], slower)).toBeUndefined();
+    // Fewer stored lines can never satisfy more requested lines (upward).
+    const third = new ReviewCoordinator(fetcher);
+    const before = posts(fetcher).length;
+    third.startBatch(nodes.slice(0, 1), { ...settings, stockfish: { time_ms: 750, lines: 5, depth: 0 } });
+    await flush(); await flush(); await flush();
+    expect(third.progress).toMatchObject({ running: false });
+    expect(posts(fetcher).length).toBeGreaterThan(before);
+  });
+  it('satisfies short prefixes when the position has one legal move', async () => {
+    const single = testNodes('R6k/8/5K2/8/8/8/8/8 b - - 0 1', []);
+    const oneLiner = () => ({ engine: 'Stockfish 19', search_policy: stockfishPolicy(sf4.stockfish), depth: 12, terminal: null,
+      best_move: 'h8h7', score: { type: 'cp', value: 0 }, lines: [{ move: 'h8h7', score: { type: 'cp', value: 0 }, depth: 12 }] });
+    const fetcher = vi.fn(readThroughFetcher(new Map(), path => (path === '/evaluate' ? oneLiner() : body(path)), []));
+    const first = new ReviewCoordinator(fetcher);
+    first.startBatch(single, sf4); await flush(); await flush(); await flush();
+    expect(first.result('sf', single[0], sf4)?.lines).toHaveLength(1);
+    const second = new ReviewCoordinator(fetcher);
+    const coverage = await second.primeLine(single, sf2, new AbortController().signal);
+    expect(coverage).toEqual({ covered: 1, total: 1 });
+    expect(second.result('sf', single[0], sf2)?.lines.map(line => line.move)).toEqual(['h8h7']);
+  });
+  it('skips corrupt superset rows and falls through to live inference', async () => {
+    const poison = {
+      engine: 'Stockfish 19', search_policy: stockfishPolicy(sf4.stockfish), depth: 12, terminal: null,
+      best_move: 'e2e4', score: { type: 'cp', value: 0 },
+      lines: [
+        { move: 'e2e4', score: { type: 'cp', value: 0 }, depth: 12 },
+        { move: 'e2e4', score: { type: 'cp', value: 0 }, depth: 12 },
+        { move: 'g1f3', score: { type: 'cp', value: -10 }, depth: 12 },
+        { move: 'c2c4', score: { type: 'cp', value: -20 }, depth: 12 },
+      ],
+    };
+    const sfKey = reviewKey('sf', nodes[0], sf4);
+    const stored = new Map<string, StoredRow>([[cacheHash(sfKey), { engine: 'sf', key: sfKey, value: poison }]]);
+    const transcript: string[] = [];
+    const fetcher = vi.fn(readThroughFetcher(stored, liveBody, transcript));
+    const coordinator = new ReviewCoordinator(fetcher);
+    coordinator.foregroundSfOnly([nodes[0]], sf2); await flush(); await flush();
+    // The duplicated-move superset fails witness validation, so the lane
+    // runs live and files a clean native 2-line row.
+    expect(coordinator.result('sf', nodes[0], sf2)).toMatchObject({ depth: 12 });
+    expect(coordinator.result('sf', nodes[0], sf2)?.lines).toHaveLength(2);
+    expect(transcript.filter(call => call === '/evaluate:miss')).toHaveLength(1);
+  });
+});
 describe('play-time Maia persistence', () => {
   it('keys play replies identically to analysis batches for reuse', async () => {
     const { maiaCacheKeyForMoveRequest } = await import('./reviewCoordinator');
