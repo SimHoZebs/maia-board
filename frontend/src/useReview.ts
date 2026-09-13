@@ -377,6 +377,7 @@ export function useReview(state: State) {
     maiaStale, maiaLocked: focusIsMaia,
     gameElo: gameForLine?.settings.eloMaia,
     error: active && current ? coordinator.error('sf', current, currentSettings) || (focusNode ? coordinator.error('sf', focusNode, focusSettings) || coordinator.error('maia', focusNode, focusSettings) : coordinator.error('maia', current, currentSettings)) : undefined,
+    currentError: active && current ? coordinator.error('sf', current, currentSettings) : undefined,
     progress, recordStatus, start: startBatchAtCurrent, retry: () => coordinator.retry(),
     tooLong: nodes.length > 257 };
 }

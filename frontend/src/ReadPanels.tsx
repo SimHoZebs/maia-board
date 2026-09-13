@@ -529,7 +529,13 @@ function useTweenedPercent(target: number): number {
       setDisplay(target);
       return;
     }
-    if (target === displayRef.current) return;
+    if (target === displayRef.current) {
+      // Back at rest (e.g. returned to origin before the hold fired): no
+      // tween is running after cleanup, so clear the flag. Otherwise one
+      // skipped hold would leak into the next navigation.
+      busyRef.current = false;
+      return;
+    }
     const from = displayRef.current;
     const hold = busyRef.current ? 0 : BAR_HOLD_MS;
     busyRef.current = true;
@@ -560,31 +566,51 @@ function useTweenedPercent(target: number): number {
 export function StockfishBar({
   evaluation,
   orientation,
+  failed,
 }: {
   evaluation?: Evaluation;
   orientation: "white" | "black";
+  failed?: boolean;
 }) {
-  const percent = evaluation ? whiteWin(evaluation.score) : 50;
+  // Retain the last settled evaluation while the next position loads: the bar
+  // keeps showing the previous value (dimmed/pulsing via .loading) so the
+  // tween runs previous -> current instead of previous -> 50 -> current.
+  const lastRef = useRef<Evaluation | undefined>(evaluation);
+  useEffect(() => {
+    if (evaluation) lastRef.current = evaluation;
+  }, [evaluation]);
+  const display = evaluation ?? lastRef.current;
+  const percent = display ? whiteWin(display.score) : 50;
   const shown = useTweenedPercent(percent);
-  const score = evaluation ? scoreValueText(evaluation.score) : "—";
-  const description = !evaluation
+  const score = display ? scoreValueText(display.score) : "—";
+  const pending = !evaluation;
+  // A failed fetch is not loading: drop the pulse so the bar never spins
+  // forever on the old value. Retry clears the failure upstream and the pulse
+  // resumes while the refetch is in flight.
+  const loading = pending && !!display && !failed;
+  const statusSuffix = loading ? " · updating" : failed && pending ? " · update failed" : "";
+  const description = !display
     ? "No evaluation yet"
-    : evaluation.terminal === "draw"
+    : display.terminal === "draw"
       ? "Draw"
-      : evaluation.terminal === "white_win"
+      : display.terminal === "white_win"
         ? "White wins"
-        : evaluation.terminal === "black_win"
+        : display.terminal === "black_win"
           ? "Black wins"
           : `${score} · White perspective`;
+  const accessibleName = !display
+    ? `${description}${failed && pending ? " · update failed" : ""}`
+    : `${description} · estimated White winning chance ${Math.round(percent)}%${statusSuffix}`;
   return (
     <section
-      className={`stockfish-balance orientation-${orientation}${evaluation ? "" : " pending"}`}
+      className={`stockfish-balance orientation-${orientation}${pending ? " pending" : ""}${loading ? " loading" : ""}`}
       aria-label="Stockfish position evaluation"
+      aria-busy={loading || undefined}
     >
       <div
         className="balance-track"
         role="img"
-        aria-label={`${description}${evaluation ? ` · estimated White winning chance ${Math.round(percent)}%` : ""}`}
+        aria-label={accessibleName}
         title={description}
       >
         <div className="balance-white" style={{ height: `${shown}%` }} />
