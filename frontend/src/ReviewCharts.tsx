@@ -39,7 +39,9 @@ export function ReviewCharts({ review, ply, sans, onView, side }: { review: Revi
   const tabs = [{ id: 'accuracy', label: 'Move accuracy' }, { id: 'evaluation', label: 'Evaluation' }] as const;
   const selected = useRef<HTMLButtonElement>(null);
   const chart = useRef<HTMLDivElement>(null);
-  const selectedPly = tab === 'accuracy' ? Math.min(ply + 1, review.nodes.length - 1) : ply;
+  // Accuracy points sit on the after-move position (point i reviews the move
+  // leading into it); point 0 is the start with no move, so nothing selects.
+  const selectedPly = tab === "accuracy" && ply === 0 ? -1 : ply;
   useLayoutEffect(() => {
     if (selected.current && chart.current) chart.current.scrollLeft = selected.current.offsetLeft - chart.current.clientWidth / 2 + 22;
   }, [ply, tab]);
@@ -88,7 +90,7 @@ export function ReviewCharts({ review, ply, sans, onView, side }: { review: Revi
           {kept.map((point, pos) => pos > 0 && point.value !== null && kept[pos - 1].value !== null ? <line key={point.origIndex} x1={(pos - 1) * 44 + 22} y1={110 - kept[pos - 1].value!} x2={pos * 44 + 22} y2={110 - point.value} className="chart-line" /> : null)}
         </svg>
         {kept.map((point, pos) => {
-          return <button key={point.origIndex} type="button" ref={pos === selectedPos ? selected : undefined} className="chart-point" disabled={tab === 'accuracy' && point.origIndex === 0} aria-label={point.description} aria-current={pos === selectedPos ? 'step' : undefined} title={point.description} onClick={() => onView(tab === 'accuracy' ? point.origIndex - 1 : point.origIndex)} style={{ left: pos * 44 }}>{point.value !== null && <i className={tab === 'accuracy' && point.quality ? `chart-dot-${point.quality.label.toLowerCase()}` : undefined} style={{ top: 110 - point.value }} />}<span>{point.moveNumber}</span></button>;
+          return <button key={point.origIndex} type="button" ref={pos === selectedPos ? selected : undefined} className="chart-point" disabled={tab === 'accuracy' && point.origIndex === 0} aria-label={point.description} aria-current={pos === selectedPos ? 'step' : undefined} title={point.description} onClick={() => onView(point.origIndex)} style={{ left: pos * 44 }}>{point.value !== null && <i className={tab === 'accuracy' && point.quality ? `chart-dot-${point.quality.label.toLowerCase()}` : undefined} style={{ top: 110 - point.value }} />}<span>{point.moveNumber}</span></button>;
         })}
       </div>
       </div>

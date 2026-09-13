@@ -52,14 +52,6 @@ import {
 } from "./reviewMetrics";
 import { ReviewOverview } from "./ReviewOverview";
 
-function reviewRecord(review: Review) {
-  return review.recordStatus.state === "fresh"
-    ? review.recordStatus.record
-    : review.recordStatus.state === "stale"
-      ? review.recordStatus.record
-      : undefined;
-}
-
 function isComplete(review: Review): boolean {
   const progress = review.progress;
   return !!progress &&
@@ -148,28 +140,6 @@ function ReviewActionButton({ state, review }: { state: State; review: Review })
   );
 }
 
-function hasReviewStatus(review: Review): boolean {
-  if (review.progress?.running) return false;
-  if (isComplete(review)) return false;
-  const record = reviewRecord(review);
-  if (review.recordStatus.state === "stale" && record) return true;
-  return false;
-}
-
-function ReviewStatus({ review }: { review: Review }) {
-  if (review.progress?.running) return null;
-  if (isComplete(review)) return null;
-  const record = reviewRecord(review);
-  if (review.recordStatus.state === "stale" && record) {
-    return (
-      <div className="analysis-record">
-        <p>Previously Maia {record.settings.elo_maia}</p>
-      </div>
-    );
-  }
-  return null;
-}
-
 export function InsightPanel({
   state,
   dispatch,
@@ -190,7 +160,9 @@ export function InsightPanel({
   ] as const;
   const inspect = (beforePly: number) => {
     setTab("moves");
-    dispatch({ type: "view", ply: beforePly });
+    // Issues name the before-position; the verdict now renders after the
+    // move, so land one ply forward.
+    dispatch({ type: "view", ply: beforePly + 1 });
     moveTab.current?.focus({ preventScroll: true });
     document.getElementById("board")?.scrollIntoView({ block: "start" });
   };
@@ -202,8 +174,7 @@ export function InsightPanel({
   const showControls =
     review.tooLong ||
     !!review.error ||
-    !!review.progress?.failed ||
-    hasReviewStatus(review);
+    !!review.progress?.failed;
   return (
     <aside className="panel insight-panel" aria-label="Game analysis">
       <div className="analysis-tabs analysis-section">
@@ -264,7 +235,6 @@ export function InsightPanel({
             <Button onClick={review.retry}>Retry failed</Button>
           </p>
         )}
-        <ReviewStatus review={review} />
       </div>
       )}
       <div
@@ -336,32 +306,47 @@ function MoveAnalysis({
   dispatch: Dispatch<Action>;
   review: Review;
 }) {
-  const response = review.maia;
-  const node = review.nodes[state.analysis.index];
+  const ply = state.analysis.index;
+  // Displayed move: the board shows the position after move x (and before
+  // move y), so this panel covers x — the move leading into the viewed
+  // position. Candidate lists come from x's before-position with x marked
+  // "(played)", matching the arrows.
+  const focus = ply - 1;
+  const hasMove = focus >= 0;
+  const response = hasMove ? review.maia : undefined;
+  const node = review.nodes[hasMove ? focus : ply];
   const insight = response ? { fen: node.fen } : undefined;
-  const played =
-    review.nodes[state.analysis.index + 1]?.moves[state.analysis.index];
-  const evaluation = review.current;
-  // Verdict for the move played FROM this position: the same temporal
-  // reference as the candidate lists (which mark it "(played)") and the
-  // arrows. Nothing renders past the final position or pre-review.
-  const bestUci = review.evaluations[state.analysis.index]?.best_move ?? undefined;
+  const played = hasMove
+    ? review.nodes[ply]?.moves[focus]
+    : undefined;
+  const evaluation = hasMove ? review.focus : undefined;
+  const afterEvaluation = hasMove ? review.evaluations[ply] : undefined;
+  const bestUci = evaluation?.best_move ?? undefined;
   const verdict = played
     ? describeMove({
         san: candidateSan(node.fen, played),
-        quality: review.qualities[state.analysis.index],
-        rarity: review.rarities?.[state.analysis.index],
+        quality: review.qualities[focus],
+        rarity: review.rarities?.[focus],
         elo: review.maiaElo,
         bestSan: bestUci ? candidateSan(node.fen, bestUci) : undefined,
       })
     : null;
+  // Exploring a candidate means playing it instead of x, so step back to
+  // x's before-position first: the reducer branches from the viewed position.
+  const exploreFromFocus = (uci: string) => {
+    dispatch({ type: "view", ply: focus });
+    dispatch({ type: "explore", uci });
+  };
   // Loading signals: a missing result with no recorded error is in-flight
   // (foreground fetch, prime, or batch) rather than genuinely absent. The
-  // foreground lane fetches the viewed position on every navigation, so the
-  // current position is never an "empty" state — it is either ready, failed,
-  // or loading. Terminals never have a Maia row, so they stay empty instead
-  // of skeleton-loading forever.
+  // foreground lane fetches the displayed move's before/after pair on every
+  // navigation. Lines longer than the review limit never fetch, so they stay
+  // empty instead of skeleton-loading forever. Before the first move there is
+  // no x yet, so the panel is empty (not loading) with a stepping hint.
+  // Focus is always x's before-position, which is never terminal in a legal
+  // line; the terminal check below is a safety net only.
   const hasError = !!review.error;
+  const tooLong = review.nodes.length > 257;
   let terminalPosition = !!evaluation?.terminal;
   if (!terminalPosition) {
     try {
@@ -370,17 +355,54 @@ function MoveAnalysis({
       terminalPosition = false;
     }
   }
-  const maiaLoading = !response && !hasError && !terminalPosition;
-  const sfLoading = !evaluation && !hasError;
-  // The verdict needs the *next* position's evaluation too, which the
-  // foreground lane never fetches (current + previous only) — it arrives via
-  // prime or an explicit batch. Gating on those lanes keeps the skeleton from
-  // spinning forever on an unbatched ply whose `after` side was never
-  // requested, and clears it when a batch settles (even with failures, which
-  // surface through the Retry banner instead).
+  const maiaLoading = hasMove && !response && !hasError && !terminalPosition && !tooLong;
+  const sfLoading = hasMove && !evaluation && !hasError && !tooLong;
+  // The verdict needs both sides of the move; the foreground lane fetches
+  // both, prime/batch backfill the rest. Gating on the batch lane keeps the
+  // skeleton honest while a batch that will supply the missing side runs.
   const batchRunning = !!review.progress?.running;
   const verdictLoading =
-    !!played && !verdict && !hasError && (sfLoading || batchRunning);
+    hasMove && !!played && !verdict && !hasError && !tooLong && (!evaluation || !afterEvaluation || batchRunning);
+  if (!hasMove) {
+    return (
+      <>
+        <p className="move-verdict" role="status">
+          Starting position — step forward to review the first move.
+        </p>
+        <div className="engine-duo">
+        <EngineSection
+          label="Maia analysis"
+          titleId="insight-title"
+          dotClass="source-maia"
+          title={
+            <>
+              Maia •{" "}
+              <Rating
+                inline
+                id="analysis-rating"
+                label={review.maiaLocked ? "Maia rating (game Elo)" : "Maia rating"}
+                value={review.maiaLocked ? review.maiaElo : state.analysisSettings.eloMaia}
+                disabled={review.maiaLocked || review.progress?.running}
+                onChange={(eloMaia) =>
+                  dispatch({ type: "analysis-settings", settings: { eloMaia } })
+                }
+              />
+            </>
+          }
+        >
+          <p className="empty-copy">No move to review yet.</p>
+        </EngineSection>
+        <EngineSection
+          label="Stockfish evaluation"
+          dotClass="source-stockfish"
+          title="Stockfish 19"
+        >
+          <p className="empty-copy">No move to review yet.</p>
+        </EngineSection>
+        </div>
+      </>
+    );
+  }
   return (
     <>
       {verdict ? (
@@ -442,8 +464,7 @@ function MoveAnalysis({
                       active: state.preview === candidate.move,
                       onPreview: () =>
                         dispatch({ type: "preview", uci: candidate.move }),
-                      onSelect: () =>
-                        dispatch({ type: "explore", uci: candidate.move }),
+                      onSelect: () => exploreFromFocus(candidate.move),
                     }}
                   />
                 );
@@ -468,7 +489,7 @@ function MoveAnalysis({
             played={played}
             previewUci={state.preview}
             onPreview={(uci) => dispatch({ type: "preview", uci })}
-            onExplore={(uci) => dispatch({ type: "explore", uci })}
+            onExplore={(uci) => exploreFromFocus(uci)}
           />
         ) : sfLoading ? (
           <SkeletonList label="Loading Stockfish lines" rows={2} />

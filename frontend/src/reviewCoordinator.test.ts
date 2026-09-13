@@ -77,6 +77,26 @@ it('deduplicates in-flight requests and coalesces stale foreground positions', a
   expect(requests.at(-1)).toBe('/evaluate:2');
   coordinator.suspend(); releases.splice(0).forEach(resolve => resolve()); await flush();
 });
+it('fetches Maia for both foreground positions at depth 2, one by default', async () => {
+  const requests: string[] = [];
+  const fetcher = vi.fn(async (url, init) => {
+    if (!init?.body) return Response.json({ code: 'not_found', message: 'missing' }, { status: 404 });
+    requests.push(`${url}:${JSON.parse(init.body as string).moves.length}`);
+    return Response.json(body(String(url)));
+  }) as typeof fetch;
+  const deep = new ReviewCoordinator(fetcher);
+  deep.foregroundAt([nodes[3], nodes[2]], settings, 2); await flush();
+  expect(requests).toContain('/move:3');
+  expect(requests).toContain('/move:2');
+  expect(requests).toContain('/evaluate:3');
+  expect(requests).toContain('/evaluate:2');
+  expect(deep.result('maia', nodes[3], settings)).toBeDefined();
+  expect(deep.result('maia', nodes[2], settings)).toBeDefined();
+  const shallow = new ReviewCoordinator(fetcher);
+  shallow.foregroundAt([nodes[3], nodes[2]], settings); await flush();
+  expect(shallow.result('maia', nodes[3], settings)).toBeDefined();
+  expect(shallow.result('maia', nodes[2], settings)).toBeUndefined();
+});
 it('coalesces synchronous emits into one subscriber notification', async () => {
   const fetcher = vi.fn(() => new Promise<Response>(() => {})) as unknown as typeof fetch;
   const coordinator = new ReviewCoordinator(fetcher);

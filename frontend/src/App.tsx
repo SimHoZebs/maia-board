@@ -34,7 +34,11 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
   const enabled = ready && !state.promotion && !resigned && !game.isGameOver() && (analysis || (mode === 'play' && !live.isGameOver() && !historic && !request && userTurn));
   const full = analysis ? analysisLine(state.analysis, analysisLength(state.analysis)) : { sanMoves: live.history() };
   const ply = analysis ? state.analysis.index : state.viewedPly ?? state.play.moves.length;
-  const arrowMoves = { actual: review.nodes[ply + 1]?.moves[ply], maia: review.maia?.top_moves[0]?.move, stockfish: review.current?.best_move };
+  // Forward estimates for the next move: the board shows the position after
+  // x, so the arrows project y. White draws the played continuation (the
+  // board's tile highlight only covers x); red/blue are Maia/Stockfish top
+  // choices from here.
+  const arrowMoves = { actual: review.nodes[ply + 1]?.moves[ply], maia: review.maiaCurrent?.top_moves[0]?.move, stockfish: review.current?.best_move };
   const playedQuality = analysis && ready && ply > 0 ? review.qualities[ply - 1] : undefined;
   const playedUci = analysis && ready && ply > 0 ? review.nodes[ply]?.moves[ply - 1] : undefined;
   const badge = playedQuality && (playedQuality.label === 'Blunder' || playedQuality.label === 'Mistake') && playedUci

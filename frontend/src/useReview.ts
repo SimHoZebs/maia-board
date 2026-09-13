@@ -34,11 +34,11 @@ export function selectMaiaDisplay(params: { memory?: MaiaIdentity; global: MaiaI
 }
 
 // Pure backfill for rating changes, tested without React: unvisited entries
-// keep the previous identity, the viewed move jumps to the new one.
-export function backfillMaiaMemory(prevMem: Record<number, MaiaIdentity>, prev: MaiaIdentity, next: MaiaIdentity, currentPly: number, length: number): Record<number, MaiaIdentity> {
+// keep the previous identity, the displayed move jumps to the new one.
+export function backfillMaiaMemory(prevMem: Record<number, MaiaIdentity>, prev: MaiaIdentity, next: MaiaIdentity, focusPly: number, length: number): Record<number, MaiaIdentity> {
   const out: Record<number, MaiaIdentity> = { ...prevMem };
   for (let i = 0; i < length; i++) if (!out[i]) out[i] = prev;
-  out[currentPly] = next;
+  out[focusPly] = next;
   return out;
 }
 
@@ -100,10 +100,15 @@ export function useReview(state: State) {
   }, [settings, pinnedSettings, pinnedKey, ownGame, userColorForLine]);
   const [maiaMemory, setMaiaMemory] = useState<Record<number, MaiaIdentity>>({});
   const [prevMaia, setPrevMaia] = useState<MaiaIdentity>(maiaIdentity);
-  // Last committed ply, for batched rating+navigate updates where the first
+  // Displayed move: the board shows the position after move x (and before move
+  // y), so the analysis panel covers x — the move leading into the viewed
+  // position — not y. Focus is that move's before-position; -1 at the start
+  // (no move yet).
+  const focusPly = currentPly - 1;
+  // Last committed focus, for batched rating+navigate updates where the first
   // render with the new identity already carries the navigated index.
-  const lastPlyRef = useRef(currentPly);
-  useEffect(() => { lastPlyRef.current = currentPly; }, [currentPly]);
+  const lastFocusRef = useRef(focusPly);
+  useEffect(() => { lastFocusRef.current = focusPly; }, [focusPly]);
   const nodes = useMemo(() => {
     const game = replay([], line.initialFen);
     const nodes: ReviewNode[] = [{ ...positionOf(game), initialFen: line.initialFen }];
@@ -114,19 +119,27 @@ export function useReview(state: State) {
   // must never leak into its headers.
   useEffect(() => { setMaiaMemory({}); }, [lineKey]);
   // Rating change invalidates the move viewed at change time. Render-phase
-  // state update (not a passive effect) captures that ply: the first render
+  // state update (not a passive effect) captures that focus: the first render
   // with the new identity backfills before any later navigation can reassign
   // the invalidation to the wrong index. Batched rating+navigate commits also
-  // invalidate the pre-batch index so neither position keeps stale results.
+  // invalidate the pre-batch focus so neither move keeps stale results.
   // Own games: only the user's moves follow the adjustable rating. Maia's
   // moves stay pinned to the game Elo, so pinned plies are re-seeded with the
   // game identity instead of the old global one and never invalidated.
   if (!sameMaiaIdentity(prevMaia, maiaIdentity)) {
-    const atChange = lastPlyRef.current;
+    const atChange = lastFocusRef.current;
     setPrevMaia(maiaIdentity);
     setMaiaMemory(prevMem => {
-      let next = backfillMaiaMemory(prevMem, prevMaia, maiaIdentity, currentPly, nodes.length);
-      if (atChange !== currentPly && atChange >= 0 && atChange < nodes.length) next = { ...next, [atChange]: maiaIdentity };
+      // Backfill unvisited moves with the previous identity; the displayed
+      // move (focus) jumps to the new one. At the start (no move yet) nothing
+      // is invalidated, but unvisited entries still backfill.
+      let next = focusPly >= 0
+        ? backfillMaiaMemory(prevMem, prevMaia, maiaIdentity, focusPly, nodes.length)
+        : { ...prevMem };
+      if (focusPly < 0) {
+        for (let i = 0; i < nodes.length; i++) if (next[i] === undefined) next[i] = prevMaia;
+      }
+      if (atChange !== focusPly && atChange >= 0 && atChange < nodes.length) next = { ...next, [atChange]: maiaIdentity };
       if (pinnedIdentity) {
         for (let i = 0; i < nodes.length; i++) {
           try {
@@ -134,10 +147,10 @@ export function useReview(state: State) {
           } catch { /* keep backfilled identity */ }
         }
         // A rating change while viewing one of Maia's moves must not
-        // invalidate that pinned position.
-        if (currentPly >= 0 && currentPly < nodes.length) {
+        // invalidate that pinned move.
+        if (focusPly >= 0 && focusPly < nodes.length) {
           try {
-            if (isMaiaNode(nodes[currentPly])) next = { ...next, [currentPly]: pinnedIdentity };
+            if (isMaiaNode(nodes[focusPly])) next = { ...next, [focusPly]: pinnedIdentity };
           } catch { /* keep */ }
         }
         if (atChange >= 0 && atChange < nodes.length) {
@@ -184,7 +197,13 @@ export function useReview(state: State) {
   useEffect(() => {
     coordinator.clearForeground();
     if (!active || nodes.length > 257) return;
-    const timer = setTimeout(() => coordinator.foregroundAt([nodes[state.analysis.index], ...(state.analysis.index ? [nodes[state.analysis.index - 1]] : [])], settingsForNode), 200);
+    // Foreground covers the displayed move's before/after pair (Stockfish
+    // needs both for the verdict) plus Maia for both sides: the panel judges
+    // x (focus) while the arrows project y (current). Maia takes the first
+    // two slots, so the focus goes first.
+    const current = nodes[state.analysis.index];
+    const focus = state.analysis.index > 0 ? nodes[state.analysis.index - 1] : null;
+    const timer = setTimeout(() => coordinator.foregroundAt(focus ? [focus, current] : [current], settingsForNode, 2), 200);
     return () => { clearTimeout(timer); coordinator.clearForeground(); };
   }, [coordinator, active, nodes, state.analysis.index, combinedKey]);
   const hash = useMemo(() => lineHash(line.initialFen, line.moves), [lineKey]);
@@ -302,35 +321,35 @@ export function useReview(state: State) {
     [line.moves, maiaResults],
   );
   const current = nodes[currentPly];
-  const currentIsMaia = !!current && isMaiaNode(current);
+  const focusNode = focusPly >= 0 ? nodes[focusPly] : undefined;
+  const focusIsMaia = !!focusNode && isMaiaNode(focusNode);
   // Pinned display for Maia's own moves: always the game identity, never stale.
-  const pinnedForCurrent = currentIsMaia && pinnedSettings ? coordinator.result('maia', current, pinnedSettings) : undefined;
+  const pinnedForFocus = focusIsMaia && pinnedSettings ? coordinator.result('maia', focusNode, pinnedSettings) : undefined;
   // Displayed Maia prefers the fresh (global) result when it exists; otherwise
   // it falls back to the remembered per-move identity so unvisited moves keep
   // their old Elo visible while the new one fetches in the background.
-  const memForCurrent = maiaMemory[currentPly] ?? maiaIdentity;
-  const freshForCurrent = active && current && !currentIsMaia ? coordinator.result('maia', current, settings) : undefined;
-  const oldSettings: RecordSettings = { ...settings, eloMaia: memForCurrent.eloMaia, eloUser: memForCurrent.eloMaia, model: memForCurrent.model };
-  const staleForCurrent = !currentIsMaia && !sameMaiaIdentity(memForCurrent, maiaIdentity) && !freshForCurrent && current
-    ? (active ? coordinator.result('maia', current, oldSettings) : undefined)
+  const memForFocus = focusPly >= 0 ? (maiaMemory[focusPly] ?? maiaIdentity) : maiaIdentity;
+  const freshForFocus = active && focusNode && !focusIsMaia ? coordinator.result('maia', focusNode, settings) : undefined;
+  const oldSettings: RecordSettings = { ...settings, eloMaia: memForFocus.eloMaia, eloUser: memForFocus.eloMaia, model: memForFocus.model };
+  const staleForFocus = focusNode && !focusIsMaia && !sameMaiaIdentity(memForFocus, maiaIdentity) && !freshForFocus
+    ? (active ? coordinator.result('maia', focusNode, oldSettings) : undefined)
     : undefined;
-  const selection = currentIsMaia
+  const selection = focusIsMaia
     ? { identity: pinnedIdentity!, useFresh: true }
-    : selectMaiaDisplay({ memory: maiaMemory[currentPly], global: maiaIdentity, fresh: freshForCurrent, stale: staleForCurrent });
-  const displayedIdentity = currentIsMaia ? pinnedIdentity! : (selection.useFresh ? maiaIdentity : (maiaMemory[currentPly] ?? maiaIdentity));
-  const maiaForCurrent = currentIsMaia ? pinnedForCurrent : (selection.useFresh ? freshForCurrent : staleForCurrent);
-  const maiaStale = currentIsMaia ? false : !sameMaiaIdentity(displayedIdentity, maiaIdentity);
+    : selectMaiaDisplay({ memory: focusPly >= 0 ? maiaMemory[focusPly] : undefined, global: maiaIdentity, fresh: freshForFocus, stale: staleForFocus });
+  const displayedIdentity = focusIsMaia ? pinnedIdentity! : (selection.useFresh ? maiaIdentity : ((focusPly >= 0 ? maiaMemory[focusPly] : undefined) ?? maiaIdentity));
+  const maiaForFocus = focusNode ? (focusIsMaia ? pinnedForFocus : (selection.useFresh ? freshForFocus : staleForFocus)) : undefined;
+  const maiaStale = focusIsMaia ? false : !sameMaiaIdentity(displayedIdentity, maiaIdentity);
   // Once the fresh result lands (or the stale row is gone) the display already
   // reads fresh; sync memory so the next rating change backfills correctly.
   useEffect(() => {
-    if (sameMaiaIdentity(displayedIdentity, maiaIdentity)) {
-      setMaiaMemory(prev => {
-        const cur = prev[currentPly];
-        if (!cur || sameMaiaIdentity(cur, maiaIdentity)) return prev;
-        return { ...prev, [currentPly]: maiaIdentity };
-      });
-    }
-  }, [currentPly, maiaKey, displayedIdentity]);
+    if (focusPly < 0 || !sameMaiaIdentity(displayedIdentity, maiaIdentity)) return;
+    setMaiaMemory(prev => {
+      const cur = prev[focusPly];
+      if (!cur || sameMaiaIdentity(cur, maiaIdentity)) return prev;
+      return { ...prev, [focusPly]: maiaIdentity };
+    });
+  }, [focusPly, maiaKey, displayedIdentity]);
   const startBatchAtCurrent = () => {
     setMaiaMemory(() => {
       const next: Record<number, MaiaIdentity> = {};
@@ -344,15 +363,20 @@ export function useReview(state: State) {
     });
     coordinator.startBatch(nodes, settingsForNode);
   };
+  const focusSettings = focusNode ? settingsForNode(focusNode) : settings;
   const currentSettings = current ? settingsForNode(current) : settings;
-  const prevSettings = currentPly > 0 ? settingsForNode(nodes[currentPly - 1]) : null;
-  return { nodes, evaluations, qualities, rarities, coverage, current: evaluations[currentPly], maia: maiaForCurrent,
+  // Forward Maia for the arrows (y's estimates from the viewed position).
+  // Fresh identity only, no stale fallback: the foreground lane fetches it on
+  // every navigation, so a missing row is briefly absent rather than wrong.
+  // settingsForNode already pins Maia's own moves to the game Elo.
+  const maiaCurrent = active && current ? coordinator.result('maia', current, currentSettings) : undefined;
+  return { nodes, evaluations, qualities, rarities, coverage, current: evaluations[currentPly], focus: focusPly >= 0 ? evaluations[focusPly] : undefined, focusPly, maia: maiaForFocus, maiaCurrent,
     maiaElo: displayedIdentity.eloMaia, maiaModel: displayedIdentity.model,
-    maiaWantedElo: currentIsMaia ? pinnedIdentity!.eloMaia : maiaIdentity.eloMaia,
-    maiaWantedModel: currentIsMaia ? pinnedIdentity!.model : maiaIdentity.model,
-    maiaStale, maiaLocked: currentIsMaia,
+    maiaWantedElo: focusIsMaia ? pinnedIdentity!.eloMaia : maiaIdentity.eloMaia,
+    maiaWantedModel: focusIsMaia ? pinnedIdentity!.model : maiaIdentity.model,
+    maiaStale, maiaLocked: focusIsMaia,
     gameElo: gameForLine?.settings.eloMaia,
-    error: active && current ? coordinator.error('sf', current, currentSettings) || coordinator.error('maia', current, currentSettings) || (currentPly > 0 && prevSettings ? coordinator.error('sf', nodes[currentPly - 1], prevSettings) : undefined) : undefined,
+    error: active && current ? coordinator.error('sf', current, currentSettings) || (focusNode ? coordinator.error('sf', focusNode, focusSettings) || coordinator.error('maia', focusNode, focusSettings) : coordinator.error('maia', current, currentSettings)) : undefined,
     progress, recordStatus, start: startBatchAtCurrent, retry: () => coordinator.retry(),
     tooLong: nodes.length > 257 };
 }

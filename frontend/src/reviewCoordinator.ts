@@ -298,10 +298,14 @@ export class ReviewCoordinator {
     }
     return { engine, node, settings, key: reviewKey(engine, node, settings) };
   }
-  foregroundAt(nodes: ReviewNode[], settings: SettingsInput) {
+  // maiaDepth covers the analysis split-view: the panel judges the displayed
+  // move (its before-position) while the arrows project forward from the
+  // viewed position, so the foreground fetches Maia for both. Defaults to 1
+  // (viewed position only).
+  foregroundAt(nodes: ReviewNode[], settings: SettingsInput, maiaDepth = 1) {
     this.active = true;
     for (const engine of ['sf', 'maia'] as const) {
-      this.foreground[engine] = nodes.slice(0, engine === 'sf' ? 2 : 1).flatMap(node => {
+      this.foreground[engine] = nodes.slice(0, engine === 'sf' ? 2 : maiaDepth).flatMap(node => {
         const job = this.job(engine, node, resolveSettings(settings, node)); return job ? [job] : [];
       });
       // Preempt in-flight batch work only when the viewed position still needs
