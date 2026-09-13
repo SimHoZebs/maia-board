@@ -17,7 +17,7 @@ import (
 // is exact-key lookup only, which is why this lives in SQLite next to games
 // rather than in a separate document store.
 var (
-	evalCacheMaxRows       = 5000
+	evalCacheMaxRows       = 25000
 	evalCacheMaxKeyBytes   = 4096
 	evalCacheMaxValueBytes = 65536
 	evalHashPattern        = regexp.MustCompile(`^[0-9a-f]{1,16}$`)
