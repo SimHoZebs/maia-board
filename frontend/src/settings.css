@@ -17,9 +17,33 @@
 .badge-dots button { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; min-width: 32px; min-height: 32px; padding: 0; background: transparent; border-color: transparent; }
 .badge-dots button i { width: 8px; height: 8px; border-radius: 50%; background: #555758; }
 .badge-dots button[aria-current="true"] i { background: var(--accent); }
-.engine-settings .field { margin: 8px 0; }
-.settings-control p { color: var(--muted); line-height: 1.6; font-size: 13px; margin: 4px 0 0; }
-.settings-control { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.engine-settings .field { margin: 4px 0; }
+.settings-control p { color: var(--muted); line-height: 1.6; font-size: 13px; margin: 2px 0 0; }
+.settings-control { padding: 8px 0; border-bottom: 1px solid var(--line); }
+/* Search-limit sentences: each row reads as a sentence with its values inline,
+   so the time budget never appears as a bare confusing number. Wraps on phones. */
+.settings-limit-rows { display: grid; gap: 4px; }
+.settings-limit-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; min-height: 38px; }
+.settings-limit-row input[type=radio] { width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
+/* Numeric boxes fit their content with right-aligned digits. */
+.settings-limit-row input[type=number] { text-align: right; font-variant-numeric: tabular-nums; }
+#stockfish-time, #stockfish-time-cap { width: 78px; }
+#stockfish-depth { width: 64px; }
+.settings-limit-row span { color: inherit; }
+/* One-line setting rows: name left, control right. The slider below its name
+   is the only exception — it needs the full width to stay usable. */
+.engine-settings .field--row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0; }
+.settings-control .field--row > .field-label { font-size: 14px; color: inherit; }
+/* Segmented choice for small discrete sets (candidate lines 1–5): one row,
+   natively keyboard-accessible radios, no full-width slider needed. */
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex: none; }
+.segmented label { cursor: pointer; }
+.segmented label + label { border-left: 1px solid var(--line); }
+.segmented input { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); opacity: 0; pointer-events: none; white-space: nowrap; }
+.segmented span { display: inline-flex; align-items: center; justify-content: center; min-width: 40px; min-height: 32px; font-size: 14px; color: var(--muted); background: transparent; }
+.segmented label:hover span { color: inherit; }
+.segmented input:checked + span { color: #e6f0d5; background: #414b35; }
+.segmented input:focus-visible + span { outline: 2px solid #d2dfbd; outline-offset: -2px; }
 .settings-control .field span { font-size: 12px; color: var(--muted); }
 .settings-control output { color: var(--accent); font-variant-numeric: tabular-nums; }
 .engine-settings input[type=number] { width: 120px; }

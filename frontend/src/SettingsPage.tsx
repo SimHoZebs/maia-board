@@ -6,10 +6,10 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import './settings.css';
 import { useEffect, useState } from 'react';
 
-function NumberSetting({ id, value, min, max, step, onChange, disabled }: { id: string; value: number; min: number; max: number; step: number; onChange: (value: number) => void; disabled?: boolean }) {
+function NumberSetting({ id, value, min, max, step, onChange, disabled, label }: { id: string; value: number; min: number; max: number; step: number; onChange: (value: number) => void; disabled?: boolean; label: string }) {
   const [draft, setDraft] = useState(String(value));
   useEffect(() => setDraft(String(value)), [value]);
-  return <input id={id} type="number" min={min} max={max} step={step} value={draft} disabled={disabled}
+  return <input id={id} type="number" min={min} max={max} step={step} value={draft} disabled={disabled} aria-label={label}
     onChange={e => {
       setDraft(e.target.value);
       if (e.target.value !== '' && e.target.validity.valid) onChange(e.target.valueAsNumber);
@@ -34,38 +34,36 @@ export function SettingsPage({ state, dispatch }: Props) {
     <h1 id="settings-title">Stockfish</h1>
     <div className="settings-control">
       <span className="field" id="stockfish-limit-label">Search limit</span>
-      <div role="radiogroup" aria-labelledby="stockfish-limit-label">
-        <label className="settings-check">
-          <input id="stockfish-limit-time" type="radio" name="stockfish-limit" checked={mode === 'time'} onChange={() => update({ depth: 0 })} />
-          Stop after time <span>Even speed, depth varies by position and device</span>
-        </label>
-        <label className="settings-check">
-          <input id="stockfish-limit-depth" type="radio" name="stockfish-limit" checked={mode === 'depth'} onChange={() => update({ depth: settings.depth > 0 ? settings.depth : 18 })} />
-          Reach depth <span>Even depth, time varies up to the max below</span>
-        </label>
+      <div role="radiogroup" aria-labelledby="stockfish-limit-label" className="settings-limit-rows">
+        <div className="settings-limit-row">
+          <input id="stockfish-limit-time" type="radio" name="stockfish-limit" checked={mode === 'time'} onChange={() => update({ depth: 0 })} aria-label="Stop after time" />
+          <span>Stop after</span>
+          <NumberSetting id="stockfish-time" label="Seconds per position" min={0.25} max={30} step={0.25} value={settings.time_ms / 1000} onChange={seconds => update({ time_ms: Math.round(seconds * 1000) })} />
+          <span>seconds per position</span>
+        </div>
+        <div className="settings-limit-row">
+          <input id="stockfish-limit-depth" type="radio" name="stockfish-limit" checked={mode === 'depth'} onChange={() => update({ depth: settings.depth > 0 ? settings.depth : 18 })} aria-label="Reach depth" />
+          <span>Reach</span>
+          <NumberSetting id="stockfish-depth" label="Target depth" min={0} max={40} step={1} value={settings.depth} onChange={depth => update({ depth })} />
+          <span>depth, max</span>
+          <NumberSetting id="stockfish-time-cap" label="Max seconds per position" min={0.25} max={30} step={0.25} value={settings.time_ms / 1000} onChange={seconds => update({ time_ms: Math.round(seconds * 1000) })} />
+          <span>seconds per position</span>
+        </div>
       </div>
     </div>
     <div className="settings-control">
-      <label className="field" htmlFor="stockfish-time">{mode === 'time' ? <>Search time <span>Seconds per position</span></> : <>Max time <span>Safety cap per position</span></>}
-        <NumberSetting id="stockfish-time" min={0.25} max={30} step={0.25} value={settings.time_ms / 1000} onChange={seconds => update({ time_ms: Math.round(seconds * 1000) })} />
-      </label>
-      {mode === 'time'
-        ? <p>Search stops after this long. Longer searches can find stronger continuations. Reviewing an entire game applies this budget to every position.</p>
-        : <p>Safety cap for the depth search below: a position that cannot reach the target still stops here. Raise it for deep positions.</p>}
-    </div>
-    <div className="settings-control">
-      <label className="field" htmlFor="stockfish-lines">Candidate lines <output>{settings.lines}</output>
-        <input id="stockfish-lines" type="range" min="1" max="5" step="1" value={settings.lines} onChange={e => update({ lines: e.target.valueAsNumber })} />
-      </label>
+      <div className="field field--row">
+        <span className="field-label" id="stockfish-lines-label">Candidate lines</span>
+        <div role="radiogroup" aria-labelledby="stockfish-lines-label" className="segmented">
+          {[1, 2, 3, 4, 5].map(n => (
+            <label key={n}>
+              <input type="radio" name="stockfish-lines" value={n} checked={settings.lines === n} onChange={() => update({ lines: n })} />
+              <span>{n}</span>
+            </label>
+          ))}
+        </div>
+      </div>
       <p>Compare up to five alternatives. More lines share the available search time.</p>
-    </div>
-    <div className="settings-control">
-      <label className="field" htmlFor="stockfish-depth">Target depth
-        <NumberSetting id="stockfish-depth" min={0} max={40} step={1} value={settings.depth} onChange={depth => update({ depth })} disabled={mode === 'time'} />
-      </label>
-      {mode === 'time'
-        ? <p>Off — the search is time-limited. Choose “Reach depth” above to target a depth instead.</p>
-        : <p>Depth counts individual moves by either side. Search stops at this depth or at the max time above, whichever comes first.</p>}
     </div>
     <footer className="settings-footer"><span>Saved automatically in this browser</span><Button onClick={() => update(defaultStockfishSettings)}>Reset defaults</Button></footer>
     <p className="settings-eyebrow">EXPERIMENTAL</p>
