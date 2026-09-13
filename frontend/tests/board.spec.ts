@@ -99,7 +99,11 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
     await route.fulfill({ body: await readFile(resolve('dist-browser', filename)), contentType });
   });
   await page.goto(`http://maia.test${path}`);
-  await expect(page.getByRole('navigation', { name: 'Destination' })).toBeVisible();
+  // With bottom navigation on phones the header tabs are replaced by the
+  // bottom-bar menu; everywhere else they stay visible.
+  const destination = page.getByRole('navigation', { name: 'Destination' });
+  if ((page.viewportSize()?.width ?? 1440) <= 760 && storage[KEYS.bottomNav] === true) await expect(destination).toBeHidden();
+  else await expect(destination).toBeVisible();
   if (path === '/' || path === '/play') {
     if (start && !storage[KEYS.current]) await page.locator('#start-game').click();
     if (expectBoard) {
@@ -282,6 +286,14 @@ test('analysis content URLs deep-link, copy, and walk games', async ({ page }) =
   expect(app.errors).toEqual([]);
 });
 
+// Page navigation with the header tabs replaced: on phones with bottom
+// navigation the tabs are hidden and the bottom-bar menu owns the move.
+async function gotoMode(page: Page, mode: 'play' | 'analysis' | 'history' | 'settings') {
+  const header = page.locator(`#mode-${mode}`);
+  if (await header.isVisible()) { await header.click(); return; }
+  await page.locator('#mobile-menu').click();
+  await page.locator(`#mobile-mode-${mode}`).click();
+}
 async function square(page: Page, key: string) {
   const board = page.locator('#board cg-board');
   await board.scrollIntoViewIfNeeded();
@@ -783,7 +795,7 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
     const controls = (await page.locator('.board-actions').boundingBox())!;
     expect(controls.y + controls.height).toBeLessThanOrEqual(viewport.height);
     await screenshot(page, testInfo.outputPath(`play-${viewport.width}.png`));
-    await page.locator('#mode-analysis').click();
+    await gotoMode(page, 'analysis');
     await page.locator('#analysis-pgn').fill('1. e4 e5 2. Nf3');
     await page.locator('#load-analysis').click();
     const rail = (await page.locator('.insight-panel').boundingBox())!;
@@ -792,6 +804,50 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
     else expect(rail.y).toBeGreaterThanOrEqual(stage.y + stage.height);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await screenshot(page, testInfo.outputPath(`analysis-${viewport.width}.png`));
+  });
+}
+
+for (const width of [320, 390]) {
+  test(`mobile bottom bar menu navigates pages, bar owns move navigation at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const app = await boot(page, { [KEYS.current]: record(['e2e4', 'e7e5']), [KEYS.bottomNav]: true });
+    const menu = page.locator('#mobile-menu');
+    await expect(menu).toBeVisible();
+    await expect(menu).toHaveAttribute('aria-expanded', 'false');
+    // The header tabs step aside for the bottom-bar menu on phones.
+    await expect(page.getByRole('navigation', { name: 'Destination' })).toBeHidden();
+    // Menu on the left, move navigation filling the rest of the same bar.
+    const menuBox = (await menu.boundingBox())!;
+    const firstBox = (await page.locator('#analysis-first').boundingBox())!;
+    expect(menuBox.width).toBe(40); expect(menuBox.height).toBe(40);
+    expect(menuBox.y).toBe(firstBox.y);
+    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(firstBox.x);
+    // Bar rides above the board on the top z axis.
+    expect(await page.locator('.notation').evaluate(el => getComputedStyle(el).zIndex)).toBe('50');
+    // Move navigation works from the bar.
+    await page.locator('#analysis-first').click();
+    await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 3');
+    await page.locator('#analysis-next').click();
+    await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 3');
+    await page.getByRole('button', { name: 'Return to game' }).click();
+    // Menu sheet lists the pages and navigates.
+    await menu.click();
+    await expect(menu).toHaveAttribute('aria-expanded', 'true');
+    const sheet = page.locator('#mobile-menu-sheet');
+    await expect(sheet).toBeVisible();
+    await expect(sheet.getByRole('link')).toHaveCount(4);
+    await sheet.getByRole('link', { name: 'Settings', exact: true }).click();
+    await expect(page).toHaveURL('http://maia.test/settings');
+    await expect(sheet).toHaveCount(0);
+    // Escape closes the sheet without navigating.
+    await gotoMode(page, 'play');
+    await expect(page).toHaveURL('http://maia.test/play');
+    await menu.click();
+    await expect(sheet).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(sheet).toHaveCount(0);
+    await expect(page).toHaveURL('http://maia.test/play');
+    expect(app.errors).toEqual([]);
   });
 }
 

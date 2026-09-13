@@ -15,7 +15,7 @@ import type { Action, State } from "./state";
 import { useMaiaBoard } from "./useMaiaBoard";
 import { analysisPath, parseAnalysisSearch, sameLine } from "./analysisUrl";
 
-const destinations = [
+export const destinations = [
   { mode: "play", path: "/play", label: "Play" },
   { mode: "analysis", path: "/analyze", label: "Analyze" },
   { mode: "history", path: "/history", label: "History" },

@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Key } from '@lichess-org/chessground/types';
-import { RotateCw, Plus, Undo2, Flag } from 'lucide-react';
+import { Menu, RotateCw, Plus, Undo2, Flag } from 'lucide-react';
+import { NavLink } from 'react-router';
 import { Chess } from 'chess.js';
 import { ChessBoard } from './ChessBoard';
 import { Button, IconButton } from './components';
@@ -15,7 +16,53 @@ import { usePlayFeedback } from './usePlayFeedback';
 import { useReview } from './useReview';
 import { reviewShapes } from './reviewArrows';
 import { SettingsPage } from './SettingsPage';
+import { destinations } from './BoardRouter';
 import { ErrorBoundary, PanelError } from './ErrorBoundary';
+
+// Bottom-bar page menu (mobile bottom navigation): a hamburger on the left
+// end of the move-navigation bar that opens the same destinations as the
+// header tabs, thumb-reachable. The rest of the bar stays move navigation.
+function MobileMenu({ state, dispatch }: Props) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: PointerEvent) => {
+      if (root.current && !root.current.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setOpen(false); root.current?.querySelector<HTMLButtonElement>('#mobile-menu')?.focus(); }
+    };
+    document.addEventListener('pointerdown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open ]);
+  return <div className="menu-root" ref={root}>
+    <IconButton id="mobile-menu" label="Menu" aria-haspopup="true" aria-expanded={open} aria-controls="mobile-menu-sheet" onClick={() => setOpen(value => !value)}><Menu size={18} aria-hidden="true" /></IconButton>
+    {open && <nav className="mobile-menu-sheet" id="mobile-menu-sheet" aria-label="Pages">
+      {destinations.map(({ mode: destMode, path, label }) => (
+        <NavLink
+          id={`mobile-mode-${destMode}`}
+          key={destMode}
+          to={path}
+          end
+          onClick={(event) => {
+            setOpen(false);
+            if (destMode === 'analysis' && state.analysisLoaded) {
+              event.preventDefault();
+              dispatch({ type: 'unload' });
+            }
+          }}
+        >
+          {label}
+        </NavLink>
+      ))}
+    </nav>}
+  </div>;
+}
 
 export function App({ state, dispatch, children }: Props & { children: ReactNode }) {
   const { mode, settings, request, error } = state;
@@ -71,9 +118,12 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
   const [confirmResign, setConfirmResign] = useState(false);
   useEffect(() => { if (over || analysis) setConfirmResign(false); }, [over, analysis]);
   const bottomNav = state.bottomNav;
-  const tools = <><IconButton id="flip-board" label="Flip board" onClick={() => dispatch({ type: 'flip' })}><RotateCw size={16} aria-hidden="true" /></IconButton>{analysis && state.analysis.branchFromPly !== null && <IconButton id="return-original" label="Return to original" onClick={() => dispatch({ type: 'original' })}><Undo2 size={16} aria-hidden="true" /></IconButton>}{!analysis && <IconButton id="takeback" label="Takeback" disabled={!state.play.moves.length || !!resigned} onClick={() => dispatch({ type: 'takeback' })}><Undo2 size={16} aria-hidden="true" /></IconButton>}{!analysis && !over && <IconButton id="resign" label="Resign" onClick={() => setConfirmResign(true)}><Flag size={16} aria-hidden="true" /></IconButton>}</>;
+  // Screens without a move list (settings, history, pre-start setup) still
+  // need page navigation once the header tabs step aside: a menu-only bar.
+  const menuOnly = bottomNav && ((mode !== 'play' && mode !== 'analysis') || !ready);
+  const tools = <><IconButton id="flip-board" label="Flip board" onClick={() => dispatch({ type: 'flip' })}><RotateCw size={16} aria-hidden="true" /></IconButton>{analysis && state.analysis.branchFromPly !== null && <IconButton id="return-original" label="Return to original" onClick={() => dispatch({ type: 'original' })}><Undo2 size={16} aria-hidden="true" /></IconButton>}{!analysis && <IconButton id="takeback" label="Takeback" disabled={!state.play.moves.length || !!resigned} onClick={() => dispatch({ type: 'takeback' })}><Undo2 size={16} aria-hidden="true" /></IconButton>}{!analysis && !over && <IconButton id="resign" label="Resign" onClick={() => setConfirmResign(true)}><Flag size={16} aria-hidden="true" /></IconButton>}{bottomNav && mode === 'play' && ready && <IconButton id="new-game" label="New game" onClick={() => dispatch({ type: 'setup' })}><Plus size={18} aria-hidden="true" /></IconButton>}</>;
   return <div className={`app-shell${bottomNav ? ' bottom-ui' : ''}`}>
-    <header className="site-header"><span className="brand">maia board</span>{children}{mode === 'play' && ready && <IconButton id="new-game" className="header-action" label="New game" onClick={() => dispatch({ type: 'setup' })}><Plus size={18} aria-hidden="true" /></IconButton>}</header>
+    <header className="site-header"><span className="brand">maia board</span>{children}{mode === 'play' && ready && !bottomNav && <IconButton id="new-game" className="header-action" label="New game" onClick={() => dispatch({ type: 'setup' })}><Plus size={18} aria-hidden="true" /></IconButton>}</header>
     <main>
       {state.syncError && <div className="sync-banner" role="alert"><span>{state.syncError}</span><Button onClick={() => dispatch({ type: 'retry-sync' })}>Retry</Button></div>}
       {mode === 'settings' ? <SettingsPage state={state} dispatch={dispatch} /> : mode === 'history' ? <ErrorBoundary label="saved games" resetKey={savedResetKey} renderFallback={(error, retry) => <PanelError id="saved-games-error" title="Saved games failed to render" message={error.message || 'Unknown rendering error.'} onRetry={retry} />}><SavedGames state={state} dispatch={dispatch} /></ErrorBoundary> : <>
@@ -87,7 +137,7 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
             {ready && <>
               <MovesPanel sans={full.sanMoves} ply={ply} initialFen={analysis ? state.analysis.initialFen : START_FEN} historical={historic} qualities={analysis ? review.qualities : moveFeedback.qualities} badgeLoading={state.badgeLoading} onView={ply => dispatch({ type: 'view', ply })} onOriginalView={ply => { dispatch({ type: 'original' }); dispatch({ type: 'view', ply }); }} analysis={analysis}
                 original={analysis && state.analysis.branchFromPly !== null ? { sans: state.analysis.sanMoves, fromPly: state.analysis.branchFromPly } : undefined}
-                branchUp={bottomNav} tools={bottomNav ? undefined : tools} />
+                branchUp={bottomNav} tools={bottomNav ? undefined : tools} menu={bottomNav ? <MobileMenu state={state} dispatch={dispatch} /> : undefined} />
               {over && <div className="game-result" role="status"><div className="result-copy"><span className="result-eyebrow">Game over</span><strong className="result-text">{winner && <span className={`side-dot ${winner}`} aria-hidden="true" />}{resultText}</strong></div><div className="result-actions"><Button variant="primary" onClick={() => dispatch({ type: 'review' })}>Review game</Button><Button id="new-game-again" onClick={() => dispatch({ type: 'setup' })}>New game</Button></div></div>}
             </>}
             <div id="error-banner" className="error-banner" role="alert" hidden={!error}>{error}{error && ready && !request && <Button id="retry-request" variant="quiet" onClick={() => dispatch({ type: 'retry' })}>Retry</Button>}</div>
@@ -97,6 +147,7 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
         {ready && <><PlayControls state={state} dispatch={dispatch} /><AnalysisControls state={state} dispatch={dispatch} /></>}
       </>}
     </main>
+    {menuOnly && <div className="mobile-pagebar"><div className="menu-slot"><MobileMenu state={state} dispatch={dispatch} /></div></div>}
     <PromotionDialog open={!!state.promotion} onChoose={piece => dispatch({ type: 'promote', piece })} />
     {confirmResign && !analysis && !over && <Dialog title="Resign game?" onCancel={() => setConfirmResign(false)}>
       <h2>Resign game?</h2>

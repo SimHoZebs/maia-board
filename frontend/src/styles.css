@@ -70,9 +70,19 @@ p { line-height: 1.5; color: var(--muted); }
 .bottom-ui .branch-point { display: flex; align-items: flex-end; }
 .bottom-ui .branch-point > button { height: 32px; }
 .bottom-ui .variation-line { top: auto; bottom: 32px; }
-.bottom-ui .move-navigation { justify-content: flex-end; }
+.bottom-ui .move-navigation { justify-content: space-between; align-items: center; margin-top: 12px; }
+.bottom-ui .move-navigation .nav-buttons { flex: 1; justify-content: space-evenly; }
 .nav-buttons { display: flex; gap: 2px; }
-.nav-buttons button, .board-actions button { width: 40px; height: 40px; min-height: 40px; min-width: 40px; display: inline-flex; align-items: center; justify-content: center; padding: 4px; border-color: transparent; background: transparent; }
+.nav-buttons button, .board-actions button, .menu-slot button { width: 40px; height: 40px; min-height: 40px; min-width: 40px; display: inline-flex; align-items: center; justify-content: center; padding: 4px; border-color: transparent; background: transparent; }
+/* Page menu lives in the move-navigation bar on mobile only; the header
+   tabs stay the desktop (and no-JS-resize) path. */
+.menu-slot { display: none; }
+.mobile-pagebar { display: none; }
+.menu-root { position: relative; flex: none; }
+.mobile-menu-sheet { position: absolute; bottom: calc(100% + 10px); left: 0; z-index: 60; display: flex; flex-direction: column; min-width: 180px; padding: 6px; background: #282a2b; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.5); }
+.mobile-menu-sheet a { display: flex; align-items: center; min-height: 44px; padding: 8px 14px; color: inherit; text-decoration: none; border-radius: 4px; font-size: 14px; }
+.mobile-menu-sheet a:hover { background: #3b3d3d; }
+.mobile-menu-sheet a[aria-current="page"] { color: var(--accent); }
 #analysis-index { display: block; text-align: right; margin-top: 2px; color: var(--muted); font-size: 10px; white-space: nowrap; }
 .board-actions { display: flex; gap: 2px; }
 #new-game { margin-left: auto; }
@@ -208,11 +218,20 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
   .workspace.awaiting { display: none; }
   .board-stage { width: min(100%, calc(100dvh - 300px)); margin: auto; }
   .app-shell.bottom-ui { display: flex; flex-direction: column; min-height: 100dvh; }
+  /* The bottom bar owns page navigation on phones: the whole header steps
+     aside for it (freeing ~64px for the board) instead of leaving a dead
+     strip with a divider. New game lives in the board toolbar instead. */
+  .bottom-ui .site-header { display: none; }
   .bottom-ui main { flex: 1; display: flex; flex-direction: column; }
   .bottom-ui .workspace, .bottom-ui .workspace.analyzing { margin: auto auto 0; }
   .bottom-ui .board-stage { width: min(100%, calc(100dvh - 344px)); margin: 0 auto; }
-  .bottom-ui .workspace.analyzing { padding-bottom: 150px; }
-  .bottom-ui .workspace.analyzing .notation { position: fixed; bottom: 0; left: 0; right: 0; margin: 0 auto; width: min(100%, 560px); z-index: 30; background: #202122; border-top: 1px solid var(--line); box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45); padding: 6px 10px calc(8px + env(safe-area-inset-bottom)); }
+  .bottom-ui .workspace, .bottom-ui .workspace.analyzing { padding-bottom: 165px; }
+  .bottom-ui .menu-slot { display: block; }
+  .bottom-ui .mobile-pagebar { display: block; position: fixed; bottom: 0; left: 0; right: 0; margin: 0 auto; width: min(100%, 560px); z-index: 50; background: #202122; border-top: 1px solid var(--line); padding: 10px 12px calc(16px + env(safe-area-inset-bottom)); }
+  .bottom-ui .workspace .notation { position: fixed; bottom: 0; left: 0; right: 0; margin: 0 auto; width: min(100%, 560px); z-index: 50; background: #202122; border-top: 1px solid var(--line); box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45); padding: 10px 12px calc(16px + env(safe-area-inset-bottom)); }
+  /* The position counter row is redundant with the highlighted move above
+     it: drop it from the bar to keep the bar short and mis-tap-proof. */
+  .bottom-ui .notation #analysis-index { display: none; }
   .player-strip { height: 34px; font-size: 13px; }
   .panel.insight-panel { margin-top: 0; width: 100%; padding: 6px 14px 14px; }
   .insight-panel section[aria-label="Maia analysis"] h2, .insight-panel section[aria-label="Stockfish evaluation"] h2 { font-size: 13px; }

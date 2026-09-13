@@ -689,6 +689,7 @@ export function MovesPanel({
   original,
   tools,
   branchUp = false,
+  menu,
 }: {
   sans: string[];
   ply: number;
@@ -702,6 +703,7 @@ export function MovesPanel({
   original?: { sans: string[]; fromPly: number };
   tools?: ReactNode;
   branchUp?: boolean;
+  menu?: ReactNode;
 }) {
   const active = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -802,6 +804,7 @@ export function MovesPanel({
       </div>
       <div className="move-navigation">
         {tools && <div className="board-actions">{tools}</div>}
+        {menu && <div className="menu-slot">{menu}</div>}
         <div className="nav-buttons">
           {[
             { id: "first", label: "First position", Icon: SkipBack, to: 0 },
