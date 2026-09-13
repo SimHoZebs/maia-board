@@ -682,7 +682,6 @@ export function MovesPanel({
   onView,
   onOriginalView,
   initialFen,
-  historical,
   qualities,
   analysis = false,
   badgeLoading = 'reel',
@@ -696,7 +695,6 @@ export function MovesPanel({
   onView: (ply: number | null) => void;
   onOriginalView?: (ply: number) => void;
   initialFen: string;
-  historical: boolean;
   qualities?: (Quality | undefined)[];
   analysis?: boolean;
   badgeLoading?: BadgeLoading;
@@ -842,11 +840,6 @@ export function MovesPanel({
       <span id="analysis-index">
         Position {ply + 1} / {sans.length + 1}
       </span>
-      {historical && (
-        <Button className="return-game" onClick={() => onView(null)}>
-          Return to game
-        </Button>
-      )}
     </section>
   );
 }

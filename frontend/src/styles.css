@@ -86,7 +86,6 @@ p { line-height: 1.5; color: var(--muted); }
 #analysis-index { display: block; text-align: right; margin-top: 2px; color: var(--muted); font-size: 10px; white-space: nowrap; }
 .board-actions { display: flex; gap: 2px; }
 #new-game { margin-left: auto; }
-.return-game { width: 100%; margin-top: 6px; color: var(--accent); }
 .panel { padding: 22px; background: #282a2b; border: 1px solid var(--line); border-radius: 7px; }
 .entry { max-width: 520px; margin: 32px auto; }
 .awaiting { display: none; }

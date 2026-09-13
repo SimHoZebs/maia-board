@@ -100,7 +100,7 @@ client-side navigation; refreshing restores the existing local-storage records.
 `state.ts` owns workflow transitions. Play's `viewedPly` is `null` when following
 the live tip, or a fixed historical ply (one half-move). Looking back leaves the
 live request intact. A reply advances the game while historical viewing stays
-fixed; Return to game follows the tip again. Historical boards are read-only.
+fixed; Last position follows the tip again. Historical boards are read-only.
 Setup drafts and opening/cancelling dialogs preserve requests. Starting a game,
 switching destinations, resuming a saved game, takeback, and analysis context
 changes retire obsolete requests. `useMaiaBoard.ts` retains the StrictMode-safe

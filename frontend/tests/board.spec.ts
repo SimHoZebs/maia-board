@@ -183,7 +183,7 @@ test('direct play resumes once; Back/Forward preserves game viewing and analysis
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 3');
   await piece(page, 'e2', 'white pawn');
   await expect(page.locator('#board .cg-wrap')).toHaveClass(/orientation-black/);
-  await page.getByRole('button', { name: 'Return to game' }).click();
+  await page.locator('#analysis-last').click();
   await piece(page, 'e5', 'black pawn');
   await page.goForward();
   await expect(page).toHaveURL('http://maia.test/analyze?moves=d2d4,d7d5');
@@ -589,7 +589,7 @@ test('setup disappears; draft cancel preserves a reply arriving while historical
   await expect(page.locator('#new-game')).toBeFocused();
   await piece(page, 'e2', 'white pawn');
   expect(await currentMoves(page)).toEqual(['e2e4', 'e7e5']);
-  await page.getByRole('button', { name: 'Return to game' }).click();
+  await page.locator('#analysis-last').click();
   await piece(page, 'e5', 'black pawn');
   expect(app.requests).toHaveLength(1);
   await expect(page.locator('.player-strip').filter({ hasText: 'Maia' })).toContainText('1800');
@@ -829,7 +829,7 @@ for (const width of [320, 390]) {
     await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 3');
     await page.locator('#analysis-next').click();
     await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 3');
-    await page.getByRole('button', { name: 'Return to game' }).click();
+    await page.locator('#analysis-last').click();
     // Menu sheet lists the pages and navigates.
     await menu.click();
     await expect(menu).toHaveAttribute('aria-expanded', 'true');
@@ -1025,7 +1025,7 @@ test('complete game navigation keeps board size stable', async ({ page }) => {
   });
   const tip = await size();
   await page.locator('#analysis-prev').click();
-  await expect(page.getByRole('button', { name: 'Return to game' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Return to game' })).toHaveCount(0);
   expect(await size()).toEqual(tip);
   await page.locator('#analysis-first').click();
   expect(await size()).toEqual(tip);
