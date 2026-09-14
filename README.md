@@ -139,8 +139,8 @@ Compose and Komodo configuration belong to that repository.
 
 The [frontend architecture](frontend/README.md#state-boundaries) describes timeline,
 session, evaluation, and persistence ownership. The [backend README](backend/README.md)
-defines the HTTP and worker boundaries. [`PLAN.md`](PLAN.md) and
-[`REFACTOR_PLAN.md`](REFACTOR_PLAN.md) retain historical decisions and findings.
+defines the HTTP and worker boundaries. [`PLAN.md`](PLAN.md) retains the original
+product decisions for historical context.
 
 Upstream dependencies: [Maia3](https://github.com/CSSLab/maia3/tree/1e13597c42d4858b7cfd7cfdae01e297263364b2),
 [Stockfish](https://github.com/official-stockfish/Stockfish/tree/sf_19),
