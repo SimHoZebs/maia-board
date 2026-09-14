@@ -1,13 +1,10 @@
 import { expect, it } from 'vitest';
-import { applyUci, positionOf, replay, START_FEN } from './domain';
+import { buildTimeline, START_FEN } from './domain';
 import type { Quality } from './reviewMetrics';
 import { summarizeReview } from './reviewSummary';
 
 function nodes(moves: string[], initialFen = START_FEN) {
-  const game = replay([], initialFen);
-  const positions = [positionOf(game)];
-  for (const move of moves) { applyUci(game, move); positions.push(positionOf(game)); }
-  return positions;
+  return buildTimeline(initialFen, moves).rows;
 }
 const quality = (accuracy: number, label: Quality['label'] = 'Good'): Quality => ({ accuracy, label, loss: null });
 const missing: Quality = { label: 'Unreviewed', accuracy: null, loss: null };

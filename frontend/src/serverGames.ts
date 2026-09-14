@@ -1,12 +1,12 @@
 import type { StoredGame } from './domain';
-import { readStorage, restoreGame, writeStorage } from './storage';
+import { readStorage, restoreGame } from './storage';
 
 export type ServerGame = {
   id: string; created_at: string; updated_at: string; user_color: string;
   elo_maia: number; elo_user: number; model: string; moves: string[]; temperature?: number; result?: string;
 };
 
-export type GamesList = { games: ServerGame[]; current_id: string | null; total: number };
+export type GamesList = { games: ServerGame[]; current_id: string | null; total: number; current_game?: ServerGame | null; next_offset?: number | null };
 
 export class ServerGamesError extends Error {
   readonly code: string;
@@ -19,7 +19,7 @@ export class ServerGamesError extends Error {
   }
 }
 
-type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 function isServerGame(value: unknown): value is ServerGame {
   if (!value || typeof value !== 'object') return false;
@@ -59,10 +59,10 @@ function throwServerError(body: unknown, status: number): never {
   throw new ServerGamesError(code, message, status);
 }
 
-export async function fetchGames(fetchImpl: FetchLike = fetch): Promise<GamesList> {
+export async function fetchGames(fetchImpl: FetchLike = fetch, offset = 0, signal?: AbortSignal): Promise<GamesList> {
   let response: Response;
   try {
-    response = await fetchImpl('/games?limit=500', { headers: { 'Accept': 'application/json' } });
+    response = await fetchImpl(`/games?limit=100&offset=${offset}`, { headers: { 'Accept': 'application/json' }, cache: 'no-store', signal });
   } catch {
     throw new ServerGamesError('server_unreachable', 'The game server could not be reached.');
   }
@@ -70,17 +70,21 @@ export async function fetchGames(fetchImpl: FetchLike = fetch): Promise<GamesLis
   if (!response.ok) throwServerError(body, response.status);
   const list = body as Partial<GamesList>;
   if (!Array.isArray(list.games) || !list.games.every(isServerGame)
-    || !(list.current_id === null || typeof list.current_id === 'string') || typeof list.total !== 'number') {
+    || !(list.current_id === null || typeof list.current_id === 'string') || typeof list.total !== 'number' || !Number.isSafeInteger(list.total) || list.total < 0) {
     throw new ServerGamesError('unknown', 'The game server returned an incomplete list.', response.status);
   }
-  return { games: list.games, current_id: list.current_id, total: list.total };
+  if (list.current_game != null && (!isServerGame(list.current_game) || list.current_game.id !== list.current_id)) throw new ServerGamesError('unknown', 'The current game is invalid.');
+  if (list.next_offset != null && (!Number.isInteger(list.next_offset) || list.next_offset <= offset)) throw new ServerGamesError('unknown', 'The next history page is invalid.');
+  return { games: list.games, current_id: list.current_id, total: list.total,
+    ...(list.current_game !== undefined ? { current_game: list.current_game } : {}),
+    ...(list.next_offset !== undefined ? { next_offset: list.next_offset } : {}) };
 }
 
-export async function saveRemote(game: StoredGame, current: boolean, fetchImpl: FetchLike = fetch): Promise<ServerGame> {
+export async function saveRemote(game: StoredGame, current: boolean, fetchImpl: FetchLike = fetch, signal?: AbortSignal): Promise<ServerGame> {
   let response: Response;
   try {
     response = await fetchImpl('/games', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(toPayload(game, current)),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(toPayload(game, current)), signal,
     });
   } catch {
     throw new ServerGamesError('server_unreachable', 'The game server could not be reached.');
@@ -91,10 +95,10 @@ export async function saveRemote(game: StoredGame, current: boolean, fetchImpl: 
   return body;
 }
 
-export async function deleteRemote(id: string, fetchImpl: FetchLike = fetch): Promise<void> {
+export async function deleteRemote(id: string, fetchImpl: FetchLike = fetch, signal?: AbortSignal): Promise<void> {
   let response: Response;
   try {
-    response = await fetchImpl(`/games/${id}`, { method: 'DELETE' });
+    response = await fetchImpl(`/games/${encodeURIComponent(id)}`, { method: 'DELETE', signal });
   } catch {
     throw new ServerGamesError('server_unreachable', 'The game server could not be reached.');
   }
@@ -111,47 +115,14 @@ export type OutboxOp =
 export const OUTBOX_KEY = 'maia-board.outbox.v1';
 export const MIGRATED_KEY = 'maia-board.migrated-games.v1';
 
-function isOutboxOp(value: unknown): value is OutboxOp {
-  if (!value || typeof value !== 'object') return false;
+export function restoreOutboxOp(value: unknown): OutboxOp | undefined {
+  if (!value || typeof value !== 'object') return;
   const op = value as Record<string, unknown>;
-  if (op.op === 'delete') return typeof op.id === 'string';
-  if (op.op === 'save') return restoreGame(op.game) !== undefined && typeof op.current === 'boolean';
-  return false;
-}
-
-export function loadOutbox(): OutboxOp[] {
-  const raw = readStorage<unknown>(OUTBOX_KEY);
-  return Array.isArray(raw) ? raw.filter(isOutboxOp) : [];
-}
-
-export function storeOutbox(ops: OutboxOp[]): void {
-  writeStorage(OUTBOX_KEY, ops);
-}
-
-export function pushOutbox(op: OutboxOp): number {
-  const ops = loadOutbox();
-  if (op.op === 'save') {
-    // Collapse a trailing run of saves for the same game: each save carries
-    // the full snapshot, so intermediate entries are redundant. The run
-    // breaks on deletes or foreign-id ops, preserving save→delete→save
-    // ordering. The current marker survives when any collapsed op carried it
-    // (mergeSync never unsets a marker, so neither may collapsing).
-    let start = ops.length;
-    while (start > 0) {
-      const prev = ops[start - 1];
-      if (prev.op !== 'save' || prev.game.id !== op.game.id) break;
-      start--;
-    }
-    if (start < ops.length) {
-      const current = op.current || ops.slice(start).some(entry => entry.op === 'save' && entry.current);
-      ops.splice(start, ops.length - start, { op: 'save', game: op.game, current });
-      storeOutbox(ops);
-      return ops.length;
-    }
+  if (op.op === 'delete' && typeof op.id === 'string') return { op: 'delete', id: op.id };
+  if (op.op === 'save' && typeof op.current === 'boolean') {
+    const game = restoreGame(op.game);
+    if (game) return { op: 'save', game, current: op.current };
   }
-  ops.push(op);
-  storeOutbox(ops);
-  return ops.length;
 }
 
 // Merges server rows with pending local ops. Pending ops always win; the last
@@ -195,8 +166,4 @@ export function migrationOps(saved: StoredGame[], current: StoredGame | null): O
 
 export function isMigrated(): boolean {
   return readStorage<unknown>(MIGRATED_KEY) === true;
-}
-
-export function markMigrated(): void {
-  writeStorage(MIGRATED_KEY, true);
 }

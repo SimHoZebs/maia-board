@@ -17,14 +17,17 @@ class InvalidRequest(Exception):
 
 def reconstruct(request):
     try:
-        board = chess.Board(request.get("initial_fen") or chess.STARTING_FEN)
+        moves = request.get("moves") or []
+        if not isinstance(moves, list) or len(moves) > 256:
+            raise InvalidRequest("invalid_position")
+        board = chess.Board(request.get("initial_fen") or (chess.STARTING_FEN if moves else request["fen"]))
         expected = chess.Board(request["fen"])
     except ValueError as error:
         raise InvalidRequest("invalid_fen") from error
     if not board.is_valid() or not expected.is_valid():
         raise InvalidRequest("invalid_position")
     try:
-        for move in request.get("moves") or []:
+        for move in moves:
             board.push_uci(move)
     except ValueError as error:
         raise InvalidRequest("invalid_position") from error
@@ -122,7 +125,6 @@ def evaluate(request, binary):
         # marks two rows "played" downstream and corrupts keyed list
         # reconciliation on navigation. Prefer the deepest depth with a full
         # distinct set.
-        deepest = max(complete)
         lines = None
         for depth in sorted(complete, reverse=True):
             ranked = [iterations[depth][rank] for rank in range(1, count + 1)]
@@ -130,17 +132,7 @@ def evaluate(request, binary):
                 lines = ranked
                 break
         if lines is None:
-            # Every complete iteration reused a move across ranks: keep the
-            # deepest depth's ranks in order, dropping repeats. Rank 1 always
-            # survives, so best_move still leads.
-            seen = set()
-            lines = []
-            for rank in range(1, count + 1):
-                line = iterations[deepest][rank]
-                if line["move"] in seen:
-                    continue
-                seen.add(line["move"])
-                lines.append(line)
+            raise RuntimeError("no complete distinct exact engine result")
         result["lines"] = lines
         result.update(best_move=result["lines"][0]["move"], score=result["lines"][0]["score"],
                       depth=min(line["depth"] for line in result["lines"]))
@@ -162,9 +154,9 @@ def main():
         result = evaluate(json.load(sys.stdin), args.binary)
     except InvalidRequest as error:
         result = {"code": error.code, "message": "position or move history is invalid"}
-    except Exception:
+    except Exception as error:
         total_ms = round((time.monotonic() - started) * 1000)
-        print(f"stockfish_timing outcome=error total_ms={total_ms}", file=sys.stderr, flush=True)
+        print(f"stockfish_timing outcome=error total_ms={total_ms} error={type(error).__name__}: {str(error)[:1024]}", file=sys.stderr, flush=True)
         result = {"code": "engine_unavailable", "message": "Stockfish evaluation is unavailable"}
     print(json.dumps(result))
 

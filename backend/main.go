@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -26,9 +27,7 @@ type moveRequest struct {
 	MaiaColor   string   `json:"maia_color"`
 	InitialFEN  string   `json:"initial_fen,omitempty"`
 	Temperature float64  `json:"temperature,omitempty"`
-	// Opaque read-through coordinates, same contract as POST /evaluate's
-	// cache_hash/cache_key: serve a matching cached row or compute live
-	// and store it, so play-time callers skip the GET+PUT round-trips.
+	// Accepted for older clients; cache identity is derived by the server.
 	CacheHash string `json:"cache_hash,omitempty"`
 	CacheKey  string `json:"cache_key,omitempty"`
 }
@@ -79,6 +78,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("open game database: %v", err)
 	}
+	if err := store.ensureV2Cache(); err != nil {
+		log.Fatalf("open evaluation cache: %v", err)
+	}
 	app := &server{pool: NewEnginePool(large, small), staticDir: staticDir, store: store,
 		evaluator: NewEvaluator(python, getenv("STOCKFISH_WORKER", "/app/stockfish_worker.py"), getenv("STOCKFISH_BINARY", "/app/stockfish"))}
 
@@ -91,6 +93,7 @@ func main() {
 	mux.HandleFunc("/evaluations", app.evaluations)
 	mux.HandleFunc("/evaluations/", app.evaluations)
 	mux.HandleFunc("/evaluations/coverage", app.coverage)
+	mux.HandleFunc("/evaluations/lookup", app.evaluationLookup)
 	mux.HandleFunc("/", app.frontend)
 	address := ":" + port
 	log.Printf("maia-board listening on %s", address)
@@ -192,21 +195,18 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 	// the served model must equal the requested one.
 	useCache := request.Temperature == 0
 	if useCache {
-		if entry, ok := s.lookupCache(request.CacheHash, "maia", request.CacheKey); ok {
-			var cached moveResponse
-			if encoded, err := json.Marshal(entry.Value); err == nil {
-			if err := json.Unmarshal(encoded, &cached); err == nil &&
-				cached.Move != "" && cached.ModelUsed == model && !cached.Degraded {
-					model, degraded = cached.ModelUsed, cached.Degraded
-					w.Header().Set("X-Eval-Cache", "hit")
-					writeJSON(w, http.StatusOK, entry.Value)
-					return
-				}
-			}
+		if cached, ok := s.cachedMaia(engineRequest, model); ok {
+			w.Header().Set("X-Eval-Cache", "hit")
+			writeJSON(w, http.StatusOK, cached)
+			return
 		}
 	}
 
-	result, used, fallback, err := s.pool.predict(r.Context(), model, engineRequest)
+	// The client transport may stop waiting on cancellation or deadline. This
+	// handler still owns bounded prediction, validation, and cache persistence;
+	// its eventual response write may fail after disconnect. Worker admission
+	// and operation deadlines remain authoritative, including during fallback.
+	result, used, fallback, err := s.pool.predict(context.WithoutCancel(r.Context()), model, engineRequest)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrWorkerBusy):
@@ -228,14 +228,16 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 	for _, candidate := range result.Candidates {
 		response.TopMoves = append(response.TopMoves, topMove{Move: candidate.Move, Prob: candidate.Policy})
 	}
-	// Fallback answers are stand-ins for the requested model: serving them
-	// later would masquerade as full-quality inference, so they are never
-	// persisted (matching the old explicit-PUT contract). Sampled
-	// (temperature != 0) answers vary per call and are never filed either.
-	if !degraded && useCache {
-		s.storeCache(request.CacheHash, "maia", request.CacheKey, response)
+	if !validMoveValue(response, validated, useCache) {
+		writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "invalid Maia worker response")
+		return
 	}
-	if useCache && validCacheRef(request.CacheHash, request.CacheKey) {
+	// Only deterministic, non-degraded answers populate the requested model's cache.
+	if !degraded && useCache {
+		hash, key := maiaIdentity(engineRequest, validated).coordinates()
+		s.storeCache(hash, "maia", key, response)
+	}
+	if useCache {
 		w.Header().Set("X-Eval-Cache", "miss")
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -351,7 +353,9 @@ func writeAPIError(w http.ResponseWriter, status int, code, message string) {
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
+	if err := json.NewEncoder(w).Encode(value); err != nil {
+		log.Printf("http response encoding/write failed: %v", err)
+	}
 }
 
 // statusRecorder captures the response status so handlers can log one

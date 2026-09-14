@@ -1,5 +1,9 @@
 # maia-board — self-hosted Maia3 play + analysis
 
+Historical planning record. Dated decisions and acceptance results below describe
+their original work. See [README.md](README.md) for current usage and links to
+the maintained frontend and backend architecture documentation.
+
 Minimal alternative to `maia-platform-frontend`: just play-vs-Maia and an
 analysis board, with inference on the home cluster instead of phone WASM.
 

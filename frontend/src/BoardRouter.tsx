@@ -63,7 +63,7 @@ export function BoardRouter() {
   // Redirects start in an inert context until the destination URL is committed.
   const mode =
     destinations.find((destination) => matchPath(destination.path, pathname))
-      ?.mode ?? "play";
+      ?.mode ?? "history";
   // Parsed once per location: the initializer takes the mount value for boot,
   // the sync effect takes the live one for Back/Forward.
   const urlLine = useMemo(

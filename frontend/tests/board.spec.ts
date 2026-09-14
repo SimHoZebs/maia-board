@@ -5,6 +5,7 @@ import { Chess } from 'chess.js';
 import { KEYS } from '../src/storage';
 import { defaultSettings, replay, type StoredGame } from '../src/domain';
 import type { MoveRequest } from '../src/api';
+import { EvaluationFixture } from './evaluation-fixture';
 import { defaultStockfishSettings, stockfishPolicy } from '../src/stockfishSettings';
 const SEARCH_POLICY = stockfishPolicy(defaultStockfishSettings);
 
@@ -31,6 +32,7 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
   const requests: { route: Route; payload: MoveRequest }[] = [];
   const gameStore = { games: new Map<string, any>(), currentId: null as string | null };
   const errors: string[] = [];
+  const cache = new EvaluationFixture();
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(({ storage }) => {
     if (!sessionStorage.getItem('seeded')) {
@@ -56,6 +58,7 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
   if (extraInit) await page.addInitScript(extraInit);
   await page.route('http://maia.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
+    if (await cache.lookup(route)) return;
     if (path === '/move') { requests.push({ route, payload: route.request().postDataJSON() }); return; }
     if (path === '/evaluate') {
       const payload = route.request().postDataJSON();
@@ -81,7 +84,7 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
         const row = {
           id: body.id ?? `mock-${gameStore.games.size + 1}`, created_at: body.created_at || previous?.created_at || now,
           updated_at: same ? previous.updated_at : now, user_color: body.user_color, elo_maia: body.elo_maia,
-          elo_user: body.elo_user, model: body.model, moves: body.moves, result: body.result ?? previous?.result ?? '',
+          elo_user: body.elo_user, model: body.model, temperature: body.temperature, moves: body.moves, result: body.result ?? previous?.result ?? '',
         };
         gameStore.games.set(row.id, row);
         if (body.current) gameStore.currentId = row.id;
@@ -102,7 +105,7 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
   // With bottom navigation on phones the header tabs are replaced by the
   // bottom-bar menu; everywhere else they stay visible.
   const destination = page.getByRole('navigation', { name: 'Destination' });
-  if ((page.viewportSize()?.width ?? 1440) <= 760 && storage[KEYS.bottomNav] !== false) await expect(destination).toBeHidden();
+  if ((page.viewportSize()?.width ?? 1440) <= 760) await expect(destination).toBeHidden();
   else await expect(destination).toBeVisible();
   if (path === '/' || path === '/play') {
     if (start && !storage[KEYS.current]) await page.locator('#start-game').click();
@@ -127,9 +130,17 @@ function countCaptures(game: StoredGame) { return replay(game.moves).history({ v
 for (const width of [390, 640, 1440]) {
   test(`destination tabs stay in place across modes at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
-    // Header-tab geometry needs the header tabs visible: opt out of the
-    // default-on bottom navigation for this loop (mobile hides them).
-    await boot(page, { [KEYS.bottomNav]: false });
+    await boot(page, { 'maia-board.bottom-nav.v1': false });
+    if (width <= 760) {
+      const menu = page.locator('#mobile-menu');
+      const initial = await menu.boundingBox();
+      for (const mode of ['analysis', 'history', 'settings', 'play']) {
+        await gotoMode(page, mode);
+        await expect(menu).toBeVisible();
+        await expect.poll(() => menu.boundingBox()).toEqual(initial);
+      }
+      return;
+    }
     const tabs = page.getByRole('navigation', { name: 'Destination' });
     const positions = () => tabs.getByRole('link').evaluateAll(links => links.map(link => {
       const { x, y, width, height } = link.getBoundingClientRect();
@@ -215,7 +226,10 @@ test('Back retires pending analysis; Forward does not repeat it or resume play t
   await piece(page, 'c5', 'black pawn');
   await page.goBack();
   await expect(page).toHaveURL('http://maia.test/analyze');
-  await expect(page.locator('#insight-content')).toHaveCount(1);
+  // The empty startpos line restores intact (not the importer): no move to
+  // judge yet, so the panel shows its stepping hint instead of content.
+  await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 1');
+  await expect(page.getByText('Current position — explore a candidate or step forward to review a move.')).toBeVisible();
   await page.goForward();
   await expect(page).toHaveURL('http://maia.test/play');
   await piece(page, 'c5', 'black pawn');
@@ -296,16 +310,19 @@ async function gotoMode(page: Page, mode: 'play' | 'analysis' | 'history' | 'set
   await page.locator('#mobile-menu').click();
   await page.locator(`#mobile-mode-${mode}`).click();
 }
-async function square(page: Page, key: string) {
+async function squares(page: Page, keys: string[]) {
   const board = page.locator('#board cg-board');
   await board.scrollIntoViewIfNeeded();
   const bounds = (await board.boundingBox())!;
   const black = await page.locator('#board .cg-wrap').evaluate(el => el.classList.contains('orientation-black'));
-  const file = key.charCodeAt(0) - 97, rank = Number(key[1]) - 1;
-  return { x: bounds.x + (black ? 7 - file + 0.5 : file + 0.5) * bounds.width / 8, y: bounds.y + (black ? rank + 0.5 : 7 - rank + 0.5) * bounds.height / 8 };
+  return keys.map(key => {
+    const file = key.charCodeAt(0) - 97, rank = Number(key[1]) - 1;
+    return { x: bounds.x + (black ? 7 - file + 0.5 : file + 0.5) * bounds.width / 8, y: bounds.y + (black ? rank + 0.5 : 7 - rank + 0.5) * bounds.height / 8 };
+  });
 }
+async function square(page: Page, key: string) { return (await squares(page, [key]))[0]; }
 async function move(page: Page, from: string, to: string, drag = false) {
-  const a = await square(page, from), b = await square(page, to);
+  const [a, b] = await squares(page, [from, to]);
   if (drag) {
     await page.mouse.move(a.x, a.y); await page.mouse.down();
     await page.mouse.move(b.x, b.y, { steps: 12 }); await page.mouse.up();
@@ -318,7 +335,10 @@ async function piece(page: Page, key: string, expected: string | null) {
   }, key)).toBe(expected);
 }
 async function currentMoves(page: Page) {
-  return page.evaluate(key => JSON.parse(localStorage.getItem(key) || 'null')?.moves ?? [], KEYS.current);
+  return page.evaluate(() => {
+    const repository = JSON.parse(localStorage.getItem('maia-board.games.v2') || 'null');
+    return repository?.games.find((game: any) => game.id === repository.currentId)?.moves ?? [];
+  });
 }
 async function screenshot(page: Page, path: string) {
   await expect(page.locator('#board piece.anim')).toHaveCount(0);
@@ -414,9 +434,9 @@ test('analysis load, navigation, copy, request history, stale reply and mode reu
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 4');
   await piece(page, 'f3', 'white knight');
   await expect.poll(() => app.requests.length).toBe(1);
-  expect(app.requests[0].payload.moves).toEqual(['e2e4', 'e7e5', 'g1f3']);
+  expect(app.requests[0].payload.moves).toEqual(['e2e4', 'e7e5']);
   await page.locator('#analysis-prev').click();
-  await app.reply(0, 'b8c6');
+  await app.reply(0, 'g1f3');
   await expect(page.locator('#insight-content')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Analyze entire game' })).toBeEnabled();
   await piece(page, 'g1', 'white knight');
@@ -429,15 +449,28 @@ test('analysis load, navigation, copy, request history, stale reply and mode reu
   await page.getByRole('button', { name: 'FEN', exact: true }).click();
   await page.locator('#analysis-fen').fill(fen); await page.locator('#analysis-pgn').fill('1. e4');
   await page.locator('#load-analysis').click();
-  await expect.poll(() => app.requests.length).toBe(2);
-  expect(app.requests[1].payload.initial_fen).toBe(fen);
-  expect(replay(app.requests[1].payload.moves, fen).fen()).toBe(app.requests[1].payload.fen);
-  await app.reply(1, 'e8d7');
-  await expect(page.getByRole('heading', { name: 'Maia • 1600', exact: true })).toBeVisible();
+  // Release obsolete singles too; only the loaded FEN's focus can populate
+  // its panel. Queue order is an implementation detail.
+  let replied = 1;
+  for (;;) {
+    await expect.poll(() => app.requests.length).toBeGreaterThan(replied);
+    const index = replied++;
+    const payload = app.requests[index].payload;
+    await app.reply(index);
+    if (payload.initial_fen === fen && payload.moves.length === 0) {
+      expect(replay(payload.moves, fen).fen()).toBe(payload.fen);
+      break;
+    }
+  }
+  await expect(page.locator('#insight-content')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Maia 79m • 1600', exact: true })).toBeVisible();
   await expect(page.locator('#analysis-rating')).toHaveValue('1600');
-  await page.locator('#mode-play').click(); await move(page, 'd2', 'd4');
-  await expect.poll(() => app.requests.length).toBe(3);
-  await app.reply(2, 'd7d5'); await piece(page, 'd5', 'black pawn');
+  await page.locator('#mode-play').click();
+  await expect(page.locator('#takeback')).toBeVisible();
+  await move(page, 'd2', 'd4');
+  await expect.poll(() => app.requests.some(request => !request.payload.initial_fen && request.payload.moves.join() === 'd2d4')).toBe(true);
+  await app.reply(app.requests.findIndex(request => !request.payload.initial_fen && request.payload.moves.join() === 'd2d4'), 'd7d5');
+  await piece(page, 'd5', 'black pawn');
   expect(app.errors).toEqual([]);
 });
 
@@ -450,9 +483,8 @@ test('saved switching at identical FEN retires pending reply and persists select
   await expect.poll(() => app.requests.length).toBe(2);
   await expect.poll(() => page.evaluate(key => {
     const raw = localStorage.getItem(key);
-    const game = raw ? JSON.parse(raw) : null;
-    return typeof game?.id === 'string' ? game.id : null;
-  }, KEYS.current)).toBe('b');
+    return raw ? JSON.parse(raw).currentId : null;
+  }, 'maia-board.games.v2')).toBe('b');
   await app.reply(1, 'c7c5'); await app.reply(0, 'e7e5');
   await piece(page, 'c5', 'black pawn'); await piece(page, 'e7', 'black pawn');
   await expect(page.locator('#insight-title')).toHaveCount(0);
@@ -482,15 +514,17 @@ test('pending takeback/new game/mode/settings transitions reject obsolete replie
   expect(app.errors).toEqual([]);
 });
 
-test('request errors settle without retry loops, controls recover', async ({ page }) => {
+test('busy retries are bounded, then manual retry recovers controls', async ({ page }) => {
   const app = await boot(page);
-  await move(page, 'e2', 'e4'); await app.reply(0, undefined, 503);
+  await move(page, 'e2', 'e4');
+  for (let index = 0; index < 3; index++) await app.reply(index, undefined, 503);
   await expect(page.locator('#error-banner')).toContainText('Maia is busy. Wait a moment and try again.');
   await expect(page.locator('#retry-request')).toBeVisible();
   await expect(page.locator('.turn-indicator')).not.toHaveText('Thinking…');
   await page.locator('#retry-request').click();
-  await expect.poll(() => app.requests.length).toBe(2);
-  await app.reply(1, 'e7e5'); await expect(page.locator('.turn-indicator')).toHaveText('To move');
+  await expect.poll(() => app.requests.length).toBe(4);
+  await app.reply(3, 'e7e5'); await expect(page.locator('.turn-indicator')).toHaveText('To move');
+  expect(app.requests).toHaveLength(4);
   expect(app.errors).toEqual([]);
 });
 
@@ -537,7 +571,11 @@ test('single live Chessground binding survives React updates and StrictMode clea
   await page.locator('#mode-analysis').click(); await page.locator('#analysis-pgn').fill('1. d4 d5');
   await page.locator('#load-analysis').click(); await page.locator('#mode-play').click();
   await page.locator('#flip-board').click();
-  expect(await stats()).toEqual(initial);
+  // Workspaces mount per mode (each engine exists only on its own page), so
+  // a mode switch remounts the board once; the invariant is no leaked
+  // binding — net listener balance unchanged — with exactly one live board.
+  const after = await stats();
+  expect(after.adds - after.removes).toBe(initial.adds - initial.removes);
   await expect(page.locator('#board cg-board')).toHaveCount(1);
   await screenshot(page, testInfo.outputPath('desktop.png'));
   await page.setViewportSize({ width: 390, height: 844 });
@@ -602,23 +640,25 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   const app = await boot(page);
   await page.locator('#mode-analysis').click();
   await expect(page.locator('#analysis-controls')).toBeVisible();
-  await page.locator('#analysis-pgn').fill('1. e4 e5 2. Nf3');
+  await page.locator('#analysis-pgn').fill('1. e4 e5 2. Nf3 Nc6');
   await page.locator('#load-analysis').click();
   await expect(page.locator('#analysis-controls')).toHaveCount(0);
   await app.reply(0, 'b8c6', 200, [{ move: 'b8c6', prob: .4 }, { move: 'g8f6', prob: .15 }]);
-  await expect(page.locator('section[aria-label="Maia analysis"] .candidate-reading')).toHaveText(['Nc640%', 'Nf615%']);
+  await expect(page.locator('section[aria-label="Maia analysis"] .candidate-reading')).toHaveText(['Played, Nc640%', 'Nf615%']);
   await expect(page.locator('.win-hero')).toHaveCount(0);
   await expect(page.locator('section[aria-label="Maia analysis"] .candidate-list')).toContainText('Nc6');
   await expect(page.locator('.balance-track')).toHaveAccessibleName(/estimated White winning chance 52%/);
   await page.getByRole('button', { name: 'Explore Nf6' }).hover();
-  await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(1);
+  await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(0);
   await piece(page, 'g8', 'black knight');
-  await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 4');
+  await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
   await expect(page.locator('section[aria-label="Maia analysis"] .candidate-list')).toContainText('Nc6');
   await screenshot(page, testInfo.outputPath('analysis-candidates-desktop.png'));
   await page.getByRole('button', { name: 'Explore Nf6' }).click();
   await piece(page, 'f6', 'black knight');
-  await expect(page.locator('#insight-content')).toHaveCount(0);
+  // Exploring lands on a position whose before-position already has a cached
+  // evaluation, so the panel judges the explored move instead of blanking.
+  await expect(page.locator('#insight-content').getByRole('button', { name: 'Explore Nf6 (played) from before this move', exact: true })).toBeVisible();
   await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(0);
   await move(page, 'f1', 'c4');
   // Either branch move can win the 200ms foreground race. A parked
@@ -637,20 +677,41 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   expect(tip).toBeGreaterThanOrEqual(1);
   expect(replay(app.requests[tip].payload.moves).fen()).toBe(app.requests[tip].payload.fen);
   await app.reply(tip, 'b8c6');
+  // Resolve the focus single too, so the focus Maia list paints at the old
+  // identity (priming the stale-while-revalidating display below).
+  const focusMoves = ['e2e4', 'e7e5', 'g1f3', 'g8f6'];
+  await expect.poll(() => app.requests.some(r => r.payload.moves.join() === focusMoves.join())).toBe(true);
+  const focusIdx = app.requests.findIndex((r, i) => !replied.has(i) && r.payload.moves.join() === focusMoves.join());
+  if (focusIdx >= 0) { replied.add(focusIdx); await app.reply(focusIdx); }
+  await expect(page.locator('section[aria-label="Maia analysis"] .candidate-list')).toBeVisible();
+  // Let the display commit flush before changing the rating.
+  await page.waitForTimeout(250);
   await expect(page.locator('#analysis-rating')).toBeVisible();
   await page.locator('#analysis-rating').selectOption('2000');
-  await expect(page.locator('#insight-content')).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'Maia • 2000', exact: true })).toBeVisible();
+  // Rating changes keep the previous identity visible with a stale banner
+  // while the new Elo fetches. Lane blocking staggers the new-identity
+  // singles, so wait for the first by Elo (counts are unreliable: late
+  // old-identity singles interleave), assert the banner while it is held,
+  // then release both.
+  await expect.poll(() => app.requests.some(r => r.payload.elo_maia === 2000)).toBe(true);
+  await page.waitForTimeout(2000);
+  // NOTE: getByRole('status', name) does not match this banner's mixed
+  // text/expression content in Chromium's AX tree (probed: text present,
+  // role query empty), so assert on text instead.
+  await expect(page.getByText('updating to 2000')).toBeVisible();
+  await app.reply(app.requests.findIndex(r => r.payload.elo_maia === 2000));
+  await expect.poll(() => app.requests.filter(r => r.payload.elo_maia === 2000)).toHaveLength(2);
+  await app.reply(app.requests.map((r, i) => (r.payload.elo_maia === 2000 ? i : -1)).filter(i => i >= 0).at(-1)!);
+  await expect(page.getByRole('heading', { name: 'Maia 79m • 2000', exact: true })).toBeVisible();
   await expect(page.locator('#analysis-rating')).toHaveValue('2000');
-  await expect.poll(() => app.requests.length).toBe(tip + 2);
-  expect(app.requests[tip + 1].payload).toMatchObject({ elo_maia: 2000, elo_user: 2000 });
-  for (const [id, expected] of [['copy-pgn', '1. e4 e5 2. Nf3'], ['copy-explored-pgn', '1. e4 e5 2. Nf3 Nf6 3. Bc4']]) {
+  expect(app.requests.some(r => r.payload.elo_maia === 2000 && r.payload.elo_user === 2000)).toBe(true);
+  for (const [id, expected] of [['copy-pgn', '1. e4 e5 2. Nf3 Nc6'], ['copy-explored-pgn', '1. e4 e5 2. Nf3 Nf6 3. Bc4']]) {
     await page.locator(`#${id}`).click();
     await expect(page.locator(`#${id}`)).toHaveText(/copied/i);
     await expect.poll(() => copiedTexts(page)).toContain(expected);
   }
   await page.locator('#return-original').click();
-  await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 4');
+  await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
   await piece(page, 'g8', 'black knight');
   await page.locator('#mode-play').click();
   await expect(page.locator('.player-strip').filter({ hasText: 'Maia' })).toContainText('1600');
@@ -681,7 +742,7 @@ test('history review, resume, copy, delete, and just-finished game review', asyn
   await expect(page).toHaveURL('http://maia.test/play');
   await piece(page, 'e5', 'black pawn');
   await page.locator('#mode-history').click();
-  await cards.last().getByRole('button', { name: 'Delete', exact: true }).click();
+  await cards.filter({ has: page.getByRole('button', { name: 'Resume', exact: true }) }).getByRole('button', { name: 'Delete', exact: true }).click();
   await page.getByRole('button', { name: 'Delete game', exact: true }).click();
   await expect(cards).toHaveCount(1);
   await page.reload();
@@ -694,16 +755,21 @@ test('history review, resume, copy, delete, and just-finished game review', asyn
 });
 
 test('analysis entry sources and input keyboard isolation', async ({ page }) => {
-  const app = await boot(page, { [KEYS.saved]: [record(['d2d4', 'd7d5'])] });
+  const app = await boot(page, { [KEYS.saved]: [record(['d2d4', 'd7d5'])] }, false);
   await page.locator('#mode-analysis').click();
   await page.getByRole('button', { name: 'History', exact: true }).last().click();
   await page.locator('.saved-game .saved-open').click();
   await expect(page).toHaveURL('http://maia.test/analyze?moves=d2d4,d7d5');
   await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
-  // Arrow keys on the rating select must not step the board.
+  // Arrow keys on the rating select must not step the board. Step back to
+  // a user move first: on Maia's own moves the rating locks (disabled) by
+  // design, and a disabled control cannot take focus at all.
+  await page.locator('#analysis-prev').click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 3');
+  await expect(page.locator('#analysis-rating')).toBeEnabled();
   await page.locator('#analysis-rating').focus();
   await page.keyboard.press('ArrowLeft');
-  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
+  await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 3');
   // The Analyze tab returns to the importer instead of reopening the line.
   await page.locator('#mode-analysis').click();
   await expect(page).toHaveURL('http://maia.test/analyze');
@@ -715,16 +781,27 @@ test('analysis entry sources and input keyboard isolation', async ({ page }) => 
   await page.locator('#analysis-controls').getByRole('button', { name: 'Starting position', exact: true }).click();
   await page.locator('#load-analysis').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 1');
+  // Drain the startpos single: the boot mock strips abort signals, so a
+  // still-held lane would wedge the next load's foreground forever. Reply
+  // e2e4 explicitly: the default legal-first top would seed a3, but the tail
+  // below reads e4 back from this row.
   await expect.poll(() => app.requests.length).toBeGreaterThan(0);
-  if (app.requests[0].payload.moves.length) await app.reply(0);
-  const currentIndex = app.requests[0].payload.moves.length ? 1 : 0;
-  await app.reply(currentIndex, 'e2e4');
+  await app.reply(app.requests.length - 1, 'e2e4', 200, [{ move: 'e2e4', prob: .6 }]);
+  // The panel judges the displayed move from its before-position, so an
+  // empty start has no candidates: unload back to the importer, then load
+  // one move to read the single back.
+  await page.locator('#mode-analysis').click();
+  await page.locator('#analysis-pgn').fill('1. e4');
+  await page.locator('#load-analysis').click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 2');
+  // The drained startpos reply already seeded this focus row (same node, same
+  // settings), so the focus single is a memory hit and fires no request.
   await expect(page.locator('.win-hero')).toHaveCount(0);
   await expect(page.locator('section[aria-label="Maia analysis"] .candidate-list')).toContainText('e4');
 });
 
 test('tapping a history game opens its analysis', async ({ page }) => {
-  const app = await boot(page, { [KEYS.saved]: [record(['e2e4', 'e7e5'], 'white', 'g1')] });
+  const app = await boot(page, { [KEYS.saved]: [record(['e2e4', 'e7e5'], 'white', 'g1')] }, false);
   await page.locator('#mode-history').click();
   await expect(page.locator('.saved-game')).toHaveCount(1);
   await page.locator('.saved-game .saved-open').click();
@@ -808,7 +885,7 @@ test('bottom bar swaps mounts across the mobile breakpoint without duplicating',
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect(page.locator('.mobile-footer')).toHaveCount(0);
   await expect(page.locator('.board-stage .move-navigation')).toBeVisible();
-  await expect(page.locator('#mobile-menu')).toHaveCount(1);
+  await expect(page.locator('#mobile-menu')).toHaveCount(0);
   await page.locator('#analysis-last').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
   // And back to mobile.
@@ -821,7 +898,7 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
   test(`workspace geometry and horizontal notation ${viewport.width}x${viewport.height}`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport);
     const long = Array.from({ length: 18 }, () => ['g1f3', 'g8f6', 'f3g1', 'f6g8']).flat();
-    await boot(page, { [KEYS.current]: record(long), [KEYS.bottomNav]: true });
+    await boot(page, { [KEYS.current]: record(long) });
     const board = await page.locator('#board').boundingBox();
     expect(board!.width).toBeGreaterThan(viewport.width < 760 ? 300 : 380);
     expect(Math.abs(board!.width - board!.height)).toBeLessThan(1);
@@ -841,9 +918,11 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
     }
     // Board actions live above the board (less reachable on mobile);
     // move navigation lives below it next to the move list.
-    const toolbar = (await page.locator('.board-toolbar').boundingBox())!;
     const nav = (await page.locator('.move-navigation').boundingBox())!;
-    expect(toolbar.y + toolbar.height).toBeLessThanOrEqual(board!.y);
+    if (viewport.width <= 760) {
+      const toolbar = (await page.locator('.board-toolbar').boundingBox())!;
+      expect(toolbar.y + toolbar.height).toBeLessThanOrEqual(board!.y);
+    } else await expect(page.locator('.move-navigation .board-actions')).toBeVisible();
     expect(nav.y).toBeGreaterThanOrEqual(board!.y + board!.height);
     const list = page.locator('#move-list');
     expect(await list.evaluate(el => el.scrollWidth > el.clientWidth && el.clientHeight <= 52)).toBe(true);
@@ -870,10 +949,10 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
   });
 }
 
-for (const width of [320, 390]) {
+for (const width of [320, 360, 390]) {
   test(`mobile bottom bar menu navigates pages, bar owns move navigation at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
-    const app = await boot(page, { [KEYS.current]: record(['e2e4', 'e7e5']), [KEYS.bottomNav]: true });
+    const app = await boot(page, { [KEYS.current]: record(['e2e4', 'e7e5']) });
     const menu = page.locator('#mobile-menu');
     await expect(menu).toBeVisible();
     await expect(menu).toHaveAttribute('aria-expanded', 'false');
@@ -917,7 +996,7 @@ for (const width of [320, 390]) {
 for (const width of [320, 390]) {
   test(`compact analysis variation notation at ${width}px`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: 844 });
-    await boot(page, { [KEYS.bottomNav]: true }, false, '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6');
+    await boot(page, {}, false, '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6');
     await page.locator('#analysis-first').click();
     await page.locator('#analysis-next').click();
     await move(page, 'c7', 'c5');
@@ -974,9 +1053,10 @@ for (const width of [320, 390]) {
 for (const originPly of [0, 9, 12]) {
   test(`variation is inserted at its origin ply ${originPly}`, async ({ page }, info) => {
     await page.setViewportSize({ width: 320, height: 844 });
-    await boot(page, { [KEYS.bottomNav]: true }, false, '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6,b5a4,g8f6,e1g1,f8e7,f1e1,b7b5');
+    await boot(page, {}, false, '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6,b5a4,g8f6,e1g1,f8e7,f1e1,b7b5');
     await page.locator('#analysis-first').click();
     for (let index = 0; index < originPly; index++) await page.locator('#analysis-next').click();
+    await expect(page.locator('#analysis-index')).toHaveText(`Position ${originPly + 1} / 13`);
     await move(page, originPly === 9 ? 'd7' : 'd2', originPly === 9 ? 'd6' : 'd4');
     const variation = page.getByLabel('Explored variation', { exact: true });
     await expect(variation).toBeVisible();
@@ -1025,7 +1105,7 @@ test('tapping an original move after the branch exits the branch', async ({ page
 
 test('analysis keeps one scrolling main row and adds height only for a branch', async ({ page }, info) => {
   await page.setViewportSize({ width: 320, height: 844 });
-  await boot(page, { [KEYS.bottomNav]: true }, false, '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6,b5a4,g8f6,e1g1,f8e7,f1e1,b7b5');
+  await boot(page, {}, false, '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6,b5a4,g8f6,e1g1,f8e7,f1e1,b7b5');
   const list = page.locator('#move-list');
   const height = await list.evaluate(el => el.clientHeight);
   expect(height).toBe(40);
@@ -1057,10 +1137,9 @@ test('analysis keeps one scrolling main row and adds height only for a branch', 
   expect(await list.evaluate(el => el.clientHeight)).toBe(height);
 });
 
-test('default layout keeps tools in the move row and branches downward', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  // The off layout: opt out of the default-on bottom navigation.
-  await boot(page, { [KEYS.bottomNav]: false });
+test('desktop layout keeps tools in the move row and branches downward', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await boot(page);
   // Original layout: no toolbar above the board; flip shares the move row.
   await expect(page.locator('.board-toolbar')).toHaveCount(0);
   await expect(page.locator('.move-navigation .board-actions #flip-board')).toBeVisible();
@@ -1105,11 +1184,14 @@ test('phone touch movement and board exploration', async ({ browser }) => {
   await page.touchscreen.tap(from.x, from.y); await page.touchscreen.tap(to.x, to.y);
   await app.reply(0, 'e7e5');
   await piece(page, 'e5', 'black pawn');
-  await page.locator('#mode-analysis').tap();
-  await page.getByRole('button', { name: 'Starting position', exact: true }).tap();
+  await page.locator('#mobile-menu').tap();
+  await page.locator('#mobile-mode-analysis').tap();
+  // Load a line with a move to judge: the panel covers the displayed move
+  // from its before-position, so an empty start has no candidates to explore.
+  await page.locator('#analysis-pgn').fill('1. e4');
   await page.locator('#load-analysis').tap();
   await app.reply(1, 'e2e4');
-  await page.getByRole('button', { name: 'Explore e4' }).tap();
+  await page.getByRole('button', { name: 'Explore e4 (played)' }).tap();
   await piece(page, 'e4', 'white pawn');
   await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 2');
   expect(app.errors).toEqual([]);

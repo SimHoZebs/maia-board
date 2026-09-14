@@ -55,6 +55,8 @@ func TestEvaluationHelper(t *testing.T) {
 		}
 		terminal := "draw"
 		_ = json.NewEncoder(os.Stdout).Encode(evaluationResponse{Engine: "Stockfish 19", SearchPolicy: request.Settings.policy(), Terminal: &terminal, Score: evaluationScore{Type: "cp"}, Lines: []evaluationLine{}})
+	case "white_win", "black_win":
+		_ = json.NewEncoder(os.Stdout).Encode(evaluationResponse{Engine: "Stockfish 19", SearchPolicy: SearchPolicy, Terminal: &mode, Score: evaluationScore{Type: "mate", WinningSide: strings.TrimSuffix(mode, "_win")}, Lines: []evaluationLine{}})
 	case "position_mismatch", "invalid_position", "invalid_fen", "engine_unavailable":
 		_ = json.NewEncoder(os.Stdout).Encode(apiError{mode, "/secret/path"})
 	case "duplicates", "wrongbest":
@@ -82,6 +84,8 @@ func TestEvaluateHTTP(t *testing.T) {
 		status                 int
 	}{
 		{"success", valid, "ok", "", 200},
+		{"white terminal", valid, "white_win", "", 200},
+		{"black terminal", valid, "black_win", "", 200},
 		{"configured", `{"fen":"` + startFEN + `","settings":{"time_ms":2000,"lines":5,"depth":18}}`, "settings", "", 200},
 		{"invalid settings", `{"fen":"` + startFEN + `","settings":{"time_ms":30001,"lines":5,"depth":18}}`, "settings", "invalid_request", 400},
 		{"wrong policy", `{"fen":"` + startFEN + `","settings":{"time_ms":2000,"lines":5,"depth":18}}`, "ok", "engine_unavailable", 502},
@@ -152,12 +156,12 @@ func TestEvaluateCacheReadThrough(t *testing.T) {
 	if normalizeJSON(t, w.Body.String()) != normalizeJSON(t, first) {
 		t.Fatalf("cached body changed:\n%s\n%s", first, w.Body)
 	}
-	// Same hash, different key: a stale row is recomputed and overwritten.
+	// Client-provided coordinates cannot alter the server-derived identity.
 	stale := `{"fen":"` + startFEN + `","moves":[],"cache_hash":"abc123","cache_key":"other-key"}`
 	w = httptest.NewRecorder()
 	s.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(stale)))
-	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "miss" {
-		t.Fatalf("stale: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
+	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "hit" {
+		t.Fatalf("ignored coordinates: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
 	}
 	w = httptest.NewRecorder()
 	hit.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(stale)))
@@ -165,20 +169,19 @@ func TestEvaluateCacheReadThrough(t *testing.T) {
 		t.Fatalf("stale overwrite: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
 	}
 	// Corrupt row: validation fails, falls through to live inference.
-	put := httptest.NewRecorder()
-	hit.evaluations(put, httptest.NewRequest("PUT", "/evaluations/deadbeef", strings.NewReader(`{"engine":"sf","key":"k","value":{"a":1}}`)))
-	if put.Code != 200 {
-		t.Fatalf("seed corrupt row: %d %s", put.Code, put.Body)
+	hash, key := sfIdentity(evaluationRequest{FEN: startFEN}).coordinates()
+	if _, err := store.cachePut(hash, "sf", key, `{"a":1}`); err != nil {
+		t.Fatal(err)
 	}
 	w = httptest.NewRecorder()
 	s.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(`{"fen":"`+startFEN+`","moves":[],"cache_hash":"deadbeef","cache_key":"k"}`)))
 	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "miss" {
 		t.Fatalf("corrupt: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
 	}
-	// No cache coordinates: computes live, sets no header.
+	// No client coordinates still uses the canonical server cache.
 	w = httptest.NewRecorder()
 	s.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(`{"fen":"`+startFEN+`","moves":[]}`)))
-	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "" {
+	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "hit" {
 		t.Fatalf("uncached: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
 	}
 }

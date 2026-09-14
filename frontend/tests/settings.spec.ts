@@ -3,12 +3,14 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { replay } from '../src/domain';
 import { stockfishPolicy } from '../src/stockfishSettings';
+import { EvaluationFixture } from './evaluation-fixture';
 
 for (const width of [360, 1440]) test(`engine settings and Play temperature at ${width}px`, async ({ page }, info) => {
   await page.setViewportSize({ width, height: 900 });
   const requests: { path: string; body: any }[] = [];
   const errors: string[] = [];
   let current: any = null;
+  const cache = new EvaluationFixture();
   page.on('pageerror', error => errors.push(error.message));
   await page.route('http://maia.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
@@ -21,8 +23,7 @@ for (const width of [360, 1440]) test(`engine settings and Play temperature at $
       } else await route.fulfill({ json: { games: current ? [current] : [], current_id: current?.id ?? null, total: current ? 1 : 0 } });
       return;
     }
-    if (path === '/evaluations/coverage') { await route.fulfill({ json: { rows: {} } }); return; }
-    if (path.startsWith('/evaluations/')) { await route.fulfill({ status: 404, json: {} }); return; }
+    if (await cache.lookup(route)) return;
     if (path === '/move' || path === '/evaluate') {
       const body = route.request().postDataJSON();
       requests.push({ path, body });
@@ -39,6 +40,12 @@ for (const width of [360, 1440]) test(`engine settings and Play temperature at $
     await route.fulfill({ body: await readFile(resolve('dist-browser', file)), contentType: file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html' });
   });
   await page.goto('http://maia.test/play');
+  // Header tabs hide on phones (the bottom-bar menu owns navigation there),
+  // so navigate whichever way the current viewport offers.
+  const gotoMode = async (mode: string) => {
+    if (await page.locator(`#mode-${mode}`).isVisible()) await page.locator(`#mode-${mode}`).click();
+    else { await page.locator('#mobile-menu').click(); await page.locator(`#mobile-mode-${mode}`).click(); }
+  };
   await page.getByText('Advanced', { exact: true }).click();
   await page.locator('#maia-temperature').fill('0.7');
   await page.getByRole('radio', { name: 'Black', exact: true }).check();
@@ -49,7 +56,7 @@ for (const width of [360, 1440]) test(`engine settings and Play temperature at $
   expect(current.temperature).toBe(.7);
   const gameId = current.id;
   const moveCount = requests.filter(r => r.path === '/move').length;
-  await page.locator('#mode-settings').click();
+  await gotoMode('settings');
   await expect(page.getByRole('heading', { name: 'Stockfish', exact: true })).toBeVisible();
   await expect(page.locator('#maia-temperature')).toHaveCount(0);
   await expect(page.locator('#board')).toHaveCount(0);
@@ -80,11 +87,11 @@ for (const width of [360, 1440]) test(`engine settings and Play temperature at $
   expect(requests.filter(r => r.path === '/move')).toHaveLength(moveCount);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath('stockfish-settings.png') });
-  await page.locator('#mode-play').click();
+  await gotoMode('play');
   await expect(page.locator('#new-game')).toBeVisible();
   expect(current.id).toBe(gameId);
   expect(current.temperature).toBe(.7);
-  await page.locator('#mode-analysis').click();
+  await gotoMode('analysis');
   await page.getByRole('button', { name: 'Starting position', exact: true }).click();
   await page.locator('#load-analysis').click();
   await expect.poll(() => requests.some(r => r.path === '/evaluate')).toBe(true);

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultSettings, type StoredGame } from './domain';
 import {
-  deleteRemote, fetchGames, isMigrated, loadOutbox, markMigrated, mergeSync, migrationOps,
-  pushOutbox, saveRemote, storeOutbox, toStoredGame, type OutboxOp,
+  deleteRemote, fetchGames, mergeSync, migrationOps,
+  saveRemote, toStoredGame, type OutboxOp,
 } from './serverGames';
 
 beforeEach(() => {
@@ -39,7 +39,7 @@ describe('server mapping', () => {
     await expect(saveRemote(game('b', ['e2e4']), true, fetchImpl)).resolves.toMatchObject({ id: 'b' });
     await expect(deleteRemote('b', fetchImpl)).resolves.toBeUndefined();
     await expect(saveRemote(game('c'), false, fetchImpl)).rejects.toMatchObject({ code: 'invalid_elo' });
-    expect(fetchImpl).toHaveBeenNthCalledWith(1, '/games?limit=500', expect.anything());
+    expect(fetchImpl).toHaveBeenNthCalledWith(1, '/games?limit=100&offset=0', expect.anything());
     expect(fetchImpl).toHaveBeenNthCalledWith(2, '/games', expect.objectContaining({ method: 'POST' }));
     expect(fetchImpl).toHaveBeenNthCalledWith(3, '/games/b', expect.objectContaining({ method: 'DELETE' }));
     await expect(fetchGames(vi.fn().mockRejectedValue(new Error('down')))).rejects.toMatchObject({ code: 'server_unreachable' });
@@ -47,60 +47,6 @@ describe('server mapping', () => {
   it('treats delete of unknown games as success', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
     await expect(deleteRemote('missing', fetchImpl)).resolves.toBeUndefined();
-  });
-});
-
-describe('outbox', () => {
-  it('persists ops across reloads and validates on read', () => {
-    expect(loadOutbox()).toEqual([]);
-    pushOutbox({ op: 'save', game: game('a'), current: true });
-    pushOutbox({ op: 'delete', id: 'b' });
-    localStorage.setItem('maia-board.outbox.v1', '[{"op":"save","game":{"id":1}}]');
-    expect(loadOutbox()).toEqual([]);
-    storeOutbox([{ op: 'delete', id: 'b' }]);
-    expect(loadOutbox()).toEqual([{ op: 'delete', id: 'b' }]);
-  });
-  it('tracks migration exactly once', () => {
-    expect(isMigrated()).toBe(false);
-    markMigrated();
-    expect(isMigrated()).toBe(true);
-  });
-  it('collapses consecutive saves for the same game to the latest snapshot', () => {
-    pushOutbox({ op: 'save', game: game('a', ['e2e4']), current: true });
-    pushOutbox({ op: 'save', game: game('a', ['e2e4', 'e7e5']), current: false });
-    pushOutbox({ op: 'save', game: game('a', ['e2e4', 'e7e5', 'g1f3']), current: false });
-    const ops = loadOutbox();
-    expect(ops).toHaveLength(1);
-    expect(ops[0]).toEqual({ op: 'save', game: game('a', ['e2e4', 'e7e5', 'g1f3']), current: true });
-  });
-  it('breaks coalescing runs on deletes and foreign ids', () => {
-    pushOutbox({ op: 'save', game: game('a', ['e2e4']), current: false });
-    pushOutbox({ op: 'save', game: game('b', ['d2d4']), current: false });
-    pushOutbox({ op: 'save', game: game('a', ['e2e4', 'e7e5']), current: false });
-    expect(loadOutbox()).toHaveLength(3);
-    pushOutbox({ op: 'delete', id: 'a' });
-    pushOutbox({ op: 'save', game: game('a', ['e2e4']), current: true });
-    const ops = loadOutbox();
-    expect(ops).toEqual([
-      { op: 'save', game: game('a', ['e2e4']), current: false },
-      { op: 'save', game: game('b', ['d2d4']), current: false },
-      { op: 'save', game: game('a', ['e2e4', 'e7e5']), current: false },
-      { op: 'delete', id: 'a' },
-      { op: 'save', game: game('a', ['e2e4']), current: true },
-    ]);
-    // Collapsed runs merge identically to their uncollapsed form.
-    expect(mergeSync([], null, ops).currentId).toBe('a');
-  });
-  it('merges a collapsed run exactly like its uncollapsed equivalent', () => {
-    pushOutbox({ op: 'save', game: game('a', ['e2e4']), current: false });
-    pushOutbox({ op: 'save', game: game('a', ['e2e4', 'e7e5']), current: true });
-    pushOutbox({ op: 'save', game: game('a', ['e2e4', 'e7e5', 'g1f3']), current: false });
-    const uncollapsed: OutboxOp[] = [
-      { op: 'save', game: game('a', ['e2e4']), current: false },
-      { op: 'save', game: game('a', ['e2e4', 'e7e5']), current: true },
-      { op: 'save', game: game('a', ['e2e4', 'e7e5', 'g1f3']), current: false },
-    ];
-    expect(mergeSync([], null, loadOutbox())).toEqual(mergeSync([], null, uncollapsed));
   });
 });
 

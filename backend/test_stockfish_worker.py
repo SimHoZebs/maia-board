@@ -11,7 +11,7 @@ from unittest.mock import patch, MagicMock
 
 import chess
 import chess.engine
-from stockfish_worker import evaluate, white_score
+from stockfish_worker import evaluate, white_score, reconstruct, InvalidRequest
 
 
 class StockfishTests(unittest.TestCase):
@@ -42,6 +42,7 @@ class StockfishTests(unittest.TestCase):
                 self.assertEqual(score["value"], expected)
                 self.assertEqual(score["winning_side"], "white" if expected > 0 else "black")
 
+    @unittest.skipUnless(os.environ.get("STOCKFISH_BINARY"), "requires Stockfish 19")
     def test_real_start_middle_end(self):
         for fen in [chess.STARTING_FEN,
                     "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
@@ -67,6 +68,7 @@ class StockfishTests(unittest.TestCase):
         engine.quit.assert_called_once()
         engine.close.assert_called_once()
 
+    @unittest.skipUnless(os.environ.get("STOCKFISH_BINARY"), "requires Stockfish 19")
     def test_real_cp_white_perspective_on_black_turn(self):
         board = chess.Board("8/8/4k3/8/4K3/8/4P3/8 b - - 0 1")
         for position in [board, board.mirror()]:
@@ -105,14 +107,14 @@ class StockfishTests(unittest.TestCase):
         self.assertEqual(result["depth"], 4)
         self.assertEqual(result["best_move"], "e2e4")
         self.assertEqual([line["move"] for line in result["lines"]], ["e2e4", "d2d4"])
-        # Every complete iteration duplicated: drop repeats, best still first.
+        # An incomplete candidate set cannot satisfy the requested search.
         engine.analysis.return_value.__enter__.return_value = [
             report(4, 1, "e2e4"), report(4, 2, "e2e4")]
         with patch("chess.engine.SimpleEngine.popen_uci", return_value=engine):
-            result = evaluate({"fen": chess.STARTING_FEN}, "/unused")
-        self.assertEqual(result["best_move"], "e2e4")
-        self.assertEqual([line["move"] for line in result["lines"]], ["e2e4"])
+            with self.assertRaisesRegex(RuntimeError, "no complete distinct exact"):
+                evaluate({"fen": chess.STARTING_FEN}, "/unused")
 
+    @unittest.skipUnless(os.environ.get("STOCKFISH_BINARY"), "requires Stockfish 19 for mating searches")
     def test_mates_and_terminal_without_engine(self):
         for fen, winner in [("7k/5Q2/6K1/8/8/8/8/8 w - - 0 1", "white"),
                             ("8/8/8/8/8/6k1/5q2/7K b - - 0 1", "black")]:
@@ -129,6 +131,7 @@ class StockfishTests(unittest.TestCase):
             self.assertEqual(terminal["lines"], [])
             self.assertIsNone(terminal["best_move"])
 
+    @unittest.skipUnless(os.environ.get("STOCKFISH_BINARY"), "requires Stockfish 19")
     def test_one_legal_move(self):
         board = chess.Board("R6k/8/5K2/8/8/8/8/8 b - - 0 1")
         self.assertEqual(board.legal_moves.count(), 1)
@@ -136,6 +139,7 @@ class StockfishTests(unittest.TestCase):
         self.assertEqual(result["best_move"], "h8h7")
         self.assertEqual(len(result["lines"]), 1)
 
+    @unittest.skipUnless(os.environ.get("STOCKFISH_BINARY"), "requires Stockfish 19 for custom-start search")
     def test_history_and_draws(self):
         board = chess.Board()
         moves = ["g1f3", "g8f6", "f3g1", "f6g8"] * 2
@@ -143,7 +147,8 @@ class StockfishTests(unittest.TestCase):
             board.push_uci(move)
         result = self.run_worker(board, moves, binary="/missing")
         self.assertEqual(result["terminal"], "draw")
-        self.assertEqual(self.run_worker(board)["code"], "position_mismatch")
+        # FEN-only analysis has no accumulated repetition history.
+        self.assertEqual(self.run_worker(board, binary="/missing")["code"], "engine_unavailable")
         board.pop()
         self.assertTrue(board.can_claim_threefold_repetition())
         self.assertFalse(board.is_repetition(3))
@@ -161,6 +166,33 @@ class StockfishTests(unittest.TestCase):
         self.assertEqual(self.run_worker(chess.Board(), ["e2e5"])["code"], "invalid_position")
         invalid = chess.Board("8/8/8/8/8/8/8/8 w - - 0 1")
         self.assertEqual(self.run_worker(invalid, initial=invalid.fen())["code"], "invalid_position")
+
+    def test_terminal_and_repetition_without_native_engine(self):
+        for fen, terminal in [("7k/6Q1/6K1/8/8/8/8/8 b - - 0 1", "white_win"),
+                              ("8/8/8/8/8/6k1/6q1/7K w - - 0 1", "black_win"),
+                              ("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1", "draw")]:
+            with patch("chess.engine.SimpleEngine.popen_uci") as launch:
+                result = evaluate({"fen": fen, "moves": []}, "/unused")
+            launch.assert_not_called()
+            self.assertEqual(result["terminal"], terminal)
+            if terminal != "draw":
+                self.assertEqual(result["score"], {"type": "mate", "value": 0, "winning_side": terminal.split("_")[0]})
+        board = chess.Board()
+        moves = ["g1f3", "g8f6", "f3g1", "f6g8"] * 2
+        for move in moves:
+            board.push_uci(move)
+        with patch("chess.engine.SimpleEngine.popen_uci") as launch:
+            self.assertEqual(evaluate({"fen": board.fen(), "moves": moves}, "/unused")["terminal"], "draw")
+        launch.assert_not_called()
+        self.assertFalse(reconstruct({"fen": board.fen(), "moves": []}).is_repetition(3))
+
+    def test_reconstruction_shape_semantics_and_budget(self):
+        for payload in [{"fen": chess.STARTING_FEN, "moves": ["e2e5"]},
+                        {"fen": chess.STARTING_FEN, "moves": ["e2e4"]},
+                        {"fen": "8/8/8/8/8/8/8/8 w - - 0 1", "moves": []},
+                        {"fen": chess.STARTING_FEN, "moves": ["g1f3"] * 257}]:
+            with self.assertRaises(InvalidRequest):
+                reconstruct(payload)
 
 
 if __name__ == "__main__":

@@ -1,72 +1,23 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
-func TestParseEngineTranscriptMapsWDLAndRanks(t *testing.T) {
-	result, err := parseEngineTranscript([]string{
-		"info depth 1 multipv 2 score cp 10 wdl 300 200 500 pv d2d4 string policy 0.25",
-		"info depth 1 multipv 1 score cp 20 wdl 600 200 200 pv e2e4 string policy 0.50",
-		"bestmove e2e4",
-	}, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Move != "e2e4" || len(result.Candidates) != 2 {
-		t.Fatalf("unexpected result: %+v", result)
-	}
-	if result.Candidates[0].Move != "e2e4" || result.Candidates[0].WDL != [3]float64{0.2, 0.2, 0.6} {
-		t.Fatalf("unexpected primary candidate: %+v", result.Candidates[0])
-	}
-}
-
-func TestParseEngineTranscriptRejectsMissingPolicy(t *testing.T) {
-	_, err := parseEngineTranscript([]string{
-		"info depth 1 multipv 1 score cp 20 wdl 600 200 200 pv e2e4",
-		"bestmove e2e4",
-	}, 20)
-	if !errors.Is(err, ErrProtocol) {
-		t.Fatalf("expected protocol error, got %v", err)
-	}
-}
-
-func TestParseEngineTranscriptRequiresContiguousRanks(t *testing.T) {
-	_, err := parseEngineTranscript([]string{
-		"info depth 1 multipv 1 score cp 20 wdl 600 200 200 pv e2e4 string policy 0.5",
-		"info depth 1 multipv 3 score cp 10 wdl 300 200 500 pv d2d4 string policy 0.25",
-		"bestmove e2e4",
-	}, 20)
-	if !errors.Is(err, ErrProtocol) {
-		t.Fatalf("expected protocol error, got %v", err)
-	}
-}
-
-func TestParseEngineTranscriptAcceptsOneLegalMove(t *testing.T) {
-	result, err := parseEngineTranscript([]string{
-		"info depth 1 multipv 1 score cp 20 wdl 600 200 200 pv e2e4 string policy 1.0",
-		"bestmove e2e4",
-	}, 1)
-	if err != nil || len(result.Candidates) != 1 {
-		t.Fatalf("unexpected one-move result: %+v, err=%v", result, err)
-	}
-}
-
-func TestParseEngineTranscriptAcceptsFiveCandidatesWhenManyMovesAreLegal(t *testing.T) {
-	lines := []string{
-		"info depth 1 multipv 1 score cp 20 wdl 600 200 200 pv e2e4 string policy 0.40",
-		"info depth 1 multipv 2 score cp 10 wdl 300 200 500 pv d2d4 string policy 0.25",
-		"info depth 1 multipv 3 score cp 5 wdl 300 300 400 pv g1f3 string policy 0.15",
-		"info depth 1 multipv 4 score cp 0 wdl 300 300 400 pv c2c4 string policy 0.10",
-		"info depth 1 multipv 5 score cp -5 wdl 200 300 500 pv b1c3 string policy 0.05",
-		"bestmove e2e4",
-	}
-	result, err := parseEngineTranscript(lines, 20)
-	if err != nil || len(result.Candidates) != 5 {
-		t.Fatalf("unexpected five-move result: %+v, err=%v", result, err)
-	}
+func engineFixture(move string) EngineResult {
+	wdl := [3]float64{.2, .2, .6}
+	return EngineResult{Move: move, Candidates: []Candidate{{Move: move, Policy: 1, WDL: wdl}}, WDL: wdl}
 }
 
 type fakePredictor struct {
@@ -80,44 +31,258 @@ func (f *fakePredictor) predict(context.Context, EngineRequest) (EngineResult, e
 	f.calls++
 	return f.result, f.err
 }
-
 func (f *fakePredictor) snapshot() WorkerStatus { return f.status }
 
 func TestEnginePoolFallsBackPerRequest(t *testing.T) {
 	large := &fakePredictor{err: errors.New("79m failed")}
-	small := &fakePredictor{result: EngineResult{Move: "e2e4"}}
+	small := &fakePredictor{result: engineFixture("e2e4")}
 	result, used, degraded, err := NewEnginePool(large, small).predict(context.Background(), "79m", EngineRequest{})
-	if err != nil || used != "5m" || !degraded || result.Move != "e2e4" {
-		t.Fatalf("unexpected fallback: result=%+v used=%s degraded=%v err=%v", result, used, degraded, err)
+	if err != nil || used != "5m" || !degraded || result.Move != "e2e4" || large.calls != 1 || small.calls != 1 {
+		t.Fatalf("fallback: %+v %s %t %v", result, used, degraded, err)
 	}
-	if large.calls != 1 || small.calls != 1 {
-		t.Fatalf("unexpected calls: large=%d small=%d", large.calls, small.calls)
+}
+func TestEnginePoolDoesNotFallbackForRequestErrors(t *testing.T) {
+	for _, failure := range []error{ErrWorkerBusy, context.Canceled, context.DeadlineExceeded, ErrPositionMismatch, ErrInvalidPosition, ErrNoLegalMoves} {
+		large, small := &fakePredictor{err: failure}, &fakePredictor{}
+		_, _, _, err := NewEnginePool(large, small).predict(context.Background(), "79m", EngineRequest{})
+		if !errors.Is(err, failure) || small.calls != 0 {
+			t.Fatalf("fallback on %v", failure)
+		}
+	}
+}
+func TestEngineResultValidation(t *testing.T) {
+	valid := engineFixture("e2e4")
+	if !validEngineResult(valid, 1, true) {
+		t.Fatal("valid result rejected")
+	}
+	for _, change := range []func(*EngineResult){
+		func(r *EngineResult) { r.WDL = [3]float64{} },
+		func(r *EngineResult) { r.Candidates[0].Policy = 2 },
+		func(r *EngineResult) { r.Candidates[0].Move = "garbage" },
+		func(r *EngineResult) { r.Candidates = append(r.Candidates, r.Candidates[0]) },
+		func(r *EngineResult) { r.Move = "d2d4" },
+	} {
+		r := engineFixture("e2e4")
+		change(&r)
+		if validEngineResult(r, 1, true) {
+			t.Fatalf("accepted %+v", r)
+		}
+	}
+	valid.Move = "a2a3"
+	if !validEngineResult(valid, 1, false) {
+		t.Fatal("sampled move outside candidates rejected")
 	}
 }
 
-func TestEnginePoolDoesNotFallbackWhenLargeWorkerBusy(t *testing.T) {
-	large := &fakePredictor{err: ErrWorkerBusy}
-	small := &fakePredictor{}
-	_, used, degraded, err := NewEnginePool(large, small).predict(context.Background(), "79m", EngineRequest{})
-	if !errors.Is(err, ErrWorkerBusy) || used != "" || degraded || small.calls != 0 {
-		t.Fatalf("unexpected busy behavior: used=%s degraded=%v err=%v small-calls=%d", used, degraded, err, small.calls)
+// Re-exec the Go test binary as a persistent JSON-lines helper. The request's
+// SelfElo selects a delay; OppoElo selects its unique answer, exposing cross-talk.
+func TestPersistentMaiaHelper(t *testing.T) {
+	if os.Getenv("MAIA_JSON_HELPER") != "1" {
+		return
+	}
+	if os.Getenv("MAIA_JSON_SLOW_INIT") == "1" {
+		_ = os.WriteFile(os.Getenv("MAIA_JSON_STARTED"), []byte(strconv.Itoa(os.Getpid())), 0600)
+		time.Sleep(time.Minute)
+	}
+	fmt.Println(`{"ready":true}`)
+	scanner := bufio.NewScanner(os.Stdin)
+	calls := 0
+	for scanner.Scan() {
+		var r EngineRequest
+		if json.Unmarshal(scanner.Bytes(), &r) != nil {
+			os.Exit(2)
+		}
+		if path := os.Getenv("MAIA_JSON_STARTED"); path != "" {
+			_ = os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0600)
+		}
+		calls++
+		if path := os.Getenv("MAIA_JSON_CALLS"); path != "" {
+			_ = os.WriteFile(path, []byte(strconv.Itoa(calls)), 0600)
+		}
+		if path := os.Getenv("MAIA_JSON_RELEASE"); path != "" {
+			for {
+				if _, err := os.Stat(path); err == nil {
+					break
+				}
+				time.Sleep(time.Millisecond)
+			}
+		}
+		if r.SelfElo == 4999 {
+			time.Sleep(time.Minute)
+		} else {
+			time.Sleep(time.Duration(r.SelfElo) * time.Millisecond)
+		}
+		move := "e2e4"
+		if r.OppoElo == 2 {
+			move = "d2d4"
+		}
+		if r.OppoElo == 3 {
+			fmt.Println(strings.Repeat("x", workerLineLimit+1))
+			continue
+		}
+		if r.OppoElo == 4 {
+			fmt.Println(`{"error":{"code":"invalid_position","message":"invalid board"}}`)
+			continue
+		}
+		result := engineFixture(move)
+		if r.OppoElo == 5 {
+			result.Candidates[0].Policy = 2
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"result": result, "legal_count": 1}); err != nil {
+			os.Exit(2)
+		}
+	}
+	os.Exit(0)
+}
+func persistentWorker(t *testing.T) (*Worker, string) {
+	t.Helper()
+	t.Setenv("MAIA_JSON_HELPER", "1")
+	path := filepath.Join(t.TempDir(), "started")
+	t.Setenv("MAIA_JSON_STARTED", path)
+	w := NewWorker("test", []string{os.Args[0], "-test.run=^TestPersistentMaiaHelper$"})
+	w.startWait, w.moveWait = time.Second, 2*time.Second
+	t.Cleanup(w.close)
+	return w, path
+}
+func awaitPID(t *testing.T, path string) int {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			if pid, err := strconv.Atoi(string(data)); err == nil {
+				return pid
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("worker did not receive request")
+	return 0
+}
+func TestCanceledCallerKeepsWarmWorkerAndSlot(t *testing.T) {
+	w, path := persistentWorker(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	r := EngineRequest{FEN: startFEN, SelfElo: 400, OppoElo: 1}
+	go func() { _, err := w.predict(ctx, r); done <- err }()
+	pid := awaitPID(t, path)
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if len(w.slot) != 1 || w.snapshot().State != stateBusy {
+		t.Fatal("canceled caller released slot")
+	}
+	if _, err := w.predict(context.Background(), EngineRequest{FEN: startFEN, OppoElo: 2}); !errors.Is(err, ErrWorkerBusy) {
+		t.Fatalf("second request: %v", err)
+	}
+	// Joining the same operation drains its original response without rerunning.
+	r.InitialFEN = startFEN // Equivalent explicit history root shares canonical identity.
+	result, err := w.predict(context.Background(), r)
+	if err != nil || result.Move != "e2e4" {
+		t.Fatalf("join: %+v %v", result, err)
+	}
+	if len(w.slot) != 0 {
+		t.Fatal("completed slot retained")
+	}
+	result, err = w.predict(context.Background(), EngineRequest{FEN: startFEN, OppoElo: 2})
+	if err != nil || result.Move != "d2d4" {
+		t.Fatalf("cross-talk: %+v %v", result, err)
+	}
+	w.mu.Lock()
+	nextPID := w.proc.cmd.Process.Pid
+	w.mu.Unlock()
+	if nextPID != pid {
+		t.Fatalf("warm PID changed: %d -> %d", pid, nextPID)
+	}
+}
+func TestHardTimeoutKillsReapsAndReleases(t *testing.T) {
+	w, path := persistentWorker(t)
+	w.moveWait = 150 * time.Millisecond
+	done := make(chan error, 1)
+	go func() {
+		_, err := w.predict(context.Background(), EngineRequest{FEN: startFEN, SelfElo: 4999})
+		done <- err
+	}()
+	pid := awaitPID(t, path)
+	if err := <-done; !errors.Is(err, ErrProtocol) {
+		t.Fatalf("timeout: %v", err)
+	}
+	if len(w.slot) != 0 || w.snapshot().State != stateFailed {
+		t.Fatal("hard timeout retained slot")
+	}
+	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("PID %d not reaped: %v", pid, err)
+	}
+	if _, err := w.predict(context.Background(), EngineRequest{FEN: startFEN, OppoElo: 2}); err != nil {
+		t.Fatalf("recovery: %v", err)
+	}
+}
+func TestWorkerRejectsOversizedResponse(t *testing.T) {
+	w, _ := persistentWorker(t)
+	if _, err := w.predict(context.Background(), EngineRequest{FEN: startFEN, OppoElo: 3}); !errors.Is(err, ErrProtocol) {
+		t.Fatal(err)
+	}
+	if len(w.slot) != 0 {
+		t.Fatal("slot leaked")
 	}
 }
 
-func TestEnginePoolDoesNotFallbackAfterClientDeadline(t *testing.T) {
-	large := &fakePredictor{err: context.DeadlineExceeded}
-	small := &fakePredictor{}
-	_, used, degraded, err := NewEnginePool(large, small).predict(context.Background(), "79m", EngineRequest{})
-	if !errors.Is(err, context.DeadlineExceeded) || used != "" || degraded || small.calls != 0 {
-		t.Fatalf("unexpected deadline behavior: used=%s degraded=%v err=%v small-calls=%d", used, degraded, err, small.calls)
+func TestInitializationTimeoutKillsAndReaps(t *testing.T) {
+	w, path := persistentWorker(t)
+	t.Setenv("MAIA_JSON_SLOW_INIT", "1")
+	w.startWait = 150 * time.Millisecond
+	done := make(chan error, 1)
+	go func() { _, err := w.predict(context.Background(), EngineRequest{FEN: startFEN}); done <- err }()
+	pid := awaitPID(t, path)
+	if err := <-done; !errors.Is(err, ErrProtocol) {
+		t.Fatal(err)
+	}
+	if len(w.slot) != 0 {
+		t.Fatal("initialization slot leaked")
+	}
+	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("initializing PID %d not reaped: %v", pid, err)
 	}
 }
 
+func TestInvalidPositionResponseLeavesWarmWorkerReady(t *testing.T) {
+	w, _ := persistentWorker(t)
+	if _, err := w.predict(context.Background(), EngineRequest{FEN: startFEN, OppoElo: 4}); !errors.Is(err, ErrInvalidPosition) {
+		t.Fatal(err)
+	}
+	w.mu.Lock()
+	pid := w.proc.cmd.Process.Pid
+	w.mu.Unlock()
+	result, err := w.predict(context.Background(), EngineRequest{FEN: startFEN, OppoElo: 2})
+	if err != nil || result.Move != "d2d4" {
+		t.Fatalf("stale error: %+v %v", result, err)
+	}
+	w.mu.Lock()
+	next := w.proc.cmd.Process.Pid
+	w.mu.Unlock()
+	if next != pid {
+		t.Fatal("invalid position restarted worker")
+	}
+}
+func TestSampledRequestsDoNotJoin(t *testing.T) {
+	w, path := persistentWorker(t)
+	request := EngineRequest{FEN: startFEN, SelfElo: 400, Temperature: .7}
+	done := make(chan error, 1)
+	go func() { _, err := w.predict(context.Background(), request); done <- err }()
+	awaitPID(t, path)
+	if _, err := w.predict(context.Background(), request); !errors.Is(err, ErrWorkerBusy) {
+		t.Fatalf("sampled duplicate joined: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
 func TestWorkerAcquireReturnsBusyWithoutStartingProcess(t *testing.T) {
-	worker := NewWorker("test", nil)
-	worker.slot <- struct{}{}
-	defer func() { <-worker.slot }()
-	if _, err := worker.predict(context.Background(), EngineRequest{}); !errors.Is(err, ErrWorkerBusy) {
-		t.Fatalf("expected busy error, got %v", err)
+	w := NewWorker("test", nil)
+	w.slot <- struct{}{}
+	if _, err := w.predict(context.Background(), EngineRequest{}); !errors.Is(err, ErrWorkerBusy) {
+		t.Fatal(err)
 	}
+	<-w.slot
 }

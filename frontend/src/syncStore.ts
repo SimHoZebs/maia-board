@@ -1,14 +1,23 @@
 import { createContext, useContext, useSyncExternalStore } from 'react';
-import { loadOutbox } from './serverGames';
+import type { PendingGameOperation, RecoveryItem } from './gameRepository';
 
-// History-sync display state, owned outside the game reducer. Persist/flush
-// triggers still react to game state in effects, but the indicator values
-// (pending count, error, server total) live here so updating them re-renders
-// only their subscribers — never the board mid-animation. This replaces the
-// old animation-window deferral: separation instead of timing workarounds.
+// Repository status and history controls have narrow subscriptions so an
+// acknowledgement or page indicator does not re-render the board.
 export class HistorySyncStore {
-  private pendingCount = loadOutbox().length;
+  private pendingCount = 0;
   private errorMessage = '';
+  private durabilityMessage = '';
+  private preferenceMessage = '';
+  private more = false;
+  private fetching = false;
+  private operations: readonly PendingGameOperation[] = [];
+  private recoverable: readonly RecoveryItem[] = [];
+  private failed: string | null = null;
+  private conflicting = false;
+  loadMore: () => Promise<void> = async () => {};
+  retry: () => Promise<void> = async () => {};
+  exportPending: () => string = () => '';
+  discardPending: (version: string) => void = () => {};
   private serverTotal: number | null = null;
   private listeners = new Set<() => void>();
   private revision = 0;
@@ -19,7 +28,33 @@ export class HistorySyncStore {
     [...this.listeners].forEach(listener => listener());
   }
   get pending() { return this.pendingCount; }
-  get error() { return this.errorMessage; }
+  get error() { return [this.durabilityMessage, this.preferenceMessage, this.errorMessage].filter(Boolean).join(' '); }
+  get durabilityError() { return this.durabilityMessage; }
+  get hasMore() { return this.more; }
+  get loading() { return this.fetching; }
+  get pendingOperations() { return this.operations; }
+  get recoveryItems() { return this.recoverable; }
+  get failedVersion() { return this.failed; }
+  get conflict() { return this.conflicting; }
+  setRecovery(operations: readonly PendingGameOperation[], recovery: readonly RecoveryItem[], failed: string | null, conflict: boolean) {
+    if (this.operations === operations && this.recoverable === recovery && this.failed === failed && this.conflicting === conflict) return;
+    this.operations = operations; this.recoverable = recovery; this.failed = failed; this.conflicting = conflict;
+    this.emit();
+  }
+  setDurabilityError(message: string) {
+    if (message === this.durabilityMessage) return;
+    this.durabilityMessage = message;
+    this.emit();
+  }
+  setPreferenceError(message: string) {
+    if (message === this.preferenceMessage) return;
+    this.preferenceMessage = message;
+    this.emit();
+  }
+  setPage(hasMore: boolean, loading: boolean) {
+    if (hasMore === this.more && loading === this.fetching) return;
+    this.more = hasMore; this.fetching = loading; this.emit();
+  }
   get total() { return this.serverTotal; }
   setPending(count: number) {
     if (this.pendingCount === count) return;

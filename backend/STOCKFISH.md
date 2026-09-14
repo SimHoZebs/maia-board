@@ -1,8 +1,10 @@
 # Stockfish evaluation
 
 `POST /evaluate` runs native Stockfish 19 through a separate Python helper.
-It uses neither Maia inference nor Maia's worker pool. `/move` and `/healthz`
-retain their existing contracts.
+The Go server owns its admission slot and request cancellation. See the
+[backend README](README.md) for the other API endpoints and the
+[root README](../README.md) for FEN (position), UCI (coordinate move), and ply
+(one player's move) terminology.
 
 ## Request and position history
 
@@ -41,6 +43,13 @@ Omitting settings retains the legacy policy shown below.
 The frontend Settings page saves Stockfish preferences in this browser, initially
 750 ms, 2 lines, and depth 0. Preferences are included in position-cache and
 completed-analysis identities. Maia analysis remains independent of these settings.
+
+The server derives evaluation cache identity from the request and engine revision.
+An exact settings match takes precedence over compatible reuse with the same time
+and depth but more candidate lines. Reused results retain their original
+`search_policy`; `actual_settings` identifies the search that produced them.
+Candidate-count reuse is approximate because a larger search can divide its time
+differently. The [backend README](README.md#storage-and-cache) describes bulk lookup.
 
 ## Response and score perspective
 
@@ -127,8 +136,7 @@ Operator configuration: `PYTHON` (default `python3`), `STOCKFISH_WORKER`
 
 ## Timing traces
 
-No metrics endpoint exists; diagnosis uses three log streams, all keyed by
-plies (the in-game position index, the x-axis for second-half cliffs):
+Server and worker logs separate request time from native search time:
 
 - Server log, one line per request: `evaluate status=… plies=… policy=…
   duration_ms=… depth=… lines=…` and `move status=… plies=… model=…
@@ -137,23 +145,16 @@ plies (the in-game position index, the x-axis for second-half cliffs):
   policy=… multipv=… plies=… total_ms=… spawn_ms=… search_ms=… depth=…
   lines=…`, plus `outcome=error` with `total_ms` on failures. They split
   each evaluation into process-spawn vs actual search.
-- Browser console, one line per completed whole-game batch: `[review]
-  batch timing` with per-engine live count/avg/max, server-cache and memory
-  hit counts, first-half vs second-half live averages, and per-ply
-  `liveMsByPly`. The coordinator also keeps the raw rows in memory as
-  `timings` (`{engine, ply, detail, source, ms, retries, batched, failed?}`).
 
-How to read them: flat-but-slow `search_ms` near `time_ms` points at the
-search budget (time/lines/depth); `spawn_ms`-dominated cost points at
-fork/exec pressure; a fast first half with `memHits`/`serverHits` followed
-by slow `live` rows points at one-sided cache invalidation (a settings
-change keeps the other engine's keys); rising `liveMsByPly` with plies on
-the Maia lane points at history-length cost.
+`search_ms` near the requested `time_ms` points at the search budget;
+`spawn_ms`-dominated cost points at process startup. Compare `plies` across requests
+to examine history-length effects. The [frontend performance fixture](../frontend/README.md#simulated-client-performance)
+separately measures navigation, rendering, and mocked network timings.
 
 ## Build provenance and redistribution
 
 The separate `stockfish-build` Docker stage derives from the pinned
-`golang:1.24-bookworm` image, with GCC 12 and make, and builds the portable
+`golang:1.25-bookworm` image, with GCC 12 and make, and builds the portable
 Linux `ARCH=x86-64` target. No architecture-specific AVX requirement is added.
 This packaging targets Linux x86-64.
 
@@ -187,11 +188,12 @@ From `backend/`:
 ```sh
 CGO_ENABLED=0 go test ./...
 CGO_ENABLED=0 go vet ./...
-STOCKFISH_BINARY=/app/stockfish python3 -m unittest -v test_stockfish_worker
+STOCKFISH_BINARY=/app/stockfish python3 -m unittest -v test_stockfish_worker test_engine_settings
 STOCKFISH_BINARY=/app/stockfish STOCKFISH_WORKER=stockfish_worker.py go test -v -run TestRealStockfishHTTPAndCancellation
 ```
 
-The Python suite uses actual helper subprocesses and the real native engine.
+The Python modules combine mocked searches with actual helper subprocesses
+and the real native engine; real searches skip when `STOCKFISH_BINARY` is unset.
 It checks start/middle/endgame searches, score signs, mating moves, terminal
 handling without an engine, full-history repetition, invalid positions, and
 custom-start replay. The Go suite checks HTTP validation, error mapping, busy
@@ -206,3 +208,8 @@ docker build --target stockfish-build -f backend/Dockerfile -t maia-board-stockf
 docker build -f backend/Dockerfile.stockfish-test -t maia-board-stockfish-check:test .
 docker run --rm --init --cpus=6 --memory=8g maia-board-stockfish-check:test
 ```
+
+This test image copies `stockfish_worker.py` and `test_stockfish_worker.py` and
+runs that module against the packaged binary. CI additionally extracts the binary
+for `test_engine_settings` and the Go HTTP/cancellation integration test; those
+checks run on the CI host with Python 3.12 and the pinned chess packages.

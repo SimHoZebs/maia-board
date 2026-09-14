@@ -5,43 +5,24 @@ import { replay } from '../src/domain';
 import { defaultStockfishSettings, stockfishPolicy } from '../src/stockfishSettings';
 const SEARCH_POLICY = stockfishPolicy(defaultStockfishSettings);
 import { KEYS } from '../src/storage';
+import { EvaluationFixture, evaluationIdentity } from './evaluation-fixture';
 
 async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,20,200,-700,-680]) {
   const requests: { engine: string; moves: string[]; initial_fen: string; elo_maia?: number }[] = [];
-  const evaluations = new Map<string, { engine: string; key: string; value: unknown }>();
+  const cache = new EvaluationFixture();
+  const evaluations = cache.entries;
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.route('http://maia.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
-    if (path === '/evaluations/coverage') {
-      const rows: Record<string, unknown> = {};
-      for (const hash of new URL(route.request().url()).searchParams.getAll('hash')) {
-        const hit = evaluations.get(hash);
-        if (hit) rows[hash] = { engine: hit.engine, value: hit.value };
-      }
-      await route.fulfill({ json: { rows } });
-      return;
-    }
-    if (path.startsWith('/evaluations/')) {
-      const hash = path.slice('/evaluations/'.length);
-      if (route.request().method() === 'PUT') {
-        const put = route.request().postDataJSON();
-        evaluations.set(hash, { engine: put.engine, key: put.key, value: put.value });
-        await route.fulfill({ json: { key_hash: hash, engine: put.engine, created_at: 'now' } });
-        return;
-      }
-      const hit = evaluations.get(hash);
-      if (hit) await route.fulfill({ json: { key_hash: hash, engine: hit.engine, value: hit.value, created_at: 'now' } });
-      else await route.fulfill({ status: 404, json: { code: 'not_found', message: 'missing' } });
-      return;
-    }
+    if (await cache.lookup(route)) return;
     if (path === '/move' || path === '/evaluate') {
       const payload = route.request().postDataJSON(); requests.push({ engine: path, ...payload });
       const engine = path === '/move' ? 'maia' : 'sf';
       // Read-through emulation: serve a matching stored row, else compute
       // live and file it, mirroring the backend contract.
-      const hit = evaluations.get(payload.cache_hash);
-      if (hit && hit.engine === engine && hit.key === payload.cache_key) {
+      const hit = cache.get(engine, payload);
+      if (hit) {
         await route.fulfill({ json: hit.value, headers: { 'X-Eval-Cache': 'hit' } });
         return;
       }
@@ -52,9 +33,9 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
       const score = { type: 'cp', value: scores[payload.moves.length] ?? 0 };
       const value = path === '/move' ? { move: best, top_moves: [{ move: best, prob: .6 }], wdl: [.2,.3,.5], model_used: payload.model, degraded: false } : {
         engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12 + payload.moves.length, terminal: null, best_move: best, score,
-        lines: [{ move: best, score, depth: 12 }, { move: legal.find(move => move !== best), score: { type: 'cp', value: game.turn() === 'w' ? -500 : 500 }, depth: 12 }],
+        lines: [{ move: best, score, depth: 12 + payload.moves.length }, ...legal.filter(move => move !== best).slice(0, 1).map(move => ({ move, score: { type: 'cp', value: game.turn() === 'w' ? -500 : 500 }, depth: 12 + payload.moves.length }))],
       };
-      if (payload.cache_hash) evaluations.set(payload.cache_hash, { engine, key: payload.cache_key, value });
+      cache.set(engine, payload, value);
       await route.fulfill({ json: value }); return;
     }
     if (path === '/games' || path.startsWith('/games/')) {
@@ -75,6 +56,61 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
   return { requests, errors, evaluations };
 }
 const lines = (page: Page) => page.locator('#board svg.cg-shapes line');
+test('standalone FEN shows current candidates and clears correct-frame previews', async ({ page }) => {
+  const app = await bootReview(page);
+  const fen = '4k3/8/8/8/8/8/4P3/4K3 w - - 0 23';
+  await page.goto(`http://maia.test/analyze?fen=${encodeURIComponent(fen)}`);
+  await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 1');
+  const maia = page.getByRole('region', { name: 'Maia analysis', exact: true });
+  await expect(maia.getByRole('button', { name: 'Explore e4', exact: true })).toBeVisible();
+  const candidate = page.getByRole('region', { name: 'Stockfish evaluation', exact: true }).getByRole('button', { name: 'Explore e3', exact: true });
+  await expect(page.getByRole('region', { name: 'Stockfish evaluation', exact: true }).getByRole('button').first()).toBeVisible();
+  const preview = page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]');
+  await candidate.hover();
+  await expect(preview).toHaveCount(1);
+  await page.locator('.brand').hover();
+  await expect(preview).toHaveCount(0);
+  await candidate.focus();
+  await expect(preview).toHaveCount(1);
+  await page.getByRole('tab', { name: 'Move analysis', exact: true }).focus();
+  await expect(preview).toHaveCount(0);
+  await maia.getByRole('button', { name: 'Explore e4', exact: true }).click();
+  await expect(page.locator('.move-cell')).toContainText('23. e4');
+  await expect(maia.getByRole('button', { name: 'Explore e4 (played) from before this move', exact: true })).toBeVisible();
+  await maia.getByRole('button').first().hover();
+  await expect(preview).toHaveCount(0);
+  expect(app.errors).toEqual([]);
+});
+
+test('root identifies requested and actual fallback models', async ({ page }) => {
+  const app = await bootReview(page);
+  await page.route('http://maia.test/move', route => {
+    const body = route.request().postDataJSON();
+    const move = replay(body.moves, body.initial_fen).moves({ verbose: true })[0];
+    const uci = `${move.from}${move.to}${move.promotion ?? ''}`;
+    return route.fulfill({ json: { move: uci, top_moves: [{ move: uci, prob: .13 }], wdl: [.2,.3,.5], model_used: '5m', degraded: true } });
+  });
+  await page.goto('http://maia.test/analyze?moves=');
+  await expect(page.getByRole('heading', { name: 'Maia 5m • 1600', exact: true })).toBeVisible();
+  await expect(page.getByText('Requested 79m; using 5m fallback.', { exact: true })).toBeVisible();
+  expect(app.errors).toEqual([]);
+});
+
+test('adjacent backward navigation animates and loaded positions start settled', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await bootReview(page);
+  await expect(page.locator('#board piece.anim')).toHaveCount(0);
+  const animated = await page.evaluate(async () => {
+    document.querySelector<HTMLButtonElement>('#analysis-prev')!.click();
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return document.querySelectorAll('#board piece.anim').length;
+  });
+  expect(animated).toBeGreaterThan(0);
+  await expect(page.locator('#board piece.anim')).toHaveCount(0);
+  await page.goto('http://maia.test/analyze?moves=d2d4,d7d5');
+  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
+  await expect(page.locator('#board piece.anim')).toHaveCount(0);
+});
 async function atStart(page: Page) {
   await page.locator('#analysis-first').click();
   await expect(lines(page)).toHaveCount(3);
@@ -102,7 +138,7 @@ test('whole game completes independently of viewing and updates the position bal
   await expect(page.locator('.review-charts, .win-hero')).toHaveCount(0);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await page.locator('#analysis-first').click();
-  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   await expect(page.locator('.move-cell .quality-great')).toHaveCount(2);
   await expect(page.locator('.move-cell .quality-mistake')).toHaveCount(1);
   await expect(page.locator('.move-cell .quality-blunder')).toHaveCount(1);
@@ -139,7 +175,7 @@ for (const width of [320, 1440]) {
 
 test('overview summarizes the game and opens the decision before a selected mistake', async ({ page }, info) => {
   const app = await bootReview(page);
-  await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 16' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 15' })).toBeVisible();
   await page.getByRole('tab', { name: 'Overview', exact: true }).click();
   await expect(page.getByRole('tabpanel', { name: 'Overview', exact: true })).toBeVisible();
   await expect(page.locator('.engine-duo')).toHaveCount(0);
@@ -155,9 +191,9 @@ test('overview summarizes the game and opens the decision before a selected mist
   await page.screenshot({ path: info.outputPath('overview-desktop.png'), fullPage: true });
   await page.getByRole('button', { name: 'Review 2. Nf3 · White · Blunder', exact: true }).click();
   await expect(page.getByRole('tab', { name: 'Move analysis', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 5');
-  await expect(page.locator('#insight-content').getByRole('button', { name: 'Explore Nf3 (played)', exact: true })).toBeVisible();
-  await expect(page.locator('.balance-score')).toHaveText('+2.00');
+  await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
+  await expect(page.locator('#insight-content').getByRole('button', { name: 'Explore Nf3 (played) from before this move', exact: true })).toBeVisible();
+  await expect(page.locator('.balance-score')).toHaveText('-7.00');
   expect(app.errors).toEqual([]);
 });
 
@@ -165,7 +201,7 @@ test('overview supports keyboard tabs without stepping the board and links inacc
   await page.setViewportSize({ width: 360, height: 800 });
   const app = await bootReview(page, '1. e4 e5 2. Nf3 Nc6', [0,0,100,0,0]);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
-  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   const before = app.requests.length;
   await page.getByRole('tab', { name: 'Move analysis', exact: true }).focus();
   await page.keyboard.press('ArrowRight');
@@ -182,15 +218,15 @@ test('overview supports keyboard tabs without stepping the board and links inacc
   await page.screenshot({ path: info.outputPath('overview-mobile.png'), fullPage: true });
   await page.getByRole('button', { name: 'Review 1… e5 · Black · Inaccuracy', exact: true }).click();
   await expect(page.getByRole('tabpanel', { name: 'Move analysis', exact: true })).toBeVisible();
-  await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 5');
-  await expect(page.locator('#insight-content').getByRole('button', { name: 'Explore e5 (played)', exact: true })).toBeVisible();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 5');
+  await expect(page.locator('#insight-content').getByRole('button', { name: 'Explore e5 (played) from before this move', exact: true })).toBeVisible();
   expect(app.errors).toEqual([]);
 });
 
 test('overview distinguishes empty games, no issues, and explored lines', async ({ page }) => {
   await bootReview(page, '1. e4 e5', [0,0,0]);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
-  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   await page.getByRole('tab', { name: 'Overview', exact: true }).click();
   await expect(page.getByText('No inaccuracies, mistakes, misses, blunders, or skulls found.', { exact: true })).toBeVisible();
   await page.getByRole('tab', { name: 'Move analysis', exact: true }).click();
@@ -218,7 +254,7 @@ for (const width of [1440, 360]) test(`overview restores accuracy and evaluation
   await page.setViewportSize({ width, height: 900 });
   const app = await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
-  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   await page.getByRole('tab', { name: 'Overview', exact: true }).click();
   await expect(page.getByRole('tabpanel', { name: 'Move accuracy graph', exact: true })).toBeVisible();
   await expect(page.locator('.chart-line')).toHaveCount(3);
@@ -230,14 +266,14 @@ for (const width of [1440, 360]) test(`overview restores accuracy and evaluation
   await page.screenshot({ path: info.outputPath(`overview-graphs-${width}.png`), fullPage: true });
   await page.locator('.chart-point').nth(3).click();
   await expect(page.getByRole('tab', { name: 'Overview', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 5');
+  await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
   await expect(page.locator('.review-charts')).toHaveCount(1);
   await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/2\. Nf3/);
   await page.getByRole('tab', { name: 'Move accuracy', exact: true }).focus();
   await page.keyboard.press('ArrowRight');
   await expect(page.getByRole('tab', { name: 'Evaluation', exact: true })).toBeFocused();
   await expect(page.getByRole('tabpanel', { name: 'Evaluation graph', exact: true })).toBeVisible();
-  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 5');
+  await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
   await expect(page.locator('.chart-line')).toHaveCount(4);
   await expect(page.locator('.chart-point').nth(4)).toHaveAccessibleName(/2… Nc6 · Black.*White winning chance.*-6\.80/);
   await page.locator('.chart-point').nth(4).click();
@@ -250,7 +286,7 @@ for (const width of [1440, 360]) test(`overview restores accuracy and evaluation
 
 test('overview graphs leave unreviewed positions as gaps', async ({ page }) => {
   await bootReview(page);
-  await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 16' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 15' })).toBeVisible();
   await page.getByRole('tab', { name: 'Overview', exact: true }).click();
   await expect(page.locator('.chart-point i')).toHaveCount(1);
   await expect(page.locator('.chart-line')).toHaveCount(0);
@@ -278,13 +314,13 @@ test('overview shows only your moves with your decision points on the graphs', a
   await expect(page.locator('.chart-point:disabled')).toHaveCount(0);
   await expect(page.locator('.chart-line')).toHaveCount(0);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
-  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   await expect(page.locator('.accuracy-caption')).toHaveText('Accuracy');
   await expect(page.locator('.review-issue')).toHaveCount(1);
   await expect(page.locator('.issue-move small')).toHaveCount(0);
   await page.getByRole('button', { name: 'Review 1… e5 · Black · You · Mistake', exact: true }).click();
   await expect(page.getByRole('tab', { name: 'Move analysis', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 5');
+  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 5');
   await page.getByRole('tab', { name: 'Overview', exact: true }).click();
   await expect(page.locator('.chart-point i')).toHaveCount(2);
   await expect(page.locator('.chart-line')).toHaveCount(1);
@@ -303,7 +339,7 @@ test('analysis tabs stay visible while panel content scrolls', async ({ page }) 
   await page.setViewportSize({ width: 1440, height: 700 });
   await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
-  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   await page.getByRole('tab', { name: 'Overview', exact: true }).click();
   const tabs = page.getByRole('tablist', { name: 'Game analysis views', exact: true });
   const before = await tabs.boundingBox();
@@ -315,7 +351,11 @@ test('analysis tabs stay visible while panel content scrolls', async ({ page }) 
 
 test('unlisted played moves have no fallback below either prediction list', async ({ page }) => {
   await bootReview(page, '1. d4 d5');
+  // Step to the position after the played move: the panel judges d4 from its
+  // before-position, where the top predictions genuinely exclude it.
   await page.locator('#analysis-first').click();
+  await page.locator('#analysis-next').click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 3');
   await expect(page.locator('#insight-content .candidate-list')).toContainText('e4');
   await expect(page.locator('section[aria-label="Stockfish evaluation"] .candidate-list')).toContainText('e4');
   await expect(page.locator('.engine-duo')).not.toContainText('Played d4');
@@ -341,13 +381,16 @@ test('blunder and mistake destinations carry board badges', async ({ page }) => 
 });
 test('server-cached positions skip inference after reload', async ({ page }) => {
   const app = await bootReview(page);
-  await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 16' })).toBeVisible();
-  await expect.poll(() => app.evaluations.size).toBeGreaterThanOrEqual(3);
+  await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 15' })).toBeVisible();
+  // Both engines at the before/current pair must finish before reloading.
+  // Three rows can leave current-position Maia uncached and legitimately
+  // trigger the fourth request after reload.
+  await expect.poll(() => app.evaluations.size).toBe(4);
   const calls = app.requests.length;
   await page.reload();
   // The loaded line restores from the snapshot with the import panel closed;
   // cached positions resolve without new inference.
-  await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 16' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 15' })).toBeVisible();
   await expect(page.locator('.candidate-list li')).not.toHaveCount(0);
   expect(app.requests).toHaveLength(calls);
   expect(app.errors).toEqual([]);
@@ -355,20 +398,20 @@ test('server-cached positions skip inference after reload', async ({ page }) => 
 test('completed analysis restores automatically across reload without inference', async ({ page }) => {
   const app = await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
-  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   const inferred = () => app.requests.filter(request => request.engine === '/move' || request.engine === '/evaluate').length;
   const before = inferred();
   expect(before).toBeGreaterThan(0);
   await page.reload();
   // No click: the fresh record primes itself from the server eval cache.
-  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   await expect(page.locator('.candidate-list li').first()).toBeVisible();
   expect(inferred()).toBe(before);
 });
 test('partially evicted analysis restores cached positions and gates the rest', async ({ page }) => {
   const app = await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
-  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   // Evict every Maia row server-side: Stockfish stays cached.
   const evicted = [...app.evaluations].filter(([, entry]) => entry.engine === 'maia').map(([hash]) => hash);
   expect(evicted.length).toBeGreaterThan(0);
@@ -380,7 +423,7 @@ test('partially evicted analysis restores cached positions and gates the rest', 
   await expect(page.getByRole('button', { name: 'Analyze entire game' })).toBeVisible();
   await expect(page.getByRole('status').filter({ hasText: /of \d+ positions cached/ })).toHaveCount(0);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
-  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   // Every evicted Maia position re-infers at least once; Stockfish never does.
   // Set membership instead of exact counts: the insight single and the
   // foreground may legitimately re-request the viewed position alongside the
@@ -388,7 +431,7 @@ test('partially evicted analysis restores cached positions and gates the rest', 
   const reRequested = new Set(
     app.requests.slice(reloadMark)
       .filter(request => request.engine === '/move')
-      .map(request => (request as { cache_hash?: string }).cache_hash),
+      .map(request => evaluationIdentity('maia', request)),
   );
   expect(evicted.every(hash => reRequested.has(hash))).toBe(true);
   expect(inferred('/evaluate') - evalsBefore).toBe(0);
@@ -396,7 +439,7 @@ test('partially evicted analysis restores cached positions and gates the rest', 
 test('changed analysis settings gate the missing positions behind a new batch', async ({ page }) => {
   await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
-  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   await expect(page.locator('#analysis-rating')).toBeVisible();
   await page.locator('#analysis-rating').selectOption('1800');
   await expect(page.getByRole('button', { name: 'Analyze entire game' })).toBeVisible();
@@ -411,7 +454,10 @@ test('mixed arrow sources retain their own endpoints', async ({ page }, info) =>
   await atStart(page);
   const endpoints = await lines(page).evaluateAll(elements => elements.map(el => `${el.getAttribute('x1')},${el.getAttribute('y1')}:${el.getAttribute('x2')},${el.getAttribute('y2')}`));
   expect(new Set(endpoints).size).toBe(3);
-  await expect(page.getByRole('heading', { name: 'Maia • 1600', exact: true })).toBeVisible();
+  // Arrows project forward from the viewed position, but the panel judges the
+  // displayed move from its before-position: step forward to read predictions.
+  await page.locator('#analysis-next').click();
+  await expect(page.getByRole('heading', { name: 'Maia 79m • 1600', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Stockfish' })).toBeVisible();
   await expect(page.locator('.insight-panel')).toContainText('Nf3');
   await expect(page.locator('.insight-panel')).toContainText('d4');
@@ -427,7 +473,7 @@ test('current position balance replaces the win-rate sections', async ({ page })
 });
 test('analysis progress replaces the analyze button while running without a cancel option', async ({ page }) => {
   await bootReview(page);
-  await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 16' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 15' })).toBeVisible();
   const held: Route[] = [];
   await page.route('http://maia.test/move', route => { held.push(route); });
   await page.route('http://maia.test/evaluate', route => { held.push(route); });
@@ -439,7 +485,7 @@ test('analysis progress replaces the analyze button while running without a canc
   await page.unroute('http://maia.test/move');
   await page.unroute('http://maia.test/evaluate');
   for (const route of held) await route.fulfill({ json: route.request().url().endsWith('/move') ? { move: 'e2e4', top_moves: [{ move: 'e2e4', prob: .6 }], wdl: [.2,.3,.5], model_used: '79m', degraded: false } : { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4', score: { type: 'cp', value: 20 }, lines: [{ move: 'e2e4', score: { type: 'cp', value: 20 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: 0 }, depth: 12 }] } });
-  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   await expect(page.locator('.tab-action').getByRole('status')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Cancel analysis' })).toHaveCount(0);
 });
@@ -447,7 +493,7 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
   test(`review geometry, arrows and balance ${viewport.width}x${viewport.height}`, async ({ page }, info) => {
     await page.setViewportSize(viewport); await bootReview(page); await atStart(page);
     await page.getByRole('button', { name: 'Analyze entire game' }).click();
-    await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
     await page.evaluate(() => { window.scrollTo(0, 0); document.querySelector('.insight-panel')!.scrollTop = 0; });
     const box = (await page.locator('#board').boundingBox())!;
     expect(box.width).toBeGreaterThan(300); expect(box.width).toBeCloseTo(box.height, 0);
@@ -499,7 +545,7 @@ test('touch move selection updates the position balance', async ({ browser }) =>
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   const page = await context.newPage(); await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).tap();
-  await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   await page.locator('.move-cell').nth(0).tap();
   await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 5');
   await page.locator('.move-cell').nth(1).tap();

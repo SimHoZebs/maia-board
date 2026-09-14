@@ -3,14 +3,16 @@ import { Chess, type Square } from 'chess.js';
 import { Chessground } from '@lichess-org/chessground';
 import type { Api } from '@lichess-org/chessground/api';
 import type { Color, Key } from '@lichess-org/chessground/types';
-import { legalDests, type Position } from './domain';
+import { legalDests } from './domain';
 import { toGroundColor } from './board-colors';
 import type { DrawShape } from '@lichess-org/chessground/draw';
 import { reviewBrushes } from './reviewArrows';
 
-type Props = { position: Position; orientation: Color; enabled: boolean; thinking: boolean; interactionVersion: number; preview?: string | null; shapes?: DrawShape[]; onMove: (from: Square, to: Square) => void };
+export type BoardPosition = { fen: string; lastMove?: readonly string[] | null };
+export type BoardTransition = { line: string; ply: number };
+type Props = { position: BoardPosition; transition: BoardTransition; orientation: Color; enabled: boolean; thinking: boolean; interactionVersion: number; preview?: string | null; shapes?: DrawShape[]; onMove: (from: Square, to: Square) => void };
 
-export function ChessBoard({ position, orientation, enabled, thinking, interactionVersion, preview, shapes, onMove }: Props) {
+export function ChessBoard({ position, transition, orientation, enabled, thinking, interactionVersion, preview, shapes, onMove }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const api = useRef<Api | null>(null);
   const callback = useRef(onMove);
@@ -20,9 +22,9 @@ export function ChessBoard({ position, orientation, enabled, thinking, interacti
   // on the loaded line's final position instead of the default startpos.
   const initial = useRef<{ fen: string; orientation: Color } | null>(null);
   if (initial.current === null) initial.current = { fen: position.fen, orientation };
-  // Previous FEN for single-step detection: one legal move animates, a game
-  // load (many pieces away) snaps instantly instead of sliding everything.
-  const prevFen = useRef<string | null>(null);
+  // The workspace supplies line identity and cursor: adjacent plies animate
+  // in either direction, while a different loaded line snaps.
+  const previous = useRef<BoardTransition>(transition);
   useLayoutEffect(() => { callback.current = onMove; });
   useLayoutEffect(() => {
     const ground = Chessground(container.current!, {
@@ -42,7 +44,6 @@ export function ChessBoard({ position, orientation, enabled, thinking, interacti
       drawable: { brushes: reviewBrushes },
     });
     api.current = ground;
-    prevFen.current = initial.current!.fen;
     // Chessground memoizes its bounding rect until scroll/resize. Any layout
     // shift (setup opening, banners, fonts) would otherwise offset every click,
     // so refresh the memo whenever the board resizes.
@@ -61,20 +62,8 @@ export function ChessBoard({ position, orientation, enabled, thinking, interacti
     ground.cancelMove();
     // Adjacent plies slide; game loads jump many pieces at once and must snap
     // instead of animating every piece from the previous line's tip.
-    const prev = prevFen.current;
-    prevFen.current = position.fen;
-    let singleStep = true;
-    if (prev !== null && prev !== position.fen) {
-      singleStep = false;
-      try {
-        const from = new Chess(prev);
-        for (const candidate of from.moves({ verbose: true })) {
-          const probe = new Chess(prev);
-          probe.move({ from: candidate.from, to: candidate.to, promotion: candidate.promotion });
-          if (probe.fen() === position.fen) { singleStep = true; break; }
-        }
-      } catch { singleStep = false; }
-    }
+    const singleStep = previous.current.line === transition.line && Math.abs(previous.current.ply - transition.ply) <= 1;
+    previous.current = transition;
     ground.set({ fen: position.fen, orientation, turnColor: toGroundColor(game.turn()), animation: { enabled: singleStep },
       lastMove: lastMove ? lastMove.split(',') as Key[] : undefined,
       movable: { free: false, color: enabled ? toGroundColor(game.turn()) : undefined, dests: enabled ? legalDests(game) : new Map(), showDests: true,
@@ -92,7 +81,7 @@ export function ChessBoard({ position, orientation, enabled, thinking, interacti
     // The instant set above persists `enabled: false`; restore sliding for
     // subsequent single-ply navigation. No fen means the render path, no anim.
     if (!singleStep) ground.set({ animation: { enabled: true } });
-  }, [position.fen, orientation, enabled, lastMove, gesture, interactionVersion]);
+  }, [position.fen, transition.line, transition.ply, orientation, enabled, lastMove, gesture, interactionVersion]);
   useLayoutEffect(() => {
     api.current?.setAutoShapes(shapes ?? (preview ? [{ orig: preview.slice(0, 2) as Key, dest: preview.slice(2, 4) as Key, brush: 'candidate' }] : []));
   }, [position.fen, preview, shapes, interactionVersion, orientation]);

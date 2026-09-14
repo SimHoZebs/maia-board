@@ -133,8 +133,8 @@ func validateGamePayload(payload *gamePayload) *requestError {
 	if payload.Moves == nil {
 		payload.Moves = []string{}
 	}
-	if len(payload.Moves) > 256 {
-		return &requestError{"history_too_long", "moves may contain at most 256 plies"}
+	if len(payload.Moves) > 4096 {
+		return &requestError{"history_too_long", "moves may contain at most 4096 plies"}
 	}
 	for _, move := range payload.Moves {
 		if !uciMovePattern.MatchString(move) {
@@ -252,13 +252,17 @@ func (s *GameStore) Get(id string) (gameRow, error) {
 	return game, err
 }
 
-func (s *GameStore) List(limit int) ([]gameRow, int, error) {
+func (s *GameStore) List(limit int, offsets ...int) ([]gameRow, int, error) {
+	offset := 0
+	if len(offsets) > 0 {
+		offset = offsets[0]
+	}
 	var total int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM games`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	rows, err := s.db.Query(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result
-		FROM games ORDER BY updated_at DESC, created_at DESC LIMIT ?`, limit)
+		FROM games ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -315,12 +319,36 @@ func (s *server) games(w http.ResponseWriter, r *http.Request) {
 			}
 			limit = min(parsed, 500)
 		}
-		games, total, err := s.store.List(limit)
+		offset := 0
+		if raw := r.URL.Query().Get("offset"); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed < 0 {
+				writeAPIError(w, http.StatusBadRequest, "invalid_request", "offset must be a nonnegative integer")
+				return
+			}
+			offset = parsed
+		}
+		games, total, err := s.store.List(limit, offset)
 		if err != nil {
 			writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"games": games, "current_id": nullableString(s.store.CurrentID()), "total": total})
+		currentID := s.store.CurrentID()
+		var current *gameRow
+		if currentID != "" {
+			row, err := s.store.Get(currentID)
+			if err == nil {
+				current = &row
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "current game is unavailable")
+				return
+			}
+		}
+		var nextOffset any
+		if offset < total && len(games) < total-offset {
+			nextOffset = offset + len(games)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"games": games, "current_id": nullableString(currentID), "current_game": current, "total": total, "next_offset": nextOffset})
 	case http.MethodPost:
 		var payload gamePayload
 		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024))

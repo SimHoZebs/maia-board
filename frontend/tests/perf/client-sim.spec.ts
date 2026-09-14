@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Chess } from 'chess.js';
 import { replay } from '../../src/domain';
-import { KEYS } from '../../src/storage';
+import { EvaluationFixture } from '../evaluation-fixture';
 import { defaultStockfishSettings, stockfishPolicy } from '../../src/stockfishSettings';
 
 const SEARCH_POLICY = stockfishPolicy(defaultStockfishSettings);
@@ -80,14 +80,16 @@ async function clickMove(page: Page, from: string, to: string) {
 }
 
 async function storedMoves(page: Page): Promise<string[]> {
-  return page.evaluate(key => JSON.parse(localStorage.getItem(key) || 'null')?.moves ?? [], KEYS.current);
+  return page.evaluate(() => {
+    const repository = JSON.parse(localStorage.getItem('maia-board.games.v2') || 'null');
+    return repository?.games.find((game: any) => game.id === repository.currentId)?.moves ?? [];
+  });
 }
 
 test('client sim: random play, long-line review batch, scrub, branch', async ({ page }, testInfo) => {
   const steps: StepRow[] = [];
   const net: NetRow[] = [];
   const errors: string[] = [];
-  const batchSummaries: unknown[] = [];
   // React commits per interaction: play moves, whole batch, scrub clicks.
   // Counts test whether re-renders multiply; durations test whether each
   // render gets more expensive as the line grows.
@@ -106,12 +108,6 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
   const scrubInsightMs: number[] = [];
   const scrubSummaries: Summary[] = [];
   page.on('pageerror', error => errors.push(error.message));
-  page.on('console', message => {
-    if (message.text().startsWith('[review] batch timing')) {
-      try { batchSummaries.push(JSON.parse(message.text().slice('[review] batch timing'.length))); }
-      catch { batchSummaries.push(message.text()); }
-    }
-  });
 
   // Perf observers must install before any app code runs. Arming
   // `window.__perfCommits` also switches on the CommitRecorder profiler in
@@ -178,40 +174,17 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
   // Read-through backend emulation with simulated inference latency. Hits
   // answer in CACHE_HIT_MS with the X-Eval-Cache header; misses pay the
   // live budget and file the row, mirroring the Go contract.
-  const evaluations = new Map<string, { engine: string; key: string; value: unknown }>();
+  const evaluations = new EvaluationFixture();
   await page.route('http://maia.test/**', async route => {
     const url = new URL(route.request().url());
     const path = url.pathname;
-    if (path === '/evaluations/coverage') {
-      await sleep(EVAL_GET_MS);
-      const rows: Record<string, unknown> = {};
-      for (const hash of url.searchParams.getAll('hash')) {
-        const hit = evaluations.get(hash);
-        if (hit) rows[hash] = { engine: hit.engine, value: hit.value };
-      }
-      await route.fulfill({ json: { rows } });
-      return;
-    }
-    if (path.startsWith('/evaluations/')) {
-      const hash = path.slice('/evaluations/'.length);
-      if (route.request().method() === 'PUT') {
-        const put = route.request().postDataJSON();
-        evaluations.set(hash, { engine: put.engine, key: put.key, value: put.value });
-        await route.fulfill({ json: { key_hash: hash, engine: put.engine, created_at: 'now' } });
-        return;
-      }
-      await sleep(EVAL_GET_MS);
-      const hit = evaluations.get(hash);
-      if (hit) await route.fulfill({ json: { key_hash: hash, engine: hit.engine, value: hit.value, created_at: 'now' } });
-      else await route.fulfill({ status: 404, json: { code: 'not_found', message: 'missing' } });
-      return;
-    }
+    if (await evaluations.lookup(route, EVAL_GET_MS)) return;
     if (path === '/move' || path === '/evaluate') {
       const payload = route.request().postDataJSON();
       const engine = path === '/move' ? 'maia' : 'sf';
-      const hit = payload.cache_hash ? evaluations.get(payload.cache_hash) : undefined;
+      const hit = evaluations.get(engine, payload);
       const wallStart = Date.now();
-      if (hit && hit.engine === engine && (hit as { key: string }).key === payload.cache_key) {
+      if (hit) {
         await sleep(CACHE_HIT_MS);
         net.push({ engine, ply: payload.moves.length, cache: 'hit', simulatedMs: CACHE_HIT_MS, wallMs: Date.now() - wallStart });
         await route.fulfill({ json: hit.value, headers: { 'X-Eval-Cache': 'hit' } });
@@ -234,7 +207,7 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
             best_move: sfMoves[0], score: { type: 'cp', value: 20 },
             lines: sfMoves.map((move, index) => ({ move, score: { type: 'cp', value: index === 0 ? 20 : 0 }, depth: 14 })),
           };
-      if (payload.cache_hash) evaluations.set(payload.cache_hash, { engine, key: payload.cache_key, value });
+      evaluations.set(engine, payload, value);
       net.push({ engine, ply: payload.moves.length, cache: 'live', simulatedMs: liveMs, wallMs: Date.now() - wallStart });
       await route.fulfill({ json: value });
       return;
@@ -311,7 +284,7 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
   await timed('analysis: full batch', async () => {
     const commitsBefore = await commitMark();
     await page.getByRole('button', { name: 'Analyze entire game' }).click();
-    await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible({ timeout: 180_000 });
+    await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled({ timeout: 180_000 });
     await settleFrames();
     const batchStats = summarize(await commitSlice(commitsBefore));
     batchCommits = batchStats.root.count;
@@ -346,7 +319,8 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
   // 4. Foreground latency after a settings change (no second batch).
   await timed('analysis: rating change foreground', async () => {
     await page.locator('#analysis-rating').selectOption('1800');
-    await expect(page.getByRole('heading', { name: 'Maia • 1800', exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('heading', { name: 'Maia 79m • 1800', exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText('updating to 1800')).toHaveCount(0);
   });
 
   // 5. Branch: explore the top candidate at the tip. The scrub already ends
@@ -389,7 +363,7 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
     ({ app: avgIdMs(ss, 'app'), chrome: avgIdMs(ss, 'chrome'), board: avgIdMs(ss, 'board'), insight: avgIdMs(ss, 'insight'), root: avgIdMs(ss, 'root') });
 
   const metrics = {
-    config: { seed: SEED, targetPlies: TARGET_PLIES, actualPlies: line.length, playMoves: played, MAIA_LIVE_MS, SF_LIVE_MS, CACHE_HIT_MS, buildDir: BUILD_DIR },
+    config: { seed: SEED, targetPlies: TARGET_PLIES, actualPlies: line.length, playMoves: played, MAIA_LIVE_MS, SF_LIVE_MS, CACHE_HIT_MS, buildDir: BUILD_DIR, inference: 'mocked', cleanPreRefactorBaseline: false },
     steps,
     scrubClickMs: { count: scrubMs.length, p50: pct(sortedScrub, 50), p95: pct(sortedScrub, 95), max: Math.max(0, ...scrubMs), earlyAvg: earlyWallMs, lateAvg: lateWallMs, perClick: scrubMs },
     commits: {
@@ -425,7 +399,6 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
       hits: net.filter(r => r.cache === 'hit').length,
       byPly: net.map(r => [r.engine, r.ply, r.cache, r.wallMs]),
     },
-    batchSummaries,
     longtasks: { count: longtaskMs.length, p50: pct(longtaskMs, 50), p95: pct(longtaskMs, 95), max: Math.max(0, ...longtaskMs) },
     cls: Math.round(cls * 1000) / 1000,
     errors,
@@ -447,5 +420,6 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
   console.log(`[perf] ${line.length} plies | scrub wall early/late ${earlyWallMs}/${lateWallMs}ms | regions early [${regionLine(earlyRegions)}] late [${regionLine(lateRegions)}] | longtasks ${metrics.longtasks.count} | net ${metrics.network.calls}`);
 
   expect(errors).toEqual([]);
-  expect(batchSummaries.length).toBeGreaterThan(0);
+  expect(batchCommits).toBeGreaterThan(0);
+  expect(evaluations.entries.size).toBeGreaterThanOrEqual(positions);
 });

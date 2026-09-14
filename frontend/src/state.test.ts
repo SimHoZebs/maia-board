@@ -6,6 +6,7 @@ import { testNodes } from './testUtils';
 import { computeReviewQualities, type ReviewQualitiesMemo, type ReviewQualitiesStats } from './useReview';
 import { reviewKey, type ReviewNode } from './reviewCoordinator';
 import { terminalEvaluation, type Evaluation } from './reviewMetrics';
+import { outcomeEvaluation } from './outcomeEvaluation';
 import { HistorySyncStore } from './syncStore';
 import { currentPosition, initialState, reducer, snapshotOf } from './state';
 import { KEYS, restoreGame } from './storage';
@@ -18,6 +19,24 @@ const response: MoveResponse = { move: 'e7e5', top_moves: [], wdl: [0.2, 0.3, 0.
 const started = () => reducer(initialState(), { type: 'new', id: 'test', createdAt: '2026-09-10' });
 
 describe('request ownership', () => {
+  it('retains the accepted fallback identity and ignores stale replies after a newer identity', () => {
+    const pending = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
+    const firstRequest = pending.request!;
+    expect(firstRequest.payload.model).toBe('79m');
+    const fallback: MoveResponse = { ...response, model_used: '5m', degraded: true };
+    const accepted = reducer(pending, { type: 'reply', request: firstRequest, response: fallback });
+    expect(accepted.play.moves).toEqual(['e2e4', 'e7e5']);
+    expect(accepted.insight).toEqual({ response: fallback, fen: firstRequest.payload.fen, mode: 'play' });
+    expect(accepted.play.settings.model).toBe('79m');
+    const next = reducer(accepted, { type: 'move', from: 'g1', to: 'f3' });
+    expect(next.insight).toBeNull();
+    const latestResponse: MoveResponse = { ...response, move: 'b8c6' };
+    const latest = reducer(next, { type: 'reply', request: next.request!, response: latestResponse });
+    expect(latest.insight?.response).toBe(latestResponse);
+    expect(reducer(latest, { type: 'reply', request: firstRequest, response: fallback })).toBe(latest);
+    expect(reducer(accepted, { type: 'takeback' }).insight).toBeNull();
+    expect(reducer(accepted, { type: 'new', id: 'fresh', createdAt: '2026-09-14' }).insight).toBeNull();
+  });
   it.each(['play', 'analysis', 'history'] as const)('initializes %s before deciding whether to resume Maia', mode => {
     const game = { id: 'pending', createdAt: '2026-09-10', moves: ['e2e4'], settings: defaultSettings };
     localStorage.setItem(KEYS.current, JSON.stringify(game));
@@ -75,16 +94,16 @@ describe('task lifecycles', () => {
     expect(state.settings.eloMaia).toBe(1600);
     expect(currentPosition(reducer(state, { type: 'view', ply: null })).moves).toEqual(state.play.moves);
   });
-  it('analysis ratings retire results and requests without changing play settings', () => {
-    let state = reducer(started(), { type: 'review' });
-    state = reducer(state, { type: 'analyze' });
-    const request = state.request!;
+  it('analysis ratings retire play requests and leave analysis inference to its owner', () => {
+    const playing = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
+    const request = playing.request!;
+    let state = reducer(playing, { type: 'review' });
     state = reducer(state, { type: 'analysis-settings', settings: { eloMaia: 2200 } });
     expect(state.request).toBeNull();
     expect(state.insight).toBeNull();
     expect(reducer(state, { type: 'reply', request, response })).toBe(state);
-    state = reducer(state, { type: 'analyze' });
-    expect(state.request?.payload).toMatchObject({ elo_maia: 2200, elo_user: 2200, maia_color: 'white' });
+    expect(state.request).toBeNull();
+    expect(state.analysisSettings.eloMaia).toBe(2200);
     expect(state.settings.eloMaia).toBe(1600);
   });
   it('keeps original mainline while replaying and editing one multi-ply branch', () => {
@@ -100,9 +119,9 @@ describe('task lifecycles', () => {
     expect(exportLine(state.analysis)).toContain('1. e4 e5 2. Nf3');
     state = reducer(state, { type: 'view', ply: 2 });
     state = reducer(state, { type: 'move', from: 'd2', to: 'd4' });
-    state = reducer(state, { type: 'analyze' });
-    expect(state.request!.payload.moves).toEqual(['e2e4', 'c7c5', 'd2d4']);
-    expect(replay(state.request!.payload.moves).fen()).toBe(state.request!.payload.fen);
+    expect(currentPosition(state).moves).toEqual(['e2e4', 'c7c5', 'd2d4']);
+    expect(replay(currentPosition(state).moves).fen()).toBe(currentPosition(state).fen);
+    expect(state.request).toBeNull();
     state = reducer(state, { type: 'original' });
     expect(state.analysis.branchFromPly).toBeNull();
     expect(state.analysis.index).toBe(1);
@@ -147,17 +166,17 @@ describe('task lifecycles', () => {
     expect(linked.analysis.index).toBe(1);
     expect(linked.analysisSourceId).toBeNull();
   });
-  it('replays custom-start black promotion with the identical request history', () => {
+  it('replays custom-start black promotion with the complete analysis history', () => {
     let state = reducer(started(), { type: 'mode', mode: 'analysis' });
     const fen = '4k3/8/8/8/8/8/p6P/4K3 b - - 0 12';
     state = reducer(state, { type: 'inputs', inputs: { fen } });
     state = reducer(state, { type: 'load' });
     state = reducer(state, { type: 'move', from: 'a2', to: 'a1' });
     state = reducer(state, { type: 'promote', piece: 'n' });
-    state = reducer(state, { type: 'analyze' });
-    expect(state.request!.payload.moves).toEqual(['a2a1n']);
-    expect(replay(state.request!.payload.moves, fen).fen()).toBe(state.request!.payload.fen);
-    expect(state.request!.payload.maia_color).toBe('white');
+    expect(currentPosition(state).moves).toEqual(['a2a1n']);
+    expect(replay(currentPosition(state).moves, fen).fen()).toBe(currentPosition(state).fen);
+    expect(new Chess(currentPosition(state).fen).turn()).toBe('w');
+    expect(state.request).toBeNull();
   });
   it('deleting the current saved record clears its current storage source', () => {
     const played = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
@@ -236,6 +255,19 @@ describe('legacy storage and analysis', () => {
 
 describe('server sync', () => {
   const serverGame = (id: string, moves: string[] = []) => ({ id, createdAt: '2026-09-10', moves, settings: defaultSettings });
+  it('preserves live request identity and historical cursor on same-tip hydration', () => {
+    const live = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
+    const viewing = reducer(live, { type: 'view', ply: 0 });
+    const { userColor, model, eloMaia, eloUser, temperature } = viewing.play.settings;
+    const hydratedGame = { ...viewing.play, settings: { temperature, model, eloUser, eloMaia, userColor } };
+    const next = reducer(viewing, { type: 'sync', saved: [hydratedGame], currentId: viewing.play.id, pending: [], total: 1 });
+    expect(next.request).toBe(live.request);
+    expect(next.viewedPly).toBe(0);
+    const failed = reducer(next, { type: 'failure', request: live.request!, error: new Error('offline') });
+    const hydrated = reducer(failed, { type: 'sync', saved: [{ ...failed.play }], currentId: failed.play.id, pending: [], total: 1 });
+    expect(hydrated.request).toBeNull();
+    expect(hydrated.error).toBe(failed.error);
+  });
   it('adopts the server current game and requeues a Maia turn', () => {
     const state = reducer(initialState(), {
       type: 'sync', saved: [serverGame('s', ['e2e4'])], currentId: 's', total: 1, pending: [],
@@ -243,6 +275,13 @@ describe('server sync', () => {
     expect(state.play.id).toBe('s');
     expect(state.started).toBe(true);
     expect(state.request?.payload.moves).toEqual(['e2e4']);
+  });
+  it('retires the current game when its repository delete is projected', () => {
+    const local = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
+    const next = reducer(local, { type: 'sync', saved: [], currentId: null, total: 0, pending: [{ op: 'delete', id: local.play.id }] });
+    expect(next.started).toBe(false);
+    expect(next.saved).toEqual([]);
+    expect(next.request).toBeNull();
   });
   it('keeps unsynced local edits over the server snapshot', () => {
     const local = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
@@ -267,10 +306,6 @@ describe('server sync', () => {
     const state = reducer(initialState(), { type: 'sync', saved: [], currentId: null, total: 0, pending: [] });
     expect(state.play.id).toBe('cache');
     expect(state.started).toBe(true);
-  });
-  it('bumps the flush trigger on explicit retry', () => {
-    const state = reducer(initialState(), { type: 'retry-sync' });
-    expect(state.flushNonce).toBe(1);
   });
   it('keeps history beyond the old eight-game cap', () => {
     let state = initialState();
@@ -448,7 +483,7 @@ describe('line records', () => {
 });
 
 describe('history sync store', () => {
-  it('notifies only on change and starts from the stored outbox', () => {
+  it('notifies only when repository display values change', () => {
     const store = new HistorySyncStore();
     expect(store.pending).toBe(0);
     expect(store.error).toBe('');
@@ -525,7 +560,7 @@ describe('canonical timeline', () => {
         expect(row.san).toBe(last?.san ?? '');
         expect(row.uci).toBe(last ? `${last.from}${last.to}${last.promotion ?? ''}` : '');
         expect(row.lastMove).toEqual(last ? [last.from, last.to] : undefined);
-        expect(row.terminal !== null).toBe(terminalEvaluation(game) !== undefined);
+        expect(row.outcome !== null).toBe(terminalEvaluation(game) !== undefined);
       }
     }
   });
@@ -537,7 +572,7 @@ describe('canonical timeline', () => {
     const timeline = buildTimeline(START_FEN, moves);
     const tip = timeline.rows.at(-1)!;
     expect(tip.fen).toBe(record.fen);
-    expect(tip.terminal).toEqual(record.terminal);
+    expect(outcomeEvaluation(tip.outcome) ?? null).toEqual(record.terminal);
     expect(timeline.rows.slice(1).map(row => row.san)).toEqual(record.sanMoves);
   });
 
@@ -546,7 +581,7 @@ describe('canonical timeline', () => {
     const timeline = buildTimeline(START_FEN, ['e2e4', 'e7e5', 'g1f3']);
     // A coverage-style full pass plus navigation lookups: pure row reads.
     let covered = 0;
-    for (const row of timeline.rows) if (row.terminal !== null || row.fen) covered++;
+    for (const row of timeline.rows) if (row.outcome !== null || row.fen) covered++;
     expect(timeline.rows[2].fen).toContain(' ');
     expect(covered).toBe(4);
     expect(timelineBuildsForTests()).toBe(1);
@@ -580,7 +615,7 @@ describe('review qualities incremental', () => {
   ];
   const byNodes = (entries: [string[], Evaluation][]) => {
     const map = new Map(entries.map(([slice, entry]) => [JSON.stringify(slice), entry]));
-    return (node: ReviewNode) => map.get(JSON.stringify(node.moves));
+    return (node: ReviewNode) => map.get(JSON.stringify(node.timeline.moves.slice(0, node.ply)));
   };
   const run = (
     moves: string[],
@@ -630,7 +665,7 @@ describe('review qualities incremental', () => {
 
   it('matches a fresh compute exactly across build, settle, append, and takeback', () => {
     const store = new Map(italianEvals.map(([slice, entry]) => [JSON.stringify(slice), entry]));
-    const lookup = (node: ReviewNode) => store.get(JSON.stringify(node.moves));
+    const lookup = (node: ReviewNode) => store.get(JSON.stringify(node.timeline.moves.slice(0, node.ply)));
     const fresh = (moves: string[]) => {
       const nodes = testNodes(START_FEN, moves);
       return computeReviewQualities({

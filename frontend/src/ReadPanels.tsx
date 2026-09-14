@@ -3,6 +3,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useMemo,
   type Dispatch,
   type ReactNode,
 } from "react";
@@ -10,7 +11,8 @@ import {
   candidateSan,
   exportLine,
   loadLine,
-  replay,
+  lineRecord,
+  resultTextForTip,
   sideName,
   storedGameResult,
 } from "./domain";
@@ -58,11 +60,12 @@ function isComplete(review: Review): boolean {
     !progress.failed;
 }
 
-// Tab-bar action: the Analyze / Re-analyze / Restore button owns the right
+// Tab-bar action: the Analyze / Analyzed button owns the right
 // end of the tab row. While running it is replaced in place by the progress
 // status.
 function ReviewActionButton({ state, review }: { state: State; review: Review }) {
   const progress = review.progress;
+  const complete = isComplete(review) || !!(review.coverage && review.coverage.covered === review.coverage.total);
   if (progress?.running) {
     return (
       <span role="status">
@@ -75,21 +78,18 @@ function ReviewActionButton({ state, review }: { state: State; review: Review })
     return (
       <Button
         variant="primary"
-        aria-label="Analyze explored line"
-        disabled={review.tooLong}
+        aria-label={complete ? 'Analyzed explored line' : 'Analyze explored line'}
+        disabled={review.tooLong || complete}
         onClick={review.start}
       >
-        Analyze
+        {complete ? 'Analyzed' : 'Analyze'}
       </Button>
     );
   }
-  if (
-    isComplete(review) ||
-    (review.coverage && review.coverage.covered === review.coverage.total)
-  ) {
+  if (complete) {
     return (
-      <Button variant="primary" onClick={review.start}>
-        Re-analyze
+      <Button variant="primary" disabled>
+        Analyzed
       </Button>
     );
   }
@@ -120,7 +120,7 @@ function ReviewActionButton({ state, review }: { state: State; review: Review })
       </Button>
     );
   }
-  // Full coverage returns Re-analyze above, so only the priming state loads
+  // Full coverage returns Analyzed above, so only the priming state loads
   // here; 'fresh' is subsumed by the coverage branch by construction.
   if (review.recordStatus.state === "checking")
     return (
@@ -310,21 +310,21 @@ function MoveAnalysis({
   // Displayed move: the board shows the position after move x (and before
   // move y), so this panel covers x — the move leading into the viewed
   // position. Candidate lists come from x's before-position with x marked
-  // "(played)", matching the arrows.
+  // "(played)". At the root, candidates describe the current position.
   const focus = ply - 1;
   const hasMove = focus >= 0;
-  const response = hasMove ? review.maia : undefined;
+  const response = hasMove ? review.maia : review.maiaCurrent;
   const node = review.nodes[hasMove ? focus : ply];
   const insight = response ? { fen: node.fen } : undefined;
   const played = hasMove
-    ? review.nodes[ply]?.moves[focus]
+    ? review.nodes[ply]?.uci ?? undefined
     : undefined;
-  const evaluation = hasMove ? review.focus : undefined;
+  const evaluation = hasMove ? review.focus : review.current;
   const afterEvaluation = hasMove ? review.evaluations[ply] : undefined;
   const bestUci = evaluation?.best_move ?? undefined;
   const verdict = played
     ? describeMove({
-        san: candidateSan(node.fen, played),
+        san: review.nodes[ply].san ?? played,
         quality: review.qualities[focus],
         rarity: review.rarities?.[focus],
         elo: review.maiaElo,
@@ -334,15 +334,15 @@ function MoveAnalysis({
   // Exploring a candidate means playing it instead of x, so step back to
   // x's before-position first: the reducer branches from the viewed position.
   const exploreFromFocus = (uci: string) => {
-    dispatch({ type: "view", ply: focus });
+    dispatch({ type: "preview", uci: null });
+    if (hasMove) dispatch({ type: "view", ply: focus });
     dispatch({ type: "explore", uci });
   };
   // Loading signals: a missing result with no recorded error is in-flight
   // (foreground fetch, prime, or batch) rather than genuinely absent. The
   // foreground lane fetches the displayed move's before/after pair on every
   // navigation. Lines longer than the review limit never fetch, so they stay
-  // empty instead of skeleton-loading forever. Before the first move there is
-  // no x yet, so the panel is empty (not loading) with a stepping hint.
+  // empty instead of skeleton-loading forever.
   // Focus is always x's before-position, which is never terminal in a legal
   // line; the terminal check below is a safety net only.
   const hasError = !!review.error;
@@ -355,56 +355,17 @@ function MoveAnalysis({
       terminalPosition = false;
     }
   }
-  const maiaLoading = hasMove && !response && !hasError && !terminalPosition && !tooLong;
-  const sfLoading = hasMove && !evaluation && !hasError && !tooLong;
+  const maiaLoading = !response && !hasError && !terminalPosition && !tooLong;
+  const sfLoading = !evaluation && !hasError && !tooLong;
   // The verdict needs both sides of the move; the foreground lane fetches
   // both, prime/batch backfill the rest. Gating on the batch lane keeps the
   // skeleton honest while a batch that will supply the missing side runs.
   const batchRunning = !!review.progress?.running;
   const verdictLoading =
     hasMove && !!played && !verdict && !hasError && !tooLong && (!evaluation || !afterEvaluation || batchRunning);
-  if (!hasMove) {
-    return (
-      <>
-        <p className="move-verdict" role="status">
-          Starting position — step forward to review the first move.
-        </p>
-        <div className="engine-duo">
-        <EngineSection
-          label="Maia analysis"
-          titleId="insight-title"
-          dotClass="source-maia"
-          title={
-            <>
-              Maia •{" "}
-              <Rating
-                inline
-                id="analysis-rating"
-                label={review.maiaLocked ? "Maia rating (game Elo)" : "Maia rating"}
-                value={review.maiaLocked ? review.maiaElo : state.analysisSettings.eloMaia}
-                disabled={review.maiaLocked || review.progress?.running}
-                onChange={(eloMaia) =>
-                  dispatch({ type: "analysis-settings", settings: { eloMaia } })
-                }
-              />
-            </>
-          }
-        >
-          <p className="empty-copy">No move to review yet.</p>
-        </EngineSection>
-        <EngineSection
-          label="Stockfish evaluation"
-          dotClass="source-stockfish"
-          title="Stockfish 19"
-        >
-          <p className="empty-copy">No move to review yet.</p>
-        </EngineSection>
-        </div>
-      </>
-    );
-  }
   return (
     <>
+      {!hasMove && <p className="move-verdict" role="status">Current position — explore a candidate or step forward to review a move.</p>}
       {verdict ? (
         <p className="move-verdict" role="status">
           {verdict}
@@ -419,7 +380,7 @@ function MoveAnalysis({
         dotClass="source-maia"
         title={
           <>
-            Maia •{" "}
+            Maia {response?.model_used ?? (hasMove ? review.maiaWantedModel : state.analysisSettings.model)} •{" "}
             <Rating
               inline
               id="analysis-rating"
@@ -433,6 +394,7 @@ function MoveAnalysis({
           </>
         }
       >
+        {response?.degraded && <p role="status">Requested {hasMove ? review.maiaWantedModel : state.analysisSettings.model}; using {response.model_used} fallback.</p>}
         {review.maiaStale && (
           <p role="status">
             Showing Maia {review.maiaElo}
@@ -460,10 +422,11 @@ function MoveAnalysis({
                     metric={`${Math.round(candidate.prob * 100)}%`}
                     isPlayed={isPlayed}
                     preview={{
-                      label: `Explore ${san}${isPlayed ? " (played)" : ""}`,
-                      active: state.preview === candidate.move,
+                      label: `Explore ${san}${isPlayed ? " (played)" : ""}${hasMove ? " from before this move" : ""}`,
+                      active: !hasMove && state.preview === candidate.move,
                       onPreview: () =>
-                        dispatch({ type: "preview", uci: candidate.move }),
+                        dispatch({ type: "preview", uci: hasMove ? null : candidate.move }),
+                      onClear: () => dispatch({ type: "preview", uci: null }),
                       onSelect: () => exploreFromFocus(candidate.move),
                     }}
                   />
@@ -487,8 +450,9 @@ function MoveAnalysis({
             fen={node.fen}
             evaluation={evaluation}
             played={played}
-            previewUci={state.preview}
-            onPreview={(uci) => dispatch({ type: "preview", uci })}
+            retrospective={hasMove}
+            previewUci={hasMove ? null : state.preview}
+            onPreview={(uci) => dispatch({ type: "preview", uci: hasMove ? null : uci })}
             onExplore={(uci) => exploreFromFocus(uci)}
           />
         ) : sfLoading ? (
@@ -629,13 +593,15 @@ function StockfishBody({
   previewUci,
   onPreview,
   onExplore,
+  retrospective = false,
 }: {
   fen: string;
   evaluation: Evaluation;
   played?: string;
   previewUci: string | null;
-  onPreview: (uci: string) => void;
+  onPreview: (uci: string | null) => void;
   onExplore: (uci: string) => void;
+  retrospective?: boolean;
 }) {
   if (evaluation.terminal)
     return (
@@ -663,9 +629,10 @@ function StockfishBody({
               metric={scoreValueText(line.score)}
               isPlayed={isPlayed}
               preview={{
-                label: `Explore ${san}${isPlayed ? " (played)" : ""}`,
+                label: `Explore ${san}${isPlayed ? " (played)" : ""}${retrospective ? " from before this move" : ""}`,
                 active: previewUci === line.move,
                 onPreview: () => onPreview(line.move),
+                onClear: () => onPreview(null),
                 onSelect: () => onExplore(line.move),
               }}
             />
@@ -890,6 +857,10 @@ export function SavedGames({
   useSyncSnapshot(sync);
   const syncPending = sync.pending;
   const historyTotal = sync.total;
+  const visibleGames = useMemo(() => state.saved.map(game => {
+    const position = lineRecord(game.moves);
+    return { game, position, result: game.result === 'resigned' ? storedGameResult(game) : resultTextForTip(position.fen, position.terminal) };
+  }), [state.saved]);
   useEffect(
     () => () => {
       if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
@@ -925,9 +896,7 @@ export function SavedGames({
         <p className="empty-copy">Your games will appear here.</p>
       )}
       <div id="saved-games">
-        {state.saved.map((game) => {
-          const position = replay(game.moves);
-          const result = storedGameResult(game);
+        {visibleGames.map(({ game, position, result }) => {
           return (
             <article className="saved-game" key={game.id}>
               <button
@@ -937,7 +906,7 @@ export function SavedGames({
                 onClick={() => dispatch({ type: "review", id: game.id })}
               >
                 <BoardThumbnail
-                  fen={position.fen()}
+                  fen={position.fen}
                   orientation={game.settings.userColor}
                 />
                 <div className="saved-details">
@@ -991,6 +960,7 @@ export function SavedGames({
           );
         })}
       </div>
+      {sync.hasMore && <Button disabled={sync.loading} onClick={() => void sync.loadMore()}>{sync.loading ? 'Loading…' : 'Load more'}</Button>}
       {copiedId !== null && (
         <span role="status" className="visually-hidden">
           PGN copied to clipboard
@@ -999,7 +969,7 @@ export function SavedGames({
       {deleting && (
         <Dialog title="Delete saved game?" onCancel={() => setDeleting(null)}>
           <h2>Delete saved game?</h2>
-          <p>This removes the game from this device.</p>
+          <p>This deletes the saved game from server history and this browser.</p>
           <div className="actions">
             <Button
               onClick={() => {

@@ -4,50 +4,35 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-func TestTemperatureUCIHelper(t *testing.T) {
+func TestTemperatureJSONHelper(t *testing.T) {
 	if os.Getenv("MAIA_TEMP_HELPER") != "1" {
 		return
 	}
 	scanner := bufio.NewScanner(os.Stdin)
-	temperature, index := "", 0
+	index := 0
+	fmt.Println(`{"ready":true}`)
 	for scanner.Scan() {
-		line := scanner.Text()
-		switch {
-		case line == "uci":
-			fmt.Println("uciok")
-		case line == "isready":
-			fmt.Println("readyok")
-		case strings.HasPrefix(line, "setoption name Temperature value "):
-			temperature = strings.TrimPrefix(line, "setoption name Temperature value ")
-		case strings.HasPrefix(line, "position "):
-			fmt.Println("info string position-ok legal-count 1")
-		case strings.HasPrefix(line, "go "):
-			if index >= 2 || temperature != []string{"0.7", "0"}[index] {
-				fmt.Println("info string go-error")
-				continue
-			}
-			fmt.Println("info depth 1 multipv 1 score cp 20 wdl 600 200 200 pv e2e4 string policy 1.0")
-			fmt.Println("bestmove e2e4")
-			index++
-			temperature = ""
-		case line == "quit":
-			os.Exit(0)
+		var request EngineRequest
+		if json.Unmarshal(scanner.Bytes(), &request) != nil || index >= 2 || request.Temperature != []float64{.7, 0}[index] {
+			os.Exit(2)
 		}
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"result": engineFixture("e2e4"), "legal_count": 1})
+		index++
 	}
 	os.Exit(0)
 }
 
 func TestWorkerResetsTemperatureForEachRequest(t *testing.T) {
 	t.Setenv("MAIA_TEMP_HELPER", "1")
-	worker := NewWorker("test", []string{os.Args[0], "-test.run=^TestTemperatureUCIHelper$"})
+	worker := NewWorker("test", []string{os.Args[0], "-test.run=^TestTemperatureJSONHelper$"})
 	defer worker.close()
 	for _, temperature := range []float64{.7, 0} {
 		_, err := worker.predict(context.Background(), EngineRequest{FEN: startFEN, SelfElo: 1600, OppoElo: 1600, Temperature: temperature})
@@ -142,16 +127,10 @@ func TestTemperatureMigrationAndRoundtrip(t *testing.T) {
 
 func TestSampledMoveMayDifferFromPolicyCandidates(t *testing.T) {
 	for _, sampled := range []string{"d2d4", "a2a3"} {
-		result, err := parseEngineTranscript([]string{
-			"info depth 1 multipv 1 score cp 20 wdl 600 200 200 pv e2e4 string policy 0.4",
-			"info depth 1 multipv 2 score cp 10 wdl 300 200 500 pv d2d4 string policy 0.25",
-			"info depth 1 multipv 3 score cp 5 wdl 300 300 400 pv g1f3 string policy 0.15",
-			"info depth 1 multipv 4 score cp 0 wdl 300 300 400 pv c2c4 string policy 0.10",
-			"info depth 1 multipv 5 score cp -5 wdl 200 300 500 pv b1c3 string policy 0.05",
-			"bestmove " + sampled,
-		}, 20)
-		if err != nil || result.Move != sampled || result.Candidates[0].Move != "e2e4" {
-			t.Fatalf("sampled result: %+v %v", result, err)
+		result := engineFixture("e2e4")
+		result.Move = sampled
+		if !validEngineResult(result, 1, false) || result.Candidates[0].Move != "e2e4" {
+			t.Fatalf("sampled result: %+v", result)
 		}
 	}
 }

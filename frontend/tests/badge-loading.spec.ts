@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { replay } from '../src/domain';
+import { EvaluationFixture } from './evaluation-fixture';
 import { defaultStockfishSettings, stockfishPolicy } from '../src/stockfishSettings';
 const SEARCH_POLICY = stockfishPolicy(defaultStockfishSettings);
 
@@ -10,25 +11,11 @@ const SEARCH_POLICY = stockfishPolicy(defaultStockfishSettings);
 // quiet once it lands.
 async function bootHistory(page: Page, pgn: string, primeMs: number) {
   const errors: string[] = [];
+  const cache = new EvaluationFixture();
   page.on('pageerror', error => errors.push(error.message));
   await page.route('http://maia.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
-    if (path === '/evaluations/coverage') {
-      // Slow empty cache: the restore is genuinely in flight.
-      await new Promise(resolve => setTimeout(resolve, primeMs));
-      await route.fulfill({ json: { rows: {} } });
-      return;
-    }
-    if (path.startsWith('/evaluations/')) {
-      if (route.request().method() === 'PUT') {
-        await route.fulfill({ json: { key_hash: 'x', engine: 'sf', created_at: 'now' } });
-        return;
-      }
-      // Slow empty cache: the restore is genuinely in flight.
-      await new Promise(resolve => setTimeout(resolve, primeMs));
-      await route.fulfill({ status: 404, json: { code: 'not_found', message: 'missing' } });
-      return;
-    }
+    if (await cache.lookup(route, primeMs)) return;
     if (path === '/evaluate') {
       const payload = route.request().postDataJSON();
       const game = replay(payload.moves, payload.initial_fen);

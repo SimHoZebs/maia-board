@@ -1,132 +1,136 @@
-"""Small UCI adapter around the pinned upstream Maia3 engine.
-
-The upstream UCI implementation computes policy probabilities but only prints
-WDL/PV data. This adapter preserves its command handling and adds one
-machine-readable ``string policy`` value per MultiPV rank.
-"""
-
+"""Bounded JSON-lines transport for Maia3 ref 1e13597c42d4858b7cfd7cfdae01e297263364b2."""
 from __future__ import annotations
 
+import contextlib
+import json
+import math
 import sys
+import time
 
 import chess
 
-from maia3.uci import Maia3UCIEngine, parse_args
+MAX_LINE = 64 * 1024
 
 
-def option_name_value(line: str) -> tuple[str, str]:
-    if "name" not in line:
-        raise ValueError("setoption command has no name")
-    after_name = line.split("name", 1)[1].strip()
-    name, _, value = after_name.partition("value")
-    return name.strip().lower(), value.strip()
+class InvalidRequest(ValueError):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
 
 
-def parse_position(line: str) -> chess.Board:
-    tokens = line.split()
-    if len(tokens) < 2:
-        raise ValueError("position command is incomplete")
-
-    index = 1
-    if tokens[index] == "startpos":
-        board = chess.Board()
-        index += 1
-    elif tokens[index] == "fen":
-        if len(tokens) < index + 7:
-            raise ValueError("FEN position is incomplete")
-        board = chess.Board(" ".join(tokens[index + 1 : index + 7]))
-        index += 7
-    else:
-        raise ValueError("position must use startpos or fen")
-
-    if index < len(tokens):
-        if tokens[index] != "moves":
-            raise ValueError("position has unexpected trailing data")
-        for move_text in tokens[index + 1 :]:
-            move = chess.Move.from_uci(move_text)
+def position(request):
+    """Validate semantics before upstream cmd_position (which silently rejects)."""
+    try:
+        fen = request["fen"]
+        moves = request.get("moves") or []
+        initial = request.get("initial_fen") or (chess.STARTING_FEN if moves else fen)
+        if not isinstance(moves, list) or len(moves) > 256:
+            raise ValueError("moves must contain at most 256 plies")
+        expected, board = chess.Board(fen), chess.Board(initial)
+        if not expected.is_valid() or not board.is_valid():
+            raise ValueError("invalid board")
+        for text in moves:
+            move = chess.Move.from_uci(text)
             if move not in board.legal_moves:
-                raise ValueError(f"illegal move {move_text}")
+                raise ValueError("illegal move")
             board.push(move)
-    return board
+        if board.fen() != expected.fen():
+            raise InvalidRequest("position_mismatch", "moves do not produce fen")
+        if not board.is_valid():
+            raise ValueError("invalid reconstructed board")
+        command = "position fen " + initial
+        if moves:
+            command += " moves " + " ".join(moves)
+        return board, command
+    except InvalidRequest:
+        raise
+    except (ValueError, TypeError, KeyError, AttributeError) as error:
+        raise InvalidRequest("invalid_position", "position or history is invalid") from error
 
 
-def emit_position_result(board: chess.Board, expected_fen: str | None) -> None:
-    if expected_fen is not None:
-        try:
-            expected = chess.Board(expected_fen).fen()
-        except ValueError:
-            print("info string position-error invalid-position", flush=True)
-            return
-        if board.fen() != expected:
-            print("info string position-error position-mismatch", flush=True)
-            return
-    print(
-        f"info string position-ok legal-count {board.legal_moves.count()}",
-        flush=True,
-    )
-
-
-def emit_move(engine: Maia3UCIEngine) -> None:
+def predict(engine, request):
+    if not isinstance(request, dict) or set(request) - {"fen", "moves", "initial_fen", "self_elo", "oppo_elo", "temperature"}:
+        raise InvalidRequest("invalid_position", "invalid request shape")
+    board, command = position(request)
+    for key in ("self_elo", "oppo_elo"):
+        value = request.get(key)
+        if type(value) is not int or not 0 <= value <= 5000:
+            raise InvalidRequest("invalid_position", "invalid Elo")
+    temperature = request.get("temperature", 0)
+    if type(temperature) not in (int, float) or not math.isfinite(temperature) or not 0 <= temperature <= 2:
+        raise InvalidRequest("invalid_position", "invalid temperature")
+    if board.is_game_over():
+        raise InvalidRequest("game_over", "position has no playable moves")
+    # Preserve the pinned engine's option parsing and full history rebuilding.
+    engine.cmd_setoption(f"setoption name SelfElo value {request['self_elo']}")
+    engine.cmd_setoption(f"setoption name OppoElo value {request['oppo_elo']}")
+    engine.cmd_setoption("setoption name MultiPV value 5")
+    engine.cmd_setoption(f"setoption name Temperature value {temperature}")
+    engine.cmd_position(command)
     move, top_moves = engine.score_moves()
-    for rank, item in enumerate(top_moves, start=1):
+    if move is None or move not in board.legal_moves:
+        raise RuntimeError("engine returned invalid selected move")
+    candidates = []
+    seen, previous, total = set(), 1.0, 0.0
+    for item in top_moves:
+        candidate, policy = item["move"], float(item["policy"])
         win, draw, loss = item["wdl"]
-        print(
-            "info depth 1 "
-            f"multipv {rank} score cp {win - loss} "
-            f"wdl {win} {draw} {loss} "
-            f"pv {item['move'].uci()} string policy {item['policy']:.9f}",
-            flush=True,
-        )
-    print(f"bestmove {move.uci() if move is not None else '0000'}", flush=True)
+        if candidate not in board.legal_moves or candidate in seen or not math.isfinite(policy) or not 0 <= policy <= previous + 1e-7:
+            raise RuntimeError("engine returned invalid candidate")
+        if any(type(v) is not int or not 0 <= v <= 1000 for v in (win, draw, loss)) or sum((win, draw, loss)) != 1000:
+            raise RuntimeError("engine returned invalid WDL")
+        seen.add(candidate)
+        previous, total = policy, total + policy
+        candidates.append({"move": candidate.uci(), "policy": policy, "wdl": [loss / 1000, draw / 1000, win / 1000]})
+    if len(candidates) != min(5, board.legal_moves.count()) or total <= 0 or total > 1.000001:
+        raise RuntimeError("engine returned incomplete or inconsistent candidates")
+    if temperature == 0:
+        selected_policy = next((item["policy"] for item in candidates if item["move"] == move.uci()), None)
+        # torch.argmax and torch.topk can disagree on ordering of equal logits.
+        admissible = (abs(selected_policy - candidates[0]["policy"]) <= 1e-7 if selected_policy is not None
+                      else len(candidates) == 5 and abs(candidates[-1]["policy"] - candidates[0]["policy"]) <= 1e-7)
+        if not admissible:
+            raise RuntimeError("engine returned inconsistent deterministic selection")
+    return {"result": {"move": move.uci(), "candidates": candidates, "wdl": candidates[0]["wdl"]}, "legal_count": board.legal_moves.count()}
 
 
-def main() -> None:
-    config = parse_args(sys.argv[1:])
-    engine = Maia3UCIEngine(config)
-    expected_fen: str | None = None
+def emit(value, output):
+    encoded = json.dumps(value, allow_nan=False, separators=(",", ":"))
+    if len(encoded.encode()) > MAX_LINE:
+        raise RuntimeError("worker response too large")
+    print(encoded, file=output, flush=True)
 
-    for raw in sys.stdin:
-        line = raw.strip()
-        if not line:
-            continue
+
+def serve(engine, source, output):
+    emit({"ready": True}, output)
+    while True:
+        raw = source.readline(MAX_LINE + 1)
+        if not raw:
+            return
+        if len(raw.encode()) > MAX_LINE or not raw.endswith("\n"):
+            emit({"error": {"code": "engine_unavailable", "message": "request line exceeds limit"}}, output)
+            return
+        started = time.monotonic()
         try:
-            if line == "uci":
-                engine.cmd_uci()
-            elif line == "isready":
-                try:
-                    engine.ensure_model_loaded()
-                except Exception as error:
-                    print(f"maia3 worker error: {error}", file=sys.stderr, flush=True)
-                    return
-                print("readyok", flush=True)
-            elif line.startswith("setoption "):
-                name, value = option_name_value(line)
-                if name == "expectedfen":
-                    expected_fen = value
-                else:
-                    engine.cmd_setoption(line)
-            elif line.startswith("position "):
-                try:
-                    board = parse_position(line)
-                    engine.cmd_position(line)
-                except (ValueError, RuntimeError) as error:
-                    print("info string position-error invalid-position", flush=True)
-                    print(f"maia3 worker error: {error}", file=sys.stderr, flush=True)
-                    continue
-                emit_position_result(board, expected_fen)
-            elif line.startswith("go ") or line == "go":
-                try:
-                    emit_move(engine)
-                except Exception as error:
-                    print("info string go-error", flush=True)
-                    print(f"maia3 worker error: {error}", file=sys.stderr, flush=True)
-            elif line == "ucinewgame":
-                engine.cmd_ucinewgame()
-            elif line == "quit":
-                return
-        except (ValueError, RuntimeError) as error:
-            print(f"info string adapter-error {type(error).__name__}", flush=True)
-            print(f"maia3 worker error: {error}", file=sys.stderr, flush=True)
+            with contextlib.redirect_stdout(sys.stderr):
+                result = predict(engine, json.loads(raw))
+        except InvalidRequest as error:
+            result = {"error": {"code": error.code, "message": str(error)}}
+        except Exception as error:
+            print(f"maia worker error: {str(error)[:1024]}", file=sys.stderr, flush=True)
+            result = {"error": {"code": "engine_unavailable", "message": "Maia inference failed"}}
+        emit(result, output)
+        print(f"maia inference duration_ms={(time.monotonic() - started) * 1000:.1f}", file=sys.stderr, flush=True)
+
+
+def main():
+    output = sys.stdout
+    with contextlib.redirect_stdout(sys.stderr):
+        from maia3.uci import Maia3UCIEngine, parse_args
+        config = parse_args(sys.argv[1:])
+        engine = Maia3UCIEngine(config)
+        engine.ensure_model_loaded()
+    serve(engine, sys.stdin, output)
 
 
 if __name__ == "__main__":

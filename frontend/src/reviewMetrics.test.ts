@@ -107,17 +107,17 @@ it('describes the played move in plain English across both axes', () => {
   const quality = (label: Quality['label'], loss: number | null = 0): Quality => ({ label, accuracy: 100, loss });
   const rarity = (label: Rarity['label']): Rarity => ({ label, r: 1, prob: 0.4, topProb: 0.4 });
   expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity: rarity('Expected'), elo: 1600 }))
-    .toBe("Best — Nf3 is the engine's top choice, and the natural move at 1600.");
+    .toBe("Best — Nf3 is the engine's top choice. Maia at 1600 predicts 40% for this move.");
   expect(describeMove({ san: 'Nxh7+', quality: quality('Best'), rarity: rarity('Unseen'), elo: 1600 }))
-    .toBe("Brilliant — Nxh7+ is the engine's best move, and almost nobody at 1600 plays it.");
+    .toBe("Best — Nxh7+ is the engine's top choice. Maia at 1600 predicts 40% for this move.");
   expect(describeMove({ san: 'Re8', quality: quality('Great'), rarity: rarity('Unseen'), elo: 1400 }))
-    .toBe('Brilliant — Re8 was the only good move, and almost nobody at 1400 finds it.');
+    .toBe("Great — Re8 is the engine's top choice with a sizable gap to its next candidate. Maia at 1400 predicts 40% for this move.");
   expect(describeMove({ san: 'Re8', quality: quality('Great'), rarity: rarity('Expected'), elo: 1400 }))
-    .toBe('Great — Re8 was the only good move in the position, and you found it.');
+    .toBe("Great — Re8 is the engine's top choice with a sizable gap to its next candidate. Maia at 1400 predicts 40% for this move.");
   expect(describeMove({ san: 'h3', quality: quality('Good'), rarity: rarity('Seen'), elo: 1600 }))
-    .toBe('Good — h3 is sound, but slightly imprecise.');
+    .toBe("Good — h3 keeps the engine's estimated winning chance close to its best line. Maia at 1600 predicts 40% for this move.");
   expect(describeMove({ san: 'Qh5', quality: quality('Blunder', 25), rarity: rarity('Expected'), elo: 1600 }))
-    .toBe('Qh5 was a blunder — it gave up 25% of your winning chance. Most players at 1600 would play it too.');
+    .toBe('Qh5 was a blunder — it gave up 25% of your estimated winning chance. Maia at 1600 predicts 40% for this move.');
   expect(describeMove({ san: 'Kd2', quality: quality('Miss'), rarity: rarity('Seen'), elo: 1600, bestSan: 'Qxf7#' }))
     .toBe('Kd2 missed the win — Qxf7# kept the winning position.');
   expect(describeMove({ san: 'fxg3', quality: quality('Skull'), rarity: rarity('Expected'), elo: 1600, bestSan: 'Qg5+' }))
@@ -128,4 +128,15 @@ it('describes the played move in plain English across both axes', () => {
     .toBe('e4 was the only legal move.');
   expect(describeMove({ san: 'e4', quality: quality('Unreviewed'), rarity: rarity('Unknown'), elo: 1600 })).toBeNull();
   expect(describeMove({ san: 'e4', quality: undefined, rarity: undefined, elo: 1600 })).toBeNull();
+});
+it('reports actual model probability without population or brilliance claims', () => {
+  const quality: Quality = { label: 'Blunder', accuracy: 20, loss: 25 };
+  const rarity = maiaRarity(maia([['e2e4', .15], ['d2d4', .13]]), 'd2d4');
+  const text = describeMove({ san: 'd4', quality, rarity, elo: 1600 });
+  expect(text).toContain('predicts 13%');
+  expect(text).not.toMatch(/most|nobody|population/i);
+  const absent = describeMove({ san: 'Nf3', quality: { ...quality, label: 'Great' }, rarity: maiaRarity(maia([['e2e4', .15]]), 'g1f3'), elo: 1600 });
+  expect(absent).toContain("absent from Maia's top choices");
+  expect(absent).not.toMatch(/brilliant|only good|impossible|nobody/i);
+  expect(describeMove({ san: 'd4', quality, rarity: undefined, elo: 1600 })).not.toContain('1600');
 });

@@ -4,10 +4,15 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "tsc --noEmit && vite build",
+    "dev": "vite",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "build:bundle": "vite build",
+    "build": "npm run typecheck && npm run build:bundle",
     "build:profiling": "tsc --noEmit && vite build --mode profiling --outDir dist-profiling",
     "test": "vitest run src",
-    "test:browser": "MAIA_BUILD_DIR=dist-browser npm run build && playwright test",
+    "test:browser:run": "playwright test",
+    "test:browser": "MAIA_BUILD_DIR=dist-browser npm run build && npm run test:browser:run",
     "test:browser:strict": "NODE_ENV=development npm run test:browser",
     "test:perf": "MAIA_BUILD_DIR=dist-profiling npm run build:profiling && MAIA_BUILD_DIR=dist-profiling playwright test -c playwright.perf.config.ts"
   },

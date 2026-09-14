@@ -1,176 +1,95 @@
-import { useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { MaiaApiError, requestMove } from './api';
-import { maiaCacheKeyForMoveRequest } from './reviewCoordinator';
-import { initialState, reducer, snapshotOf } from './state';
-import { KEYS, loadSaved, readStorage, restoreGame, writeStorage } from './storage';
-import {
-  deleteRemote, fetchGames, isMigrated, loadOutbox, markMigrated, migrationOps,
-  pushOutbox, saveRemote, ServerGamesError, storeOutbox, toStoredGame,
-} from './serverGames';
+import { initialState, reducer, snapshotOf, type Action } from './state';
+import { KEYS, readStorage, writeStorage } from './storage';
+import { GameRepository } from './gameRepository';
 import { HistorySyncStore } from './syncStore';
-import type { Mode, StoredGame } from './domain';
+import type { Mode } from './domain';
 import type { UrlLine } from './analysisUrl';
 import { STOCKFISH_STORAGE_KEY } from './stockfishSettings';
 
-const LAN_DOWN = 'Game history is unavailable. Check that the server is running on your LAN.';
-
 export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
-  // The initializer runs once on mount: a content URL wins over the snapshot
-  // on first paint so shared links never flash the previous local line.
-  const [state, dispatch] = useReducer(reducer, mode, m => initialState(m, urlLine));
-  // Sync display state lives outside the game reducer: indicator updates
-  // re-render only their subscribers, never the board mid-animation.
+  const [repository] = useState(() => new GameRepository());
+  const [state, setState] = useState(() => initialState(mode, urlLine, repository.snapshot()));
+  const current = useRef(state);
   const [sync] = useState(() => new HistorySyncStore());
-  // URL owns destination; reducer mode is its execution context. A guarded
-  // render-time update settles it before children or request effects commit.
+  const dispatch = useCallback((action: Action) => {
+    const before = current.current;
+    const next = reducer(before, action);
+    current.current = next;
+    setState(next);
+    // Commands persist their accepted result immediately, outside React's
+    // replayable reducer/render lifecycle. Hydration has no mutation command.
+    if (action.type === 'delete') {
+      repository.delete(action.id);
+      const snapshot = readStorage<{ gameId?: string }>(KEYS.snapshot);
+      if (snapshot?.gameId === action.id) {
+        const error = writeStorage(KEYS.snapshot, null);
+        if (error) sync.setPreferenceError(error.message);
+      }
+    } else if (action.type !== 'sync' && next !== before && (next.play !== before.play || action.type === 'saved' && next.started)) {
+      if (next.started || next.play.moves.length || next.play.result === 'resigned') repository.save(next.play, next.started);
+    }
+  }, [repository, sync]);
   if (state.mode !== mode) dispatch({ type: 'mode', mode });
-  useEffect(() => { writeStorage(KEYS.settings, state.settings); }, [state.settings]);
-  useEffect(() => { writeStorage(KEYS.feedback, state.feedback); }, [state.feedback]);
-  useEffect(() => { writeStorage(KEYS.badgeLoading, state.badgeLoading); }, [state.badgeLoading]);
-  useEffect(() => { writeStorage(KEYS.bottomNav, state.bottomNav); }, [state.bottomNav]);
-  useEffect(() => { writeStorage(STOCKFISH_STORAGE_KEY, state.stockfish); }, [state.stockfish]);
-  useEffect(() => { writeStorage(KEYS.analysis, state.inputs); }, [state.inputs]);
+
   useEffect(() => {
-    // The loaded analysis line persists independently of the import-form
-    // inputs, so refresh restores the board, not the setup dialog.
-    writeStorage(KEYS.snapshot, state.analysisLoaded ? snapshotOf(state.analysis, state.analysisSourceId ?? undefined) : null);
-  }, [state.analysis, state.analysisLoaded, state.analysisSourceId]);
-  useEffect(() => {
-    fetchGames().then(
-      list => {
-        dispatch({
-          type: 'sync',
-          saved: list.games.map(toStoredGame).filter((game): game is StoredGame => !!game),
-          currentId: list.current_id, total: list.total, pending: loadOutbox(),
-        });
-        sync.setPending(loadOutbox().length);
-        sync.setTotal(list.total);
-        sync.clearError();
-      },
-      () => {
-        // Offline: queue anything the server has never seen so Retry uploads it.
-        const have = new Set(loadOutbox().flatMap(op => op.op === 'save' ? [op.game.id] : []));
-        let added = false;
-        for (const op of migrationOps(loadSaved(), restoreGame(readStorage(KEYS.current)) ?? null)) {
-          if (op.op === 'save' && have.has(op.game.id)) continue;
-          pushOutbox(op);
-          added = true;
-        }
-        if (added) sync.setPending(loadOutbox().length);
-        sync.setError(LAN_DOWN);
-      },
-    );
-    if (!isMigrated()) {
-      const saved = loadSaved();
-      const current = restoreGame(readStorage(KEYS.current));
-      for (const op of migrationOps(saved, current ?? null)) pushOutbox(op);
-      markMigrated();
-      sync.setPending(loadOutbox().length);
-    }
-  }, [state.flushNonce]);
-  const mountedPlay = useRef(false);
-  useEffect(() => {
-    writeStorage(KEYS.current, state.play.moves.length || state.play.result === 'resigned' ? state.play : null);
-    if (!mountedPlay.current) { mountedPlay.current = true; return; }
-    // Persist every live game, including empty ones, so the current-game
-    // marker and refresh resumption always agree. Fresh untouched boards
-    // (never started) are the only records with nothing worth keeping.
-    if (state.started || state.play.moves.length || state.saved.some(game => game.id === state.play.id)) {
-      pushOutbox({ op: 'save', game: state.play, current: state.started });
-    }
-    sync.setPending(loadOutbox().length);
-  }, [state.play, state.started]);
-  const prevSavedIds = useRef<string[] | null>(null);
-  useEffect(() => {
-    writeStorage(KEYS.saved, state.saved);
-    const ids = state.saved.map(game => game.id);
-    if (prevSavedIds.current !== null) {
-      for (const id of prevSavedIds.current) {
-        if (!ids.includes(id)) pushOutbox({ op: 'delete', id });
+    sync.loadMore = repository.loadMore;
+    sync.retry = repository.retry;
+    sync.exportPending = repository.exportPending;
+    sync.discardPending = version => repository.discardPending(version);
+    let previousGames = repository.snapshot().games;
+    let previousCurrent = repository.snapshot().currentId;
+    const update = () => {
+      const value = repository.snapshot();
+      sync.setPending(value.pending.length + value.recovery.length);
+      sync.setTotal(value.total);
+      sync.setError([value.error, value.recovery.length ? `${value.recovery.length} stored item(s) need recovery. Export pending work before discarding them.` : ''].filter(Boolean).join(' '));
+      sync.setDurabilityError(value.durabilityError);
+      sync.setPage(value.nextOffset !== null, value.loading);
+      sync.setRecovery(value.pending, value.recovery, value.failedVersion, value.conflict);
+      if (value.games !== previousGames || value.currentId !== previousCurrent) {
+        previousGames = value.games;
+        previousCurrent = value.currentId;
+        dispatch({ type: 'sync', saved: value.games, currentId: value.currentId, total: value.total, pending: value.pending });
       }
-      // Deleting the reviewed game retires its snapshot so refresh cannot
-      // resurrect a just-deleted line as analyzed. Records stay: they are
-      // keyed by line content and shared across duplicate lines.
-      const snapshot = readStorage<{ gameId?: unknown }>(KEYS.snapshot);
-      if (snapshot && typeof snapshot.gameId === 'string' && !ids.includes(snapshot.gameId)) writeStorage(KEYS.snapshot, null);
-      sync.setPending(loadOutbox().length);
-    }
-    prevSavedIds.current = ids;
-  }, [state.saved]);
-  const flushing = useRef(false);
+    };
+    const unsubscribe = repository.subscribe(update);
+    update();
+    const stop = repository.start();
+    return () => { unsubscribe(); stop(); };
+  }, [repository, sync, dispatch]);
+
   useEffect(() => {
-    if (flushing.current) return;
-    flushing.current = true;
-    void (async () => {
-      try {
-        for (;;) {
-          const ops = loadOutbox();
-          if (!ops.length) break;
-          const [op] = ops;
-          try {
-            if (op.op === 'save') await saveRemote(op.game, op.current);
-            else await deleteRemote(op.id);
-          } catch (error) {
-            if (error instanceof ServerGamesError && error.status === 400) {
-              storeOutbox(ops.slice(1));
-              sync.setError(error.message);
-              continue;
-            }
-            sync.setError(error instanceof Error ? error.message : LAN_DOWN);
-            break;
-          }
-          storeOutbox(ops.slice(1));
-        }
-        if (!loadOutbox().length) sync.clearError();
-      } finally {
-        flushing.current = false;
-        sync.setPending(loadOutbox().length);
-      }
-    })();
-  }, [state.saved, state.play, state.flushNonce]);
+    let errorMessage = '';
+    for (const [key, value] of [
+      [KEYS.settings, state.play.settings], [KEYS.feedback, state.feedback], [KEYS.badgeLoading, state.badgeLoading],
+      [STOCKFISH_STORAGE_KEY, state.stockfish], [KEYS.analysis, state.inputs],
+      [KEYS.snapshot, state.analysisLoaded ? snapshotOf(state.analysis, state.analysisSourceId ?? undefined) : null],
+    ] as const) {
+      const error = writeStorage(key, value);
+      if (error) errorMessage = error.message;
+    }
+    sync.setPreferenceError(errorMessage);
+  }, [state.play.settings, state.feedback, state.badgeLoading, state.stockfish, state.inputs, state.analysisLoaded, state.analysis, state.analysisSourceId, sync]);
+
   useEffect(() => {
     const request = state.request;
     if (!request) return;
     const controller = new AbortController();
     let active = true;
-    // A request whose socket dies (mobile background, dropped LAN) may never
-    // settle: without a stall budget the spinner wedges with no failure to
-    // retry. Past the backend's 120s move window plus margin, fail into the
-    // error banner so Retry can re-issue. Cleanup aborts set active false
-    // first, so only the stall path dispatches.
     const stalled = window.setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), 150_000);
-    // StrictMode's setup/cleanup rehearsal must not launch duplicate inference.
     queueMicrotask(() => {
       if (!active) return;
-      // Play-time Maia compute is filed for later analysis reuse under the
-      // identical cache key batches use, so reviewing at the same Elo hits
-      // the server cache instead of re-inferring. The coordinates ride along
-      // on the read-through POST, replacing the old explicit PUT-after-reply.
-      // Only deterministic (temperature 0) games participate: sampled moves
-      // vary per call and the backend files them nowhere.
-      // Analysis singles are intentionally not persisted here: on Maia-locked
-      // positions the single lane is global-only while batches use the pinned
-      // game Elo, so persisting singles would cache rows under an identity
-      // batches never read.
-      let payload = request.payload;
-      if (request.mode === 'play' && (request.payload.temperature ?? 0) === 0) {
-        const { key, hash } = maiaCacheKeyForMoveRequest(request.payload);
-        payload = { ...request.payload, cache_key: key, cache_hash: hash };
-      }
-      void requestMove(payload, fetch, controller.signal).then(
-        response => {
-          window.clearTimeout(stalled);
-          if (!active) return;
-          dispatch({ type: 'reply', request, response });
-        },
+      void requestMove(request.payload, fetch, controller.signal).then(
+        response => { window.clearTimeout(stalled); if (active) dispatch({ type: 'reply', request, response }); },
         error => {
           window.clearTimeout(stalled);
-          if (!active) return;
-          dispatch({ type: 'failure', request, error: error instanceof DOMException ? new MaiaApiError('server_unreachable', 'The Maia server could not be reached.') : error });
+          if (active) dispatch({ type: 'failure', request, error: error instanceof DOMException ? new MaiaApiError('server_unreachable', 'The Maia server could not be reached.') : error });
         },
       );
     });
     return () => { active = false; window.clearTimeout(stalled); controller.abort(); };
-  }, [state.request]);
-  return { state, dispatch, sync };
+  }, [state.request, dispatch]);
+  return { state, dispatch, sync, repository };
 }

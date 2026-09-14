@@ -1,12 +1,13 @@
 import { normalizeSettings, replay, type Settings, type StoredGame } from './domain';
 
-export const KEYS = { settings: 'maia-board.settings.v1', current: 'maia-board.current-game.v1', saved: 'maia-board.saved-games.v1', analysis: 'maia-board.analysis.v1', snapshot: 'maia-board.analysis-snapshot.v1', feedback: 'maia-board.feedback.v1', badgeLoading: 'maia-board.badge-loading.v1', bottomNav: 'maia-board.bottom-nav.v1' };
+export const KEYS = { settings: 'maia-board.settings.v1', current: 'maia-board.current-game.v1', saved: 'maia-board.saved-games.v1', analysis: 'maia-board.analysis.v1', snapshot: 'maia-board.analysis-snapshot.v1', feedback: 'maia-board.feedback.v1', badgeLoading: 'maia-board.badge-loading.v1' };
 export function readStorage<T>(key: string): T | undefined {
   try { const value = localStorage.getItem(key); return value ? JSON.parse(value) as T : undefined; }
   catch { return undefined; }
 }
-export function writeStorage(key: string, value: unknown): void {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* Storage availability must not block play. */ }
+export function writeStorage(key: string, value: unknown): Error | undefined {
+  try { localStorage.setItem(key, JSON.stringify(value)); }
+  catch (cause) { return new Error(`Local storage is unavailable: ${cause instanceof Error ? cause.message : String(cause)}`); }
 }
 export function restoreGame(value: unknown): StoredGame | undefined {
   if (!value || typeof value !== 'object') return;

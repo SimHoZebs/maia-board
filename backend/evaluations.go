@@ -4,23 +4,19 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
 	"time"
 )
 
-// Evaluation cache: opaque key-value rows for analysis results. The frontend
-// owns the key format (position, history, ratings, model, search policy), so
-// policy or model changes naturally miss instead of poisoning results. Access
-// is exact-key lookup only, which is why this lives in SQLite next to games
-// rather than in a separate document store.
+// Server-owned v2 identities share storage with read-only legacy cache rows.
 var (
 	evalCacheMaxRows       = 25000
 	evalCacheMaxKeyBytes   = 4096
 	evalCacheMaxValueBytes = 65536
-	evalHashPattern        = regexp.MustCompile(`^[0-9a-f]{1,16}$`)
+	evalHashPattern        = regexp.MustCompile(`^([0-9a-f]{1,16}|[0-9a-f]{64})$`)
 	coverageMaxHashes      = 1024
 )
 
@@ -60,11 +56,38 @@ func validCachePut(put *cachePut) *requestError {
 }
 
 func (s *GameStore) cacheStats() (count, bytes int, err error) {
-	err = s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(LENGTH(value)), 0) FROM evaluations`).Scan(&count, &bytes)
+	var exists int
+	err = s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='evaluations_v2'`).Scan(&exists)
+	if err != nil {
+		return
+	}
+	if exists == 0 {
+		err = s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(LENGTH(value)),0) FROM evaluations`).Scan(&count, &bytes)
+		return
+	}
+	err = s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(LENGTH(value)), 0) FROM
+		(SELECT value FROM evaluations UNION ALL SELECT value FROM evaluations_v2)`).Scan(&count, &bytes)
 	return count, bytes, err
 }
 
+// The cache owns its disposable schema separately from game migrations. A
+// distinct table keeps legacy rows physically intact and lets SQLite count the
+// bounded active cache directly, without scanning or filtering legacy values.
+func (s *GameStore) ensureV2Cache() error {
+	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS evaluations_v2 (
+		key_hash TEXT PRIMARY KEY, engine TEXT NOT NULL, cache_key TEXT NOT NULL,
+		value TEXT NOT NULL, created_at TEXT NOT NULL)`)
+	return err
+}
+
 func (s *GameStore) cachePut(hash, engine, key, value string) (cachedEvaluation, error) {
+	table := "evaluations"
+	if strings.HasPrefix(key, "v2:") {
+		if err := s.ensureV2Cache(); err != nil {
+			return cachedEvaluation{}, err
+		}
+		table = "evaluations_v2"
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -78,17 +101,26 @@ func (s *GameStore) cachePut(hash, engine, key, value string) (cachedEvaluation,
 	// touch rank: a read-touch would double write load on this
 	// single-connection database for a recency signal the current working
 	// set (recent games, re-touched on every visit) does not need.
-	if _, err := tx.Exec(`DELETE FROM evaluations WHERE key_hash = ?`, hash); err != nil {
+	if _, err := tx.Exec(`DELETE FROM `+table+` WHERE key_hash = ?`, hash); err != nil {
 		return cachedEvaluation{}, err
 	}
-	if _, err := tx.Exec(`INSERT INTO evaluations (key_hash, engine, cache_key, value, created_at)
+	if _, err := tx.Exec(`INSERT INTO `+table+` (key_hash, engine, cache_key, value, created_at)
 		VALUES (?, ?, ?, ?, ?)`,
 		hash, engine, key, value, now); err != nil {
 		return cachedEvaluation{}, err
 	}
-	if _, err := tx.Exec(`DELETE FROM evaluations WHERE key_hash NOT IN (
-		SELECT key_hash FROM evaluations ORDER BY rowid DESC LIMIT ?)`, evalCacheMaxRows); err != nil {
+	// SQLite optimizes unfiltered COUNT(*) with its b-tree count operation.
+	// Delete only overflow rows using rowid order.
+	var count int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
 		return cachedEvaluation{}, err
+	}
+	if table == "evaluations_v2" && count > evalCacheMaxRows {
+		if _, err := tx.Exec(`DELETE FROM evaluations_v2 WHERE rowid IN (
+		SELECT rowid FROM evaluations_v2 ORDER BY rowid LIMIT ?)`, count-evalCacheMaxRows); err != nil {
+			return cachedEvaluation{}, err
+		}
+		log.Printf("evaluation cache eviction rows=%d", count-evalCacheMaxRows)
 	}
 	if err := tx.Commit(); err != nil {
 		return cachedEvaluation{}, err
@@ -97,10 +129,14 @@ func (s *GameStore) cachePut(hash, engine, key, value string) (cachedEvaluation,
 }
 
 func (s *GameStore) cacheGet(hash string) (cachedEvaluation, error) {
+	table := "evaluations"
+	if len(hash) == 64 {
+		table = "evaluations_v2"
+	}
 	var entry cachedEvaluation
 	var value string
 	err := s.db.QueryRow(`SELECT key_hash, engine, cache_key, value, created_at
-		FROM evaluations WHERE key_hash = ?`, hash).Scan(
+		FROM `+table+` WHERE key_hash = ? AND LENGTH(value) <= ? AND LENGTH(cache_key) <= ?`, hash, evalCacheMaxValueBytes, evalCacheMaxKeyBytes).Scan(
 		&entry.KeyHash, &entry.Engine, &entry.Key, &value, &entry.CreatedAt)
 	if err != nil {
 		return cachedEvaluation{}, err
@@ -113,12 +149,7 @@ func (s *GameStore) cacheGet(hash string) (cachedEvaluation, error) {
 	return entry, nil
 }
 
-// Read-through helpers for POST /evaluate and POST /move. The cache key
-// format stays client-owned and opaque: the server never interprets chess
-// positions, it only files values under the hash the client computed. A hit
-// additionally requires the stored key to equal the presented key, so a
-// colliding or mismatched hash falls through to live inference and
-// overwrites the row instead of serving another position's result.
+// The full canonical key is compared as well as its digest.
 func validCacheRef(hash, key string) bool {
 	return evalHashPattern.MatchString(hash) && key != "" && len(key) <= evalCacheMaxKeyBytes
 }
@@ -128,6 +159,9 @@ func (s *server) lookupCache(hash, engine, key string) (cachedEvaluation, bool) 
 		return cachedEvaluation{}, false
 	}
 	entry, err := s.store.cacheGet(hash)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) && !strings.Contains(err.Error(), "no such table: evaluations_v2") {
+		log.Printf("evaluation cache read failed engine=%s error=%v", engine, err)
+	}
 	if err != nil || entry.Engine != engine || entry.Key != key {
 		return cachedEvaluation{}, false
 	}
@@ -141,16 +175,25 @@ func (s *server) storeCache(hash, engine, key string, value any) {
 	}
 	encoded, err := json.Marshal(value)
 	if err != nil {
+		log.Printf("evaluation cache encode failed: %v", err)
 		return
 	}
 	var document any
 	if err := json.Unmarshal(encoded, &document); err != nil {
+		log.Printf("evaluation cache decode failed: %v", err)
 		return
 	}
 	if validCachePut(&cachePut{Engine: engine, Key: key, Value: document}) != nil {
+		log.Printf("evaluation cache rejected engine=%s", engine)
 		return
 	}
-	_, _ = s.store.cachePut(hash, engine, key, string(encoded))
+	if !validOwnedCacheValue(hash, engine, key, document) {
+		log.Printf("evaluation cache rejected untrusted output engine=%s", engine)
+		return
+	}
+	started := time.Now()
+	_, err = s.store.cachePut(hash, engine, key, string(encoded))
+	log.Printf("evaluation cache write engine=%s bytes=%d duration_us=%d error=%v", engine, len(encoded), time.Since(started).Microseconds(), err)
 }
 
 func (s *server) evaluations(w http.ResponseWriter, r *http.Request) {
@@ -158,8 +201,8 @@ func (s *server) evaluations(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
 		return
 	}
-	if r.Method != http.MethodGet && r.Method != http.MethodPut {
-		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET or PUT is required")
+	if r.Method != http.MethodGet {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET is required; evaluation writes are server-owned")
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/evaluations/")
@@ -180,37 +223,11 @@ func (s *server) evaluations(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", "evaluation key must be hex")
 		return
 	}
-	if r.Method == http.MethodGet {
-		entry, err := s.store.cacheGet(id)
-		if errors.Is(err, sql.ErrNoRows) {
-			writeAPIError(w, http.StatusNotFound, "not_found", "unknown evaluation")
-			return
-		}
-		if err != nil {
-			writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
-			return
-		}
-		writeJSON(w, http.StatusOK, entry)
+	entry, err := s.store.cacheGet(id)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeAPIError(w, http.StatusNotFound, "not_found", "unknown evaluation")
 		return
 	}
-	var put cachePut
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, int64(evalCacheMaxValueBytes)+1024))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&put); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_json", "request body must be a valid JSON object")
-		return
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		writeAPIError(w, http.StatusBadRequest, "invalid_json", "request body must contain one JSON object")
-		return
-	}
-	if err := validCachePut(&put); err != nil {
-		writeAPIError(w, http.StatusBadRequest, err.Code, err.Message)
-		return
-	}
-	encoded, _ := json.Marshal(put.Value)
-	entry, err := s.store.cachePut(id, put.Engine, put.Key, string(encoded))
 	if err != nil {
 		writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
 		return
@@ -222,6 +239,10 @@ func (s *server) evaluations(w http.ResponseWriter, r *http.Request) {
 // exist" for line restores, replacing hundreds of per-position GETs. Values
 // ride along so restores seed memory without a second fan-out. Read-only:
 // missing rows stay missing for an explicit, user-gated batch.
+//
+// Legacy compatibility surface: the current frontend restores through
+// POST /evaluations/lookup. Coverage reads both the legacy table and the
+// v2 table so older cached lines still restore; it never starts inference.
 func (s *GameStore) cacheCoverage(hashes []string) (map[string]cachedEvaluation, error) {
 	rows := map[string]cachedEvaluation{}
 	for start := 0; start < len(hashes); start += 500 {
@@ -235,11 +256,15 @@ func (s *GameStore) cacheCoverage(hashes []string) (map[string]cachedEvaluation,
 		for i, hash := range chunk {
 			args[i] = hash
 		}
-		queryRows, err := s.db.Query(`SELECT key_hash, engine, cache_key, value, created_at
-			FROM evaluations WHERE key_hash IN (`+placeholders+`)`, args...)
-		if err != nil {
-			return nil, err
-		}
+		for _, table := range []string{"evaluations", "evaluations_v2"} {
+			queryRows, err := s.db.Query(`SELECT key_hash, engine, cache_key, value, created_at
+			FROM `+table+` WHERE key_hash IN (`+placeholders+`)`, args...)
+			if err != nil {
+				if strings.Contains(err.Error(), "no such table: "+table) {
+					continue
+				}
+				return nil, err
+			}
 		for queryRows.Next() {
 			var entry cachedEvaluation
 			var value string
@@ -262,6 +287,7 @@ func (s *GameStore) cacheCoverage(hashes []string) (map[string]cachedEvaluation,
 			return nil, err
 		}
 		queryRows.Close()
+		}
 	}
 	return rows, nil
 }

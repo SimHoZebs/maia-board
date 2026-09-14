@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"math"
 )
@@ -13,6 +15,22 @@ type stockfishSettings struct {
 	TimeMS int `json:"time_ms"`
 	Lines  int `json:"lines"`
 	Depth  int `json:"depth"`
+}
+
+func (s *stockfishSettings) UnmarshalJSON(data []byte) error {
+	type plain stockfishSettings
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for _, key := range []string{"time_ms", "lines", "depth"} {
+		if raw, ok := fields[key]; !ok || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return fmt.Errorf("settings.%s must be an integer", key)
+		}
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.DisallowUnknownFields()
+	return d.Decode((*plain)(s))
 }
 
 func (s *stockfishSettings) validate() *requestError {

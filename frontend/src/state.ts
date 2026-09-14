@@ -5,8 +5,9 @@ import { analysisLength, analysisLine, defaultSettings, extendLine, lineRecord, 
   type Analysis, type Insight, type Mode, type Position, type Settings, type StoredGame } from './domain';
 import type { Evaluation } from './reviewMetrics';
 import { sameLine, type UrlLine } from './analysisUrl';
-import { KEYS, loadSaved, loadSettings, readStorage, restoreGame } from './storage';
+import { KEYS, loadSettings, readStorage } from './storage';
 import { mergeSync, type OutboxOp } from './serverGames';
+import { readGameRepository } from './gameRepository';
 import { normalizeStockfishSettings, STOCKFISH_STORAGE_KEY, type StockfishSettings } from './stockfishSettings';
 import type { BadgeLoading } from './ReviewCharts';
 
@@ -14,18 +15,19 @@ export function normalizeBadgeLoading(stored: unknown): BadgeLoading {
   return stored === 'shimmer' || stored === 'placeholder' ? stored : 'reel';
 }
 
-type Request = { id: number; mode: Mode; payload: MoveRequest };
+type Request = { id: number; mode: 'play'; payload: MoveRequest };
 export type Draft = Pick<Settings, 'eloMaia' | 'model'> & { userColor: 'white' | 'black' | 'random' };
 export type PlayDraft = Draft & Pick<Settings, 'temperature'>;
 const newPlayDraft = (settings: Settings): PlayDraft => ({ ...settings, temperature: defaultSettings.temperature });
+const sameSettings = (a: Settings, b: Settings) => a.userColor === b.userColor && a.model === b.model
+  && a.eloMaia === b.eloMaia && a.eloUser === b.eloUser && (a.temperature ?? 0) === (b.temperature ?? 0);
 export type State = {
-  mode: Mode; settings: Settings; play: StoredGame; saved: StoredGame[];
-  started: boolean; setup: PlayDraft | null; viewedPly: number | null; stockfish: StockfishSettings; feedback: boolean; badgeLoading: BadgeLoading; bottomNav: boolean;
+  mode: Mode; /** Compatibility read alias of play.settings. */ readonly settings: Settings; play: StoredGame; saved: StoredGame[];
+  started: boolean; setup: PlayDraft | null; viewedPly: number | null; stockfish: StockfishSettings; feedback: boolean; badgeLoading: BadgeLoading;
   analysis: Analysis; analysisSettings: Draft; analysisLoaded: boolean; importing: boolean; analysisSourceId: string | null;
   inputs: { fen: string; pgn: string }; flipped: boolean; preview: string | null;
   promotion: { from: Square; to: Square } | null;
   insight: Insight | null; error: string; request: Request | null; revision: number;
-  flushNonce: number;
 };
 export type Action =
   | { type: 'mode'; mode: Mode }
@@ -33,9 +35,7 @@ export type Action =
   | { type: 'stockfish-settings'; settings: Partial<StockfishSettings> }
   | { type: 'feedback'; enabled: boolean }
   | { type: 'badge-loading'; loading: BadgeLoading }
-  | { type: 'bottom-nav'; enabled: boolean }
   | { type: 'new'; id: string; createdAt: string; resolvedColor?: 'white' | 'black' }
-  | { type: 'settings'; settings: Partial<Settings>; id: string; createdAt: string }
   | { type: 'analysis-settings'; settings: Partial<Draft> }
   | { type: 'takeback' } | { type: 'resign' } | { type: 'flip' }
   | { type: 'move'; from: Square; to: Square }
@@ -43,13 +43,12 @@ export type Action =
   | { type: 'preview'; uci: string | null } | { type: 'original' }
   | { type: 'promote'; piece: string | null }
   | { type: 'inputs'; inputs: Partial<State['inputs']> }
-  | { type: 'load' } | { type: 'unload' } | { type: 'url-line'; initialFen: string; moves: string[] } | { type: 'step'; delta: number } | { type: 'view'; ply: number | null } | { type: 'analyze' }
+  | { type: 'load' } | { type: 'unload' } | { type: 'url-line'; initialFen: string; moves: string[] } | { type: 'step'; delta: number } | { type: 'view'; ply: number | null }
   | { type: 'saved'; id: string } | { type: 'review'; id?: string } | { type: 'delete'; id: string }
   | { type: 'reply'; request: Request; response: MoveResponse }
   | { type: 'failure'; request: Request; error: unknown }
   | { type: 'retry' }
-  | { type: 'sync'; saved: StoredGame[]; currentId: string | null; total: number | null; pending: OutboxOp[] }
-  | { type: 'retry-sync' };
+  | { type: 'sync'; saved: StoredGame[]; currentId: string | null; total: number | null; pending: OutboxOp[] };
 
 export function currentPosition(state: State): Position & { initialFen?: string; terminal?: Evaluation | null } {
   if (state.mode === 'analysis') return analysisLine(state.analysis);
@@ -60,20 +59,20 @@ export function maiaTurn(state: State): boolean {
   // The tip record resolves history-aware terminality once per line (repetition
   // needs full history); side-to-move is position-only and safe to parse.
   const record = lineRecord(state.play.moves);
-  return toGroundColor(new Chess(record.fen).turn()) !== state.settings.userColor && record.terminal === null;
+  return toGroundColor(new Chess(record.fen).turn()) !== state.play.settings.userColor && record.terminal === null;
 }
 function queueRequest(state: State): State {
-  const position = state.mode === 'play' ? lineRecord(state.play.moves) : analysisLine(state.analysis);
-  const settings = state.mode === 'play' ? state.settings : { ...state.analysisSettings, eloUser: state.analysisSettings.eloMaia };
-  return { ...state, error: '', request: { id: state.revision, mode: state.mode, payload: {
+  const position = lineRecord(state.play.moves);
+  const settings = state.play.settings;
+  if (position.moves.length > 256) return { ...state, request: null, error: 'Maia inference supports at most 256 plies.' };
+  return { ...state, error: '', request: { id: state.revision, mode: 'play', payload: {
     fen: position.fen, moves: position.moves, elo_maia: settings.eloMaia, elo_user: settings.eloUser, model: settings.model,
-    maia_color: state.mode === 'play' ? oppositeColor(state.settings.userColor) : toGroundColor(new Chess(position.fen).turn()),
-    ...(state.mode === 'play' ? { temperature: state.settings.temperature ?? 0 } : {}),
-    ...(state.mode === 'analysis' && state.analysis.initialFen !== START_FEN ? { initial_fen: state.analysis.initialFen } : {}),
+    maia_color: oppositeColor(settings.userColor), temperature: settings.temperature ?? 0,
   } } };
 }
 function transition(state: State, changes: Partial<State>, resumePlay = true): State {
   const next = { ...state, ...changes, revision: state.revision + 1, request: null, promotion: null, preview: null, insight: null, error: '' };
+  next.settings = next.play.settings;
   return resumePlay && next.mode === 'play' && maiaTurn(next) ? queueRequest(next) : next;
 }
 function withPlay(state: State, play: StoredGame): State {
@@ -121,8 +120,8 @@ export function snapshotOf(analysis: Analysis, gameId?: string): AnalysisSnapsho
   return { initialFen: analysis.initialFen, moves: analysis.moves, index: analysis.index,
     perspective: analysis.perspective, ownGame: analysis.ownGame, ...(gameId ? { gameId } : {}) };
 }
-export function initialState(mode: Mode = 'play', urlLine?: UrlLine): State {
-  const restored = restoreGame(readStorage(KEYS.current));
+export function initialState(mode: Mode = 'play', urlLine?: UrlLine, repository = readGameRepository()): State {
+  const restored = repository.games.find(game => game.id === repository.currentId);
   const settings = restored?.settings ?? loadSettings();
   const stored = readStorage<Partial<State['inputs']>>(KEYS.analysis);
   const inputs = { fen: typeof stored?.fen === 'string' ? stored.fen : '', pgn: typeof stored?.pgn === 'string' ? stored.pgn : '' };
@@ -155,10 +154,9 @@ export function initialState(mode: Mode = 'play', urlLine?: UrlLine): State {
   }
   const state: State = { mode, settings, play: restored ?? { id: newId(), createdAt: new Date().toISOString(), moves: [], settings },
     started: !!restored, setup: restored ? null : newPlayDraft(settings), viewedPly: null,
-    saved: loadSaved(), analysis, analysisSettings: { eloMaia: settings.eloMaia, model: settings.model, userColor: settings.userColor }, analysisLoaded, importing: !analysisLoaded, analysisSourceId,
-    stockfish: normalizeStockfishSettings(readStorage(STOCKFISH_STORAGE_KEY)), feedback: readStorage<boolean>(KEYS.feedback) === true, badgeLoading: normalizeBadgeLoading(readStorage<unknown>(KEYS.badgeLoading)), bottomNav: readStorage<boolean>(KEYS.bottomNav) !== false,
-    inputs, flipped: false, preview: null, promotion: null, insight: null, error: '', request: null, revision: 0,
-    flushNonce: 0 };
+    saved: repository.games, analysis, analysisSettings: { eloMaia: settings.eloMaia, model: settings.model, userColor: settings.userColor }, analysisLoaded, importing: !analysisLoaded, analysisSourceId,
+    stockfish: normalizeStockfishSettings(readStorage(STOCKFISH_STORAGE_KEY)), feedback: readStorage<boolean>(KEYS.feedback) === true, badgeLoading: normalizeBadgeLoading(readStorage<unknown>(KEYS.badgeLoading)),
+    inputs, flipped: false, preview: null, promotion: null, insight: null, error: '', request: null, revision: 0 };
   return mode === 'play' && maiaTurn(state) ? queueRequest(state) : state;
 }
 export function reducer(state: State, action: Action): State {
@@ -167,17 +165,14 @@ export function reducer(state: State, action: Action): State {
     case 'stockfish-settings': return { ...state, stockfish: normalizeStockfishSettings({ ...state.stockfish, ...action.settings }) };
     case 'feedback': return state.feedback === action.enabled ? state : { ...state, feedback: action.enabled };
     case 'badge-loading': return state.badgeLoading === action.loading ? state : { ...state, badgeLoading: action.loading };
-    case 'bottom-nav': return state.bottomNav === action.enabled ? state : { ...state, bottomNav: action.enabled };
-    case 'setup': return { ...state, setup: { ...(state.setup ?? newPlayDraft(state.settings)), ...action.draft } };
+    case 'setup': return { ...state, setup: { ...(state.setup ?? newPlayDraft(state.play.settings)), ...action.draft } };
     case 'cancel-setup': return state.started ? { ...state, setup: null } : state;
     case 'new': {
-      const draft = state.setup ?? newPlayDraft(state.settings);
+      const draft = state.setup ?? newPlayDraft(state.play.settings);
       if (draft.userColor === 'random' && !action.resolvedColor) return state;
       const settings: Settings = { ...draft, userColor: action.resolvedColor ?? (draft.userColor === 'black' ? 'black' : 'white'), eloUser: draft.eloMaia };
-      return transition(state, { started: true, setup: null, viewedPly: null, settings, play: { id: action.id, createdAt: action.createdAt, moves: [], settings } });
+      return transition(state, { started: true, setup: null, viewedPly: null, play: { id: action.id, createdAt: action.createdAt, moves: [], settings } });
     }
-    // Legacy action is draft-only; settings cannot mutate an active game.
-    case 'settings': return reducer(state, { type: 'setup', draft: action.settings });
     case 'analysis-settings': return transition(state, { analysisSettings: { ...state.analysisSettings, ...action.settings } }, false);
     case 'flip': return { ...state, flipped: !state.flipped };
     case 'preview': return { ...state, preview: action.uci };
@@ -185,7 +180,7 @@ export function reducer(state: State, action: Action): State {
     case 'takeback': {
       if (state.mode !== 'play' || !state.play.moves.length || state.play.result === 'resigned') return state;
       const tip = lineRecord(state.play.moves);
-      const count = toGroundColor(new Chess(tip.fen).turn()) === state.settings.userColor ? 2 : 1;
+      const count = toGroundColor(new Chess(tip.fen).turn()) === state.play.settings.userColor ? 2 : 1;
       const { moves } = retreatLine(state.play.moves, START_FEN, count);
       return transition(withPlay(state, { ...state.play, moves }), { viewedPly: null });
     }
@@ -202,7 +197,7 @@ export function reducer(state: State, action: Action): State {
       const playRecord = state.mode === 'play' ? lineRecord(state.play.moves) : null;
       const game = playRecord ? new Chess(playRecord.fen) : new Chess(currentPosition(state).fen);
       if (state.promotion || (playRecord ? playRecord.terminal !== null : game.isGameOver()) || (state.mode !== 'play' && state.mode !== 'analysis')) return state;
-      if (state.mode === 'play' && (!state.started || state.play.result === 'resigned' || state.viewedPly !== null || state.request || toGroundColor(game.turn()) !== state.settings.userColor)) return state;
+      if (state.mode === 'play' && (!state.started || state.play.result === 'resigned' || state.viewedPly !== null || state.request || toGroundColor(game.turn()) !== state.play.settings.userColor)) return state;
       if (state.mode === 'analysis' && !state.analysisLoaded) return state;
       if (!game.moves({ verbose: true }).some(move => move.from === action.from && move.to === action.to)) return state;
       if (game.get(action.from)?.type === 'p' && /[18]$/.test(action.to)) return { ...state, promotion: { from: action.from, to: action.to } };
@@ -238,10 +233,9 @@ export function reducer(state: State, action: Action): State {
       const index = Math.max(0, Math.min(analysisLength(state.analysis), action.ply ?? analysisLength(state.analysis)));
       return index === state.analysis.index ? state : transition(state, { analysis: { ...state.analysis, index } }, false);
     }
-    case 'analyze': return state.mode === 'analysis' && state.analysisLoaded && !state.request ? queueRequest({ ...state, revision: state.revision + 1, insight: null, preview: null }) : state;
     case 'saved': {
       const play = state.saved.find(game => game.id === action.id);
-      return play ? transition(state, { play, settings: play.settings, started: true, setup: null, viewedPly: null, mode: 'play' }) : state;
+      return play ? transition(state, { play, started: true, setup: null, viewedPly: null, mode: 'play' }) : state;
     }
     case 'review': {
       const play = action.id ? state.saved.find(game => game.id === action.id) : state.play;
@@ -258,43 +252,44 @@ export function reducer(state: State, action: Action): State {
     }
     case 'delete': {
       const saved = state.saved.filter(game => game.id !== action.id);
-      if (state.play.id !== action.id) return { ...state, saved };
-      return transition(state, { saved, started: false, setup: newPlayDraft(state.settings), viewedPly: null,
-        play: { id: newId(), createdAt: new Date().toISOString(), moves: [], settings: state.settings } }, false);
+      const analysisSourceId = state.analysisSourceId === action.id ? null : state.analysisSourceId;
+      const analysisLoaded = state.analysisSourceId === action.id ? false : state.analysisLoaded;
+      if (state.play.id !== action.id) return { ...state, saved, analysisSourceId, analysisLoaded };
+      return transition(state, { saved, analysisSourceId, analysisLoaded, started: false, setup: newPlayDraft(state.play.settings), viewedPly: null,
+        play: { id: `${state.play.id}:deleted:${state.revision + 1}`, createdAt: state.play.createdAt, moves: [], settings: state.play.settings } }, false);
     }
     case 'sync': {
-      const merged = mergeSync(action.saved, action.currentId, action.pending);
+      const rows = new Map(state.saved.map(game => [game.id, game]));
+      for (const game of action.saved) rows.set(game.id, game);
+      const merged = mergeSync([...rows.values()], action.currentId, action.pending);
       // Display counts (pending, total, errors) live in the HistorySyncStore,
       // updated by the effect that dispatches this action — the reducer owns
       // only game data, so sync display updates never re-render the board.
       const base = { ...state, saved: merged.saved };
-      const pendingPlay = action.pending.some(op => op.op === 'save' && op.game.id === state.play.id);
-      if (pendingPlay || (merged.currentId === null && action.saved.length === 0 && state.started)) {
-        // Local edits still in the outbox (or an offline cache with no server
-        // rows) win over the server snapshot; keep any in-flight request.
-        if (state.request) return base;
-        return transition(base, {}, true);
+      const deletedPlay = action.pending.some(op => op.op === 'delete' && op.id === state.play.id);
+      if (!deletedPlay && merged.currentId === null && action.saved.length === 0 && state.started) {
+        // An empty partial history does not retire a cache-seeded live game.
+        return base;
       }
       const current = merged.saved.find(game => game.id === merged.currentId);
       if (!current) {
-        return transition(base, { started: false, setup: newPlayDraft(base.settings), viewedPly: null,
-          play: { id: newId(), createdAt: new Date().toISOString(), moves: [], settings: base.settings } }, false);
+        if (!state.started) return base;
+        return transition(base, { started: false, setup: newPlayDraft(base.play.settings), viewedPly: null,
+          play: { id: `${state.play.id}:empty:${state.revision + 1}`, createdAt: state.play.createdAt, moves: [], settings: base.play.settings } }, false);
       }
-      if (state.request && current.id === state.play.id && current.moves.join(',') === state.play.moves.join(',')) {
+      if (current.id === state.play.id && current.moves.join(',') === state.play.moves.join(',') && current.result === state.play.result && sameSettings(current.settings, state.play.settings)) {
         // Same tip with inference already running: keep the request, no duplicate.
-        return { ...base, play: current, settings: { ...current.settings }, started: true, setup: null, viewedPly: null };
+        return { ...base, started: true };
       }
-      return transition(base, { play: current, settings: { ...current.settings }, started: true, setup: null, viewedPly: null });
+      return transition(base, { play: current, started: true, setup: null, viewedPly: null });
     }
-    case 'retry-sync': return { ...state, flushNonce: state.flushNonce + 1 };
     case 'reply': {
-      if (state.request !== action.request) return state;
-      const insight: Insight = { response: action.response, fen: action.request.payload.fen, mode: state.mode };
-      if (state.mode === 'analysis') return { ...state, request: null, insight };
+      if (!state.request || state.request !== action.request) return state;
       try {
         const uci = action.response.move;
         const { moves } = extendLine(state.play.moves, START_FEN, uci.slice(0, 2) as Square, uci.slice(2, 4) as Square, uci[4]);
-        return { ...withPlay(state, { ...state.play, moves }), request: null, insight: null };
+        return { ...withPlay(state, { ...state.play, moves }), request: null,
+          insight: { response: action.response, fen: action.request.payload.fen, mode: 'play' } };
       } catch { return { ...state, request: null, error: 'Maia returned an illegal move.' }; }
     }
     case 'failure': return state.request === action.request ? { ...state, request: null, error: readableApiError(action.error) } : state;
@@ -304,7 +299,6 @@ export function reducer(state: State, action: Action): State {
       // surfaces the message first and the user gates the next attempt.
       if (state.request || !state.error) return state;
       if (state.mode === 'play') return maiaTurn(state) ? queueRequest({ ...state, revision: state.revision + 1 }) : state;
-      if (state.mode === 'analysis') return state.analysisLoaded ? queueRequest({ ...state, revision: state.revision + 1, insight: null, preview: null }) : state;
       return state;
     }
   }

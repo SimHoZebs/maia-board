@@ -1,5 +1,5 @@
 import { ArrowUpRight } from "lucide-react";
-import { candidateSan, sideName } from "./domain";
+import { sideName } from "./domain";
 import { issueLabels, summarizeReview, type ReviewSide } from "./reviewSummary";
 import type { Review } from "./useReview";
 import "./review-overview.css";
@@ -40,9 +40,7 @@ export function ReviewOverview({
             ply={ply}
             sans={review.nodes
               .slice(1)
-              .map((node, index) =>
-                candidateSan(review.nodes[index].fen, node.moves[index]),
-              )}
+              .map(node => node.san)}
             onView={onGraphView}
             side={userSide}
           />

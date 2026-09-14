@@ -1,14 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { isMaiaPosition, maiaIdentityOf, sameMaiaIdentity } from './useReview';
+import { isMaiaPosition } from './useReview';
 import { buildTimeline, loadLine } from './domain';
 
 describe('maia per-move identity', () => {
-  it('compares elo and model', () => {
-    expect(sameMaiaIdentity(maiaIdentityOf({ eloMaia: 1600, model: '79m' }), { eloMaia: 1600, model: '79m' })).toBe(true);
-    expect(sameMaiaIdentity({ eloMaia: 1600, model: '79m' }, { eloMaia: 1800, model: '79m' })).toBe(false);
-    expect(sameMaiaIdentity({ eloMaia: 1600, model: '79m' }, { eloMaia: 1600, model: '5m' })).toBe(false);
-  });
-
   it('pins Maia moves by side to move, never terminals or non-own lines', () => {
     const line = loadLine('', '1. e4 e5 2. Nf3');
     const rows = buildTimeline(line.initialFen, line.moves).rows;

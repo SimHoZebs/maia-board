@@ -1,3 +1,5 @@
+import { Chess } from 'chess.js';
+import { retryBusy, withDeadline } from './evaluationTransport';
 export type MaiaColor = 'white' | 'black';
 export type MaiaModel = '79m' | '5m';
 
@@ -10,10 +12,6 @@ export type MoveRequest = {
   maia_color: MaiaColor;
   initial_fen?: string;
   temperature?: number;
-  // Opaque read-through coordinates (see reviewCoordinator.maiaCacheKeyForMoveRequest):
-  // the backend serves a matching cached row or computes live and stores it.
-  cache_hash?: string;
-  cache_key?: string;
 };
 
 export type TopMove = {
@@ -72,15 +70,36 @@ function isModel(value: unknown): value is MaiaModel {
   return value === '79m' || value === '5m';
 }
 
-export function parseMoveResponse(value: unknown): MoveResponse {
-  if (!isRecord(value) || typeof value.move !== 'string' || !isModel(value.model_used) || typeof value.degraded !== 'boolean') {
+const uci = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
+const probability = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+export function parseMoveResponse(value: unknown, expected?: { model: MaiaModel; fen: string; temperature?: number }): MoveResponse {
+  if (!isRecord(value) || typeof value.move !== 'string' || !uci.test(value.move) || !isModel(value.model_used) || typeof value.degraded !== 'boolean') {
     throw new MaiaApiError('unknown', 'Maia returned an incomplete response.');
   }
-  if (!Array.isArray(value.top_moves) || !value.top_moves.every((candidate) => isRecord(candidate) && typeof candidate.move === 'string' && typeof candidate.prob === 'number')) {
+  if (!Array.isArray(value.top_moves) || !value.top_moves.length || value.top_moves.length > 5 || !value.top_moves.every((candidate) => isRecord(candidate) && typeof candidate.move === 'string' && uci.test(candidate.move) && probability(candidate.prob)) || new Set(value.top_moves.map(candidate => candidate.move)).size !== value.top_moves.length) {
     throw new MaiaApiError('unknown', 'Maia returned invalid candidate moves.');
   }
-  if (!Array.isArray(value.wdl) || value.wdl.length !== 3 || !value.wdl.every((part) => typeof part === 'number' && Number.isFinite(part))) {
+  const candidates = value.top_moves as TopMove[];
+  const sum = candidates.reduce((total, candidate) => total + candidate.prob, 0);
+  if (sum <= 0 || sum > 1.000001 || candidates.some((candidate, index) => index > 0 && candidate.prob > candidates[index - 1].prob + 1e-7)) throw new MaiaApiError('unknown', 'Maia returned invalid candidate probabilities.');
+  if (!Array.isArray(value.wdl) || value.wdl.length !== 3 || !value.wdl.every(probability) || Math.abs(value.wdl.reduce((sum, part) => sum + part, 0) - 1) > 1e-6) {
     throw new MaiaApiError('unknown', 'Maia returned invalid WDL data.');
+  }
+  if (expected) {
+    if (value.model_used !== expected.model && !(expected.model === '79m' && value.model_used === '5m' && value.degraded)) throw new MaiaApiError('unknown', 'Maia returned a different model.');
+    if (value.degraded !== (value.model_used !== expected.model)) throw new MaiaApiError('unknown', 'Maia returned inconsistent fallback identity.');
+    if (!expected.temperature && value.move !== candidates[0].move) {
+      // Upstream argmax and topk may order equal logits differently. Preserve
+      // its selected move when the highest policies tie, mirroring the
+      // backend's deterministic validation (including a full 5-way tie whose
+      // selected move can fall outside the listed ranks).
+      const selected = candidates.find(candidate => candidate.move === value.move);
+      const tied = selected ? Math.abs(selected.prob - candidates[0].prob) <= 1e-7
+        : candidates.length === 5 && Math.abs(candidates[4].prob - candidates[0].prob) <= 1e-7;
+      if (!tied) throw new MaiaApiError('unknown', 'Maia returned an inconsistent selected move.');
+    }
+    const legal = new Set(new Chess(expected.fen).moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`));
+    if (!legal.has(value.move) || !value.top_moves.every(candidate => legal.has(candidate.move))) throw new MaiaApiError('unknown', 'Maia returned an illegal candidate move.');
   }
   return {
     move: value.move,
@@ -104,23 +123,20 @@ function parseErrorCode(value: unknown): ApiErrorCode {
 }
 
 export async function requestMove(payload: MoveRequest, fetchImpl: FetchLike = fetch, signal?: AbortSignal): Promise<MoveResponse & { cached?: boolean }> {
-  const post = async (coordinates: boolean): Promise<Response> => {
-    const { cache_hash: _hash, cache_key: _key, ...rest } = payload;
+  return withDeadline(async transportSignal => {
+    let response: Response;
     try {
-      return await fetchImpl('/move', {
+      response = await retryBusy(fetchImpl, '/move', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(coordinates ? payload : rest),
-        signal,
-      });
+        body: JSON.stringify(payload),
+      }, transportSignal);
     } catch (error) {
-      if (signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
+      if (transportSignal.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
         throw new DOMException('Aborted', 'AbortError');
       }
       throw new MaiaApiError('server_unreachable', 'The Maia server could not be reached.');
     }
-  };
-  const read = async (response: Response): Promise<{ parsed: MoveResponse; hit: boolean }> => {
     let body: unknown;
     try {
       body = await response.json();
@@ -132,38 +148,9 @@ export async function requestMove(payload: MoveRequest, fetchImpl: FetchLike = f
       const message = isRecord(body) && typeof body.message === 'string' ? body.message : 'The Maia server rejected this position.';
       throw new MaiaApiError(code, message, response.status);
     }
-    return { parsed: parseMoveResponse(body), hit: response.headers.get('X-Eval-Cache') === 'hit' };
-  };
-  const hasCoordinates = payload.cache_hash !== undefined || payload.cache_key !== undefined;
-  const first = await post(hasCoordinates);
-  try {
-    const { parsed, hit } = await read(first);
-    // Read-through backends mark served rows; absence means live inference
-    // (or an older backend without the header).
-    if (hit) return { ...parsed, cached: true as const };
-    return parsed;
-  } catch (error) {
-    // A served row that fails validation is poison (e.g. a lax legacy PUT):
-    // fall back to live inference once. The coord-less retry files nothing
-    // server-side, so write the validated live result back explicitly to heal
-    // the row (never degraded stand-ins); other failures propagate as-is.
-    if (!hasCoordinates || first.headers.get('X-Eval-Cache') !== 'hit') throw error;
-    const { parsed } = await read(await post(false));
-    if (!parsed.degraded) {
-      const { cache_hash: hash, cache_key: key } = payload;
-      void (async () => {
-        try {
-          await fetchImpl(`/evaluations/${hash}`, {
-            method: 'PUT', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ engine: 'maia', key, value: parsed }),
-          });
-        } catch {
-          // Best-effort: the live game continues regardless.
-        }
-      })();
-    }
-    return parsed;
-  }
+    const parsed = parseMoveResponse(body, payload);
+    return response.headers.get('X-Eval-Cache') === 'hit' ? { ...parsed, cached: true } : parsed;
+  }, signal);
 }
 
 export function readableApiError(error: unknown): string {

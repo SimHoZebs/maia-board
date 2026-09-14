@@ -1,5 +1,9 @@
 # Refactor plan — separate subsystems instead of guarding them (v2)
 
+Historical planning record. The findings and proposed phases below retain their
+original context. See [README.md](README.md) for current usage and links to
+the maintained frontend and backend architecture documentation.
+
 Source: external evaluation (2026-09-14, 7 findings) + local verification
 against `frontend/src`. Plan only; no behavior changes yet.
 Review: plan-reviewer v1 returned REVISE (2 blockers, 8 majors); addressed below.

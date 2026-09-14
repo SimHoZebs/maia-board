@@ -39,6 +39,31 @@ func TestCoverageRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCoverageIncludesV2Rows(t *testing.T) {
+	s := &server{store: testStore(t)}
+	putCache(t, s, "abc123", `{"engine":"sf","key":"k1","value":{"engine":"Stockfish 19","depth":12}}`)
+	v2hash := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if _, err := s.store.cachePut(v2hash, "sf", "v2:test-key", `{"engine":"Stockfish 19"}`); err != nil {
+		t.Fatal(err)
+	}
+	w := getCoverage(t, s, "?hash=abc123&hash="+v2hash)
+	if w.Code != 200 {
+		t.Fatalf("coverage status %d: %s", w.Code, w.Body)
+	}
+	var body struct {
+		Rows map[string]cachedEvaluation `json:"rows"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Rows) != 2 {
+		t.Fatalf("rows = %+v", body.Rows)
+	}
+	if body.Rows[v2hash].Engine != "sf" || body.Rows[v2hash].Key != "v2:test-key" {
+		t.Fatalf("v2 row = %+v", body.Rows[v2hash])
+	}
+}
+
 func TestCoverageValidation(t *testing.T) {
 	s := &server{store: testStore(t)}
 	w := getCoverage(t, s, "?hash=XYZ")

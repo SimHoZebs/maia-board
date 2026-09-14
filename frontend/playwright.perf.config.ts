@@ -4,12 +4,13 @@ import { defineConfig } from '@playwright/test';
 // Excluded from the default `playwright.config.ts` run on purpose: one
 // scenario, one worker, always traced. Run with `npm run test:perf`.
 export default defineConfig({
+  outputDir: 'test-results/perf-presentation',
   testDir: './tests/perf',
   fullyParallel: false,
   workers: 1,
   timeout: 240_000,
   expect: { timeout: 60_000 },
-  reporter: [['list'], ['html', { open: 'never' }]],
+  reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report/perf-presentation' }]],
   use: {
     browserName: 'chromium',
     headless: true,

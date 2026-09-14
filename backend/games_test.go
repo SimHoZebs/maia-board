@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -37,6 +38,75 @@ func normalizeJSON(t *testing.T, document string) string {
 func gameFixture(id string, moves ...string) gamePayload {
 	maia, user := 1600, 1400
 	return gamePayload{ID: id, UserColor: "white", EloMaia: &maia, EloUser: &user, Model: "79m", Moves: moves}
+}
+
+func TestGamesPersistenceBudget(t *testing.T) {
+	s := &server{store: testStore(t)}
+	for _, count := range []int{257, 4096, 4097} {
+		moves := make([]string, count)
+		for i := range moves {
+			moves[i] = "e2e4"
+		}
+		payload := gameFixture("large", moves...)
+		body, _ := json.Marshal(payload)
+		w := httptest.NewRecorder()
+		s.games(w, httptest.NewRequest("POST", "/games", strings.NewReader(string(body))))
+		expected := 200
+		if count > 4096 {
+			expected = 400
+		}
+		if w.Code != expected {
+			t.Fatalf("%d plies: status %d, body %s", count, w.Code, w.Body)
+		}
+	}
+	oversized := gameFixture(strings.Repeat("a", 64*1024), "e2e4")
+	body, _ := json.Marshal(oversized)
+	w := httptest.NewRecorder()
+	s.games(w, httptest.NewRequest("POST", "/games", strings.NewReader(string(body))))
+	if w.Code != 400 {
+		t.Fatalf("oversized body status %d", w.Code)
+	}
+}
+
+func TestGamesPagesIncludeCurrentOutsidePage(t *testing.T) {
+	store := testStore(t)
+	current := gameFixture("old", "e2e4")
+	current.Current = true
+	if _, err := store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"middle", "new"} {
+		if _, err := store.Save(gameFixture(id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &server{store: store}
+	for offset, id := range []string{"new", "middle", "old"} {
+		w := httptest.NewRecorder()
+		s.games(w, httptest.NewRequest("GET", fmt.Sprintf("/games?limit=1&offset=%d", offset), nil))
+		var page struct {
+			Games   []gameRow `json:"games"`
+			Current *gameRow  `json:"current_game"`
+			Next    *int      `json:"next_offset"`
+			Total   int       `json:"total"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Games) != 1 || page.Games[0].ID != id || page.Total != 3 || page.Current == nil || page.Current.ID != "old" {
+			t.Fatalf("page %d: %s", offset, w.Body)
+		}
+		if offset < 2 && (page.Next == nil || *page.Next != offset+1) || offset == 2 && page.Next != nil {
+			t.Fatalf("next offset: %s", w.Body)
+		}
+	}
+	for _, offset := range []string{"-1", "junk"} {
+		w := httptest.NewRecorder()
+		s.games(w, httptest.NewRequest("GET", "/games?offset="+offset, nil))
+		if w.Code != 400 {
+			t.Fatalf("invalid offset accepted: %s", offset)
+		}
+	}
 }
 
 func TestGameStoreSaveGetList(t *testing.T) {

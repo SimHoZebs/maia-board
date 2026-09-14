@@ -31,31 +31,22 @@ export function describeMove(args: { san: string; quality: Quality | undefined; 
   const { san, quality, rarity, elo, bestSan } = args;
   if (!quality || quality.label === 'Unreviewed') return null;
   if (quality.label === 'Forced') return `${san} was the only legal move.`;
-  const rare = rarity?.label ?? 'Unknown';
+  const prediction = rarity?.prob != null
+    ? ` Maia at ${elo} predicts ${(rarity.prob * 100).toFixed(1).replace(/\.0$/, '')}% for this move.`
+    : rarity?.label === 'Unseen' ? " This move is absent from Maia's top choices." : '';
   if (quality.label === 'Miss') return bestSan ? `${san} missed the win — ${bestSan} kept the winning position.` : `${san} missed a win that was on the board.`;
   if (quality.label === 'Skull') return bestSan ? `${san} allowed mate — ${bestSan} held the position.` : `${san} allowed mate.`;
-  if (quality.label === 'Great') return rare === 'Unseen'
-    ? `Brilliant — ${san} was the only good move, and almost nobody at ${elo} finds it.`
-    : `Great — ${san} was the only good move in the position, and you found it.`;
-  if (quality.label === 'Best') {
-    if (rare === 'Unseen') return `Brilliant — ${san} is the engine's best move, and almost nobody at ${elo} plays it.`;
-    if (rare === 'Seen') return `Best — ${san} is the engine's top choice.`;
-    return `Best — ${san} is the engine's top choice, and the natural move at ${elo}.`;
-  }
+  if (quality.label === 'Great') return `Great — ${san} is the engine's top choice with a sizable gap to its next candidate.${prediction}`;
+  if (quality.label === 'Best') return `Best — ${san} is the engine's top choice.${prediction}`;
   if (quality.label === 'Good' || quality.loss == null) {
     // classifyLoss can only be null below; quality.loss is set for every
     // reviewed non-forced move, so this branch is Good by elimination.
     // Excellent does not exist yet as a Quality label (see reviewMove), so
     // near-best non-best moves read as Good for now.
-    return rare === 'Unseen'
-      ? `Good — ${san} is sound, an unusual pick at ${elo} that held together.`
-      : `Good — ${san} is sound, but slightly imprecise.`;
+    return `Good — ${san} keeps the engine's estimated winning chance close to its best line.${prediction}`;
   }
   const issue = quality.label === 'Blunder' ? 'a blunder' : quality.label === 'Mistake' ? 'a mistake' : 'an inaccuracy';
-  const tail = rare === 'Expected'
-    ? ` Most players at ${elo} would play it too.`
-    : rare === 'Unseen' ? ` Few at ${elo} would even consider it.` : '';
-  return `${san} was ${issue} — it gave up ${pointsText(quality.loss)} of your winning chance.${tail}`;
+  return `${san} was ${issue} — it gave up ${pointsText(quality.loss)} of your estimated winning chance.${prediction}`;
 }
 export function whiteWin(score: Score): number {
   return score.type === 'cp' ? 100 / (1 + Math.exp(-.00368208 * score.value)) : (score.winning_side ?? (score.value > 0 ? 'white' : 'black')) === 'white' ? 100 : 0;

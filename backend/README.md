@@ -1,14 +1,16 @@
-# maia-board backend spike
+# Maia Board backend
 
-This spike runs a Go HTTP server and keeps Maia3 inference in a Python worker.
-The worker imports the pinned upstream `Maia3UCIEngine`, preserving its model
-configuration and history handling. It adds policy probability to each UCI
-MultiPV line because upstream's stock UCI output exposes WDL and PV but omits
-policy.
+The Go HTTP server owns request validation, SQLite persistence, and engine process
+lifecycle. Python adapters perform history-aware chess validation and call Maia3
+or native Stockfish. Maia inference uses the pinned upstream `Maia3UCIEngine`
+API; Go remains the HTTP boundary.
 
-## API
+## Game and engine API
 
-`POST /move` accepts:
+The [root README](../README.md) defines FEN (a position), UCI coordinate moves,
+ply (one player's move), and PGN game notation.
+
+`POST /move` accepts a history-aware Maia request:
 
 ```json
 {
@@ -17,163 +19,174 @@ policy.
   "elo_maia": 1500,
   "elo_user": 1300,
   "model": "79m",
-  "maia_color": "black"
+  "maia_color": "black",
+  "temperature": 0
 }
 ```
 
-`fen` is the current position. `moves` are UCI plies from `initial_fen` to
-`fen`; omit `initial_fen` for standard startpos. Supply `initial_fen` for a
-custom starting position. The worker replays the sequence and rejects a
-mismatch before `go`.
+For standard-start history, omit `initial_fen` or supply the standard starting
+FEN. Supply `initial_fen` explicitly for a custom starting position. The worker
+replays `moves` from that position and compares the result with `fen` before inference.
+Elo inputs accept 0–5000; model names are `79m` and `5m` (default `79m`).
+Inference accepts at most 256 plies. Position history and FEN must describe the
+same board, and `maia_color` must match the side to move.
 
-The Go layer checks FEN shape and UCI move shape before acquiring a worker;
-python-chess in the worker performs semantic FEN and move-legality checks.
+Temperature accepts 0–2 and defaults to 0 at the API. Zero chooses the highest
+policy move; 1 samples the original distribution. Play's new-game setup defaults
+to 1; saved games retain their temperature and legacy games default to 0.
 
-The endpoint only predicts when `maia_color` matches the FEN side to move.
-Accepted values for `model` are lowercase `79m` and `5m`; omitted `model`
-defaults to `79m`. Elo validation follows the upstream UCI declaration of
-0–5000. `moves` is limited to 256 plies as a resource guard.
+Responses contain the selected `move`, ranked `top_moves` with model policy
+probabilities, and normalized `[loss, draw, win]` `wdl` for the first candidate.
+Sampling can select a move outside the displayed candidates. `model_used` and
+`degraded` identify fallback from 79M to 5M. Busy responses return 503; a failed
+79M operation can fall back to 5M, while an explicit 5M request uses only that model.
 
-Optional `temperature` accepts finite numbers from 0 to 2, defaulting to 0.
-0 selects the highest-policy move; 1 samples the original move probabilities;
-higher values spread selection more evenly. Each request resets the worker's
-temperature, including analysis requests that omit it. Play config exposes it
-under Advanced and saves the value with each game.
-New-game Play setup defaults to 1.0, matching the upstream sampling default.
-Resuming a saved game retains its temperature; legacy saved games retain 0.
+`POST /evaluate` performs a Stockfish search. Its settings, score perspective,
+history validation, limits, and process cleanup are documented in
+[`STOCKFISH.md`](STOCKFISH.md). Errors use `{code, message}`. `/healthz` supplies
+the server health endpoint.
 
-The response contains `wdl` as normalized `[loss, draw, win]` probabilities.
-It is the primary candidate's post-move WDL. `top_moves` is rank-ordered and
-contains upstream policy probabilities, independent of temperature. A sampled
-`move` can differ from the top candidate or fall outside `top_moves`.
-`model_used` and `degraded` signal a
-79M-to-5M fallback.
+`GET /games?limit=200&offset=0` lists saved games with `games`, `current_id`,
+`current_game`, `total`, and `next_offset`. The default page size is 200 and the
+maximum is 500. `next_offset: null` ends pagination; `current_game` also supplies
+the active game when it is outside the page.
+`POST /games` creates or updates a game. `GET /games/:id` retrieves a game;
+`DELETE /games/:id` is idempotent and clears a matching current-game marker.
+Games retain their identifier, settings, move history, and creation time.
+Re-saving unchanged game content preserves its recency position.
+Game saves accept at most 4096 plies within the 64 KiB JSON body limit. A game
+can exceed the engine's 256-ply history budget and still be saved.
 
-The endpoint returns `400 position_mismatch` before inference when replaying
-`initial_fen` plus `moves` does not produce `fen`; `400 not_maia_turn` when the
-requested Maia color is not on move; and `400 game_over` when no legal move
-exists.
+## Storage and cache
 
-## Game history
+SQLite uses a pure-Go driver and write-ahead logging. `DB_PATH` selects the file
+(default `maia-board.db`). Persist its directory, including SQLite's companion
+files, across container replacement. Take a consistent SQLite backup using the
+SQLite backup API or `VACUUM INTO` from a live connection; copying only an active
+database's main file can omit writes still in its write-ahead log.
 
-`GET /games` lists stored games newest-first with `{games, current_id, total}`.
-`POST /games` upserts `{id?, user_color, elo_maia, elo_user, model, moves[],
-created_at?, current?, temperature?}`; a missing id gets a server uuid, `created_at` must be
-RFC3339 and is immutable afterwards, and `current: true` moves the
-current-game marker in the same transaction. `GET /games/:id` returns one game
-or `404 not_found`; `DELETE /games/:id` is idempotent (`204`) and clears the
-marker when it points at the deleted game. Elo, UCI shape, and 256-ply limits
-mirror `/move`. Re-saving unchanged content keeps its position in recency
-order, so resume and migration never reshuffle History.
+Games and the current-game marker persist independently of evaluation rows.
+Schema migrations run when the store opens. Browser pending writes are managed
+by the frontend's persistence layer.
 
-Temperature defaults to 0 for legacy requests and saved games. Startup adds the
-`temperature REAL NOT NULL DEFAULT 0` column to existing game databases.
+`POST /move` and `POST /evaluate` can reuse stored evaluations before starting
+inference. `X-Eval-Cache` distinguishes `hit` and `miss`. Only deterministic Maia
+requests participate; sampled play moves and degraded fallback responses are not
+persisted as deterministic analysis. Invalid cached results fall through to engine
+evaluation. The cache evicts old writes beyond 25000 v2 rows, without deleting games.
 
-Storage is SQLite through a pure-Go driver (no CGO, static binary preserved),
-WAL mode, `DB_PATH` (default `./maia-board.db`, `/data/maia-board.db` in the
-managed deployment). Results derive from moves; only history and the marker
-persist. Back up with `VACUUM INTO` against a copy of the database file.
+The server derives v2 cache identity from the current FEN, initial FEN, full move
+history, engine revision, and applicable settings. Legacy client cache coordinates
+do not determine this identity. Legacy opaque rows remain stored; new identities
+start in a cold namespace. Evaluation writes are server-owned, and corrupt results
+are recomputed by the engine endpoints.
 
-## Evaluation cache
+`POST /evaluations/lookup` accepts `{requests: [...]}` with at most 1024 requests
+and a 4 MiB body. Each entry supplies `engine: "sf" | "maia"`, `fen`, `initial_fen`,
+and `moves`; Stockfish may supply `settings`, while Maia supplies `elo_maia`,
+`elo_user`, and `model`. The response is
+`{results: [{index, value, actual_settings?}]}`. Missing indexes are cache misses.
+This read-only endpoint never starts inference; invalid requests return a typed 400.
 
-Analysis results live in the same database because the access pattern is
-exact-key lookup, not document queries — a separate document store would add
-ops burden for no query benefit. `PUT /evaluations/:hash` stores
-`{engine, key, value}` under a client hash (`sf` or `maia` only, JSON object
-values, short keys); `GET /evaluations/:hash` returns the row or
-`404 not_found`; `GET /evaluations/stats` reports row count and bytes. Rows
-evict least-recently-written-first past 5000 (rewrites refresh rank).
+Stockfish exact settings take precedence. Compatible reuse requires matching time
+and depth with more candidate lines. Returned `search_policy` and `actual_settings`
+describe the original search. Such reuse is approximate: a search with more
+candidates can allocate its budget differently from an independent smaller search.
+The frontend validates the reported policy and settings, then slices displayed
+candidates without relabelling their original search. Legacy cache-repair PUTs are
+rejected; malformed lookup values remain misses until an engine endpoint recomputes
+them. Maia identity includes both ratings and the pinned upstream model revision.
 
-`POST /evaluate` and `POST /move` are read-through: with optional
-`cache_hash`/`cache_key` they serve a matching cached row (`X-Eval-Cache:
-hit`) or compute live, persist results, and report `X-Eval-Cache: miss`. A
-hit additionally requires the stored key to equal the presented key and the
-value to validate (Stockfish policy included; Maia requires the stored model
-to equal the requested one and rejects degraded rows), so stale or corrupt
-rows fall through to inference and are overwritten, and hits return the
-stored document verbatim. Only deterministic (`temperature` 0) Maia requests
-participate — sampled moves vary per call — and degraded fallbacks are never
-persisted. The frontend revalidates served rows with its stricter parser and,
-when one fails, retries once without coordinates and writes the validated
-result back explicitly, healing lax legacy rows. The key format
-stays client-owned so policy, model, or rating changes miss naturally instead
-of poisoning results.
+## Maia worker lifecycle
 
-## Line coverage
+Go communicates with a warm Python worker using JSON-lines: one JSON object per
+line on standard input/output, bounded to 64 KiB. After loading, Python emits
+`{"ready": true}`; each request receives a result or typed error. Diagnostics go
+to standard error and Go retains bounded diagnostic output in its logs.
 
-Line restores ask one question — "which of these cache rows exist" — via
-`GET /evaluations/coverage?hash=h1&hash=h2` (at most 1024 hex hashes). The
-response is `{rows: {hash: {engine, key, value}}}` with values riding along,
-so a restore seeds memory in a single round trip instead of hundreds of
-per-position probes. Fresh/stale/completed is derived client-side from actual
-rows; there is no whole-line bookkeeping table. (Databases created before
-this change may still contain an unused `analyses` table; it is never read.)
+The adapter uses the pinned upstream argument parser, `Maia3UCIEngine` constructor,
+model loader, option handling, full-history position command, and `score_moves`.
+Every request resets both ratings, candidate count, and temperature. The worker
+validates positions and moves before invoking upstream, then validates legal
+candidates, probability ordering, and win/draw/loss values before replying.
 
-## Local checks
+Each model worker has one serial operation slot. Admission waits at most 100 ms;
+identical deterministic work can join the running operation. Sampled play requests
+do not share results. Startup has a 300-second deadline and inference has a separate
+120-second deadline. A cancelled worker caller stops waiting while the operation
+continues to own its slot until the reply is drained. A hard timeout or protocol
+failure kills and reaps the worker process group before releasing admission.
+Successful operations preserve the warm process for the next request.
+
+The `/move` HTTP handler waits with client cancellation detached from that bounded
+worker operation. A disconnected client therefore leaves the handler waiting long
+enough to validate and persist a successful deterministic result under its canonical
+cache identity. The worker's caller API still supports cancellation of an individual
+waiter. Neither path releases the serial slot before the operation is drained or
+terminated. Sampled and degraded responses remain excluded from persistent caching.
+
+Stockfish uses an isolated request process whose cancellation kills its process
+group, as described in [STOCKFISH.md](STOCKFISH.md#resource-and-failure-behavior).
+
+## Local verification
+
+Run from `backend/`:
 
 ```sh
 CGO_ENABLED=0 go test ./...
-python3 -m py_compile maia3_worker.py
+CGO_ENABLED=0 go vet ./...
 ```
 
-The container pins upstream Maia3 at commit
-`1e13597c42d4858b7cfd7cfdae01e297263364b2`, installs the CPU-only
-`torch==2.14.0+cpu` wheel, and uses:
-
-```text
-python maia3_worker.py --model 79m --device cpu --no-use-amp \
-  --multipv 5 --temperature 0 --use-uci-history
-```
-
-The upstream source and protocol are documented at:
-
-- https://github.com/CSSLab/maia3
-- https://raw.githubusercontent.com/CSSLab/maia3/main/maia3/uci.py
-
-## Isolated debian-server spike
-
-The unmanaged spike is loopback-only and does not touch the Komodo repository:
+Create a Python 3.12 virtual environment in a location outside tracked source:
 
 ```sh
-ssh -F /home/simho/.kimaki/ssh/config debian-server \
-  'ls -la /home/simho/projects'
-ssh -F /home/simho/.kimaki/ssh/config debian-server \
-  'mkdir -p /home/simho/projects/maia-board-spike /home/simho/projects/maia-board-cache'
-
-# Copy the repository root to the verified remote spike directory, then compare
-# SHA256 for the copied files.
-docker build -f /home/simho/projects/maia-board-spike/backend/Dockerfile \
-  -t maia-board-spike:dev /home/simho/projects/maia-board-spike
-docker run -d --name maia-board-spike-dev --restart=no \
-  --publish 127.0.0.1:18765:8080 \
-  --mount type=bind,src=/home/simho/projects/maia-board-cache,dst=/models \
-  --memory=8g --cpus=6 maia-board-spike:dev
+python3 -m venv /path/to/maia-test-venv
+/path/to/maia-test-venv/bin/python -m pip install python-chess==1.999 chess==1.11.2
 ```
 
-The 79M worker is attempted first. A failed acquired 79M request falls back
-per request to 5M. A busy worker returns 503 without fallback. An explicit
-`model: "5m"` request uses only 5M.
-
-For the sequential fallback check, tear down the primary first, assert
-`127.0.0.1:18766` is free, then run this second container with `--memory=4g
---cpus=2`. It uses an invalid 79M alias and the cached 5M model:
+Use that interpreter for test discovery:
 
 ```sh
-docker run -d --name maia-board-spike-fallback --restart=no \
-  --env MAIA3_MODEL_79M=invalid-model-alias \
-  --publish 127.0.0.1:18766:8080 \
-  --mount type=bind,src=/home/simho/projects/maia-board-cache,dst=/models \
-  --memory=4g --cpus=2 maia-board-spike:dev
+/path/to/maia-test-venv/bin/python -m unittest discover -v
 ```
 
-Tear down both containers explicitly:
+The default suite uses `python-chess`, a stub Maia module, and engine mocks, without
+Torch or weights. Real Stockfish cases skip unless `STOCKFISH_BINARY` names the
+engine. CI builds the pinned engine from `Dockerfile`, runs `test_stockfish_worker`
+in `Dockerfile.stockfish-test`, and uses the extracted binary for search-settings
+tests and the Go HTTP/cancellation integration test.
+
+The real Maia test skips unless `MAIA3_TEST_MODEL` names a locally cached model.
+Run it in an environment with the pinned Maia runtime dependencies and cached
+weights, such as the combined image with the test file supplied:
 
 ```sh
-docker stop maia-board-spike-dev; docker rm maia-board-spike-dev
-docker stop maia-board-spike-fallback; docker rm maia-board-spike-fallback
+MAIA3_TEST_MODEL=5m python -m unittest -v test_maia3_real
 ```
 
-Run one cold request and three warm requests for each model. Record every
-total time and the maximum warm time in
-`/tmp/maia-board-spike-timing.txt` on debian-server. A maximum warm time over
-5 seconds opens a GPU follow-up; it does not fail this spike.
+That test requests local files only. It checks deterministic history-aware inference;
+mock tests do not measure model quality or cold-loading performance.
+
+## Runtime configuration and upstream
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PORT` | `8080` | HTTP listening port |
+| `STATIC_DIR` | `/app/static` | Frontend build |
+| `DB_PATH` | `maia-board.db` | SQLite database |
+| `PYTHON` | `python3` | Worker interpreter |
+| `MAIA3_WORKER` | `/app/maia3_worker.py` | Maia adapter |
+| `MAIA3_MODEL_79M` | `79m` | Large-model alias |
+| `MAIA3_MODEL_5M` | `5m` | Fallback-model alias |
+| `STOCKFISH_WORKER` | `/app/stockfish_worker.py` | Stockfish adapter |
+| `STOCKFISH_BINARY` | `/app/stockfish` | Native engine |
+
+The [combined Dockerfile](Dockerfile) pins CPU Torch and Maia3 revision
+`1e13597c42d4858b7cfd7cfdae01e297263364b2`. Its `/models/huggingface` cache holds
+downloaded model files. Build from the repository root as described in the
+[root README](../README.md#combined-container-and-hosting).
+
+- [Pinned Maia3 source](https://github.com/CSSLab/maia3/tree/1e13597c42d4858b7cfd7cfdae01e297263364b2)
+- [Pinned model API](https://github.com/CSSLab/maia3/blob/1e13597c42d4858b7cfd7cfdae01e297263364b2/maia3/uci.py)
+- [uv installation](https://docs.astral.sh/uv/getting-started/installation/)
+- [uv-managed Python runtimes](https://docs.astral.sh/uv/guides/install-python/)

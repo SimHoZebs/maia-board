@@ -2,13 +2,15 @@ import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { replay } from '../src/domain';
-import { cacheHash, reviewKey } from '../src/reviewCoordinator';
+import { EvaluationFixture } from './evaluation-fixture';
 import { stockfishPolicy } from '../src/stockfishSettings';
 
 // Regression for the duplicated-Stockfish-rows bug: a cached evaluation whose
-// ranks echo one first move (b8c6 twice at ply 3) must be rejected into a
-// miss, heal through live re-inference, and never strand a ghost row in the
-// candidate list when navigating back to ply 6.
+// ranks echo one first move must be rejected into a miss, heal through live
+// re-inference, and never strand a ghost row in the candidate list.
+// Seeded positions are focus-relative: the panel judges the displayed move
+// from its before-position, so poison sits at ply 2 (shown when viewing ply
+// 3) and the clean row at ply 5 (shown at the tip).
 const MOVES = ['e2e4', 'e7e5', 'f2f3', 'b8c6', 'f1b5', 'g8f6'];
 const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const POLICY = 'sf19-ms750-mpv4-d0-t1-h64-v2';
@@ -21,45 +23,27 @@ const sfRow = (lines: { move: string; score: { type: string; value: number }; de
 test('duplicate stockfish ranks heal and never ghost', async ({ page }) => {
   const settings = { eloMaia: 1600, eloUser: 1600, model: '79m' as const, stockfish: { time_ms: 750, lines: 4, depth: 0 } };
   if (stockfishPolicy(settings.stockfish) !== POLICY) throw new Error('policy drift');
-  const server = new Map<string, { engine: string; value: unknown }>();
+  const server = new EvaluationFixture();
   const seed = (engine: 'sf' | 'maia', slice: string[], value: unknown) => {
-    const node = { initialFen: START, moves: slice, fen: replay(slice).fen() };
-    server.set(cacheHash(reviewKey(engine, node, settings)), { engine, value });
+    const body = { initial_fen: START, moves: slice, fen: replay(slice).fen(), settings: settings.stockfish, elo_maia: settings.eloMaia, elo_user: settings.eloUser, model: settings.model };
+    server.set(engine, body, value);
   };
-  // Ply 3 as the worker once persisted it: ranks 3 and 4 both b8c6.
-  seed('sf', MOVES.slice(0, 3), sfRow([line('g8f6', -92), line('f8c5', -88), line('b8c6', -65), line('b8c6', -65)]));
-  // Ply 6 clean, exactly as cached in production.
-  seed('sf', MOVES.slice(0, 6), sfRow([line('g1e2', -37), line('b5c6', -76), line('d2d3', -84), line('b1c3', -91)]));
+  // Ply 2 as the worker once persisted it: ranks 3 and 4 echo one move.
+  // The panel judges the displayed move from its before-position, so the
+  // seeded positions are focus-relative: poison at ply 2 (shown when
+  // viewing ply 3), clean at ply 5 (shown at the tip).
+  seed('sf', MOVES.slice(0, 2), sfRow([line('g1f3', -92), line('f1c4', -88), line('d2d4', -65), line('d2d4', -65)]));
+  // Ply 5 clean, exactly as cached in production.
+  seed('sf', MOVES.slice(0, 5), sfRow([line('a8b8', -37), line('d8e7', -76), line('d8f6', -84), line('e8e7', -91)]));
   await page.route('http://maia.test/**', async route => {
     const url = new URL(route.request().url());
     const path = url.pathname;
-    if (path === '/evaluations/coverage') {
-      const rows: Record<string, unknown> = {};
-      for (const hash of url.searchParams.getAll('hash')) {
-        const hit = server.get(hash);
-        if (hit) rows[hash] = { engine: hit.engine, value: hit.value };
-      }
-      await route.fulfill({ json: { rows } });
-      return;
-    }
-    if (path.startsWith('/evaluations/')) {
-      const hash = path.slice('/evaluations/'.length);
-      if (route.request().method() === 'PUT') {
-        const put = route.request().postDataJSON();
-        server.set(hash, { engine: put.engine, value: put.value });
-        await route.fulfill({ json: { key_hash: hash, engine: put.engine, created_at: 'now' } });
-        return;
-      }
-      const hit = server.get(hash);
-      if (hit) await route.fulfill({ json: { key_hash: hash, engine: hit.engine, value: hit.value, created_at: 'now' } });
-      else await route.fulfill({ status: 404, json: { code: 'not_found', message: 'missing' } });
-      return;
-    }
+    if (await server.lookup(route)) return;
     if (path === '/move' || path === '/evaluate') {
       const payload = route.request().postDataJSON();
       if (path === '/move') {
-        const fetched = payload.moves as string[];
-        const move = fetched.length ? fetched[fetched.length - 1] : 'e2e4';
+        const candidate = replay(payload.moves, payload.initial_fen).moves({ verbose: true })[0];
+        const move = `${candidate.from}${candidate.to}${candidate.promotion ?? ''}`;
         await route.fulfill({ json: { move, top_moves: [{ move, prob: 0.6 }], wdl: [0.2, 0.3, 0.5], model_used: '79m', degraded: false } });
         return;
       }
@@ -87,15 +71,15 @@ test('duplicate stockfish ranks heal and never ghost', async ({ page }) => {
   await page.goto(`http://maia.test/analyze?moves=${MOVES.join(',')}`);
   const sfRows = page.locator('section[aria-label="Stockfish evaluation"] li');
   const texts = () => sfRows.evaluateAll(els => els.map(el => (el.textContent ?? '').replace(/\s+/g, ' ').trim()));
-  // Ply 6 primes clean from cache.
-  await expect.poll(texts, { timeout: 60000 }).toEqual(['1Ne2-0.37', '2Bxc6-0.76', '3d3-0.84', '4Nc3-0.91']);
-  // Ply 3's duplicated row is rejected into a miss, then heals live: four
-  // distinct ranks, exactly one played marker.
+  // Tip view shows the focus (ply 5) rows, primed clean from cache.
+  await expect.poll(texts, { timeout: 60000 }).toEqual(['1Rb8-0.37', '2Qe7-0.76', '3Qf6-0.84', '4Ke7-0.91']);
+  // Ply 3's view shows focus ply 2, whose duplicated row is rejected into a
+  // miss, then heals live: four distinct ranks, exactly one played marker.
   await page.locator('.move-cell').nth(2).click();
   await expect.poll(texts, { timeout: 60000 }).toHaveLength(4);
   expect(await sfRows.evaluateAll(els => els.map(el => el.querySelector('.rank')?.textContent))).toEqual(['1', '2', '3', '4']);
   expect(await sfRows.evaluateAll(els => els.filter(el => el.classList.contains('played')).length)).toBe(1);
-  // Back at ply 6: still exactly the four clean rows, no ghost fifth.
+  // Back at the tip: still exactly the four clean rows, no ghost fifth.
   await page.locator('.move-cell').nth(5).click();
-  await expect.poll(texts, { timeout: 60000 }).toEqual(['1Ne2-0.37', '2Bxc6-0.76', '3d3-0.84', '4Nc3-0.91']);
+  await expect.poll(texts, { timeout: 60000 }).toEqual(['1Rb8-0.37', '2Qe7-0.76', '3Qf6-0.84', '4Ke7-0.91']);
 });

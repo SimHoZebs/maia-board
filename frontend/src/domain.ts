@@ -1,7 +1,8 @@
 import { Chess, type Square } from 'chess.js';
 import type { Key } from '@lichess-org/chessground/types';
 import type { MaiaColor, MaiaModel, MoveResponse } from './api';
-import { terminalEvaluation, type Evaluation } from './reviewMetrics';
+import type { Evaluation } from './reviewMetrics';
+import { outcomeEvaluation } from './outcomeEvaluation';
 
 export const START_FEN = new Chess().fen();
 export type Mode = 'play' | 'analysis' | 'history' | 'settings';
@@ -23,14 +24,21 @@ export function normalizeSettings(stored?: Partial<Settings> | null): Settings {
 }
 
 export function applyUci(game: Chess, uci: string) {
+  if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(uci)) throw new Error(`Invalid UCI move: ${uci}`);
   return game.move({ from: uci.slice(0, 2) as Square, to: uci.slice(2, 4) as Square, ...(uci[4] ? { promotion: uci[4] } : {}) });
 }
 export function uciFromMove(move: { from: string; to: string; promotion?: string }) {
   return `${move.from}${move.to}${move.promotion ?? ''}`;
 }
 export function replay(moves: string[], initialFen = START_FEN): Chess {
-  const game = new Chess(initialFen);
-  moves.forEach(move => applyUci(game, move));
+  const key = timelineKey(initialFen, moves);
+  const cached = timelineCache.get(key);
+  if (!cached) return deriveTimeline(initialFen, moves, key).game;
+  // Compatibility callers need a mutable, history-bearing Chess instance.
+  // Its reconstruction is one walk; domain facts stay in the cached timeline.
+  touchTimeline(key, cached);
+  const game = new Chess(cached.initialFen);
+  cached.moves.forEach(move => applyUci(game, move));
   return game;
 }
 export function positionOf(game: Chess): Position {
@@ -64,10 +72,9 @@ export function loadLine(fen = '', pgn = ''): Analysis {
   // Explicit FEN wins; otherwise honor the starting position in an exported PGN.
   const initialFen = new Chess(fen.trim() || pgn.match(/\[FEN\s+"([^"]+)"\]/i)?.[1] || START_FEN).fen();
   const moves = parsePgnMoves(pgn, new Chess(initialFen));
-  const game = new Chess(initialFen);
-  moves.forEach(move => applyUci(game, move));
-  return { initialFen, moves, sanMoves: game.history(), index: moves.length, branchFromPly: null, branchMoves: [],
-    perspective: new Chess(initialFen).turn() === 'w' ? 'white' : 'black', ownGame: false };
+  const timeline = buildTimeline(initialFen, moves);
+  return { initialFen, moves, sanMoves: timeline.rows.slice(1).map(row => row.san), index: moves.length, branchFromPly: null, branchMoves: [],
+    perspective: timeline.rows[0].turn, ownGame: false };
 }
 export function exportLine(analysis: Analysis): string {
   const game = replay(analysis.moves, analysis.initialFen);
@@ -118,53 +125,87 @@ export function absoluteWdl(fen: string, wdl: MoveResponse['wdl']) {
   return new Chess(fen).turn() === 'w' ? [win, draw, loss] : [loss, draw, win];
 }
 
-// Canonical chess timeline: one progressive walk producing every per-ply
-// fact downstream code needs, so consumers do lookups instead of replays.
-// Rows share one terminal representation (`Evaluation | null`, null =
-// ongoing) so turn/terminal/SAN answers cannot drift between call sites.
-// Throws on the first illegal UCI exactly like replay() — callers with
-// untrusted lines narrow with legalPrefixLength() first.
+// One history-aware walk owns the position facts for every ply.
 export type TimelineRow = {
   ply: number;
   uci: string;
   san: string;
   fen: string;
   turn: 'white' | 'black';
-  terminal: Evaluation | null;
+  outcome: DomainOutcome | null;
+  historyId: number;
   lastMove: [Key, Key] | undefined;
 };
 export type Timeline = { initialFen: string; moves: string[]; rows: TimelineRow[] };
+export type DomainOutcome = { kind: 'checkmate'; winner: MaiaColor } | { kind: 'draw' };
+const timelineCache = new Map<string, Timeline>();
+const TIMELINE_CACHE_LIMIT = 64;
+let nextHistoryId = 0;
+const timelineKey = (initialFen: string, moves: string[]) => JSON.stringify([initialFen, moves]);
+function touchTimeline(key: string, timeline: Timeline) {
+  timelineCache.delete(key); timelineCache.set(key, timeline);
+  if (timelineCache.size > TIMELINE_CACHE_LIMIT) timelineCache.delete(timelineCache.keys().next().value!);
+}
+function outcome(game: Chess): DomainOutcome | null {
+  return game.isCheckmate() ? { kind: 'checkmate', winner: game.turn() === 'w' ? 'black' : 'white' }
+    : game.isDraw() ? { kind: 'draw' } : null;
+}
 
 // Test observability only: counts builder invocations, mirroring
 // lineRecordMissesForTests. Lets the suite assert that render loops and
 // navigation read rows without rebuilding the timeline.
 let timelineBuilds = 0;
 export function timelineBuildsForTests(): number { return timelineBuilds; }
-export function resetTimelinesForTests(): void { timelineBuilds = 0; }
+export function resetTimelinesForTests(): void { timelineCache.clear(); timelineBuilds = 0; }
 
 export function buildTimeline(initialFen: string, moves: string[]): Timeline {
+  const key = timelineKey(initialFen, moves);
+  const cached = timelineCache.get(key);
+  if (cached) { touchTimeline(key, cached); return cached; }
+  return deriveTimeline(initialFen, moves, key).timeline;
+}
+function deriveTimeline(initialFen: string, moves: string[], key: string): { timeline: Timeline; game: Chess } {
   timelineBuilds++;
-  const game = replay([], initialFen);
+  const game = new Chess(initialFen);
   const normalized = game.fen();
-  const rows: TimelineRow[] = [{
+  // Prefix row identity is shared with retained timelines, including branches
+  // and takebacks. The scan is bounded by 64 lines and allocates no prefixes.
+  // After all equivalent histories leave this window, a rebuild gets fresh
+  // local IDs and may restore its evaluations from the server again.
+  let shared: Timeline | undefined;
+  let sharedPly = -1;
+  for (const candidate of timelineCache.values()) {
+    if (candidate.initialFen !== normalized) continue;
+    let ply = 0;
+    while (ply < moves.length && ply < candidate.moves.length && candidate.moves[ply] === moves[ply]) ply++;
+    if (ply > sharedPly) { shared = candidate; sharedPly = ply; }
+  }
+  const rows: TimelineRow[] = [shared?.rows[0] ?? {
     ply: 0, uci: '', san: '', fen: game.fen(),
     turn: game.turn() === 'w' ? 'white' : 'black',
-    terminal: terminalEvaluation(game) ?? null,
+    outcome: outcome(game),
+    historyId: ++nextHistoryId,
     lastMove: undefined,
   }];
   for (const uci of moves) {
     const applied = applyUci(game, uci);
+    if (shared && rows.length <= sharedPly) { rows.push(shared.rows[rows.length]); continue; }
     rows.push({
       ply: rows.length,
       uci: uciFromMove(applied),
       san: applied.san,
       fen: game.fen(),
       turn: game.turn() === 'w' ? 'white' : 'black',
-      terminal: terminalEvaluation(game) ?? null,
+      outcome: outcome(game),
+      historyId: ++nextHistoryId,
       lastMove: [applied.from, applied.to],
     });
   }
-  return { initialFen: normalized, moves, rows };
+  const timeline = { initialFen: normalized, moves: [...moves], rows };
+  for (const row of rows) { if (row.lastMove) Object.freeze(row.lastMove); if (row.outcome) Object.freeze(row.outcome); Object.freeze(row); }
+  Object.freeze(timeline.moves); Object.freeze(rows); Object.freeze(timeline);
+  touchTimeline(key, timeline);
+  return { timeline, game };
 }
 
 // Length of the legal prefix of a possibly-untrusted move list. One plain
@@ -181,88 +222,16 @@ export function legalPrefixLength(initialFen: string, moves: string[]): number {
   return length;
 }
 
-// Memoized per-line derivation for the play path. State stores only UCI move
-// lists, and every consumer used to re-derive fen/SAN/turn/game-over from move
-// 0 independently (~6 full-line replays per commit, ~260 across the
-// feedback-queue rebuild on a 130-ply game). One cache entry per distinct line
-// holds everything a replay computes: each tip-advance costs exactly one replay
-// (the genuinely new tip, whose history-aware terminality needs full history —
-// threefold repetition is unknowable from a FEN), and every re-derivation of a
-// known line (guards, renders, queue rebuilds, takebacks) is a Map hit.
-//
-// The incremental commit path must never call positionOf() on a FEN-parsed
-// game: chess.js history starts empty on FEN load, so SAN/history would cover
-// only the applied move. Commits therefore probe legality on a single parse
-// and read the full derivation back from the memo.
+// Compatibility projection for persistence callers. Chess facts always come
+// from the canonical timeline; only this boundary materializes SAN arrays.
 export type LineRecord = Position & { terminal: Evaluation | null };
-
-type LineEntry = {
-  fen: string;
-  sanMoves: string[];
-  lastMove: [Key, Key] | undefined;
-  // Always resolved at write time: null = ongoing. There is no "pending"
-  // state — an unknown terminal would be indistinguishable from an ongoing
-  // position (terminalEvaluation returns undefined for those), silently
-  // disabling the memo.
-  terminal: Evaluation | null;
-  plies: number;
-};
-
-// Retention: tip-most entries plus the root. Commits need the tip, takebacks
-// the tip-1/tip-2 prefixes, renders the current line; deep history navigation
-// outside the window correctly degrades to one replay.
-const LINE_CACHE_MAX = 64;
-const lineCache = new Map<string, LineEntry>();
-
-// Test observability only: counts full-line replays (computeEntry misses plus
-// terminal resolutions). Lets the suite assert the per-commit replay bound.
-// Reset per test; read-only in production.
-let lineRecordMisses = 0;
-export function lineRecordMissesForTests(): number { return lineRecordMisses; }
-export function resetLineRecordsForTests(): void { lineCache.clear(); lineRecordMisses = 0; }
-
-function lineCacheKey(moves: string[], initialFen: string): string {
-  return JSON.stringify([new Chess(initialFen).fen(), moves]);
-}
-
-function touchLineEntry(key: string, entry: LineEntry): void {
-  lineCache.delete(key);
-  lineCache.set(key, entry);
-  if (lineCache.size > LINE_CACHE_MAX) {
-    for (const oldest of lineCache.keys()) {
-      const candidate = lineCache.get(oldest);
-      if (candidate && candidate.plies > 0) { lineCache.delete(oldest); break; }
-    }
-    if (lineCache.size > LINE_CACHE_MAX) lineCache.delete(lineCache.keys().next().value!);
-  }
-}
-
-function computeLineEntry(moves: string[], initialFen: string): LineEntry {
-  lineRecordMisses++;
-  const game = replay(moves, initialFen);
-  const position = positionOf(game);
-  return { fen: position.fen, sanMoves: position.sanMoves, lastMove: position.lastMove, terminal: terminalEvaluation(game) ?? null, plies: moves.length };
-}
-
-function freshLineRecord(moves: string[], entry: LineEntry): LineRecord {
-  // Copy-on-return: cached arrays are never shared out, so no caller can
-  // poison the cache (or a sibling state version) by mutation. `moves` is the
-  // caller's own array and needs no copy.
-  return { fen: entry.fen, moves, sanMoves: [...entry.sanMoves],
-    lastMove: entry.lastMove ? [...entry.lastMove] as [Key, Key] : undefined,
-    terminal: entry.terminal ?? null };
-}
-
+export function lineRecordMissesForTests(): number { return timelineBuilds; }
+export function resetLineRecordsForTests(): void { resetTimelinesForTests(); }
 export function lineRecord(moves: string[], initialFen = START_FEN): LineRecord {
-  const key = lineCacheKey(moves, initialFen);
-  let entry = lineCache.get(key);
-  if (!entry) {
-    entry = computeLineEntry(moves, initialFen);
-    touchLineEntry(key, entry);
-  } else {
-    touchLineEntry(key, entry);
-  }
-  return freshLineRecord(moves, entry);
+  const timeline = buildTimeline(initialFen, moves);
+  const tip = timeline.rows[moves.length];
+  return { fen: tip.fen, moves, sanMoves: timeline.rows.slice(1).map(row => row.san),
+    lastMove: tip.lastMove ? [...tip.lastMove] : undefined, terminal: outcomeEvaluation(tip.outcome) ?? null };
 }
 
 // Commit step: legality probe on a single parse (throws on illegal moves like
@@ -286,7 +255,7 @@ export function retreatLine(moves: string[], initialFen: string, plies: number):
 // History-aware terminal flags for every prefix of a line, read off the
 // canonical timeline: one progressive walk instead of per-prefix replays.
 export function terminalFlags(initialFen: string, moves: string[]): boolean[] {
-  return buildTimeline(initialFen, moves).rows.map(row => row.terminal !== null);
+  return buildTimeline(initialFen, moves).rows.map(row => row.outcome !== null);
 }
 
 // Result text without a replay: checkmate is position-only (safe from a

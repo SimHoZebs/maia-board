@@ -20,10 +20,7 @@ type evaluationRequest struct {
 	Moves      []string           `json:"moves"`
 	InitialFEN string             `json:"initial_fen,omitempty"`
 	Settings   *stockfishSettings `json:"settings,omitempty"`
-	// Opaque read-through coordinates: the client-computed hash and key of
-	// this exact position+settings. When present the handler serves a
-	// matching cached row (X-Eval-Cache: hit) or computes live and stores
-	// the result, so callers never probe the cache with a separate GET.
+	// Accepted for older clients; cache identity is derived by the server.
 	CacheHash string `json:"cache_hash,omitempty"`
 	CacheKey  string `json:"cache_key,omitempty"`
 }
@@ -41,13 +38,14 @@ type evaluationLine struct {
 }
 
 type evaluationResponse struct {
-	Engine       string           `json:"engine"`
-	SearchPolicy string           `json:"search_policy"`
-	Depth        int              `json:"depth"`
-	Terminal     *string          `json:"terminal"`
-	BestMove     *string          `json:"best_move"`
-	Score        evaluationScore  `json:"score"`
-	Lines        []evaluationLine `json:"lines"`
+	Engine         string             `json:"engine"`
+	SearchPolicy   string             `json:"search_policy"`
+	Depth          int                `json:"depth"`
+	Terminal       *string            `json:"terminal"`
+	BestMove       *string            `json:"best_move"`
+	Score          evaluationScore    `json:"score"`
+	Lines          []evaluationLine   `json:"lines"`
+	ActualSettings *stockfishSettings `json:"actual_settings,omitempty"`
 }
 
 // Evaluator owns the single admission slot and trusted process configuration.
@@ -100,19 +98,11 @@ func (s *server) evaluate(w http.ResponseWriter, r *http.Request) {
 	}
 	// Cache lookup runs before the single admission slot is touched: hits
 	// must never queue behind live searches.
-	if entry, ok := s.lookupCache(request.CacheHash, "sf", request.CacheKey); ok {
-		var cached evaluationResponse
-		if encoded, err := json.Marshal(entry.Value); err == nil {
-			if err := json.Unmarshal(encoded, &cached); err == nil &&
-				cached.Engine == "Stockfish 19" && cached.SearchPolicy == request.Settings.policy() && cached.Lines != nil {
-				result = &cached
-				w.Header().Set("X-Eval-Cache", "hit")
-				// Serve the stored document, not the re-encoded struct, so
-				// hits stay byte-compatible with misses as fields evolve.
-				writeJSON(w, 200, entry.Value)
-				return
-			}
-		}
+	if cached, ok := s.cachedSF(request); ok {
+		result = cached
+		w.Header().Set("X-Eval-Cache", "hit")
+		writeJSON(w, 200, cached)
+		return
 	}
 	if s.evaluator == nil {
 		writeAPIError(w, 502, "engine_unavailable", "Stockfish is unavailable")
@@ -132,10 +122,10 @@ func (s *server) evaluate(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if validCacheRef(request.CacheHash, request.CacheKey) {
-		s.storeCache(request.CacheHash, "sf", request.CacheKey, result)
-		w.Header().Set("X-Eval-Cache", "miss")
-	}
+	result.ActualSettings = request.Settings
+	hash, key := sfIdentity(request).coordinates()
+	s.storeCache(hash, "sf", key, result)
+	w.Header().Set("X-Eval-Cache", "miss")
 	writeJSON(w, 200, result)
 }
 
@@ -209,6 +199,7 @@ func (e *Evaluator) run(parent context.Context, request evaluationRequest) (*eva
 	cmd.Stdin = bytes.NewReader(input)
 	var output cappedOutput
 	cmd.Stdout = &output
+	cmd.Stderr = newWorkerDiagnostics("stockfish")
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -238,30 +229,11 @@ func (e *Evaluator) run(parent context.Context, request evaluationRequest) (*eva
 		}
 	}
 	var result evaluationResponse
-	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+	var document any
+	if err := json.Unmarshal(output.Bytes(), &document); err != nil {
 		return nil, err
 	}
-	if result.Engine != "Stockfish 19" || result.SearchPolicy != request.Settings.policy() || result.Lines == nil {
-		return nil, errors.New("invalid worker response")
-	}
-	// Ranks must be distinct moves with the best move leading: a duplicated
-	// first move marks two rows "played" downstream and corrupts keyed list
-	// reconciliation on navigation. Reject loudly so the evaluation fails
-	// into retry instead of rendering corrupt rows.
-	seen := make(map[string]struct{}, len(result.Lines))
-	for _, line := range result.Lines {
-		if line.Move == "" {
-			return nil, errors.New("invalid worker response")
-		}
-		if _, dup := seen[line.Move]; dup {
-			return nil, errors.New("invalid worker response")
-		}
-		seen[line.Move] = struct{}{}
-	}
-	if len(result.Lines) > 0 && (result.BestMove == nil || *result.BestMove != result.Lines[0].Move) {
-		return nil, errors.New("invalid worker response")
-	}
-	if result.Terminal == nil && len(result.Lines) == 0 {
+	if !evaluationDocument(document) || !strictDocument(document, &result) || !validEvaluationValue(result, request.Settings) {
 		return nil, errors.New("invalid worker response")
 	}
 	return &result, nil

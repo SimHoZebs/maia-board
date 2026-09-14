@@ -5,6 +5,7 @@ import { defaultStockfishSettings, normalizeStockfishSettings, stockfishPolicy, 
 import { fetchEvaluation, reviewKey, ReviewCoordinator } from './reviewCoordinator';
 import { toStoredGame } from './serverGames';
 import { KEYS } from './storage';
+import { testNodes } from './testUtils';
 
 beforeEach(() => {
   const values = new Map<string, string>();
@@ -43,9 +44,8 @@ it('commits temperature per game, leaves analysis deterministic, and preserves p
   expect(state.play).toBe(play);
   expect(state.request?.payload.temperature).toBe(.7);
   state = reducer(state, { type: 'review' });
-  state = reducer(state, { type: 'analyze' });
   expect(state.analysisSettings).not.toHaveProperty('temperature');
-  expect(state.request?.payload).not.toHaveProperty('temperature');
+  expect(state.request).toBeNull();
 });
 
 it('restores and validates browser settings and legacy temperature', () => {
@@ -59,7 +59,7 @@ it('restores and validates browser settings and legacy temperature', () => {
 });
 
 it('separates Stockfish cache identity while retaining Maia cache identity', () => {
-  const node = { initialFen: START_FEN, fen: START_FEN, moves: [] };
+  const node = testNodes(START_FEN, [])[0];
   const settings = { ...defaultSettings, stockfish: defaultStockfishSettings };
   const changed = { ...settings, stockfish: { time_ms: 30000, lines: 5, depth: 40 } };
   expect(stockfishPolicy(settings.stockfish)).toBe('sf19-ms750-mpv2-d0-t1-h64-v2');
@@ -73,19 +73,19 @@ it('separates Stockfish cache identity while retaining Maia cache identity', () 
 
 it('sends requested options and rejects a response from another search policy', async () => {
   const settings = { time_ms: 2000, lines: 1, depth: 12 };
-  const node = { fen: START_FEN, initialFen: START_FEN, moves: [] };
+  const node = testNodes(START_FEN, [])[0];
   const score = { type: 'cp', value: 12 };
   const body = { engine: 'Stockfish 19', search_policy: stockfishPolicy(settings), depth: 12, terminal: null, best_move: 'e2e4', score, lines: [{ move: 'e2e4', score, depth: 12 }] };
   const fetcher = vi.fn(async () => new Response(JSON.stringify(body)));
   await fetchEvaluation(node, new AbortController().signal, fetcher, settings);
   expect(JSON.parse((fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].body as string).settings).toEqual(settings);
   body.search_policy = stockfishPolicy(defaultStockfishSettings);
-  await expect(fetchEvaluation(node, new AbortController().signal, fetcher, settings)).rejects.toThrow('incomplete evaluation');
+  await expect(fetchEvaluation(node, new AbortController().signal, fetcher, settings)).rejects.toThrow('incompatible search settings');
 });
 
 it('primes terminal positions with the selected policy without engine requests', async () => {
   const fen = '7k/6Q1/6K1/8/8/8/8/8 b - - 1 1';
-  const node = { fen, initialFen: fen, moves: [] };
+  const node = testNodes(fen, [])[0];
   const fetcher = vi.fn();
   const coordinator = new ReviewCoordinator(fetcher);
   const settings = { ...defaultSettings, stockfish: { time_ms: 30000, lines: 5, depth: 40 } };
