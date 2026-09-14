@@ -22,7 +22,7 @@ const newPlayDraft = (settings: Settings): PlayDraft => ({ ...settings, temperat
 const sameSettings = (a: Settings, b: Settings) => a.userColor === b.userColor && a.model === b.model
   && a.eloMaia === b.eloMaia && a.eloUser === b.eloUser && (a.temperature ?? 0) === (b.temperature ?? 0);
 export type State = {
-  mode: Mode; /** Compatibility read alias of play.settings. */ readonly settings: Settings; play: StoredGame; saved: StoredGame[];
+  mode: Mode; play: StoredGame; saved: StoredGame[];
   started: boolean; setup: PlayDraft | null; viewedPly: number | null; stockfish: StockfishSettings; feedback: boolean; badgeLoading: BadgeLoading;
   analysis: Analysis; analysisSettings: Draft; analysisLoaded: boolean; importing: boolean; analysisSourceId: string | null;
   inputs: { fen: string; pgn: string }; flipped: boolean; preview: string | null;
@@ -72,7 +72,6 @@ function queueRequest(state: State): State {
 }
 function transition(state: State, changes: Partial<State>, resumePlay = true): State {
   const next = { ...state, ...changes, revision: state.revision + 1, request: null, promotion: null, preview: null, insight: null, error: '' };
-  next.settings = next.play.settings;
   return resumePlay && next.mode === 'play' && maiaTurn(next) ? queueRequest(next) : next;
 }
 function withPlay(state: State, play: StoredGame): State {
@@ -152,7 +151,7 @@ export function initialState(mode: Mode = 'play', urlLine?: UrlLine, repository 
       try { analysis = loadLine(inputs.fen, inputs.pgn); } catch { /* Keep editable invalid input for correction. */ }
     }
   }
-  const state: State = { mode, settings, play: restored ?? { id: newId(), createdAt: new Date().toISOString(), moves: [], settings },
+  const state: State = { mode, play: restored ?? { id: newId(), createdAt: new Date().toISOString(), moves: [], settings },
     started: !!restored, setup: restored ? null : newPlayDraft(settings), viewedPly: null,
     saved: repository.games, analysis, analysisSettings: { eloMaia: settings.eloMaia, model: settings.model, userColor: settings.userColor }, analysisLoaded, importing: !analysisLoaded, analysisSourceId,
     stockfish: normalizeStockfishSettings(readStorage(STOCKFISH_STORAGE_KEY)), feedback: readStorage<boolean>(KEYS.feedback) === true, badgeLoading: normalizeBadgeLoading(readStorage<unknown>(KEYS.badgeLoading)),

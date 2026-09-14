@@ -1,75 +1,82 @@
 import { createContext, useContext, useSyncExternalStore } from 'react';
-import type { PendingGameOperation, RecoveryItem } from './gameRepository';
+import type { RepositorySnapshot } from './gameRepository';
 
 // Repository status and history controls have narrow subscriptions so an
 // acknowledgement or page indicator does not re-render the board.
 export class HistorySyncStore {
-  private pendingCount = 0;
-  private errorMessage = '';
-  private durabilityMessage = '';
+  private repo: RepositorySnapshot | null = null;
   private preferenceMessage = '';
-  private more = false;
-  private fetching = false;
-  private operations: readonly PendingGameOperation[] = [];
-  private recoverable: readonly RecoveryItem[] = [];
-  private failed: string | null = null;
-  private conflicting = false;
+  private listeners = new Set<() => void>();
+  private revision = 0;
   loadMore: () => Promise<void> = async () => {};
   retry: () => Promise<void> = async () => {};
   exportPending: () => string = () => '';
   discardPending: (version: string) => void = () => {};
-  private serverTotal: number | null = null;
-  private listeners = new Set<() => void>();
-  private revision = 0;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   snapshot = () => this.revision;
   private emit() {
     this.revision++;
     [...this.listeners].forEach(listener => listener());
   }
-  get pending() { return this.pendingCount; }
-  get error() { return [this.durabilityMessage, this.preferenceMessage, this.errorMessage].filter(Boolean).join(' '); }
-  get durabilityError() { return this.durabilityMessage; }
-  get hasMore() { return this.more; }
-  get loading() { return this.fetching; }
-  get pendingOperations() { return this.operations; }
-  get recoveryItems() { return this.recoverable; }
-  get failedVersion() { return this.failed; }
-  get conflict() { return this.conflicting; }
-  setRecovery(operations: readonly PendingGameOperation[], recovery: readonly RecoveryItem[], failed: string | null, conflict: boolean) {
-    if (this.operations === operations && this.recoverable === recovery && this.failed === failed && this.conflicting === conflict) return;
-    this.operations = operations; this.recoverable = recovery; this.failed = failed; this.conflicting = conflict;
+  private displayOf(repo: RepositorySnapshot | null, preference: string) {
+    const pending = (repo?.pending.length ?? 0) + (repo?.recovery.length ?? 0);
+    const recoveryMsg = (repo?.recovery.length ?? 0)
+      ? `${repo!.recovery.length} stored item(s) need recovery. Export pending work before discarding them.`
+      : '';
+    const combined = [repo?.error ?? '', recoveryMsg].filter(Boolean).join(' ');
+    const error = [repo?.durabilityError ?? '', preference, combined].filter(Boolean).join(' ');
+    return {
+      pending,
+      total: repo?.total ?? null,
+      error,
+      durabilityError: repo?.durabilityError ?? '',
+      hasMore: (repo?.nextOffset ?? null) !== null,
+      loading: repo?.loading ?? false,
+      pendingOperations: repo?.pending ?? [],
+      recoveryItems: repo?.recovery ?? [],
+      failedVersion: repo?.failedVersion ?? null,
+      conflict: repo?.conflict ?? false,
+    };
+  }
+  private currentDisplay() {
+    return this.displayOf(this.repo, this.preferenceMessage);
+  }
+  get pending() { return this.currentDisplay().pending; }
+  get error() { return this.currentDisplay().error; }
+  get durabilityError() { return this.currentDisplay().durabilityError; }
+  get hasMore() { return this.currentDisplay().hasMore; }
+  get loading() { return this.currentDisplay().loading; }
+  get pendingOperations() { return this.currentDisplay().pendingOperations; }
+  get recoveryItems() { return this.currentDisplay().recoveryItems; }
+  get failedVersion() { return this.currentDisplay().failedVersion; }
+  get conflict() { return this.currentDisplay().conflict; }
+  get total() { return this.currentDisplay().total; }
+  setSnapshot(snapshot: RepositorySnapshot) {
+    const before = this.currentDisplay();
+    this.repo = snapshot;
+    const after = this.currentDisplay();
+    const pendingVersions = (ops: readonly { version: string }[]) => ops.map(op => op.version).join(',');
+    const recoveryVersions = (items: readonly { version: string }[]) => items.map(item => item.version).join(',');
+    if (
+      before.pending === after.pending &&
+      before.total === after.total &&
+      before.error === after.error &&
+      before.durabilityError === after.durabilityError &&
+      before.hasMore === after.hasMore &&
+      before.loading === after.loading &&
+      pendingVersions(before.pendingOperations) === pendingVersions(after.pendingOperations) &&
+      recoveryVersions(before.recoveryItems) === recoveryVersions(after.recoveryItems) &&
+      before.failedVersion === after.failedVersion &&
+      before.conflict === after.conflict
+    ) return;
     this.emit();
   }
-  setDurabilityError(message: string) {
-    if (message === this.durabilityMessage) return;
-    this.durabilityMessage = message;
-    this.emit();
-  }
+  // Local-storage preference writes (settings/feedback/badge/stockfish) fail
+  // outside the repository snapshot, so their message stays separate. The
+  // banner joins it with repo errors identically to the old 7-setter mirror.
   setPreferenceError(message: string) {
     if (message === this.preferenceMessage) return;
     this.preferenceMessage = message;
-    this.emit();
-  }
-  setPage(hasMore: boolean, loading: boolean) {
-    if (hasMore === this.more && loading === this.fetching) return;
-    this.more = hasMore; this.fetching = loading; this.emit();
-  }
-  get total() { return this.serverTotal; }
-  setPending(count: number) {
-    if (this.pendingCount === count) return;
-    this.pendingCount = count;
-    this.emit();
-  }
-  setError(message: string) {
-    if (this.errorMessage === message) return;
-    this.errorMessage = message;
-    this.emit();
-  }
-  clearError() { this.setError(''); }
-  setTotal(total: number | null) {
-    if (this.serverTotal === total) return;
-    this.serverTotal = total;
     this.emit();
   }
 }

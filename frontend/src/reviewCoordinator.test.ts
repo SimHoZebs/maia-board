@@ -24,7 +24,7 @@ describe('timeline-backed restoration', () => {
     const coordinator = new ReviewCoordinator(fetcher);
     const builds = timelineBuildsForTests();
     const replayStep = vi.spyOn(Chess.prototype, 'move');
-    expect(await coordinator.primeLine(nodes, settings, new AbortController().signal)).toEqual({ covered: 0, total: 4 });
+    expect(await coordinator.ensure(nodes, settings, { signal: new AbortController().signal })).toEqual({ covered: 0, total: 4 });
     expect(replayStep).not.toHaveBeenCalled();
     replayStep.mockRestore();
     expect(timelineBuildsForTests()).toBe(builds);
@@ -45,11 +45,11 @@ describe('timeline-backed restoration', () => {
       { index: 999, value: maiaFixture(nodes[0].fen) },
     ] })).mockResolvedValue(jsonResponse({ results: [] }));
     const coordinator = new ReviewCoordinator(fetcher);
-    await coordinator.primeLine(nodes.slice(0, 2), settings, new AbortController().signal);
+    await coordinator.ensure(nodes.slice(0, 2), settings, { signal: new AbortController().signal });
     expect(coordinator.result('sf', nodes[0], settings)).toBeDefined();
     expect(coordinator.result('maia', nodes[0], settings)).toBeUndefined();
     expect(coordinator.result('maia', nodes[1], settings)).toBeDefined();
-    await coordinator.primeLine(nodes.slice(0, 2), settings, new AbortController().signal);
+    await coordinator.ensure(nodes.slice(0, 2), settings, { signal: new AbortController().signal });
     const requests = JSON.parse(fetcher.mock.calls[1][1]!.body as string).requests;
     expect(requests.map((r: { engine: string; moves: string[] }) => [r.engine, r.moves.length])).toEqual([['maia', 0], ['sf', 1]]);
     expect(fetcher.mock.calls.every(([url]) => url === '/evaluations/lookup')).toBe(true);
@@ -57,8 +57,8 @@ describe('timeline-backed restoration', () => {
   it('prime hits finish an explicit Analyze without extra requests', async () => {
     const fetcher = vi.fn<typeof fetch>(async (_url, init) => jsonResponse({ results: JSON.parse(init!.body as string).requests.map((r: { engine: string; fen: string }, index: number) => ({ index, value: r.engine === 'sf' ? sfFixture(r.fen) : maiaFixture(r.fen) })) }));
     const coordinator = new ReviewCoordinator(fetcher);
-    expect(await coordinator.primeLine(nodes, settings, new AbortController().signal)).toEqual({ covered: 4, total: 4 });
-    coordinator.startBatch(nodes, settings);
+    expect(await coordinator.ensure(nodes, settings, { signal: new AbortController().signal })).toEqual({ covered: 4, total: 4 });
+    coordinator.ensure(nodes, settings, { retain: true });
     expect(coordinator.progress).toEqual({ done: 8, total: 8, failed: 0, running: false });
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
@@ -68,8 +68,8 @@ describe('timeline-backed restoration', () => {
     const draw = buildTimeline('8/8/8/8/8/8/7k/K7 w - - 0 1', []);
     const terminal = [reviewNodes(repetition).at(-1)!, reviewNodes(mate).at(-1)!, reviewNodes(draw)[0]];
     const fetcher = liveFetch(), coordinator = new ReviewCoordinator(fetcher);
-    expect(await coordinator.primeLine(terminal, settings, new AbortController().signal)).toEqual({ total: 3, covered: 3 });
-    coordinator.startBatch(terminal, settings); coordinator.foregroundAt(terminal, settings, 3);
+    expect(await coordinator.ensure(terminal, settings, { signal: new AbortController().signal })).toEqual({ total: 3, covered: 3 });
+    coordinator.ensure(terminal, settings, { retain: true }); coordinator.ensure(terminal, settings, { priority: true });
     await flush();
     expect(fetcher).not.toHaveBeenCalled();
     expect(coordinator.result('sf', terminal[0], settings)?.terminal).toBe('draw');
@@ -78,7 +78,7 @@ describe('timeline-backed restoration', () => {
   it('tracks restore pending work and aborts an unresolved response body', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue({ ok: true, json: () => new Promise(() => {}) } as unknown as Response);
     const coordinator = new ReviewCoordinator(fetcher), controller = new AbortController();
-    const promise = coordinator.primeLine(nodes, settings, controller.signal);
+    const promise = coordinator.ensure(nodes, settings, { signal: controller.signal });
     expect(coordinator.sfPendingKeys().size).toBe(4);
     controller.abort();
     await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
@@ -89,7 +89,7 @@ describe('timeline-backed restoration', () => {
     vi.useFakeTimers();
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue({ ok: true, json: () => new Promise(() => {}) } as unknown as Response);
     const coordinator = new ReviewCoordinator(fetcher);
-    const rejected = expect(coordinator.primeLine(nodes, settings, new AbortController().signal)).rejects.toMatchObject({ name: 'TimeoutError' });
+    const rejected = expect(coordinator.ensure(nodes, settings, { signal: new AbortController().signal })).rejects.toMatchObject({ name: 'TimeoutError' });
     await vi.advanceTimersByTimeAsync(30_001); await rejected;
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(coordinator.sfPendingKeys().size).toBe(0);
@@ -98,7 +98,7 @@ describe('timeline-backed restoration', () => {
   it('chunks bulk restoration only at the 1024-request bound', async () => {
     const roots = Array.from({ length: 513 }, (_, index) => reviewNodes(buildTimeline(START_FEN.replace('0 1', `0 ${index + 1}`), []))[0]);
     const fetcher = liveFetch(), coordinator = new ReviewCoordinator(fetcher);
-    await coordinator.primeLine(roots, settings, new AbortController().signal);
+    await coordinator.ensure(roots, settings, { signal: new AbortController().signal });
     expect(fetcher.mock.calls.map(([url, init]) => [url, JSON.parse(init!.body as string).requests.length])).toEqual([
       ['/evaluations/lookup', 1024], ['/evaluations/lookup', 2],
     ]);
@@ -108,12 +108,12 @@ describe('timeline-backed restoration', () => {
 describe('workspace scheduler', () => {
   it('deduplicates foreground work and provides root candidates without replay', async () => {
     const fetcher = liveFetch(), coordinator = new ReviewCoordinator(fetcher), builds = timelineBuildsForTests();
-    coordinator.foregroundAt([nodes[0]], settings); coordinator.foregroundAt([nodes[0]], settings);
+    coordinator.ensure([nodes[0]], settings, { priority: true }); coordinator.ensure([nodes[0]], settings, { priority: true });
     await flush();
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(coordinator.result('sf', nodes[0], settings)?.lines.length).toBe(2);
-    coordinator.foregroundAt([nodes[1], nodes[0]], settings, 2); await flush();
-    coordinator.foregroundAt([nodes[0]], settings); await flush();
+    coordinator.ensure([nodes[1], nodes[0]], settings, { priority: true }); await flush();
+    coordinator.ensure([nodes[0]], settings, { priority: true }); await flush();
     expect(fetcher).toHaveBeenCalledTimes(4);
     expect(timelineBuildsForTests()).toBe(builds);
     coordinator.suspend();
@@ -122,11 +122,11 @@ describe('workspace scheduler', () => {
     const fetcher = liveFetch(), store = new EvaluationStore(fetcher);
     const first = new ReviewCoordinator(fetcher, store), second = new ReviewCoordinator(fetcher, store);
     const render = vi.fn(), unsubscribe = first.subscribe(render);
-    first.foregroundAt([nodes[0]], settings); await flush();
+    first.ensure([nodes[0]], settings, { priority: true }); await flush();
     first.suspend(); unsubscribe(); render.mockClear();
-    second.foregroundAt([nodes[0]], settings); await flush();
+    second.ensure([nodes[0]], settings, { priority: true }); await flush();
     expect(fetcher).toHaveBeenCalledTimes(2);
-    second.foregroundAt([nodes[1]], settings); await flush();
+    second.ensure([nodes[1]], settings, { priority: true }); await flush();
     expect(render).not.toHaveBeenCalled();
     expect(first.result('sf', nodes[1], settings)).toBe(second.result('sf', nodes[1], settings));
     second.suspend();
@@ -138,8 +138,8 @@ describe('workspace scheduler', () => {
     let release!: (response: Response) => void;
     const fetcher = liveFetch(); fetcher.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
     const coordinator = new ReviewCoordinator(fetcher);
-    coordinator.syncPlayQueue(nodes.slice(0, 2), settings);
-    coordinator.syncPlayQueue(nodes, settings);
+    coordinator.ensure(nodes.slice(0, 2), settings, { retain: true, engines: ['sf'] });
+    coordinator.ensure(nodes, settings, { retain: true, engines: ['sf'] });
     expect(fetcher).toHaveBeenCalledTimes(1);
     release(jsonResponse(sfFixture(nodes[0].fen))); await flush();
     expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init!.body as string).moves.length)).toEqual([0, 1, 2, 3]);
@@ -151,7 +151,7 @@ describe('workspace scheduler', () => {
     let release!: (response: Response) => void;
     const fetcher = liveFetch(); fetcher.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
     const coordinator = new ReviewCoordinator(fetcher);
-    coordinator.syncPlayQueue(nodes, settings); coordinator.syncPlayQueue(nodes.slice(0, 2), settings);
+    coordinator.ensure(nodes, settings, { retain: true, engines: ['sf'] }); coordinator.ensure(nodes.slice(0, 2), settings, { retain: true, engines: ['sf'] });
     release(jsonResponse(sfFixture(nodes[0].fen))); await flush();
     expect(fetcher).toHaveBeenCalledTimes(2);
     coordinator.suspend();
@@ -159,7 +159,7 @@ describe('workspace scheduler', () => {
   it('batch progress derives from settled/failed key statuses and retry only runs missing work', async () => {
     const fetcher = liveFetch(); fetcher.mockImplementationOnce(async () => jsonResponse({ code: 'engine_unavailable', message: 'offline' }, 503));
     const coordinator = new ReviewCoordinator(fetcher);
-    coordinator.startBatch(nodes.slice(0, 2), settings); await flush();
+    coordinator.ensure(nodes.slice(0, 2), settings, { retain: true }); await flush();
     expect(coordinator.progress).toEqual({ done: 4, total: 4, failed: 1, running: false });
     expect(coordinator.sfPendingKeys().size).toBe(0);
     const count = fetcher.mock.calls.length;
@@ -175,7 +175,7 @@ describe('workspace scheduler', () => {
     fetcher.mockImplementationOnce(() => new Promise(resolve => { releaseOld = resolve; }))
       .mockImplementationOnce(() => new Promise(resolve => { releaseNew = resolve; }));
     const coordinator = new ReviewCoordinator(fetcher);
-    coordinator.syncPlayQueue([nodes[0]], settings); coordinator.retry();
+    coordinator.ensure([nodes[0]], settings, { retain: true, engines: ['sf'] }); coordinator.retry();
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
     releaseOld(jsonResponse(sfFixture(nodes[0].fen))); await flush();
@@ -189,7 +189,7 @@ describe('workspace scheduler', () => {
     vi.useFakeTimers();
     const fetcher = vi.fn<typeof fetch>(() => new Promise(() => {}));
     const coordinator = new ReviewCoordinator(fetcher);
-    coordinator.foregroundAt([nodes[0]], settings);
+    coordinator.ensure([nodes[0]], settings, { priority: true });
     coordinator.suspend(); await flush();
     expect(fetcher.mock.calls.every(([, init]) => init?.signal?.aborted)).toBe(true);
     expect(coordinator.sfPendingKeys().size).toBe(0);
@@ -198,7 +198,7 @@ describe('workspace scheduler', () => {
   it('suspension also aborts an in-flight bulk restoration', async () => {
     const fetcher = vi.fn<typeof fetch>(() => new Promise(() => {}));
     const coordinator = new ReviewCoordinator(fetcher);
-    const prime = coordinator.primeLine(nodes, settings, new AbortController().signal);
+    const prime = coordinator.ensure(nodes, settings, { signal: new AbortController().signal });
     coordinator.suspend();
     await expect(prime).rejects.toMatchObject({ name: 'AbortError' });
     expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
@@ -207,8 +207,8 @@ describe('workspace scheduler', () => {
   it('foreground preempts a batch then the batch retains the cancelled key', async () => {
     const fetcher = liveFetch(); fetcher.mockImplementationOnce(() => new Promise(() => {}));
     const coordinator = new ReviewCoordinator(fetcher);
-    coordinator.startBatch(nodes, settings);
-    coordinator.foregroundAt([nodes[3]], settings); await flush();
+    coordinator.ensure(nodes, settings, { retain: true });
+    coordinator.ensure([nodes[3]], settings, { priority: true }); await flush();
     expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
     expect(coordinator.progress).toEqual({ done: 8, total: 8, failed: 0, running: false });
     expect(coordinator.result('sf', nodes[0], settings)).toBeDefined();
@@ -218,7 +218,7 @@ describe('workspace scheduler', () => {
     vi.useFakeTimers();
     const fetcher = vi.fn<typeof fetch>(async () => jsonResponse({ code: 'engine_busy', message: 'busy' }, 503));
     const coordinator = new ReviewCoordinator(fetcher);
-    coordinator.syncPlayQueue([nodes[0]], settings);
+    coordinator.ensure([nodes[0]], settings, { retain: true, engines: ['sf'] });
     await vi.advanceTimersByTimeAsync(3000);
     expect(fetcher).toHaveBeenCalledTimes(3);
     expect(coordinator.error('sf', nodes[0], settings)).toBe('busy');
@@ -227,7 +227,7 @@ describe('workspace scheduler', () => {
   it('resume after backgrounding replaces hung work without resetting settled rows', async () => {
     const fetcher = liveFetch(); fetcher.mockImplementationOnce(() => new Promise(() => {}));
     const coordinator = new ReviewCoordinator(fetcher);
-    coordinator.syncPlayQueue([nodes[0]], settings); coordinator.resume(10_001); await flush();
+    coordinator.ensure([nodes[0]], settings, { retain: true, engines: ['sf'] }); coordinator.resume(10_001); await flush();
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(coordinator.result('sf', nodes[0], settings)).toBeDefined();
     coordinator.suspend();
@@ -243,6 +243,17 @@ describe('identity and provenance', () => {
     expect(reviewKey('maia', nodes[0], settings)).not.toBe(reviewKey('maia', nodes[0], { ...settings, model: '5m' }));
     const repeated = reviewNodes(buildTimeline(START_FEN, ['g1f3', 'g8f6', 'f3g1', 'f6g8']));
     expect(reviewKey('sf', repeated[0], settings)).not.toBe(reviewKey('sf', repeated[4], settings));
+  });
+  it('keys survive memory-ID rebuilds and separate custom starts with the same fen', async () => {
+    const { resetTimelinesForTests } = await import('./domain');
+    const before = reviewNodes(buildTimeline(START_FEN, ['e2e4']))[1];
+    const keyBefore = reviewKey('sf', before, settings);
+    resetTimelinesForTests();
+    const after = reviewNodes(buildTimeline(START_FEN, ['e2e4']))[1];
+    expect(after.historyId).not.toBe(before.historyId);
+    expect(reviewKey('sf', after, settings)).toBe(keyBefore);
+    const custom = reviewNodes(buildTimeline(after.fen, []))[0];
+    expect(reviewKey('sf', custom, settings)).not.toBe(reviewKey('sf', after, settings));
   });
   it('preserves compatible actual policy and slices display without changing scores or depth', () => {
     const actual = { ...defaultStockfishSettings, lines: 4 }, raw = sfFixture(START_FEN, actual);
@@ -272,7 +283,7 @@ describe('identity and provenance', () => {
   });
   it('new requested identities never expose previously settled Maia rows', async () => {
     const fetcher = liveFetch(), coordinator = new ReviewCoordinator(fetcher);
-    coordinator.foregroundAt([nodes[0]], settings); await flush();
+    coordinator.ensure([nodes[0]], settings, { priority: true }); await flush();
     expect(coordinator.result('maia', nodes[0], { ...settings, eloMaia: 2000 })).toBeUndefined();
     expect(coordinator.result('maia', nodes[1], settings)).toBeUndefined();
     coordinator.suspend();

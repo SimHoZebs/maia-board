@@ -8,6 +8,7 @@ import { reviewKey, type ReviewNode } from './reviewCoordinator';
 import { terminalEvaluation, type Evaluation } from './reviewMetrics';
 import { outcomeEvaluation } from './outcomeEvaluation';
 import { HistorySyncStore } from './syncStore';
+import type { RepositorySnapshot } from './gameRepository';
 import { currentPosition, initialState, reducer, snapshotOf } from './state';
 import { KEYS, restoreGame } from './storage';
 
@@ -91,7 +92,7 @@ describe('task lifecycles', () => {
     state = reducer(state, { type: 'cancel-setup' });
     expect(state.play.moves).toEqual(['e2e4', 'e7e5']);
     expect(currentPosition(state).moves).toEqual([]);
-    expect(state.settings.eloMaia).toBe(1600);
+    expect(state.play.settings.eloMaia).toBe(1600);
     expect(currentPosition(reducer(state, { type: 'view', ply: null })).moves).toEqual(state.play.moves);
   });
   it('analysis ratings retire play requests and leave analysis inference to its owner', () => {
@@ -104,7 +105,7 @@ describe('task lifecycles', () => {
     expect(reducer(state, { type: 'reply', request, response })).toBe(state);
     expect(state.request).toBeNull();
     expect(state.analysisSettings.eloMaia).toBe(2200);
-    expect(state.settings.eloMaia).toBe(1600);
+    expect(state.play.settings.eloMaia).toBe(1600);
   });
   it('keeps original mainline while replaying and editing one multi-ply branch', () => {
     let state = reducer(started(), { type: 'mode', mode: 'analysis' });
@@ -227,7 +228,7 @@ describe('legacy storage and analysis', () => {
     localStorage.setItem(KEYS.settings, JSON.stringify(settings));
     localStorage.setItem(KEYS.analysis, JSON.stringify({ fen: '', pgn: '1. e4 e5' }));
     const state = initialState();
-    expect(state.play.id).toBe('old'); expect(state.settings).toEqual(settings);
+    expect(state.play.id).toBe('old'); expect(state.play.settings).toEqual(settings);
     expect(state.analysis.index).toBe(2); expect(state.analysis.moves).toEqual(['e2e4', 'e7e5']);
   });
   it('handles corrupt storage without losing access to the board', () => {
@@ -490,18 +491,27 @@ describe('history sync store', () => {
     expect(store.total).toBeNull();
     const calls: number[] = [];
     const stop = store.subscribe(() => calls.push(store.snapshot()));
-    store.setPending(0);
-    store.setError('');
-    store.setTotal(null);
+    const snapshot = (overrides: Partial<RepositorySnapshot> = {}): RepositorySnapshot => ({
+      schema: 2, games: [], currentId: null, pending: [], recovery: [],
+      error: '', durabilityError: '', conflict: false, failedVersion: null,
+      total: null, nextOffset: null, loading: false, ...overrides,
+    });
+    store.setSnapshot(snapshot());
+    store.setSnapshot(snapshot());
     expect(calls).toHaveLength(0);
-    store.setPending(3);
-    store.setError('down');
-    store.setTotal(12);
+    const pendingOps = [
+      { op: 'delete', id: 'a', version: 'v1' },
+      { op: 'delete', id: 'b', version: 'v2' },
+      { op: 'delete', id: 'c', version: 'v3' },
+    ] as RepositorySnapshot['pending'];
+    store.setSnapshot(snapshot({ pending: pendingOps }));
+    store.setSnapshot(snapshot({ pending: pendingOps, error: 'down' }));
+    store.setSnapshot(snapshot({ pending: pendingOps, error: 'down', total: 12 }));
     expect(store.pending).toBe(3);
     expect(store.error).toBe('down');
     expect(store.total).toBe(12);
     expect(calls).toHaveLength(3);
-    store.clearError();
+    store.setSnapshot(snapshot({ pending: pendingOps, error: '', total: 12 }));
     expect(store.error).toBe('');
     stop();
   });

@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Chess } from 'chess.js';
 import { buildTimeline, legalPrefixLength, START_FEN, type Timeline } from './domain';
 import { ReviewCoordinator, reviewKey, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
-import { reviewMove, type Evaluation, type Quality } from './reviewMetrics';
+import { computeQualities, type UnifiedMemo } from './qualities';
+import type { Evaluation, Quality } from './reviewMetrics';
 import type { State } from './state';
 
 export type PlayFeedback = { active: boolean; qualities: (Quality | undefined)[] };
-type Verdict = { historyId: number; move: string; before?: Evaluation; after?: Evaluation; pending: boolean; quality?: Quality };
-export type PlayQualitiesMemo = { gameId: string; userColor: 'white' | 'black'; verdicts: (Verdict | undefined)[]; qualities: (Quality | undefined)[] };
+export type PlayQualitiesMemo = UnifiedMemo;
 export type PlayQualitiesStats = { reviews: number };
 
 export function computePlayQualities(args: {
@@ -16,23 +15,9 @@ export function computePlayQualities(args: {
 }): { qualities: (Quality | undefined)[]; memo: PlayQualitiesMemo } {
   const { gameId, timeline, userColor, settings, lookup, pending, prev, stats } = args;
   const nodes = reviewNodes(timeline);
-  const sameScope = prev?.gameId === gameId && prev.userColor === userColor;
-  let reused = sameScope && prev.qualities.length === timeline.moves.length;
-  const verdicts = timeline.moves.map((move, ply): Verdict | undefined => {
-    const node = nodes[ply], next = nodes[ply + 1];
-    if (node.turn !== userColor) return;
-    const before = lookup(node), after = lookup(next);
-    const awaiting = (!before || !after) && (pending.has(reviewKey('sf', node, settings)) || pending.has(reviewKey('sf', next, settings)));
-    const old = sameScope ? prev.verdicts[ply] : undefined;
-    if (old && old.historyId === node.historyId && old.move === move && old.before === before && old.after === after && old.pending === awaiting) return old;
-    reused = false;
-    if (before && after && stats) stats.reviews++;
-    const quality = before && after ? reviewMove(before, after, new Chess(node.fen), move)
-      : awaiting ? { label: 'Unreviewed' as const, accuracy: null, loss: null } : undefined;
-    return { historyId: node.historyId, move, before, after, pending: awaiting, quality };
-  });
-  const qualities = reused ? prev!.qualities : verdicts.map(verdict => verdict?.quality);
-  return { qualities, memo: { gameId, userColor, verdicts, qualities } };
+  return computeQualities({ scope: `${gameId}|${userColor}`, moves: timeline.moves, nodes,
+    evaluations: nodes.map(lookup), keyFor: node => reviewKey('sf', node, settings),
+    active: node => node.turn === userColor, pending, prev, stats });
 }
 
 export function usePlayFeedback(state: State): PlayFeedback {
@@ -46,8 +31,9 @@ export function usePlayFeedback(state: State): PlayFeedback {
     catch { return buildTimeline(START_FEN, moves.slice(0, legalPrefixLength(START_FEN, moves))); }
   }, [movesKey]);
   const settingsKey = JSON.stringify(state.stockfish);
-  const settings: ReviewSettings = useMemo(() => ({ eloMaia: state.settings.eloMaia, eloUser: state.settings.eloUser, model: state.settings.model, stockfish: state.stockfish }), [settingsKey, state.settings.eloMaia, state.settings.eloUser, state.settings.model]);
-  const userColor = state.settings.userColor;
+  const playSettings = state.play.settings;
+  const settings: ReviewSettings = useMemo(() => ({ eloMaia: playSettings.eloMaia, eloUser: playSettings.eloUser, model: playSettings.model, stockfish: state.stockfish }), [settingsKey, playSettings.eloMaia, playSettings.eloUser, playSettings.model]);
+  const userColor = playSettings.userColor;
   const gameId = state.play.id;
   const nodes = useMemo(() => {
     const all = reviewNodes(timeline);
@@ -61,9 +47,10 @@ export function usePlayFeedback(state: State): PlayFeedback {
   useEffect(() => {
     if (!active) { coordinator.suspend(); return; }
     const controller = new AbortController();
-    void coordinator.primePositions(nodes, settings, controller.signal).then(
-      () => { if (!controller.signal.aborted) coordinator.syncPlayQueue(nodes, settings); },
-      () => { if (!controller.signal.aborted) coordinator.syncPlayQueue(nodes, settings); },
+    const primed = coordinator.ensure(nodes, settings, { engines: ['sf'], signal: controller.signal });
+    void Promise.resolve(primed).then(
+      () => { if (!controller.signal.aborted) coordinator.ensure(nodes, settings, { retain: true, engines: ['sf'] }); },
+      () => { if (!controller.signal.aborted) coordinator.ensure(nodes, settings, { retain: true, engines: ['sf'] }); },
     );
     return () => controller.abort();
   }, [coordinator, active, nodes, settings]);

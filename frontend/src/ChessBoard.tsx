@@ -6,7 +6,7 @@ import type { Color, Key } from '@lichess-org/chessground/types';
 import { legalDests } from './domain';
 import { toGroundColor } from './board-colors';
 import type { DrawShape } from '@lichess-org/chessground/draw';
-import { reviewBrushes } from './reviewArrows';
+import { candidatePreviewShape, reviewBrushes } from './reviewArrows';
 
 export type BoardPosition = { fen: string; lastMove?: readonly string[] | null };
 export type BoardTransition = { line: string; ply: number };
@@ -83,7 +83,7 @@ export function ChessBoard({ position, transition, orientation, enabled, thinkin
     if (!singleStep) ground.set({ animation: { enabled: true } });
   }, [position.fen, transition.line, transition.ply, orientation, enabled, lastMove, gesture, interactionVersion]);
   useLayoutEffect(() => {
-    api.current?.setAutoShapes(shapes ?? (preview ? [{ orig: preview.slice(0, 2) as Key, dest: preview.slice(2, 4) as Key, brush: 'candidate' }] : []));
+    api.current?.setAutoShapes(shapes ?? candidatePreviewShape(preview));
   }, [position.fen, preview, shapes, interactionVersion, orientation]);
   // React owns this element; Chessground owns all its descendants and CSS classes.
   return <div className={`board${thinking ? ' is-thinking' : ''}`} id="board" aria-label="Chess board"><div ref={container} /></div>;

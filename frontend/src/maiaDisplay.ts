@@ -1,8 +1,8 @@
 import type { MoveResponse } from './api';
-import { reviewKey, type ReviewNode, type ReviewSettings } from './evaluationStore';
+import { reviewKey, stablePositionKey, type ReviewNode, type ReviewSettings } from './evaluationStore';
 
 export type MaiaDisplayEntry = {
-  positionId: number; requestKey: string; eloMaia: number; eloUser: number;
+  positionId: string; requestKey: string; eloMaia: number; eloUser: number;
   result: MoveResponse;
 };
 // A previous identity is display-only. It never satisfies the requested cache
@@ -10,7 +10,8 @@ export type MaiaDisplayEntry = {
 export function selectMaiaDisplay(node: ReviewNode | undefined, settings: ReviewSettings, fresh: MoveResponse | undefined, previous: MaiaDisplayEntry | null, pending = false) {
   if (!node || node.outcome) return { entry: undefined, stale: false, pending: false };
   const key = reviewKey('maia', node, settings);
-  const entry = fresh ? { positionId: node.historyId, requestKey: key, eloMaia: settings.eloMaia, eloUser: settings.eloUser, result: fresh }
-    : previous?.positionId === node.historyId ? previous : undefined;
+  const positionId = stablePositionKey(node);
+  const entry = fresh ? { positionId, requestKey: key, eloMaia: settings.eloMaia, eloUser: settings.eloUser, result: fresh }
+    : previous?.positionId === positionId ? previous : undefined;
   return { entry, stale: !!entry && entry.requestKey !== key, pending: !fresh && pending };
 }

@@ -2,6 +2,7 @@ import { Chess, type Square } from 'chess.js';
 import type { Key } from '@lichess-org/chessground/types';
 import type { MaiaColor, MaiaModel, MoveResponse } from './api';
 import type { Evaluation } from './reviewMetrics';
+import { outcomeFromGame } from './reviewMetrics';
 import { outcomeEvaluation } from './outcomeEvaluation';
 
 export const START_FEN = new Chess().fen();
@@ -147,8 +148,7 @@ function touchTimeline(key: string, timeline: Timeline) {
   if (timelineCache.size > TIMELINE_CACHE_LIMIT) timelineCache.delete(timelineCache.keys().next().value!);
 }
 function outcome(game: Chess): DomainOutcome | null {
-  return game.isCheckmate() ? { kind: 'checkmate', winner: game.turn() === 'w' ? 'black' : 'white' }
-    : game.isDraw() ? { kind: 'draw' } : null;
+  return outcomeFromGame(game);
 }
 
 // Test observability only: counts builder invocations, mirroring

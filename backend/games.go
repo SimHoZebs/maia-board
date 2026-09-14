@@ -121,11 +121,8 @@ func validateGamePayload(payload *gamePayload) *requestError {
 	if payload.UserColor != "white" && payload.UserColor != "black" {
 		return &requestError{"invalid_user_color", "user_color must be white or black"}
 	}
-	if payload.EloMaia == nil || payload.EloUser == nil {
-		return &requestError{"missing_elo", "elo_maia and elo_user are required"}
-	}
-	if *payload.EloMaia < 0 || *payload.EloMaia > 5000 || *payload.EloUser < 0 || *payload.EloUser > 5000 {
-		return &requestError{"invalid_elo", "Elo values must be between 0 and 5000"}
+	if err := validateElo(payload.EloMaia, payload.EloUser); err != nil {
+		return err
 	}
 	if payload.Model != "79m" && payload.Model != "5m" {
 		return &requestError{"invalid_model", "model must be lowercase 79m or 5m"}
@@ -136,10 +133,8 @@ func validateGamePayload(payload *gamePayload) *requestError {
 	if len(payload.Moves) > 4096 {
 		return &requestError{"history_too_long", "moves may contain at most 4096 plies"}
 	}
-	for _, move := range payload.Moves {
-		if !uciMovePattern.MatchString(move) {
-			return &requestError{"invalid_move", "moves must contain UCI moves"}
-		}
+	if err := validateUCIMoves(payload.Moves); err != nil {
+		return err
 	}
 	if payload.CreatedAt != "" {
 		if _, err := time.Parse(time.RFC3339, payload.CreatedAt); err != nil {

@@ -3,7 +3,7 @@ import { computePlayQualities, type PlayQualitiesMemo } from './usePlayFeedback'
 import { initialState, reducer } from './state';
 import { KEYS } from './storage';
 import { buildTimeline, START_FEN, timelineBuildsForTests } from './domain';
-import { reviewKey, reviewNodes, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
+import { reviewKey, reviewNodes, stablePositionKey, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
 import { sfFixture } from './evaluationTestFixtures';
 import { defaultStockfishSettings } from './stockfishSettings';
 import type { Evaluation } from './reviewMetrics';
@@ -35,8 +35,8 @@ describe('timeline-backed move feedback', () => {
   const settings: ReviewSettings = { eloMaia: 1600, eloUser: 1600, model: '79m', stockfish: defaultStockfishSettings };
   const timeline = buildTimeline(START_FEN, ['e2e4', 'e7e5', 'g1f3', 'b8c6']);
   const nodes = reviewNodes(timeline);
-  const values = new Map(nodes.map(node => [node.historyId, sfFixture(node.fen)]));
-  const lookup = (node: ReviewNode) => values.get(node.historyId);
+  const values = new Map(nodes.map(node => [stablePositionKey(node), sfFixture(node.fen)]));
+  const lookup = (node: ReviewNode) => values.get(stablePositionKey(node));
   const compute = (prev: PlayQualitiesMemo | null = null, overrides: Partial<Parameters<typeof computePlayQualities>[0]> = {}) => computePlayQualities({ gameId: 'game', timeline, userColor: 'white', settings, lookup, pending: new Set(), prev, ...overrides });
 
   it('grades only the user side and reuses verdicts across unrelated cache updates', () => {
@@ -57,7 +57,7 @@ describe('timeline-backed move feedback', () => {
   });
   it('a changed evaluation recomputes only affected user verdicts', () => {
     const first = compute(), stats = { reviews: 0 };
-    const changed: Evaluation = { ...values.get(nodes[1].historyId)!, score: { type: 'cp', value: -250 } };
+    const changed: Evaluation = { ...values.get(stablePositionKey(nodes[1]))!, score: { type: 'cp', value: -250 } };
     const second = compute(first.memo, { stats, lookup: node => node.ply === 1 ? changed : lookup(node) });
     expect(stats.reviews).toBe(1);
     expect(second.qualities[0]).not.toBe(first.qualities[0]);

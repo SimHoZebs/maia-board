@@ -229,13 +229,25 @@ func (w *Worker) predictLocked(parent context.Context, request EngineRequest) (E
 			return EngineResult{}, err
 		}
 	}
-	result := *reply.Result
 	var document any
-	if json.Unmarshal([]byte(line), &document) != nil || !engineResultDocument(document) || !validEngineResult(result, reply.LegalCount, request.Temperature == 0) {
+	if json.Unmarshal([]byte(line), &document) != nil {
 		w.failLocked(ErrProtocol)
 		return EngineResult{}, ErrProtocol
 	}
-	return result, nil
+	// Validate the raw result subtree through the single strict path before
+	// trusting the outer-typed copy: encoding/json pads/truncates wdl arrays
+	// and silences nulls, so lengths and nulls are checked on raw JSON.
+	raw, ok := document.(map[string]any)
+	if !ok {
+		w.failLocked(ErrProtocol)
+		return EngineResult{}, ErrProtocol
+	}
+	typed, ok := decodeStrictValue[EngineResult](raw["result"], engineResultRequired, nil)
+	if !ok || !validEngineResult(typed, reply.LegalCount, request.Temperature == 0) {
+		w.failLocked(ErrProtocol)
+		return EngineResult{}, ErrProtocol
+	}
+	return typed, nil
 }
 func validEngineResult(result EngineResult, legalCount int, deterministic bool) bool {
 	if legalCount < 1 || legalCount > 218 || len(result.Candidates) != min(legalCount, maxMultiPV) || !validWDL(result.WDL) {

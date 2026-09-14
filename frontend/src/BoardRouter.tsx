@@ -26,6 +26,14 @@ export const destinations = [
 const pathFor = (mode: Mode) =>
   destinations.find((destination) => destination.mode === mode)!.path;
 
+// Shared Analyze-tab intent: tapping Analyze while a line is loaded unloads
+// to the importer instead of reopening behind a dialog. MobileMenu in
+// workspaces.tsx duplicates this check (read-only here); keep both branches
+// identical and report any drift.
+export function shouldUnloadAnalysis(destMode: string, analysisLoaded: boolean): boolean {
+  return destMode === "analysis" && analysisLoaded;
+}
+
 function DestinationNav({
   state,
   dispatch,
@@ -44,7 +52,7 @@ function DestinationNav({
           to={path}
           end
           onClick={(event) => {
-            if (destMode === "analysis" && state.analysisLoaded) {
+            if (shouldUnloadAnalysis(destMode, state.analysisLoaded)) {
               event.preventDefault();
               dispatch({ type: "unload" });
             }

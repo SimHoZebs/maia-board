@@ -15,6 +15,13 @@ export type ArrowToggles = Record<ArrowSource, boolean>;
 export type SquareBadge = { square: Key; glyph: '💀' | '??' | '?' };
 const validMove = (move: unknown): move is string => typeof move === 'string' && /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(move);
 const validSquare = (square: unknown): square is Key => typeof square === 'string' && /^[a-h][1-8]$/.test(square);
+// Single owner for preview→candidate synthesis. reviewShapes uses it for the
+// analysis overlay; ChessBoard uses it for the standalone preview fallback so
+// both agree on validity and brush. Invalid previews yield no shape.
+export function candidatePreviewShape(preview: string | null | undefined): DrawShape[] {
+  if (!validMove(preview)) return [];
+  return [{ orig: preview.slice(0, 2) as Key, dest: preview.slice(2, 4) as Key, brush: 'candidate' }];
+}
 export function reviewShapes(moves: Record<ArrowSource, string | null | undefined>, toggles: ArrowToggles, preview?: string | null, badge?: SquareBadge | null): DrawShape[] {
   const entries = (['actual', 'maia', 'stockfish'] as const).filter(source => toggles[source] && validMove(moves[source])).map(source => ({ move: moves[source]!, brush: source as string }));
   if (validMove(preview) && !entries.some(entry => entry.move === preview)) entries.push({ move: preview, brush: 'candidate' });

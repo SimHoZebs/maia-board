@@ -14,6 +14,6 @@ it('stores the resolved side and preserves it through render-independent draft c
     state = reducer(state, { type: 'setup', draft: { userColor: 'random' } });
     state = reducer(state, { type: 'cancel-setup' });
     expect(state.play.settings.userColor).toBe(userColor);
-    expect(state.settings.userColor).toBe(userColor);
+    expect(state.play.settings.userColor).toBe(userColor);
   }
 });

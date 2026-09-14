@@ -72,6 +72,16 @@ function isModel(value: unknown): value is MaiaModel {
 
 const uci = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
 const probability = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+// Single legality source for engine responses. Returns the legal set; callers
+// throw their own domain error (MaiaApiError vs incomplete-evaluation Error)
+// so wire error types stay unchanged.
+export function legalUciSet(fen: string): Set<string> {
+  return new Set(new Chess(fen).moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`));
+}
+export function assertLegalUci(moves: string[], fen: string): void {
+  const legal = legalUciSet(fen);
+  for (const move of moves) if (!legal.has(move)) throw new Error(`Illegal UCI move: ${move}`);
+}
 export function parseMoveResponse(value: unknown, expected?: { model: MaiaModel; fen: string; temperature?: number }): MoveResponse {
   if (!isRecord(value) || typeof value.move !== 'string' || !uci.test(value.move) || !isModel(value.model_used) || typeof value.degraded !== 'boolean') {
     throw new MaiaApiError('unknown', 'Maia returned an incomplete response.');
@@ -98,8 +108,8 @@ export function parseMoveResponse(value: unknown, expected?: { model: MaiaModel;
         : candidates.length === 5 && Math.abs(candidates[4].prob - candidates[0].prob) <= 1e-7;
       if (!tied) throw new MaiaApiError('unknown', 'Maia returned an inconsistent selected move.');
     }
-    const legal = new Set(new Chess(expected.fen).moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`));
-    if (!legal.has(value.move) || !value.top_moves.every(candidate => legal.has(candidate.move))) throw new MaiaApiError('unknown', 'Maia returned an illegal candidate move.');
+    try { assertLegalUci([value.move, ...value.top_moves.map(candidate => candidate.move)], expected.fen); }
+    catch { throw new MaiaApiError('unknown', 'Maia returned an illegal candidate move.'); }
   }
   return {
     move: value.move,

@@ -92,7 +92,6 @@ func main() {
 	mux.HandleFunc("/games/", app.gameByID)
 	mux.HandleFunc("/evaluations", app.evaluations)
 	mux.HandleFunc("/evaluations/", app.evaluations)
-	mux.HandleFunc("/evaluations/coverage", app.coverage)
 	mux.HandleFunc("/evaluations/lookup", app.evaluationLookup)
 	mux.HandleFunc("/", app.frontend)
 	address := ":" + port
@@ -251,11 +250,8 @@ func validateMoveRequest(request moveRequest) (EngineRequest, string, error) {
 	if err != nil {
 		return EngineRequest{}, "", err
 	}
-	if request.EloMaia == nil || request.EloUser == nil {
-		return EngineRequest{}, "", &requestError{Code: "missing_elo", Message: "elo_maia and elo_user are required"}
-	}
-	if *request.EloMaia < 0 || *request.EloMaia > 5000 || *request.EloUser < 0 || *request.EloUser > 5000 {
-		return EngineRequest{}, "", &requestError{Code: "invalid_elo", Message: "Elo values must be between 0 and 5000"}
+	if err := validateElo(request.EloMaia, request.EloUser); err != nil {
+		return EngineRequest{}, "", err
 	}
 	model := request.Model
 	if model == "" {
@@ -273,10 +269,8 @@ func validateMoveRequest(request moveRequest) (EngineRequest, string, error) {
 	if len(request.Moves) > 256 {
 		return EngineRequest{}, "", &requestError{Code: "history_too_long", Message: "moves may contain at most 256 plies"}
 	}
-	for _, move := range request.Moves {
-		if !uciMovePattern.MatchString(move) {
-			return EngineRequest{}, "", &requestError{Code: "invalid_move", Message: "moves must contain UCI moves"}
-		}
+	if err := validateUCIMoves(request.Moves); err != nil {
+		return EngineRequest{}, "", err
 	}
 	initialFEN := request.InitialFEN
 	if initialFEN != "" {

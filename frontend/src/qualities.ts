@@ -1,0 +1,40 @@
+import { Chess } from 'chess.js';
+import { stablePositionKey, type ReviewNode } from './evaluationStore';
+import { reviewMove, type Evaluation, type Quality } from './reviewMetrics';
+
+export type UnifiedVerdict = {
+  posKey: string; fen: string; move: string;
+  before?: Evaluation; after?: Evaluation; needsPending: boolean; quality?: Quality;
+};
+export type UnifiedMemo = { scope: string; verdicts: (UnifiedVerdict | undefined)[]; qualities: (Quality | undefined)[] };
+
+// Single quality loop for review + play. Callers supply scope (game/user for
+// play, constant for review), per-node cache keys, and an activity predicate
+// (all plies for review, user side only for play). Memo reuse is stable
+// content (posKey + fen + move + eval identity + pending), never memory IDs.
+export function computeQualities(args: {
+  scope: string; moves: string[]; nodes: ReviewNode[]; evaluations: (Evaluation | undefined)[];
+  keyFor: (node: ReviewNode) => string; active: (node: ReviewNode, index: number) => boolean;
+  pending: Set<string>; prev: UnifiedMemo | null; stats?: { reviews: number };
+}): { qualities: (Quality | undefined)[]; memo: UnifiedMemo } {
+  const { scope, moves, nodes, evaluations, keyFor, active, pending, prev, stats } = args;
+  const sameScope = prev?.scope === scope;
+  let allReused = !!prev && sameScope && prev.qualities.length === moves.length;
+  const verdicts = moves.map((move, index): UnifiedVerdict | undefined => {
+    const node = nodes[index], next = nodes[index + 1];
+    if (!node || !next || !active(node, index)) return;
+    const before = evaluations[index], after = evaluations[index + 1];
+    const needsPending = (!before || !after) && (pending.has(keyFor(node)) || pending.has(keyFor(next)));
+    const old = sameScope ? prev!.verdicts[index] : undefined;
+    const posKey = stablePositionKey(node);
+    if (old && old.posKey === posKey && old.fen === node.fen && old.move === move
+      && old.before === before && old.after === after && old.needsPending === needsPending) return old;
+    allReused = false;
+    if (before && after && stats) stats.reviews++;
+    const quality = before && after ? reviewMove(before, after, new Chess(node.fen), move)
+      : needsPending ? { label: 'Unreviewed' as const, accuracy: null, loss: null } : undefined;
+    return { posKey, fen: node.fen, move, before, after, needsPending, quality };
+  });
+  const qualities = allReused ? prev!.qualities : verdicts.map(verdict => verdict?.quality);
+  return { qualities, memo: { scope, verdicts, qualities } };
+}

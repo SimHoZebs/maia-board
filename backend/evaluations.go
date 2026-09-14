@@ -17,7 +17,6 @@ var (
 	evalCacheMaxKeyBytes   = 4096
 	evalCacheMaxValueBytes = 65536
 	evalHashPattern        = regexp.MustCompile(`^([0-9a-f]{1,16}|[0-9a-f]{64})$`)
-	coverageMaxHashes      = 1024
 )
 
 type cachedEvaluation struct {
@@ -80,13 +79,35 @@ func (s *GameStore) ensureV2Cache() error {
 	return err
 }
 
-func (s *GameStore) cachePut(hash, engine, key, value string) (cachedEvaluation, error) {
-	table := "evaluations"
+// Dual-table routing (legacy read-only + cold):
+// - evaluations_v2 holds all new server-owned rows (v2: keys, 64-char hashes).
+// - evaluations holds legacy opaque rows (short hashes). Production writes go
+//   through storeCache with v2 identities only, so legacy gains no new rows in
+//   prod and stays cold; it is read for compatibility (GET /evaluations/:id,
+//   lookup fallback via canonical key match, stats). Direct cachePut with a
+//   legacy key still works for test fixtures.
+// Future migration is one commit: delete the legacy table, this router, and
+// the UNION in cacheStats.
+func cacheWriteTable(key string) string {
 	if strings.HasPrefix(key, "v2:") {
+		return "evaluations_v2"
+	}
+	return "evaluations"
+}
+
+func cacheReadTable(hash string) string {
+	if len(hash) == 64 {
+		return "evaluations_v2"
+	}
+	return "evaluations"
+}
+
+func (s *GameStore) cachePut(hash, engine, key, value string) (cachedEvaluation, error) {
+	table := cacheWriteTable(key)
+	if table == "evaluations_v2" {
 		if err := s.ensureV2Cache(); err != nil {
 			return cachedEvaluation{}, err
 		}
-		table = "evaluations_v2"
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := s.db.Begin()
@@ -129,10 +150,7 @@ func (s *GameStore) cachePut(hash, engine, key, value string) (cachedEvaluation,
 }
 
 func (s *GameStore) cacheGet(hash string) (cachedEvaluation, error) {
-	table := "evaluations"
-	if len(hash) == 64 {
-		table = "evaluations_v2"
-	}
+	table := cacheReadTable(hash)
 	var entry cachedEvaluation
 	var value string
 	err := s.db.QueryRow(`SELECT key_hash, engine, cache_key, value, created_at
@@ -233,89 +251,4 @@ func (s *server) evaluations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, entry)
-}
-
-// Bulk coverage probe: one round trip answering "which of these cache rows
-// exist" for line restores, replacing hundreds of per-position GETs. Values
-// ride along so restores seed memory without a second fan-out. Read-only:
-// missing rows stay missing for an explicit, user-gated batch.
-//
-// Legacy compatibility surface: the current frontend restores through
-// POST /evaluations/lookup. Coverage reads both the legacy table and the
-// v2 table so older cached lines still restore; it never starts inference.
-func (s *GameStore) cacheCoverage(hashes []string) (map[string]cachedEvaluation, error) {
-	rows := map[string]cachedEvaluation{}
-	for start := 0; start < len(hashes); start += 500 {
-		end := start + 500
-		if end > len(hashes) {
-			end = len(hashes)
-		}
-		chunk := hashes[start:end]
-		placeholders := strings.Repeat("?,", len(chunk)-1) + "?"
-		args := make([]any, len(chunk))
-		for i, hash := range chunk {
-			args[i] = hash
-		}
-		for _, table := range []string{"evaluations", "evaluations_v2"} {
-			queryRows, err := s.db.Query(`SELECT key_hash, engine, cache_key, value, created_at
-			FROM `+table+` WHERE key_hash IN (`+placeholders+`)`, args...)
-			if err != nil {
-				if strings.Contains(err.Error(), "no such table: "+table) {
-					continue
-				}
-				return nil, err
-			}
-		for queryRows.Next() {
-			var entry cachedEvaluation
-			var value string
-			if err := queryRows.Scan(&entry.KeyHash, &entry.Engine, &entry.Key, &value, &entry.CreatedAt); err != nil {
-				queryRows.Close()
-				return nil, err
-			}
-			var decoded any
-			if err := json.Unmarshal([]byte(value), &decoded); err != nil {
-				// One corrupt row degrades to a miss for its hash, never to a
-				// failed bulk: the per-position probe path treats unreadable
-				// rows the same way, and the client still validates values.
-				continue
-			}
-			entry.Value = decoded
-			rows[entry.KeyHash] = entry
-		}
-		if err := queryRows.Err(); err != nil {
-			queryRows.Close()
-			return nil, err
-		}
-		queryRows.Close()
-		}
-	}
-	return rows, nil
-}
-
-func (s *server) coverage(w http.ResponseWriter, r *http.Request) {
-	if s.store == nil {
-		writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
-		return
-	}
-	if r.Method != http.MethodGet {
-		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET is required")
-		return
-	}
-	hashes := r.URL.Query()["hash"]
-	if len(hashes) > coverageMaxHashes {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", "at most 1024 hashes per lookup")
-		return
-	}
-	for _, hash := range hashes {
-		if !evalHashPattern.MatchString(hash) {
-			writeAPIError(w, http.StatusBadRequest, "invalid_request", "evaluation key must be hex")
-			return
-		}
-	}
-	rows, err := s.store.cacheCoverage(hashes)
-	if err != nil {
-		writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"rows": rows})
 }

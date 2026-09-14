@@ -1,5 +1,4 @@
-import { Chess } from 'chess.js';
-import { MaiaApiError, parseMoveResponse, type MaiaModel, type MoveResponse } from './api';
+import { assertLegalUci, MaiaApiError, parseMoveResponse, type MaiaModel, type MoveResponse } from './api';
 import type { Timeline, TimelineRow } from './domain';
 import { outcomeEvaluation } from './outcomeEvaluation';
 import { retryBusy, withDeadline } from './evaluationTransport';
@@ -7,23 +6,11 @@ import type { Evaluation, Score } from './reviewMetrics';
 import { defaultStockfishSettings, stockfishPolicy, type StockfishSettings } from './stockfishSettings';
 
 export type ReviewNode = TimelineRow & { timeline: Timeline; initialFen: string };
-class PositionReference implements ReviewNode {
-  constructor(readonly timeline: Timeline, readonly ply: number) { Object.freeze(this); }
-  private get row() { return this.timeline.rows[this.ply]; }
-  get initialFen() { return this.timeline.initialFen; }
-  get fen() { return this.row.fen; }
-  get uci() { return this.row.uci; }
-  get san() { return this.row.san; }
-  get turn() { return this.row.turn; }
-  get outcome() { return this.row.outcome; }
-  get historyId() { return this.row.historyId; }
-  get lastMove() { return this.row.lastMove; }
-}
-const nodeCache = new WeakMap<Timeline, ReviewNode[]>();
+// Rows are exposed directly as frozen plain objects. No wrapper class or
+// WeakMap: cache identity is stable content (fen + history), never memory IDs,
+// so fresh objects for the same content hit the same reviewKey.
 export function reviewNodes(timeline: Timeline): ReviewNode[] {
-  let nodes = nodeCache.get(timeline);
-  if (!nodes) { nodes = timeline.rows.map(row => new PositionReference(timeline, row.ply)); nodeCache.set(timeline, nodes); }
-  return nodes;
+  return timeline.rows.map(row => Object.freeze({ ...row, timeline, initialFen: timeline.initialFen }));
 }
 export type ReviewSettings = { eloMaia: number; eloUser: number; model: MaiaModel; stockfish?: StockfishSettings };
 export type Engine = 'sf' | 'maia';
@@ -33,8 +20,15 @@ export type Job = { key: string; engine: Engine; node: ReviewNode; settings: Rev
 export type EvaluationResult = Evaluation & { actual_settings?: StockfishSettings; cached?: boolean };
 export type StockfishResult = EvaluationResult;
 type Result = Evaluation | MoveResponse;
+// Stable position identity: the server's history inputs, never memory IDs.
+// Repetitions share fen but differ in moves-prefix; custom starts share fen
+// but differ in initialFen. Both must miss each other and survive rebuilds.
+export function stablePositionKey(node: ReviewNode): string {
+  return JSON.stringify([node.initialFen, node.timeline.moves.slice(0, node.ply)]);
+}
 export function reviewKey(engine: Engine, node: ReviewNode, settings: ReviewSettings): string {
-  return JSON.stringify([engine, node.historyId, engine === 'sf' ? stockfishPolicy(settings.stockfish) : [settings.eloMaia, settings.eloUser, settings.model]]);
+  return JSON.stringify([engine, node.fen, node.initialFen, node.timeline.moves.slice(0, node.ply),
+    engine === 'sf' ? stockfishPolicy(settings.stockfish) : [settings.eloMaia, settings.eloUser, settings.model]]);
 }
 
 // Prefix arrays exist only at the HTTP boundary.
@@ -92,8 +86,8 @@ export function parseEvaluation(body: unknown, settings?: StockfishSettings, act
     if (value.depth < Math.min(...value.lines.map(line => line.depth)) || value.score.type !== value.lines[0].score.type
       || value.score.value !== value.lines[0].score.value || value.score.winning_side !== value.lines[0].score.winning_side) throw invalid();
     if (fen) {
-      const legal = new Set(new Chess(fen).moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`));
-      if (!value.lines.every(line => legal.has(line.move))) throw invalid();
+      try { assertLegalUci(value.lines.map(line => line.move), fen); }
+      catch { throw invalid(); }
     }
   }
   const { actual_settings: _reported, ...parsed } = value;
@@ -181,9 +175,11 @@ export class EvaluationStore {
     const jobs = nodes.flatMap(node => node.outcome ? [] : engines.map(engine => ({ engine, node, settings: resolveSettings(settings, node), key: reviewKey(engine, node, resolveSettings(settings, node)) })));
     await this.restore(jobs, signal);
   }
-  async primeLine(nodes: ReviewNode[], settings: SettingsInput, signal: AbortSignal) {
-    await this.prime(nodes, settings, ['sf', 'maia'], signal);
-    return { total: nodes.length, covered: nodes.filter(node => this.result('sf', node, resolveSettings(settings, node)) && (node.outcome || this.result('maia', node, resolveSettings(settings, node)))).length };
+  primeCoverage(nodes: ReviewNode[], settings: SettingsInput, engines: Engine[]): { total: number; covered: number } {
+    const both = engines.includes('sf') && engines.includes('maia');
+    return { total: nodes.length, covered: nodes.filter(node => both
+      ? this.result('sf', node, resolveSettings(settings, node)) && (node.outcome || this.result('maia', node, resolveSettings(settings, node)))
+      : engines.every(engine => engine === 'maia' ? (node.outcome || this.result('maia', node, resolveSettings(settings, node))) : this.result('sf', node, resolveSettings(settings, node)))).length };
   }
 }
 export const evaluationStore = new EvaluationStore();

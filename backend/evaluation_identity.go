@@ -63,24 +63,158 @@ func (i evaluationIdentity) coordinates() (string, string) {
 	return hex.EncodeToString(hash[:]), key
 }
 
+var (
+	docAllowNull = map[string]bool{"terminal": true, "best_move": true, "actual_settings": true, "winning_side": true}
+	evalRequired = []string{"engine", "search_policy", "depth", "score", "lines", "terminal", "best_move"}
+	moveRequired = []string{"move", "top_moves", "wdl", "model_used", "degraded"}
+	engineResultRequired = []string{"move", "candidates", "wdl"}
+)
+
+// noBadNulls rejects JSON nulls except for explicitly optional keys (terminal,
+// best_move, actual_settings, winning_side). Go decodes null into zero values
+// without error, so without this a missing degraded flag or a null prob would
+// silently become false/0 and could still pass semantic validation.
+func noBadNulls(value any, allow map[string]bool) bool {
+	switch v := value.(type) {
+	case map[string]any:
+		for key, item := range v {
+			if item == nil && !allow[key] {
+				return false
+			}
+			if !noBadNulls(item, allow) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		for _, item := range v {
+			if !noBadNulls(item, allow) {
+				return false
+			}
+		}
+		return true
+	default:
+		return true
+	}
+}
+
+// validWDLLens enforces exactly three numeric entries for every wdl array.
+// encoding/json silently pads ([0,1] -> [0,1,0]) or truncates ([0,0,1,0] ->
+// [0,0,1]) when decoding into [3]float64, so length must be checked on the
+// raw document before typed decoding.
+func validWDLLens(value any) bool {
+	switch v := value.(type) {
+	case map[string]any:
+		for key, item := range v {
+			if key == "wdl" {
+				items, ok := item.([]any)
+				if !ok || len(items) != 3 {
+					return false
+				}
+				for _, entry := range items {
+					if _, ok := entry.(float64); !ok {
+						return false
+					}
+				}
+			}
+			if !validWDLLens(item) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		for _, item := range v {
+			if !validWDLLens(item) {
+				return false
+			}
+		}
+		return true
+	default:
+		return true
+	}
+}
+
+func checkShapeAny(value any, required []string, allowNull map[string]bool) bool {
+	m, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, key := range required {
+		item, ok := m[key]
+		if !ok {
+			return false
+		}
+		if item == nil && !allowNull[key] {
+			return false
+		}
+	}
+	if allowNull == nil {
+		allowNull = map[string]bool{}
+	}
+	return noBadNulls(value, allowNull) && validWDLLens(value)
+}
+
+// decodeStrict is the one generic strict decoder shared by UnmarshalJSON
+// implementations (via plain aliases to avoid recursion) and document
+// validation (via decodeStrictValue). It enforces required presence, null
+// rejection, wdl lengths, DisallowUnknownFields, and trailing-data rejection.
+func decodeStrict[T any](data []byte, required []string, allowNull map[string]bool) (T, error) {
+	var zero T
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return zero, err
+	}
+	if !checkShapeAny(value, required, allowNull) {
+		return zero, fmt.Errorf("invalid shape")
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.DisallowUnknownFields()
+	var decoded T
+	if err := d.Decode(&decoded); err != nil {
+		return zero, err
+	}
+	var trailing any
+	if err := d.Decode(&trailing); err != io.EOF {
+		return zero, fmt.Errorf("trailing data")
+	}
+	return decoded, nil
+}
+
+// decodeStrictValue is the single strict typed decode path for cached/worker
+// documents: required presence, null rejection, wdl lengths, size bound,
+// DisallowUnknownFields, and trailing-data rejection. Semantic ranges stay in
+// valid*.
+func decodeStrictValue[T any](value any, required []string, allowNull map[string]bool) (T, bool) {
+	var zero T
+	if !checkShapeAny(value, required, allowNull) {
+		return zero, false
+	}
+	data, err := json.Marshal(value)
+	if err != nil || len(data) > evalCacheMaxValueBytes {
+		return zero, false
+	}
+	decoded, err := decodeStrict[T](data, required, allowNull)
+	if err != nil {
+		return zero, false
+	}
+	return decoded, true
+}
+
 func strictDocument(value any, target any, required ...string) bool {
+	if !checkShapeAny(value, required, docAllowNull) {
+		return false
+	}
 	data, err := json.Marshal(value)
 	if err != nil || len(data) > evalCacheMaxValueBytes {
 		return false
 	}
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(data, &fields) != nil {
-		return false
-	}
-	for _, field := range required {
-		raw, ok := fields[field]
-		if !ok || bytes.Equal(raw, []byte("null")) {
-			return false
-		}
-	}
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
-	return d.Decode(target) == nil
+	if d.Decode(target) != nil {
+		return false
+	}
+	var trailing any
+	return d.Decode(&trailing) == io.EOF
 }
 
 func probability(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 && v <= 1 }
@@ -179,8 +313,8 @@ func (s *server) cachedSF(r evaluationRequest) (*evaluationResponse, bool) {
 		if !ok {
 			continue
 		}
-		var value evaluationResponse
-		if !evaluationDocument(entry.Value) || !strictDocument(entry.Value, &value) || !validEvaluationValue(value, candidate.Settings) {
+		value, ok := decodeStrictValue[evaluationResponse](entry.Value, evalRequired, docAllowNull)
+		if !ok || !validEvaluationValue(value, candidate.Settings) {
 			continue
 		}
 		value.ActualSettings = candidate.Settings
@@ -198,8 +332,8 @@ func (s *server) cachedMaia(r EngineRequest, model string) (*moveResponse, bool)
 	if !ok {
 		return nil, false
 	}
-	var value moveResponse
-	if !moveDocument(entry.Value) || !strictDocument(entry.Value, &value) || !validMoveValue(value, model, true) || value.Degraded {
+	value, ok := decodeStrictValue[moveResponse](entry.Value, moveRequired, nil)
+	if !ok || !validMoveValue(value, model, true) || value.Degraded {
 		return nil, false
 	}
 	return &value, true

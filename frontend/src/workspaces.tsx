@@ -146,7 +146,8 @@ function BoardShell({ state, dispatch, ready, toolbar, position, transition, ori
 }
 
 export function PlayWorkspace({ state, dispatch }: Props) {
-  const { settings, request } = state;
+  const { request } = state;
+  const settings = state.play.settings;
   // Play-only engine: the analysis coordinator does not exist on this page.
   const moveFeedback = usePlayFeedback(state);
   const ply = state.viewedPly ?? state.play.moves.length;

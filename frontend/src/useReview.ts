@@ -1,38 +1,26 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Chess } from 'chess.js';
 import { buildTimeline, type TimelineRow } from './domain';
 import type { State } from './state';
 import { ReviewCoordinator, reviewKey, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
-import { maiaRarity, reviewMove, type Evaluation, type Quality } from './reviewMetrics';
+import { computeQualities, type UnifiedMemo, type UnifiedVerdict } from './qualities';
+import { maiaRarity, type Evaluation, type Quality } from './reviewMetrics';
 import { selectMaiaDisplay, type MaiaDisplayEntry } from './maiaDisplay';
 
 export type RecordStatus = { state: 'checking' | 'fresh' | 'none' };
 export function isMaiaPosition(row: Pick<TimelineRow, 'turn' | 'outcome'>, userColor: 'white' | 'black', ownGame: boolean): boolean {
   return ownGame && row.outcome === null && row.turn !== userColor;
 }
-type ReviewPlyVerdict = { fen: string; move: string; before?: Evaluation; after?: Evaluation; needsPending: boolean; quality?: Quality };
-export type ReviewQualitiesMemo = { verdicts: (ReviewPlyVerdict | undefined)[]; qualities: (Quality | undefined)[] };
+type ReviewPlyVerdict = UnifiedVerdict & { needsPending: boolean };
+export type ReviewQualitiesMemo = UnifiedMemo;
 export type ReviewQualitiesStats = { reviews: number };
 export function computeReviewQualities(args: {
   line: { moves: string[] }; nodes: ReviewNode[]; evaluations: (Evaluation | undefined)[];
   settingsForNode: (node: ReviewNode) => ReviewSettings; pending: Set<string>; prev: ReviewQualitiesMemo | null; stats?: ReviewQualitiesStats;
 }): { qualities: (Quality | undefined)[]; memo: ReviewQualitiesMemo } {
   const { line, nodes, evaluations, settingsForNode, pending, prev, stats } = args;
-  let allReused = !!prev && prev.qualities.length === line.moves.length;
-  const verdicts = line.moves.map((move, index): ReviewPlyVerdict => {
-    const node = nodes[index], next = nodes[index + 1];
-    const before = evaluations[index], after = evaluations[index + 1];
-    const needsPending = (!before || !after) && (pending.has(reviewKey('sf', node, settingsForNode(node))) || pending.has(reviewKey('sf', next, settingsForNode(next))));
-    const old = prev?.verdicts[index];
-    if (old && old.fen === node.fen && old.move === move && old.before === before && old.after === after && old.needsPending === needsPending) return old;
-    allReused = false;
-    if (before && after && stats) stats.reviews++;
-    const quality = before && after ? reviewMove(before, after, new Chess(node.fen), move)
-      : needsPending ? { label: 'Unreviewed' as const, accuracy: null, loss: null } : undefined;
-    return { fen: node.fen, move, before, after, needsPending, quality };
-  });
-  const qualities = allReused ? prev!.qualities : verdicts.map(verdict => verdict.quality);
-  return { qualities, memo: { verdicts, qualities } };
+  return computeQualities({ scope: '', moves: line.moves, nodes, evaluations,
+    keyFor: node => reviewKey('sf', node, settingsForNode(node)),
+    active: () => true, pending, prev, stats });
 }
 
 export function useReview(state: State) {
@@ -90,7 +78,7 @@ export function useReview(state: State) {
     if (!active || tooLong) return;
     // Current and previous Stockfish grade the displayed move. Maia's focus
     // grades that move; current-position Maia supplies forward candidates.
-    const timer = setTimeout(() => coordinator.foregroundAt(focusNode ? [focusNode, currentNode] : [currentNode], settingsForNode, 2), 200);
+    const timer = setTimeout(() => { coordinator.ensure(focusNode ? [focusNode, currentNode] : [currentNode], settingsForNode, { priority: true }); }, 200);
     return () => { clearTimeout(timer); coordinator.clearForeground(); };
   }, [coordinator, active, tooLong, nodes, currentPly, combinedKey]);
 
@@ -100,7 +88,7 @@ export function useReview(state: State) {
   useEffect(() => {
     if (!active || tooLong) return;
     const controller = new AbortController();
-    void coordinator.primeLine(nodes, settingsForNode, controller.signal).then(
+    void Promise.resolve(coordinator.ensure(nodes, settingsForNode, { signal: controller.signal })).then(
       () => { if (!controller.signal.aborted) setPrime({ key: primeKey }); },
       error => { if (!controller.signal.aborted) setPrime({ key: primeKey, error: error instanceof Error ? error.message : 'Evaluation lookup failed.' }); },
     );
@@ -136,7 +124,7 @@ export function useReview(state: State) {
     maiaCurrentModel: maiaCurrent?.model_used, maiaCurrentDegraded: maiaCurrent?.degraded ?? false,
     maiaCurrentPending: active && coordinator.isPending('maia', currentNode, currentSettings),
     gameElo: gameForLine?.settings.eloMaia, error, currentError,
-    progress: coordinator.progress, recordStatus, start: () => coordinator.startBatch(nodes, settingsForNode),
+    progress: coordinator.progress, recordStatus, start: () => { coordinator.ensure(nodes, settingsForNode, { retain: true }); },
     retry: () => { coordinator.retry(); if (prime?.error) setPrimeAttempt(attempt => attempt + 1); }, tooLong };
 }
 export type Review = ReturnType<typeof useReview>;

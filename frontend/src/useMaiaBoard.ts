@@ -42,12 +42,7 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
     let previousCurrent = repository.snapshot().currentId;
     const update = () => {
       const value = repository.snapshot();
-      sync.setPending(value.pending.length + value.recovery.length);
-      sync.setTotal(value.total);
-      sync.setError([value.error, value.recovery.length ? `${value.recovery.length} stored item(s) need recovery. Export pending work before discarding them.` : ''].filter(Boolean).join(' '));
-      sync.setDurabilityError(value.durabilityError);
-      sync.setPage(value.nextOffset !== null, value.loading);
-      sync.setRecovery(value.pending, value.recovery, value.failedVersion, value.conflict);
+      sync.setSnapshot(value);
       if (value.games !== previousGames || value.currentId !== previousCurrent) {
         previousGames = value.games;
         previousCurrent = value.currentId;

@@ -17,7 +17,7 @@ it('defaults new games to 1 while preserving legacy and saved-game temperatures'
   for (const temperature of [undefined, 0, .7]) {
     localStorage.setItem(KEYS.current, JSON.stringify({ id: 'saved', createdAt: '2026-09-11T00:00:00Z', moves: ['e2e4'], settings: { ...defaultSettings, temperature } }));
     let state = initialState();
-    expect(state.settings.temperature).toBe(temperature ?? 0);
+    expect(state.play.settings.temperature).toBe(temperature ?? 0);
     expect(state.request?.payload.temperature).toBe(temperature ?? 0);
     state = reducer(state, { type: 'setup' });
     expect(state.setup?.temperature).toBe(1);
@@ -25,7 +25,7 @@ it('defaults new games to 1 while preserving legacy and saved-game temperatures'
     state = reducer(state, { type: 'setup', draft: { eloMaia: 1700 } });
     expect(state.setup?.temperature).toBe(.5);
     state = reducer(state, { type: 'cancel-setup' });
-    expect(state.settings.temperature).toBe(temperature ?? 0);
+    expect(state.play.settings.temperature).toBe(temperature ?? 0);
     state = reducer(state, { type: 'new', id: 'new', createdAt: '2026-09-11T00:00:00Z' });
     expect(state.play.settings.temperature).toBe(1);
   }
@@ -89,7 +89,7 @@ it('primes terminal positions with the selected policy without engine requests',
   const fetcher = vi.fn();
   const coordinator = new ReviewCoordinator(fetcher);
   const settings = { ...defaultSettings, stockfish: { time_ms: 30000, lines: 5, depth: 40 } };
-  expect(await coordinator.primeLine([node], settings, new AbortController().signal)).toEqual({ covered: 1, total: 1 });
+  expect(await coordinator.ensure([node], settings, { signal: new AbortController().signal })).toEqual({ covered: 1, total: 1 });
   expect(coordinator.result('sf', node, settings)?.search_policy).toBe(stockfishPolicy(settings.stockfish));
   expect(fetcher).not.toHaveBeenCalled();
 });

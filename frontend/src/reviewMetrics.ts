@@ -1,5 +1,6 @@
 import type { Chess } from 'chess.js';
 import type { MoveResponse } from './api';
+import type { DomainOutcome } from './domain';
 export const SEARCH_POLICY = 'sf19-n100k-ms750-mpv2-t1-h64-v1';
 export const REVIEW_METHOD = 'maia-board-review-v1';
 export type Score = { type: 'cp' | 'mate'; value: number; winning_side?: 'white' | 'black' };
@@ -87,10 +88,23 @@ export function reviewMove(before: Evaluation | undefined, after: Evaluation | u
   const great = best && loss <= 1 && legal >= 2 && before.score.type === 'cp' && after.score.type === 'cp' && first?.move === played && second?.move !== played && first.score.type === 'cp' && second?.score.type === 'cp' && pov(first.score) - pov(second.score) >= 10;
   return { label: classifyLoss(loss) ?? (great ? 'Great' : best ? 'Best' : 'Good'), accuracy: moveAccuracy(loss), loss };
 }
+// Single terminal source of truth. Winner resolution mirrors whiteWin:
+// explicit winning_side, else mate-value sign. domain.ts outcome() and both
+// Evaluation constructors share these two helpers so repetition/mate/draw
+// facts cannot drift.
+export function outcomeFromGame(game: Pick<Chess, 'isCheckmate' | 'isDraw' | 'turn'>): DomainOutcome | null {
+  return game.isCheckmate() ? { kind: 'checkmate', winner: game.turn() === 'w' ? 'black' : 'white' }
+    : game.isDraw() ? { kind: 'draw' } : null;
+}
+export function evaluationForOutcome(outcome: DomainOutcome | null, search_policy: string): Evaluation | undefined {
+  if (!outcome) return;
+  const winner = outcome.kind === 'checkmate' ? outcome.winner : null;
+  return { engine: 'Stockfish 19', search_policy, depth: 0, terminal: winner ? `${winner}_win` : 'draw', best_move: null, lines: [],
+    score: winner ? { type: 'mate', value: 0, winning_side: winner } : { type: 'cp', value: 0 } };
+}
 export function terminalEvaluation(game: Chess): Evaluation | undefined {
   if (!game.isGameOver()) return;
-  const winner = game.isCheckmate() ? (game.turn() === 'w' ? 'black' : 'white') : null;
-  return { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 0, terminal: winner ? `${winner}_win` : 'draw', best_move: null, lines: [], score: winner ? { type: 'mate', value: 0, winning_side: winner } : { type: 'cp', value: 0 } };
+  return evaluationForOutcome(outcomeFromGame(game), SEARCH_POLICY);
 }
 export function scoreValueText(score: Score): string {
   // Bare signed numbers: sign is White-relative (+ White, - Black), magnitude
