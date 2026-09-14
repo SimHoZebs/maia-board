@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
 import type { Key } from '@lichess-org/chessground/types';
 import { Menu, RotateCw, Plus, Undo2, Flag } from 'lucide-react';
 import { NavLink } from 'react-router';
@@ -7,7 +6,7 @@ import { Chess } from 'chess.js';
 import { ChessBoard } from './ChessBoard';
 import { Button, IconButton } from './components';
 import { AnalysisActions, AnalysisControls, PlayControls, type Props } from './Controls';
-import { InsightPanel, MoveNavBar, MovesPanel, SavedGames, StockfishBar } from './ReadPanels';
+import { InsightPanel, MovesPanel, SavedGames, StockfishBar } from './ReadPanels';
 import { PromotionDialog } from './PromotionDialog';
 import { Dialog } from './Dialog';
 import { gameResult, lineRecord, oppositeColor, replay, resultTextForTip, sideName, START_FEN, storedGameResult } from './domain';
@@ -66,25 +65,8 @@ function MobileMenu({ state, dispatch }: Props) {
   </div>;
 }
 
-// Placement-only viewport switch (no measuring): the mobile bottom bar is
-// a separate mount from the inline move navigation, with exactly one of
-// them mounted at a time so IDs stay unique.
-function useMediaQuery(query: string): boolean {
-  const current = () =>
-    typeof window !== 'undefined' && typeof window.matchMedia !== 'undefined' && window.matchMedia(query).matches;
-  const [matches, setMatches] = useState(current);
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return;
-    const list = window.matchMedia(query);
-    setMatches(list.matches);
-    const onChange = (event: MediaQueryListEvent) => setMatches(event.matches);
-    list.addEventListener('change', onChange);
-    return () => list.removeEventListener('change', onChange);
-  }, [query]);
-  return matches;
-}
-
-export function App({ state, dispatch, children }: Props & { children: ReactNode }) {  const { mode, settings, request, error } = state;
+export function App({ state, dispatch, children }: Props & { children: ReactNode }) {
+  const { mode, settings, request, error } = state;
   const review = useReview(state);
   const moveFeedback = usePlayFeedback(state);
   const analysis = mode === 'analysis';
@@ -162,19 +144,9 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
   const [confirmResign, setConfirmResign] = useState(false);
   useEffect(() => { if (over || analysis) setConfirmResign(false); }, [over, analysis]);
   const bottomNav = state.bottomNav;
-  const isMobile = useMediaQuery('(max-width: 760px)');
-  const [portalHost, setPortalHost] = useState<HTMLElement | null>(null);
-  useEffect(() => { setPortalHost(document.body); }, []);
-  // The mobile bottom bar is a separate mount from the inline move
-  // navigation: exactly one of them exists at a time, so the bar can live
-  // outside the padded content flow (full-bleed, last in-flow child of the
-  // page) while desktop keeps its inline row.
-  const mobileBar = bottomNav && isMobile;
   // Screens without a move list (settings, history, pre-start setup) still
   // need page navigation once the header tabs step aside: a menu-only bar.
   const menuOnly = bottomNav && ((mode !== 'play' && mode !== 'analysis') || !ready);
-  const mobileMenu = <MobileMenu state={state} dispatch={dispatch} />;
-  const moveNav = <MoveNavBar ply={ply} total={full.sanMoves.length} onView={ply => dispatch({ type: 'view', ply })} menu={mobileMenu} />;
   const tools = <><IconButton id="flip-board" label="Flip board" onClick={() => dispatch({ type: 'flip' })}><RotateCw size={16} aria-hidden="true" /></IconButton>{analysis && state.analysis.branchFromPly !== null && <IconButton id="return-original" label="Return to original" onClick={() => dispatch({ type: 'original' })}><Undo2 size={16} aria-hidden="true" /></IconButton>}{!analysis && <IconButton id="takeback" label="Takeback" disabled={!state.play.moves.length || !!resigned} onClick={() => dispatch({ type: 'takeback' })}><Undo2 size={16} aria-hidden="true" /></IconButton>}{!analysis && !over && <IconButton id="resign" label="Resign" onClick={() => setConfirmResign(true)}><Flag size={16} aria-hidden="true" /></IconButton>}{bottomNav && mode === 'play' && ready && <IconButton id="new-game" label="New game" onClick={() => dispatch({ type: 'setup' })}><Plus size={18} aria-hidden="true" /></IconButton>}</>;
   return <div className={`app-shell${bottomNav ? ' bottom-ui' : ''}`}>
     <RegionRecorder id="chrome"><header className="site-header"><span className="brand">maia board</span>{children}{mode === 'play' && ready && !bottomNav && <IconButton id="new-game" className="header-action" label="New game" onClick={() => dispatch({ type: 'setup' })}><Plus size={18} aria-hidden="true" /></IconButton>}</header></RegionRecorder>
@@ -191,7 +163,7 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
             {ready && <>
               <MovesPanel sans={full.sanMoves} ply={ply} initialFen={analysis ? state.analysis.initialFen : START_FEN} qualities={analysis ? review.qualities : moveFeedback.qualities} badgeLoading={state.badgeLoading} onView={ply => dispatch({ type: 'view', ply })} onOriginalView={ply => { dispatch({ type: 'original' }); dispatch({ type: 'view', ply }); }} analysis={analysis}
                 original={analysis && state.analysis.branchFromPly !== null ? { sans: state.analysis.sanMoves, fromPly: state.analysis.branchFromPly } : undefined}
-                branchUp={bottomNav} tools={bottomNav ? undefined : tools} menu={bottomNav && !mobileBar ? mobileMenu : undefined} hideNav={mobileBar} />
+                branchUp={bottomNav} tools={bottomNav ? undefined : tools} menu={bottomNav ? <MobileMenu state={state} dispatch={dispatch} /> : undefined} />
               {over && <div className="game-result" role="status"><div className="result-copy"><span className="result-eyebrow">Game over</span><strong className="result-text">{winner && <span className={`side-dot ${winner}`} aria-hidden="true" />}{resultText}</strong></div><div className="result-actions"><Button variant="primary" onClick={() => dispatch({ type: 'review' })}>Review game</Button><Button id="new-game-again" onClick={() => dispatch({ type: 'setup' })}>New game</Button></div></div>}
             </>}
             <div id="error-banner" className="error-banner" role="alert" hidden={!error}>{error}{error && ready && !request && <Button id="retry-request" variant="quiet" onClick={() => dispatch({ type: 'retry' })}>Retry</Button>}</div>
@@ -201,11 +173,7 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
         {ready && <RegionRecorder id="chrome"><><PlayControls state={state} dispatch={dispatch} /><AnalysisControls state={state} dispatch={dispatch} /></></RegionRecorder>}
       </>}
     </main>
-    {menuOnly && !mobileBar && <div className="mobile-pagebar"><div className="menu-slot">{mobileMenu}</div></div>}
-    {mobileBar && portalHost && createPortal(
-      <div className="mobile-footer">{menuOnly ? <div className="mobile-pagebar"><div className="menu-slot">{mobileMenu}</div></div> : moveNav}</div>,
-      portalHost,
-    )}
+    {menuOnly && <div className="mobile-pagebar"><div className="menu-slot"><MobileMenu state={state} dispatch={dispatch} /></div></div>}
     <PromotionDialog open={!!state.promotion} onChoose={piece => dispatch({ type: 'promote', piece })} />
     {confirmResign && !analysis && !over && <Dialog title="Resign game?" onCancel={() => setConfirmResign(false)}>
       <h2>Resign game?</h2>
