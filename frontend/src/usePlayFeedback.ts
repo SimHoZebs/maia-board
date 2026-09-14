@@ -182,33 +182,48 @@ export function usePlayFeedback(state: State): PlayFeedback {
       coordinator.suspend();
       return;
     }
-    // One progressive walk for the whole line: prefix fens plus history-aware
-    // terminals (repetition included) with zero replays — instead of a replay
-    // per node. Terminal entries seed the cache exactly as job() would.
-    const game = new Chess(START_FEN);
-    const prefixes: string[][] = [[]];
-    const fens: string[] = [game.fen()];
-    const terminals: (Evaluation | null)[] = [terminalEvaluation(game) ?? null];
-    for (const uci of moves) {
-      try {
-        applyUci(game, uci);
-      } catch {
-        break;
-      }
-      prefixes.push(moves.slice(0, prefixes.length));
-      fens.push(game.fen());
-      terminals.push(terminalEvaluation(game) ?? null);
-    }
+    // Restore from the server cache first (bounded concurrent probes,
+    // tip-first), then queue only true misses for live inference. Without
+    // this the single-file queue re-probes every position sequentially on
+    // every page load (~400 round trips for a 133-ply game).
+    const controller = new AbortController();
+    let cancelled = false;
     const items: { node: ReviewNode; terminal: Evaluation | null }[] = [];
-    moves.forEach((_, ply) => {
-      if ((ply % 2 === 0) !== (state.settings.userColor === 'white')) return;
-      if (ply + 1 >= prefixes.length) return;
-      items.push(
-        { node: { initialFen: START_FEN, moves: prefixes[ply], fen: fens[ply] }, terminal: terminals[ply] },
-        { node: { initialFen: START_FEN, moves: prefixes[ply + 1], fen: fens[ply + 1] }, terminal: terminals[ply + 1] },
-      );
-    });
-    coordinator.syncPlayQueueResolved(items, settings);
+    {
+      // One progressive walk for the whole line: prefix fens plus history-aware
+      // terminals (repetition included) with zero replays — instead of a replay
+      // per node. Terminal entries seed the cache exactly as job() would.
+      const game = new Chess(START_FEN);
+      const prefixes: string[][] = [[]];
+      const fens: string[] = [game.fen()];
+      const terminals: (Evaluation | null)[] = [terminalEvaluation(game) ?? null];
+      for (const uci of moves) {
+        try {
+          applyUci(game, uci);
+        } catch {
+          break;
+        }
+        prefixes.push(moves.slice(0, prefixes.length));
+        fens.push(game.fen());
+        terminals.push(terminalEvaluation(game) ?? null);
+      }
+      moves.forEach((_, ply) => {
+        if ((ply % 2 === 0) !== (state.settings.userColor === 'white')) return;
+        if (ply + 1 >= prefixes.length) return;
+        items.push(
+          { node: { initialFen: START_FEN, moves: prefixes[ply], fen: fens[ply] }, terminal: terminals[ply] },
+          { node: { initialFen: START_FEN, moves: prefixes[ply + 1], fen: fens[ply + 1] }, terminal: terminals[ply + 1] },
+        );
+      });
+    }
+    void coordinator.primePositions(items, settings, controller.signal).then(
+      remaining => {
+        if (cancelled) return;
+        coordinator.syncPlayQueueResolved(remaining, settings);
+      },
+      () => { /* Aborted by cleanup/navigation; the next sync supersedes. */ },
+    );
+    return () => { cancelled = true; controller.abort(); };
   }, [coordinator, active, queuedKey, settings]);
   // Read live from the coordinator cache as evaluations settle (the
   // subscription above re-renders, turning icons on). The walk is incremental:

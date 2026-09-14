@@ -416,6 +416,71 @@ export class ReviewCoordinator {
     this.emit();
   }
   suspend() { this.active = false; this.clearForeground(); this.clearPlayQueue(); this.batch = null; this.emit(); }
+  // Play-lane restore: concurrent read-through for queued positions ahead of
+  // the single-file queue drain. Play feedback evaluates at the user's fixed
+  // lines setting, but past analyses may have filed larger rows, so each
+  // position needs its exact lookup plus the downward-superset fallback —
+  // exactly readServerCache per job. Bounded lanes (like primeLine) collapse
+  // ~133 sequential probe rounds into ~17; tip-first ordering paints the
+  // visible tip first. Read-only: misses stay missing for the queue's live
+  // path, which the caller runs next with only the returned remainder.
+  // Terminals arrive precomputed from the caller and are never probed (the
+  // queue seeds them, mirroring job()). Aborts via signal (hook-owned).
+  async primePositions(
+    items: { node: ReviewNode; terminal: Evaluation | null }[],
+    settings: SettingsInput,
+    signal: AbortSignal,
+  ): Promise<{ node: ReviewNode; terminal: Evaluation | null }[]> {
+    const pending: { job: Job; item: { node: ReviewNode; terminal: Evaluation | null } }[] = [];
+    for (const item of items) {
+      if (item.terminal) continue;
+      const resolved = resolveSettings(settings, item.node);
+      const key = reviewKey('sf', item.node, resolved);
+      if (this.cache.sf.peek(key) || this.failures.has(key)) continue;
+      pending.push({ job: { engine: 'sf', node: item.node, settings: resolved, key, lane: 'play' }, item });
+    }
+    // Tip-first: the move list viewport shows the tip, so its icons matter first.
+    pending.sort((a, b) => b.job.node.moves.length - a.job.node.moves.length);
+    const restoring = pending.map(({ job }) => ({ key: job.key, engine: job.engine }));
+    for (const job of restoring) {
+      const entry = this.primeInflight.get(job.key);
+      this.primeInflight.set(job.key, { count: (entry?.count ?? 0) + 1, engine: job.engine });
+    }
+    // Notify now so badges animate for the whole restore (callers only emit
+    // again after queueing the remainder, so a bare restore still settles).
+    this.emit();
+    try {
+      const lanes = Array.from({ length: Math.min(8, pending.length) }, async () => {
+        while (pending.length) {
+          signal.throwIfAborted();
+          const { job } = pending.shift()!;
+          const hit = await this.readServerCache(job, signal).catch(error => {
+            if (error instanceof DOMException && error.name === 'AbortError') throw error;
+            return undefined;
+          });
+          if (hit) this.cache.sf.set(job.key, hit as Evaluation);
+        }
+      });
+      await Promise.all(lanes);
+    } finally {
+      for (const job of restoring) {
+        const left = (this.primeInflight.get(job.key)?.count ?? 1) - 1;
+        if (left <= 0) this.primeInflight.delete(job.key);
+        else this.primeInflight.set(job.key, { count: left, engine: job.engine });
+      }
+      this.emit();
+    }
+    // Remainder for the queue: anything still unfinished. Failed keys stay in
+    // (probing them again is wasted), but they must reach syncPlayQueueResolved
+    // below: it clears failures for desired positions so the next sync retries
+    // them instead of leaving a permanent hole. Terminals likewise flow
+    // through — the queue, not the prime, seeds them.
+    return items.filter(({ node }) => {
+      const resolved = resolveSettings(settings, node);
+      const key = reviewKey('sf', node, resolved);
+      return !this.cache.sf.peek(key);
+    });
+  }
   startBatch(nodes: ReviewNode[], settings: SettingsInput) {
     if (nodes.length > 257) return;
     const total = nodes.reduce((count, node) => count + (terminalEvaluation(replay(node.moves, node.initialFen)) ? 0 : 2), 0);

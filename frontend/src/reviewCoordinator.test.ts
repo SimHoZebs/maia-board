@@ -1022,3 +1022,140 @@ describe('play-lane fetch ordering', () => {
     expect(play.result('sf', nodes[0], sf2)).toMatchObject({ best_move: 'g1f3', depth: 14 });
   });
 });
+
+describe('play prime positions', () => {
+  const CANDIDATES = ['e2e4', 'd2d4', 'g1f3', 'c2c4', 'b1c3'];
+  const sf2 = { ...settings, stockfish: { time_ms: 750, lines: 2, depth: 0 } };
+  const sf4 = { ...settings, stockfish: { time_ms: 750, lines: 4, depth: 0 } };
+  const liveBody = (path: string, request: Record<string, unknown>) => {
+    if (path === '/evaluate') {
+      const wanted = request.settings as { time_ms: number; lines: number; depth: number };
+      const policy = stockfishPolicy(wanted);
+      const count = Math.min(wanted.lines, 4);
+      const lines = CANDIDATES.slice(0, count).map((move, index) => ({ move, score: { type: 'cp', value: -index * 10 }, depth: 12 }));
+      return { engine: 'Stockfish 19', search_policy: policy, depth: 12, terminal: null, best_move: lines[0].move, score: lines[0].score, lines };
+    }
+    return body(path);
+  };
+  const callsOf = (fetcher: ReturnType<typeof vi.fn>) =>
+    fetcher.mock.calls.map((call: unknown[]) => `${(call[1] as RequestInit | undefined)?.method ?? 'GET'} ${String(call[0]).split('?')[0]}`);
+  const evalGets = (fetcher: ReturnType<typeof vi.fn>) => callsOf(fetcher).filter(call => call.startsWith('GET /evaluations/'));
+  const evalPosts = (fetcher: ReturnType<typeof vi.fn>) => callsOf(fetcher).filter(call => call === 'POST /evaluate');
+  const playItems = (ns: ReviewNode[]) => ns.map(node => ({ node, terminal: null as Evaluation | null }));
+
+  it('restores exact rows with one probe each and zero POSTs', async () => {
+    const stored = new Map<string, StoredRow>();
+    const seed = vi.fn(readThroughFetcher(stored, liveBody));
+    const seeder = new ReviewCoordinator(seed);
+    seeder.startBatch(nodes.slice(0, 2), sf2);
+    await flush(); await flush(); await flush();
+    const fetcher = vi.fn(readThroughFetcher(stored, liveBody));
+    const play = new ReviewCoordinator(fetcher);
+    const remaining = await play.primePositions(playItems(nodes.slice(0, 2)), sf2, new AbortController().signal);
+    expect(remaining).toEqual([]);
+    // Exact probes only: no superset fan-out, no inference POSTs.
+    expect(evalGets(fetcher).sort()).toEqual(
+      nodes.slice(0, 2).map(node => `GET /evaluations/${cacheHash(reviewKey('sf', node, sf2))}`).sort(),
+    );
+    expect(evalPosts(fetcher)).toHaveLength(0);
+    expect(play.result('sf', nodes[1], sf2)?.best_move).toBe('e2e4');
+  });
+
+  it('serves larger rows through the prime with zero POSTs', async () => {
+    const stored = new Map<string, StoredRow>();
+    const seed = vi.fn(readThroughFetcher(stored, liveBody));
+    const seeder = new ReviewCoordinator(seed);
+    seeder.startBatch(nodes.slice(0, 1), sf4);
+    await flush(); await flush(); await flush();
+    const fetcher = vi.fn(readThroughFetcher(stored, liveBody));
+    const play = new ReviewCoordinator(fetcher);
+    const remaining = await play.primePositions(playItems(nodes.slice(0, 1)), sf2, new AbortController().signal);
+    expect(remaining).toEqual([]);
+    expect(evalPosts(fetcher)).toHaveLength(0);
+    expect(play.result('sf', nodes[0], sf2)?.lines.map(line => line.move)).toEqual(['e2e4', 'd2d4']);
+  });
+
+  it('returns true misses for the queue to infer live', async () => {
+    const stored = new Map<string, StoredRow>();
+    const fetcher = vi.fn(readThroughFetcher(stored, liveBody));
+    const play = new ReviewCoordinator(fetcher);
+    const items = playItems(nodes.slice(0, 1));
+    const remaining = await play.primePositions(items, sf2, new AbortController().signal);
+    expect(remaining).toHaveLength(1);
+    play.syncPlayQueueResolved(remaining, sf2);
+    await flush(); await flush(); await flush();
+    expect(evalPosts(fetcher)).toHaveLength(1);
+    expect(play.result('sf', nodes[0], sf2)?.depth).toBe(12);
+  });
+
+  it('aborts cleanly and releases pending work', async () => {
+    const gates = new Map<string, () => void>();
+    const gated = vi.fn(async (url: unknown, init?: RequestInit) => {
+      await new Promise<void>((resolve, reject) => {
+        gates.set(String(url).split('?')[0], resolve);
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      });
+      return Response.json({ code: 'not_found', message: 'missing' }, { status: 404 });
+    }) as unknown as typeof fetch;
+    const play = new ReviewCoordinator(gated);
+    const items = playItems(nodes.slice(0, 2));
+    const controller = new AbortController();
+    const priming = play.primePositions(items, sf2, controller.signal);
+    await flush();
+    const pendingKey = (node: ReviewNode) => reviewKey('sf', node, sf2);
+    expect(play.sfPendingKeys()).toEqual(new Set([pendingKey(nodes[0]), pendingKey(nodes[1])]));
+    controller.abort();
+    await expect(priming).rejects.toThrow();
+    await flush();
+    expect(play.sfPendingKeys()).toEqual(new Set());
+    expect(play.result('sf', nodes[0], sf2)).toBeUndefined();
+  });
+
+  it('probes tip-first so visible icons restore first', async () => {
+    const fetcher = vi.fn(readThroughFetcher(new Map(), liveBody));
+    const play = new ReviewCoordinator(fetcher);
+    // Ascending input: the pool must still lead with the tip-most position.
+    const line = loadLine('', '1. e4 e5 2. Nf3 Nc6 3. Bb5');
+    const long = testNodes(line.initialFen, line.moves);
+    const items = playItems(long);
+    void play.primePositions(items, sf2, new AbortController().signal);
+    const gets = evalGets(fetcher);
+    expect(gets.length).toBeGreaterThan(0);
+    const tip = long[long.length - 1];
+    expect(gets[0]).toBe(`GET /evaluations/${cacheHash(reviewKey('sf', tip, sf2))}`);
+    await flush(); await flush();
+  });
+
+  it('retries live-failed positions on the next prime+sync instead of leaving a hole', async () => {
+    const stored = new Map<string, StoredRow>();
+    const impl = readThroughFetcher(stored, liveBody);
+    let failures = 1;
+    const fetcher = vi.fn((async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).split('?')[0] === '/evaluate' && (init?.method ?? 'GET') === 'POST' && failures > 0) {
+        failures--;
+        return Response.json({ message: 'busy' }, { status: 500 });
+      }
+      return impl(url, init);
+    }) as unknown as typeof fetch);
+    const play = new ReviewCoordinator(fetcher);
+    const items = playItems(nodes.slice(0, 1));
+    // First pass: prime misses, live POST fails.
+    const remaining = await play.primePositions(items, sf2, new AbortController().signal);
+    expect(remaining).toHaveLength(1);
+    play.syncPlayQueueResolved(remaining, sf2);
+    await flush(); await flush(); await flush();
+    expect(play.error('sf', nodes[0], sf2)).toBeDefined();
+    expect(play.result('sf', nodes[0], sf2)).toBeUndefined();
+    // Next pass: prime skips probing the known failure, but the remainder
+    // still carries it, so sync clears the failure and retries successfully.
+    const getsBefore = evalGets(fetcher).length;
+    const remaining2 = await play.primePositions(items, sf2, new AbortController().signal);
+    expect(evalGets(fetcher)).toHaveLength(getsBefore);
+    expect(remaining2).toHaveLength(1);
+    play.syncPlayQueueResolved(remaining2, sf2);
+    await flush(); await flush(); await flush();
+    expect(evalPosts(fetcher)).toHaveLength(2);
+    expect(play.error('sf', nodes[0], sf2)).toBeUndefined();
+    expect(play.result('sf', nodes[0], sf2)?.depth).toBe(12);
+  });
+});
