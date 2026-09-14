@@ -224,6 +224,21 @@ export function retreatLine(moves: string[], initialFen: string, plies: number):
   return { moves: prefix, record: lineRecord(prefix, initialFen) };
 }
 
+// History-aware terminal flags for every prefix of a line in one progressive
+// walk. Equivalent to mapping terminalEvaluation over per-prefix replays, but
+// O(line) instead of O(line²): the walking instance accumulates the exact
+// history repetition checks need, so each prefix reads identically to its
+// replay. Used for per-ply terminal questions that must not replay.
+export function terminalFlags(initialFen: string, moves: string[]): boolean[] {
+  const game = replay([], initialFen);
+  const flags = [terminalEvaluation(game) !== undefined];
+  for (const uci of moves) {
+    applyUci(game, uci);
+    flags.push(terminalEvaluation(game) !== undefined);
+  }
+  return flags;
+}
+
 // Result text without a replay: checkmate is position-only (safe from a
 // FEN parse); draw-vs-unfinished is history-aware and comes solely from the
 // memoized terminal — never from a FEN-parsed isDraw()/isGameOver(), which

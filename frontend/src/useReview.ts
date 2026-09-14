@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Chess } from 'chess.js';
-import { applyUci, positionOf, replay } from './domain';
+import { applyUci, replay, terminalFlags, uciFromMove } from './domain';
 import type { MaiaModel } from './api';
 import type { State } from './state';
-import { ReviewCoordinator, reviewKey, subscribeNone, type ReviewNode } from './reviewCoordinator';
-import { maiaRarity, reviewMove, terminalEvaluation } from './reviewMetrics';
+import { ReviewCoordinator, reviewKey, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
+import { maiaRarity, reviewMove, terminalEvaluation, type Evaluation, type Quality } from './reviewMetrics';
 import { getAnalysisRecords, isFreshRecord, lineHash, putAnalysisRecord, type AnalysisRecord, type RecordSettings } from './analysisRecords';
 
 export type RecordStatus = { state: 'checking' | 'fresh' | 'stale' | 'none'; record?: AnalysisRecord };
@@ -53,6 +53,77 @@ export function isMaiaPosition(node: Pick<ReviewNode, 'fen' | 'moves' | 'initial
     if (terminalEvaluation(replay(node.moves, node.initialFen))) return false;
     return (new Chess(node.fen).turn() === 'w' ? 'white' : 'black') !== userColor;
   } catch { return false; }
+}
+
+// One ply's verdict inputs. Verdicts are pure functions of (before/after
+// evals, board, move), so a ply reuses its verdict exactly when the eval refs
+// and pending state still match — regardless of coordinator version bumps
+// from unrelated settles, line extensions/truncations, or settings changes
+// (all of which surface as changed refs or fresh lookups). Output equality
+// with a from-scratch recompute holds by construction: same function, same
+// inputs. Fens always come from the current nodes (never cached), so only
+// verdict objects are shared across runs.
+type ReviewPlyVerdict = {
+  before: Evaluation | undefined;
+  after: Evaluation | undefined;
+  needsPending: boolean;
+  quality: Quality | undefined;
+};
+
+export type ReviewQualitiesMemo = {
+  verdicts: (ReviewPlyVerdict | undefined)[];
+  qualities: (Quality | undefined)[];
+};
+
+// Test observability only: counts reviewMove calls inside
+// computeReviewQualities.
+export type ReviewQualitiesStats = { reviews: number };
+
+export function computeReviewQualities(args: {
+  line: { moves: string[] };
+  nodes: ReviewNode[];
+  evaluations: (Evaluation | undefined)[];
+  settingsForNode: (node: ReviewNode) => ReviewSettings;
+  pending: Set<string>;
+  prev: ReviewQualitiesMemo | null;
+  stats?: ReviewQualitiesStats;
+}): { qualities: (Quality | undefined)[]; memo: ReviewQualitiesMemo } {
+  const { line, nodes, evaluations, settingsForNode, pending, prev, stats } = args;
+  // Sentinel for plies whose queued evaluations have not settled. Same
+  // contract as before: the coordinator's pending set decides what may still
+  // arrive, so there is no per-source condition to fall behind.
+  const awaitingEval: Quality = { label: 'Unreviewed', accuracy: null, loss: null };
+  const verdicts: (ReviewPlyVerdict | undefined)[] = [];
+  const qualities: (Quality | undefined)[] = [];
+  let allReused = !!prev && prev.qualities.length === line.moves.length;
+  line.moves.forEach((move, index) => {
+    const before = evaluations[index];
+    const after = evaluations[index + 1];
+    const needsPending = (!before || !after) &&
+      (pending.has(reviewKey('sf', nodes[index], settingsForNode(nodes[index]))) ||
+        pending.has(reviewKey('sf', nodes[index + 1], settingsForNode(nodes[index + 1]))));
+    const prevVerdict = prev?.verdicts[index];
+    if (prevVerdict && prevVerdict.before === before && prevVerdict.after === after && prevVerdict.needsPending === needsPending) {
+      verdicts.push(prevVerdict);
+      qualities.push(prevVerdict.quality);
+      return;
+    }
+    allReused = false;
+    let quality: Quality | undefined;
+    if (!before || !after) {
+      quality = needsPending ? awaitingEval : undefined;
+    } else {
+      stats && stats.reviews++;
+      quality = reviewMove(before, after, new Chess(nodes[index].fen), move);
+    }
+    verdicts.push({ before, after, needsPending, quality });
+    qualities.push(quality);
+  });
+  const memo: ReviewQualitiesMemo = {
+    verdicts,
+    qualities: allReused && prev ? prev.qualities : qualities,
+  };
+  return { qualities: memo.qualities, memo };
 }
 
 export function useReview(state: State) {
@@ -114,10 +185,23 @@ export function useReview(state: State) {
   // render with the new identity already carries the navigated index.
   const lastFocusRef = useRef(focusPly);
   useEffect(() => { lastFocusRef.current = focusPly; }, [focusPly]);
-  const nodes = useMemo<(ReviewNode & { sanMoves: string[] })[]>(() => {
+  // Incremental timeline: one chess.js apply per ply plus O(1) bookkeeping.
+  // Calling positionOf per ply re-walks history each time (O(N²) total —
+  // ~1.5s of main-thread block for a 133-ply line, paid before first
+  // paint), so move/SAN lists accumulate here instead. Node contents are
+  // identical: verbose entries carry the same SAN chess.js files in its
+  // own history.
+  const nodes = useMemo<(ReviewNode & { sanMoves: string[]; lastMove: [string, string] | undefined })[]>(() => {
     const game = replay([], line.initialFen);
-    const nodes: (ReviewNode & { sanMoves: string[] })[] = [{ ...positionOf(game), initialFen: line.initialFen }];
-    for (const move of line.moves) { applyUci(game, move); nodes.push({ ...positionOf(game), initialFen: line.initialFen }); }
+    const nodes: (ReviewNode & { sanMoves: string[]; lastMove: [string, string] | undefined })[] = [{ fen: game.fen(), moves: [], sanMoves: [], lastMove: undefined, initialFen: line.initialFen }];
+    const moves: string[] = [];
+    const sanMoves: string[] = [];
+    for (const uci of line.moves) {
+      const applied = applyUci(game, uci);
+      moves.push(uciFromMove(applied));
+      sanMoves.push(applied.san);
+      nodes.push({ fen: game.fen(), moves: [...moves], sanMoves: [...sanMoves], lastMove: [applied.from, applied.to], initialFen: line.initialFen });
+    }
     return nodes;
   }, [lineKey, state.analysis.moves, state.analysis.branchMoves]);
   // New content owns fresh memory: stale Elo associations from another line
@@ -257,10 +341,12 @@ export function useReview(state: State) {
   const cacheVersion = coordinator.snapshot();
   // Terminal flags are per-line, not per-render: replaying every prefix and
   // generating legal moves per node on each render is quadratic and dominated
-  // the analysis render (per the DevTools profile). Compute once per line.
+  // the analysis render (per the DevTools profile). One progressive walk per
+  // line instead — history-identical to per-prefix replays, so repetition
+  // draws resolve exactly as before.
   const terminalByPly = useMemo(
-    () => nodes.map(node => terminalEvaluation(replay(node.moves, node.initialFen)) !== undefined),
-    [nodes],
+    () => terminalFlags(line.initialFen, line.moves),
+    [lineKey],
   );
   const coverage = useMemo(() => {
     if (!(active && mainLine && primedKey === primeKey)) return null;
@@ -305,22 +391,30 @@ export function useReview(state: State) {
     () => nodes.map(node => coordinator.result('maia', node, settingsForNode(node))),
     [nodes, settingsForNode, cacheVersion, coordinator],
   );
-  const qualities = useMemo(() => {
-    const game = replay([], line.initialFen);
-    // Contract with QualityBadge: 'Unreviewed' survives only while a verdict
-    // may still arrive. The coordinator's pending set covers every lane
-    // (batch, foreground, play queue, server restore), so there is no
-    // per-source condition here to fall behind when a new one appears.
-    const pending = coordinator.sfPendingKeys();
-    return line.moves.map((move, index) => {
-      const quality = reviewMove(evaluations[index], evaluations[index + 1], game, move);
-      applyUci(game, move);
-      if (quality.label !== 'Unreviewed') return quality;
-      const before = reviewKey('sf', nodes[index], settingsForNode(nodes[index]));
-      const after = reviewKey('sf', nodes[index + 1], settingsForNode(nodes[index + 1]));
-      return pending.has(before) || pending.has(after) ? quality : undefined;
-    });
-  }, [line.initialFen, line.moves, nodes, evaluations, settingsForNode, cacheVersion, coordinator]);
+  // Index-independent derivations, memoized (sharing cacheVersion above):
+  // evaluations, qualities, and rarities depend only on the line, settings,
+  // and cache contents — not on the viewed position. Without this every
+  // arrow-key step recomputes the full quality loop (a legal-move generation
+  // per ply), putting a game-length-scaled hitch between the keypress and
+  // the board update. The qualities pass itself is incremental (see
+  // computeReviewQualities): settles recompute only changed plies, so a batch
+  // drain no longer replays the verdict loop per settle. The ref is read
+  // during render but written post-commit, so StrictMode/concurrent
+  // double-computes are merely less optimal, never wrong — reuse validity is
+  // content-derived.
+  const reviewQualitiesRef = useRef<ReviewQualitiesMemo | null>(null);
+  const computedReviewQualities = useMemo(() => computeReviewQualities({
+    line,
+    nodes,
+    evaluations,
+    settingsForNode,
+    pending: coordinator.sfPendingKeys(),
+    prev: reviewQualitiesRef.current,
+  }), [line.initialFen, line.moves, nodes, evaluations, settingsForNode, cacheVersion, coordinator]);
+  useEffect(() => {
+    reviewQualitiesRef.current = computedReviewQualities.memo;
+  }, [computedReviewQualities]);
+  const qualities = computedReviewQualities.qualities;
   // Additive difficulty axis: Maia probability ratio of the played move.
   // Own games anchor each ply to its responsible Elo: the user's moves to the
   // adjustable analysis rating, Maia's moves to the pinned game Elo.

@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Chess } from 'chess.js';
 import { MaiaApiError, type MoveResponse } from './api';
-import { absoluteWdl, analysisLine, defaultSettings, exportExplored, exportLine, extendLine, lineRecord, lineRecordMissesForTests, loadLine, positionOf, replay, resetLineRecordsForTests, resultTextForTip, retreatLine, START_FEN } from './domain';
+import { absoluteWdl, analysisLine, defaultSettings, exportExplored, exportLine, extendLine, lineRecord, lineRecordMissesForTests, loadLine, positionOf, replay, resetLineRecordsForTests, resultTextForTip, retreatLine, START_FEN, terminalFlags, testNodes } from './domain';
+import { computeReviewQualities, type ReviewQualitiesMemo, type ReviewQualitiesStats } from './useReview';
+import { reviewKey, type ReviewNode } from './reviewCoordinator';
+import { terminalEvaluation, type Evaluation } from './reviewMetrics';
 import { createDeferredDispatcher } from './useMaiaBoard';
 import { currentPosition, initialState, reducer, snapshotOf } from './state';
 import { KEYS, restoreGame } from './storage';
@@ -488,5 +491,143 @@ describe('deferred sync dispatcher', () => {
     vi.advanceTimersByTime(250);
     expect(dispatch).toHaveBeenCalledTimes(2);
     expect(dispatch).toHaveBeenNthCalledWith(2, 0);
+  });
+});
+
+describe('terminal flags', () => {
+  const agreement = (initialFen: string, moves: string[]) => {
+    const flags = terminalFlags(initialFen, moves);
+    expect(flags).toHaveLength(moves.length + 1);
+    for (let index = 0; index <= moves.length; index++) {
+      const expected = terminalEvaluation(replay(moves.slice(0, index), initialFen)) !== undefined;
+      expect(flags[index]).toBe(expected);
+    }
+  };
+
+  it('matches per-prefix replays incl. mates, stalemate, and repetition', () => {
+    agreement(START_FEN, ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4']);
+    agreement(START_FEN, ['f2f3', 'e7e5', 'g2g4', 'd8h4']);
+    agreement(START_FEN, ['g1f3', 'g8f6', 'f3g1', 'f6g8', 'g1f3', 'g8f6', 'f3g1', 'f6g8']);
+    agreement('k7/8/1Q6/8/8/8/8/7K b - - 0 1', []);
+    agreement('k7/8/8/8/8/8/8/K7 w - - 0 1', []);
+    agreement('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 100 51', []);
+    agreement('4k3/8/8/8/8/8/p6P/4K3 b - - 0 12', ['a2a1n']);
+    const mates = terminalFlags(START_FEN, ['f2f3', 'e7e5', 'g2g4', 'd8h4']);
+    expect(mates.at(-1)).toBe(true);
+    expect(mates.slice(0, -1)).toEqual([false, false, false, false]);
+    expect(terminalFlags(START_FEN, []).at(-1)).toBe(false);
+  });
+});
+
+describe('review qualities incremental', () => {
+  const settings = { eloMaia: 1600, eloUser: 1600, model: '79m' as const };
+  const evaluation = (move: string, value: number): Evaluation => ({
+    engine: 'Stockfish 19', search_policy: 'sf19-n100k-ms750-mpv2-t1-h64-v1', depth: 12, terminal: null, best_move: move,
+    score: { type: 'cp', value },
+    lines: [{ move, score: { type: 'cp', value }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: value - 20 }, depth: 12 }],
+  });
+  const italianMoves = ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4'];
+  const italianNodes = testNodes(START_FEN, italianMoves);
+  const italianEvals: [string[], Evaluation][] = [
+    [[], evaluation('e2e4', 20)],
+    [['e2e4'], evaluation('e7e5', 15)],
+    [['e2e4', 'e7e5'], evaluation('g1f3', 10)],
+    [['e2e4', 'e7e5', 'g1f3'], evaluation('b8c6', 12)],
+    [['e2e4', 'e7e5', 'g1f3', 'b8c6'], evaluation('f1c4', 8)],
+    [['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4'], evaluation('d7d5', 6)],
+  ];
+  const byNodes = (entries: [string[], Evaluation][]) => {
+    const map = new Map(entries.map(([slice, entry]) => [JSON.stringify(slice), entry]));
+    return (node: ReviewNode) => map.get(JSON.stringify(node.moves));
+  };
+  const run = (
+    moves: string[],
+    nodes: ReviewNode[],
+    lookup: (node: ReviewNode) => Evaluation | undefined,
+    prev: ReviewQualitiesMemo | null,
+    pending: Set<string> = new Set(),
+    stats?: ReviewQualitiesStats,
+    resolve: (node: ReviewNode) => typeof settings = () => settings,
+  ) => computeReviewQualities({
+    line: { moves }, nodes, evaluations: nodes.map(lookup), settingsForNode: resolve, pending, prev, stats,
+  });
+
+  it('computes settled verdicts with one review per settled ply', () => {
+    const stats: ReviewQualitiesStats = { reviews: 0 };
+    const { qualities } = run(italianMoves, italianNodes, byNodes(italianEvals), null, new Set(), stats);
+    expect(stats).toEqual({ reviews: 5 });
+    expect(qualities).toHaveLength(5);
+    expect(qualities[0]?.label).toBe('Best');
+    expect(qualities[4]).toBeDefined();
+  });
+
+  it('reuses everything on an identical rerun', () => {
+    const first = run(italianMoves, italianNodes, byNodes(italianEvals), null);
+    const stats: ReviewQualitiesStats = { reviews: 0 };
+    const second = run(italianMoves, italianNodes, byNodes(italianEvals), first.memo, new Set(), stats);
+    expect(stats).toEqual({ reviews: 0 });
+    expect(second.qualities).toBe(first.qualities);
+  });
+
+  it('settle arrival recomputes only the changed plies', () => {
+    const partial = italianEvals.filter(([slice]) => JSON.stringify(slice) !== JSON.stringify(['e2e4', 'e7e5', 'g1f3']));
+    const moves = ['e2e4', 'e7e5', 'g1f3'];
+    const nodes = testNodes(START_FEN, moves);
+    const afterNode = nodes[3];
+    const pending = new Set([reviewKey('sf', afterNode, settings)]);
+    const first = run(moves, nodes, byNodes(partial), null, pending);
+    expect(first.qualities[0]?.label).toBe('Best');
+    expect(first.qualities[2]?.label).toBe('Unreviewed');
+    const stats: ReviewQualitiesStats = { reviews: 0 };
+    const second = run(moves, nodes, byNodes(italianEvals), first.memo, new Set(), stats);
+    expect(stats).toEqual({ reviews: 1 });
+    expect(second.qualities[0]).toBe(first.qualities[0]);
+    expect(second.qualities[2]).toBeDefined();
+    expect(second.qualities[2]?.label).not.toBe('Unreviewed');
+  });
+
+  it('matches a fresh compute exactly across build, settle, append, and takeback', () => {
+    const store = new Map(italianEvals.map(([slice, entry]) => [JSON.stringify(slice), entry]));
+    const lookup = (node: ReviewNode) => store.get(JSON.stringify(node.moves));
+    const fresh = (moves: string[]) => {
+      const nodes = testNodes(START_FEN, moves);
+      return computeReviewQualities({
+        line: { moves }, nodes, evaluations: nodes.map(lookup),
+        settingsForNode: () => settings, pending: new Set(), prev: null,
+      }).qualities;
+    };
+    let prev: ReviewQualitiesMemo | null = null;
+    const steps = [
+      ['e2e4', 'e7e5'],
+      ['e2e4', 'e7e5', 'g1f3'],
+      ['e2e4', 'e7e5', 'g1f3', 'b8c6'],
+      ['e2e4', 'e7e5'],
+      ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4'],
+    ];
+    for (const [index, moves] of steps.entries()) {
+      if (index === 3) store.delete(JSON.stringify(['e2e4', 'e7e5']));
+      const nodes = testNodes(START_FEN, moves);
+      const next = run(moves, nodes, lookup, prev);
+      expect(next.qualities).toEqual(fresh(moves));
+      prev = next.memo;
+    }
+  });
+
+  it('recomputes replaced eval objects even with equal values', () => {
+    const moves = ['e2e4', 'e7e5'];
+    const nodes = testNodes(START_FEN, moves);
+    const first = run(moves, nodes, byNodes(italianEvals), null);
+    // Same values, fresh objects (e.g. refetch after eviction): recompute.
+    const stats: ReviewQualitiesStats = { reviews: 0 };
+    const second = run(moves, nodes, byNodes(italianEvals), first.memo, new Set(), stats);
+    expect(stats).toEqual({ reviews: 0 });
+    expect(second.qualities).toBe(first.qualities);
+    const clone = (node: ReviewNode) => {
+      const found = byNodes(italianEvals)(node);
+      return found && { ...found, lines: found.lines.map(line => ({ ...line, score: { ...line.score } })) };
+    };
+    const third = run(moves, nodes, clone, first.memo, new Set(), stats);
+    expect(stats.reviews).toBeGreaterThan(0);
+    expect(third.qualities).toEqual(first.qualities);
   });
 });
