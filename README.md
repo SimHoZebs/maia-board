@@ -48,9 +48,9 @@ cache. Reuse depends on position history, engine identity, ratings/model for Mai
 and search settings for Stockfish. Restoring cached analysis and generating missing
 analysis are separate operations. Sampled Maia play moves and degraded fallback
 results do not populate the deterministic server cache. Saved games are independent
-of evaluation-cache eviction. Server-derived versioned cache identities leave
-legacy evaluation rows cold while preserving saved games and migrating pending
-browser writes. See [backend storage and cache](backend/README.md#storage-and-cache).
+of evaluation-cache eviction. Server-derived versioned cache identities are
+independent of saved games and pending browser writes.
+See [backend storage and cache](backend/README.md#storage-and-cache).
 
 Games can be saved with up to 4096 plies within a 64 KiB request. Engine analysis
 accepts at most 256 plies; a longer game's save remains independent of that limit.

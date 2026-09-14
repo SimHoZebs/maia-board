@@ -77,9 +77,9 @@ evaluation. The cache evicts old writes beyond 25000 v2 rows, without deleting g
 
 The server derives v2 cache identity from the current FEN, initial FEN, full move
 history, engine revision, and applicable settings. Legacy client cache coordinates
-do not determine this identity. Legacy opaque rows remain stored; new identities
-start in a cold namespace. Evaluation writes are server-owned, and corrupt results
-are recomputed by the engine endpoints.
+do not determine this identity; the legacy table is dropped when the store opens
+and its misses recompute through the engine endpoints. Evaluation writes are
+server-owned, and corrupt results are recomputed by the engine endpoints.
 
 `POST /evaluations/lookup` accepts `{requests: [...]}` with at most 1024 requests
 and a 4 MiB body. Each entry supplies `engine: "sf" | "maia"`, `fen`, `initial_fen`,

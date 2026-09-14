@@ -8,8 +8,9 @@ import (
 	"testing"
 )
 
-// Legacy storage fixtures are inserted directly. Public PUT is intentionally
-// disabled; neither legacy rows nor corruption fixtures are trusted producers.
+// Cache fixtures are inserted directly. Public PUT is intentionally
+// disabled; corruption fixtures are untrusted producers. Short legacy ids
+// address nothing since the legacy table was dropped: they 404.
 func putCache(t *testing.T, s *server, hash, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	var put cachePut
@@ -28,12 +29,11 @@ func putCache(t *testing.T, s *server, hash, body string) *httptest.ResponseReco
 	writeJSON(w, 200, entry)
 	return w
 }
-func TestLegacyEvaluationCacheReadOnly(t *testing.T) {
+func TestLegacyEvaluationIdsAreGone(t *testing.T) {
 	s := &server{store: testStore(t)}
-	putCache(t, s, "abc123", `{"engine":"sf","key":"k","value":{"depth":12}}`)
 	w := httptest.NewRecorder()
 	s.evaluations(w, httptest.NewRequest("GET", "/evaluations/abc123", nil))
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"depth":12`) {
+	if w.Code != 404 {
 		t.Fatal(w)
 	}
 	for _, body := range []string{`{"engine":"sf","key":"k","value":{"depth":13}}`, `{`, `{}`} {
@@ -49,15 +49,14 @@ func TestLegacyEvaluationCacheReadOnly(t *testing.T) {
 		t.Fatal(w)
 	}
 	if _, ok := s.cachedSF(evaluationRequest{FEN: startFEN}); ok {
-		t.Fatal("trusted legacy row")
+		t.Fatal("empty cache hit")
 	}
 }
-func TestEvaluationCacheEvictionPreservesLegacyAndRefreshesRank(t *testing.T) {
+func TestEvaluationCacheEvictionRefreshesRank(t *testing.T) {
 	old := evalCacheMaxRows
 	evalCacheMaxRows = 3
 	defer func() { evalCacheMaxRows = old }()
 	s := &server{store: testStore(t)}
-	putCache(t, s, "abc123", `{"engine":"sf","key":"legacy","value":{"depth":12}}`)
 	ids := map[int]string{}
 	for _, n := range []int{1, 2, 3, 1, 4} {
 		i := sfIdentity(evaluationRequest{FEN: startFEN, Settings: &stockfishSettings{750, n, 0}})
@@ -75,11 +74,8 @@ func TestEvaluationCacheEvictionPreservesLegacyAndRefreshesRank(t *testing.T) {
 	if _, err := s.store.cacheGet(ids[2]); err == nil {
 		t.Fatal("oldest retained")
 	}
-	if _, err := s.store.cacheGet("abc123"); err != nil {
-		t.Fatal("legacy was removed", err)
-	}
 	count, _, err := s.store.cacheStats()
-	if err != nil || count != 4 {
+	if err != nil || count != 3 {
 		t.Fatalf("stats %d %v", count, err)
 	}
 }

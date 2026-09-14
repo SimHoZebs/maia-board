@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Server-owned v2 identities share storage with read-only legacy cache rows.
+// Server-owned v2 identities live in evaluations_v2, the only cache table.
 var (
 	evalCacheMaxRows       = 25000
 	evalCacheMaxKeyBytes   = 4096
@@ -55,60 +55,21 @@ func validCachePut(put *cachePut) *requestError {
 }
 
 func (s *GameStore) cacheStats() (count, bytes int, err error) {
-	var exists int
-	err = s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='evaluations_v2'`).Scan(&exists)
-	if err != nil {
-		return
-	}
-	if exists == 0 {
-		err = s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(LENGTH(value)),0) FROM evaluations`).Scan(&count, &bytes)
-		return
-	}
-	err = s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(LENGTH(value)), 0) FROM
-		(SELECT value FROM evaluations UNION ALL SELECT value FROM evaluations_v2)`).Scan(&count, &bytes)
+	err = s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(LENGTH(value)), 0) FROM evaluations_v2`).Scan(&count, &bytes)
 	return count, bytes, err
 }
 
-// The cache owns its disposable schema separately from game migrations. A
-// distinct table keeps legacy rows physically intact and lets SQLite count the
-// bounded active cache directly, without scanning or filtering legacy values.
-func (s *GameStore) ensureV2Cache() error {
-	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS evaluations_v2 (
+// The cache owns its disposable schema separately from game migrations.
+// The table is created at store open; eviction below bounds it without
+// touching games.
+func ensureV2Cache(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS evaluations_v2 (
 		key_hash TEXT PRIMARY KEY, engine TEXT NOT NULL, cache_key TEXT NOT NULL,
 		value TEXT NOT NULL, created_at TEXT NOT NULL)`)
 	return err
 }
 
-// Dual-table routing (legacy read-only + cold):
-// - evaluations_v2 holds all new server-owned rows (v2: keys, 64-char hashes).
-// - evaluations holds legacy opaque rows (short hashes). Production writes go
-//   through storeCache with v2 identities only, so legacy gains no new rows in
-//   prod and stays cold; it is read for compatibility (GET /evaluations/:id,
-//   lookup fallback via canonical key match, stats). Direct cachePut with a
-//   legacy key still works for test fixtures.
-// Future migration is one commit: delete the legacy table, this router, and
-// the UNION in cacheStats.
-func cacheWriteTable(key string) string {
-	if strings.HasPrefix(key, "v2:") {
-		return "evaluations_v2"
-	}
-	return "evaluations"
-}
-
-func cacheReadTable(hash string) string {
-	if len(hash) == 64 {
-		return "evaluations_v2"
-	}
-	return "evaluations"
-}
-
 func (s *GameStore) cachePut(hash, engine, key, value string) (cachedEvaluation, error) {
-	table := cacheWriteTable(key)
-	if table == "evaluations_v2" {
-		if err := s.ensureV2Cache(); err != nil {
-			return cachedEvaluation{}, err
-		}
-	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -122,10 +83,10 @@ func (s *GameStore) cachePut(hash, engine, key, value string) (cachedEvaluation,
 	// touch rank: a read-touch would double write load on this
 	// single-connection database for a recency signal the current working
 	// set (recent games, re-touched on every visit) does not need.
-	if _, err := tx.Exec(`DELETE FROM `+table+` WHERE key_hash = ?`, hash); err != nil {
+	if _, err := tx.Exec(`DELETE FROM evaluations_v2 WHERE key_hash = ?`, hash); err != nil {
 		return cachedEvaluation{}, err
 	}
-	if _, err := tx.Exec(`INSERT INTO `+table+` (key_hash, engine, cache_key, value, created_at)
+	if _, err := tx.Exec(`INSERT INTO evaluations_v2 (key_hash, engine, cache_key, value, created_at)
 		VALUES (?, ?, ?, ?, ?)`,
 		hash, engine, key, value, now); err != nil {
 		return cachedEvaluation{}, err
@@ -133,10 +94,10 @@ func (s *GameStore) cachePut(hash, engine, key, value string) (cachedEvaluation,
 	// SQLite optimizes unfiltered COUNT(*) with its b-tree count operation.
 	// Delete only overflow rows using rowid order.
 	var count int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM evaluations_v2`).Scan(&count); err != nil {
 		return cachedEvaluation{}, err
 	}
-	if table == "evaluations_v2" && count > evalCacheMaxRows {
+	if count > evalCacheMaxRows {
 		if _, err := tx.Exec(`DELETE FROM evaluations_v2 WHERE rowid IN (
 		SELECT rowid FROM evaluations_v2 ORDER BY rowid LIMIT ?)`, count-evalCacheMaxRows); err != nil {
 			return cachedEvaluation{}, err
@@ -150,11 +111,10 @@ func (s *GameStore) cachePut(hash, engine, key, value string) (cachedEvaluation,
 }
 
 func (s *GameStore) cacheGet(hash string) (cachedEvaluation, error) {
-	table := cacheReadTable(hash)
 	var entry cachedEvaluation
 	var value string
 	err := s.db.QueryRow(`SELECT key_hash, engine, cache_key, value, created_at
-		FROM `+table+` WHERE key_hash = ? AND LENGTH(value) <= ? AND LENGTH(cache_key) <= ?`, hash, evalCacheMaxValueBytes, evalCacheMaxKeyBytes).Scan(
+		FROM evaluations_v2 WHERE key_hash = ? AND LENGTH(value) <= ? AND LENGTH(cache_key) <= ?`, hash, evalCacheMaxValueBytes, evalCacheMaxKeyBytes).Scan(
 		&entry.KeyHash, &entry.Engine, &entry.Key, &value, &entry.CreatedAt)
 	if err != nil {
 		return cachedEvaluation{}, err
@@ -177,7 +137,7 @@ func (s *server) lookupCache(hash, engine, key string) (cachedEvaluation, bool) 
 		return cachedEvaluation{}, false
 	}
 	entry, err := s.store.cacheGet(hash)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) && !strings.Contains(err.Error(), "no such table: evaluations_v2") {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		log.Printf("evaluation cache read failed engine=%s error=%v", engine, err)
 	}
 	if err != nil || entry.Engine != engine || entry.Key != key {

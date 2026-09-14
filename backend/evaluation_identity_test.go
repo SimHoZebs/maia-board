@@ -182,9 +182,9 @@ func TestLookupRejectsMalformedShapeAndBounds(t *testing.T) {
 	if rows := lookupValues(t, lookup(t, s, requests)); len(rows) != 0 {
 		t.Fatal("cold cache produced results")
 	}
-	var tables int
-	if err := s.store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name='evaluations_v2'`).Scan(&tables); err != nil || tables != 0 {
-		t.Fatalf("cache-only read wrote schema: %d %v", tables, err)
+	var rows int
+	if err := s.store.db.QueryRow(`SELECT COUNT(*) FROM evaluations_v2`).Scan(&rows); err != nil || rows != 0 {
+		t.Fatalf("cache-only read wrote rows: %d %v", rows, err)
 	}
 }
 func TestCorruptV2ValuesMissThenRecomputeAndOverwrite(t *testing.T) {

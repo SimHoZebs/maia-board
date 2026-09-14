@@ -84,15 +84,18 @@ func NewGameStore(path string) (*GameStore, error) {
 		result TEXT NOT NULL DEFAULT ''
 	);
 	CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-	CREATE TABLE IF NOT EXISTS evaluations (
-		key_hash TEXT PRIMARY KEY,
-		engine TEXT NOT NULL CHECK (engine IN ('sf', 'maia')),
-		cache_key TEXT NOT NULL,
-		value TEXT NOT NULL,
-		created_at TEXT NOT NULL
-	);
 	CREATE INDEX IF NOT EXISTS idx_games_updated ON games(updated_at DESC);`
 	if _, err := db.Exec(schema); err != nil {
+		db.Close()
+		return nil, err
+	}
+	// The legacy evaluations table is disposable cache, not user data: drop
+	// it once on open. Misses recompute through the engine endpoints.
+	if _, err := db.Exec(`DROP TABLE IF EXISTS evaluations`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := ensureV2Cache(db); err != nil {
 		db.Close()
 		return nil, err
 	}

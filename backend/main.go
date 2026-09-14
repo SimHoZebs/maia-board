@@ -78,9 +78,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("open game database: %v", err)
 	}
-	if err := store.ensureV2Cache(); err != nil {
-		log.Fatalf("open evaluation cache: %v", err)
-	}
 	app := &server{pool: NewEnginePool(large, small), staticDir: staticDir, store: store,
 		evaluator: NewEvaluator(python, getenv("STOCKFISH_WORKER", "/app/stockfish_worker.py"), getenv("STOCKFISH_BINARY", "/app/stockfish"))}
 
