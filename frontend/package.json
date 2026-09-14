@@ -8,7 +8,8 @@
     "build:profiling": "tsc --noEmit && vite build --mode profiling --outDir dist-profiling",
     "test": "vitest run src",
     "test:browser": "MAIA_BUILD_DIR=dist-browser npm run build && playwright test",
-    "test:browser:strict": "NODE_ENV=development npm run test:browser"
+    "test:browser:strict": "NODE_ENV=development npm run test:browser",
+    "test:perf": "MAIA_BUILD_DIR=dist-profiling npm run build:profiling && MAIA_BUILD_DIR=dist-profiling playwright test -c playwright.perf.config.ts"
   },
   "dependencies": {
     "@lichess-org/chessground": "10.1.0",

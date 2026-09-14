@@ -187,3 +187,32 @@ terminal handling, and resolve both random-side outcomes. Geometry checks cover
 1366×768, 1440×900, 360×800, and 390×844, with
 screenshots under ignored `test-results/`. Screenshots wait for piece animations
 to finish. Real inference and deployment are outside these browser fixtures.
+
+## Perf client sim (opt-in)
+
+`npm run test:perf` runs a single simulated client interaction outside the
+default suite: a few random play moves via real board clicks, a seeded random
+analysis line (`PERF_PLIES`, default 40), Analyze entire game, a full scrub of
+the line, a rating change, and branch exploration. `/move` and `/evaluate`
+answer from an in-fixture read-through cache with simulated latency
+(`PERF_MAIA_MS`/`PERF_SF_MS`/`PERF_CACHE_MS`, defaults 900/750/25ms), so no
+server is needed and timings are deterministic. `PERF_SEED` replays the same
+line across runs; `PERF_PLAY_MOVES` sets the clicked play moves. Past ~80
+plies the 4-minute timeout in `playwright.perf.config.ts` may need a bump.
+
+The sim builds the profiling bundle, so React commit counts and per-commit
+render durations are live alongside step walls, scrub click-to-index
+latencies, live-vs-hit network rows, the coordinator's `[review] batch
+timing` summary, longtasks, and CLS — all in `perf-metrics.json` (attached
+to the HTML report) with a one-line `[perf]` console summary. The headline
+growth check is the scrub early-vs-late split: commits, render-ms, and wall
+latency for the first vs. last third of the line. Counting is armed by the
+harness (`CommitRecorder` in `src/perfCommits.tsx` activates only when the
+test pre-registers `window.__perfCommits`); normal builds render untouched.
+
+Note: React 19's profiling entry requires production react-dom for shared
+internals, so the profiling swap in `vite.config.ts` is importer-scoped — a
+plain `react-dom -> react-dom/profiling` alias makes the bundle import
+itself and crash at startup. Tune the delays or lengthen the PGN in
+`tests/perf/client-sim.spec.ts` to chase a specific second-half cliff or
+interaction complaint.

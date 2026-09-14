@@ -7,12 +7,15 @@ import "./styles.css";
 import { BrowserRouter } from "react-router";
 import { BoardRouter } from "./BoardRouter";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { CommitRecorder } from "./perfCommits";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ErrorBoundary label="app">
       <BrowserRouter>
-        <BoardRouter />
+        <CommitRecorder>
+          <BoardRouter />
+        </CommitRecorder>
       </BrowserRouter>
     </ErrorBoundary>
   </StrictMode>,

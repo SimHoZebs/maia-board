@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import type { Key } from '@lichess-org/chessground/types';
 import { Menu, RotateCw, Plus, Undo2, Flag } from 'lucide-react';
 import { NavLink } from 'react-router';
@@ -6,10 +7,10 @@ import { Chess } from 'chess.js';
 import { ChessBoard } from './ChessBoard';
 import { Button, IconButton } from './components';
 import { AnalysisActions, AnalysisControls, PlayControls, type Props } from './Controls';
-import { InsightPanel, MovesPanel, SavedGames, StockfishBar } from './ReadPanels';
+import { InsightPanel, MoveNavBar, MovesPanel, SavedGames, StockfishBar } from './ReadPanels';
 import { PromotionDialog } from './PromotionDialog';
 import { Dialog } from './Dialog';
-import { analysisLength, analysisLine, gameResult, oppositeColor, replay, sideName, START_FEN, storedGameResult } from './domain';
+import { gameResult, lineRecord, oppositeColor, replay, resultTextForTip, sideName, START_FEN, storedGameResult } from './domain';
 import { toGroundColor } from './board-colors';
 import { currentPosition } from './state';
 import { usePlayFeedback } from './usePlayFeedback';
@@ -18,6 +19,7 @@ import { reviewShapes } from './reviewArrows';
 import { SettingsPage } from './SettingsPage';
 import { destinations } from './BoardRouter';
 import { ErrorBoundary, PanelError } from './ErrorBoundary';
+import { RegionRecorder } from './perfCommits';
 
 // Bottom-bar page menu (mobile bottom navigation): a hamburger on the left
 // end of the move-navigation bar that opens the same destinations as the
@@ -64,23 +66,61 @@ function MobileMenu({ state, dispatch }: Props) {
   </div>;
 }
 
-export function App({ state, dispatch, children }: Props & { children: ReactNode }) {
-  const { mode, settings, request, error } = state;
+// Placement-only viewport switch (no measuring): the mobile bottom bar is
+// a separate mount from the inline move navigation, with exactly one of
+// them mounted at a time so IDs stay unique.
+function useMediaQuery(query: string): boolean {
+  const current = () =>
+    typeof window !== 'undefined' && typeof window.matchMedia !== 'undefined' && window.matchMedia(query).matches;
+  const [matches, setMatches] = useState(current);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const list = window.matchMedia(query);
+    setMatches(list.matches);
+    const onChange = (event: MediaQueryListEvent) => setMatches(event.matches);
+    list.addEventListener('change', onChange);
+    return () => list.removeEventListener('change', onChange);
+  }, [query]);
+  return matches;
+}
+
+export function App({ state, dispatch, children }: Props & { children: ReactNode }) {  const { mode, settings, request, error } = state;
   const review = useReview(state);
   const moveFeedback = usePlayFeedback(state);
-  const position = currentPosition(state);
-  const game = new Chess(position.fen), live = replay(state.play.moves);
   const analysis = mode === 'analysis';
+  const ply = analysis ? state.analysis.index : state.viewedPly ?? state.play.moves.length;
+  // Analysis mode reads the displayed position from the review timeline
+  // (built once per line in useReview) instead of replaying the line on
+  // every render, so cursor steps are O(1) lookups. The fallback covers a
+  // transient out-of-range index the way a clamped slice would. Play mode
+  // keeps its memoized line record below.
+  const position: ReturnType<typeof currentPosition> = analysis
+    ? { fen: (review.nodes[ply] ?? review.nodes[review.nodes.length - 1]).fen } as ReturnType<typeof currentPosition>
+    : currentPosition(state);
+  const game = new Chess(position.fen);
+  // Play tip derivation is memoized (one shared replay per line at most):
+  // side-to-move is position-only, terminality is history-aware via the record.
+  const playLine = mode === 'play' ? lineRecord(state.play.moves) : null;
+  // The live play game is play-only: analysis renders must not replay it.
+  // new Chess() keeps the type without the replay cost. It is never read in
+  // analysis mode: every consumer below is mode-guarded or short-circuits.
+  const live = playLine ? new Chess(playLine.fen) : analysis ? new Chess() : replay(state.play.moves);
   const ready = analysis ? state.analysisLoaded : state.started;
   const base = analysis ? 'white' : settings.userColor;
   const orientation = state.flipped ? oppositeColor(base) : base;
   const historic = mode === 'play' && state.viewedPly !== null;
-  const userTurn = toGroundColor(live.turn()) === settings.userColor;
+  const userTurn = !analysis && toGroundColor(live.turn()) === settings.userColor;
   const resigned = !analysis && ready && state.play.result === 'resigned';
-  const boardOver = !analysis && ready && live.isGameOver();
-  const enabled = ready && !state.promotion && !resigned && !game.isGameOver() && (analysis || (mode === 'play' && !live.isGameOver() && !historic && !request && userTurn));
-  const full = analysis ? analysisLine(state.analysis, analysisLength(state.analysis)) : { sanMoves: live.history() };
-  const ply = analysis ? state.analysis.index : state.viewedPly ?? state.play.moves.length;
+  const boardOver = !analysis && ready && (playLine ? playLine.terminal !== null : live.isGameOver());
+  // Viewed-position terminality is history-aware in play mode (the sliced line
+  // record, which preserves prefix history for repetition); analysis keeps its
+  // existing single-parse check unchanged.
+  const tipOver = !analysis && (playLine ? playLine.terminal !== null : live.isGameOver());
+  const viewedOver = analysis ? game.isGameOver() : (position.terminal ?? null) !== null;
+  const enabled = ready && !state.promotion && !resigned && !viewedOver && (analysis || (mode === 'play' && !tipOver && !historic && !request && userTurn));
+  // The full SAN list comes from the tip of the same timeline: identical to
+  // replaying the whole line, but free after the once-per-line build.
+  const full = analysis ? { sanMoves: review.nodes[review.nodes.length - 1].sanMoves } : { sanMoves: playLine ? playLine.sanMoves : live.history() };
   // Forward estimates for the next move: the board shows the position after
   // x, so the arrows project y. White draws the played continuation (the
   // board's tile highlight only covers x); red/blue are Maia/Stockfish top
@@ -109,27 +149,41 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
   }, [ready, mode, dispatch]);
   const strip = (color: 'white' | 'black') => {
     const shownGame = analysis || historic ? game : live;
-    const active = !resigned && toGroundColor(shownGame.turn()) === color && !shownGame.isGameOver();
+    // Analysis keeps its existing check; play reads the memoized terminal so a
+    // repetition draw at the viewed (or tip) position is honored.
+    const shownOver = analysis ? shownGame.isGameOver()
+      : (historic ? (position.terminal ?? null) : (playLine?.terminal ?? null)) !== null;
+    const active = !resigned && toGroundColor(shownGame.turn()) === color && !shownOver;
     return <div className={`player-strip${active && ready ? ' active' : ''}`}><span className={`side-dot ${color}`} /><strong>{analysis ? sideName(color) : color === settings.userColor ? 'You' : `Maia · ${settings.eloMaia}`}</strong><span className="player-side">{!analysis && sideName(color)}</span>{active && ready && <span className="turn-indicator" role="status">{historic ? 'At this position' : request && !analysis ? 'Thinking…' : 'To move'}</span>}</div>;
   };
   const over = boardOver || resigned;
   const winner = resigned ? oppositeColor(settings.userColor) : over && live.isCheckmate() ? oppositeColor(toGroundColor(live.turn())) : null;
-  const resultText = resigned ? storedGameResult(state.play) : gameResult(live);
+  const resultText = resigned ? storedGameResult(state.play) : mode === 'play' && playLine ? resultTextForTip(playLine.fen, playLine.terminal) : !analysis ? gameResult(live) : '';
   const [confirmResign, setConfirmResign] = useState(false);
   useEffect(() => { if (over || analysis) setConfirmResign(false); }, [over, analysis]);
   const bottomNav = state.bottomNav;
+  const isMobile = useMediaQuery('(max-width: 760px)');
+  const [portalHost, setPortalHost] = useState<HTMLElement | null>(null);
+  useEffect(() => { setPortalHost(document.body); }, []);
+  // The mobile bottom bar is a separate mount from the inline move
+  // navigation: exactly one of them exists at a time, so the bar can live
+  // outside the padded content flow (full-bleed, last in-flow child of the
+  // page) while desktop keeps its inline row.
+  const mobileBar = bottomNav && isMobile;
   // Screens without a move list (settings, history, pre-start setup) still
   // need page navigation once the header tabs step aside: a menu-only bar.
   const menuOnly = bottomNav && ((mode !== 'play' && mode !== 'analysis') || !ready);
+  const mobileMenu = <MobileMenu state={state} dispatch={dispatch} />;
+  const moveNav = <MoveNavBar ply={ply} total={full.sanMoves.length} onView={ply => dispatch({ type: 'view', ply })} menu={mobileMenu} />;
   const tools = <><IconButton id="flip-board" label="Flip board" onClick={() => dispatch({ type: 'flip' })}><RotateCw size={16} aria-hidden="true" /></IconButton>{analysis && state.analysis.branchFromPly !== null && <IconButton id="return-original" label="Return to original" onClick={() => dispatch({ type: 'original' })}><Undo2 size={16} aria-hidden="true" /></IconButton>}{!analysis && <IconButton id="takeback" label="Takeback" disabled={!state.play.moves.length || !!resigned} onClick={() => dispatch({ type: 'takeback' })}><Undo2 size={16} aria-hidden="true" /></IconButton>}{!analysis && !over && <IconButton id="resign" label="Resign" onClick={() => setConfirmResign(true)}><Flag size={16} aria-hidden="true" /></IconButton>}{bottomNav && mode === 'play' && ready && <IconButton id="new-game" label="New game" onClick={() => dispatch({ type: 'setup' })}><Plus size={18} aria-hidden="true" /></IconButton>}</>;
   return <div className={`app-shell${bottomNav ? ' bottom-ui' : ''}`}>
-    <header className="site-header"><span className="brand">maia board</span>{children}{mode === 'play' && ready && !bottomNav && <IconButton id="new-game" className="header-action" label="New game" onClick={() => dispatch({ type: 'setup' })}><Plus size={18} aria-hidden="true" /></IconButton>}</header>
+    <RegionRecorder id="chrome"><header className="site-header"><span className="brand">maia board</span>{children}{mode === 'play' && ready && !bottomNav && <IconButton id="new-game" className="header-action" label="New game" onClick={() => dispatch({ type: 'setup' })}><Plus size={18} aria-hidden="true" /></IconButton>}</header></RegionRecorder>
     <main>
       {state.syncError && <div className="sync-banner" role="alert"><span>{state.syncError}</span><Button onClick={() => dispatch({ type: 'retry-sync' })}>Retry</Button></div>}
       {mode === 'settings' ? <SettingsPage state={state} dispatch={dispatch} /> : mode === 'history' ? <ErrorBoundary label="saved games" resetKey={savedResetKey} renderFallback={(error, retry) => <PanelError id="saved-games-error" title="Saved games failed to render" message={error.message || 'Unknown rendering error.'} onRetry={retry} />}><SavedGames state={state} dispatch={dispatch} /></ErrorBoundary> : <>
         {!ready && <div className="entry"><PlayControls state={state} dispatch={dispatch} /><AnalysisControls state={state} dispatch={dispatch} /></div>}
         <div className={`workspace${analysis && ready ? ' analyzing' : ''}${!ready ? ' awaiting' : ''}${over ? ' game-over' : ''}`}>
-          <section className={`board-stage${over ? ' game-over' : ''}`} aria-label="Chess workspace">
+          <RegionRecorder id="board-stage"><section className={`board-stage${over ? ' game-over' : ''}`} aria-label="Chess workspace">
             {ready && bottomNav && <div className="board-actions board-toolbar" role="toolbar" aria-label="Board actions">{tools}</div>}
             {strip(oppositeColor(orientation))}
             <div className={`board-frame${analysis && ready ? ' with-evaluation' : ''}`}><ErrorBoundary label="board" resetKey={boardResetKey} renderFallback={(error, retry) => <PanelError id="board-error" title="Board failed to render" message={error.message || 'Unknown rendering error.'} onRetry={retry} />}><ChessBoard position={position} orientation={orientation} enabled={enabled} thinking={!!request} interactionVersion={state.revision} shapes={shapes} onMove={(from, to) => dispatch({ type: 'move', from, to })} />{analysis && ready && <StockfishBar key={`${insightResetKey}|${review.tooLong ? 1 : 0}`} evaluation={review.current} orientation={orientation} failed={!!review.currentError} />}</ErrorBoundary></div>
@@ -137,17 +191,21 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
             {ready && <>
               <MovesPanel sans={full.sanMoves} ply={ply} initialFen={analysis ? state.analysis.initialFen : START_FEN} qualities={analysis ? review.qualities : moveFeedback.qualities} badgeLoading={state.badgeLoading} onView={ply => dispatch({ type: 'view', ply })} onOriginalView={ply => { dispatch({ type: 'original' }); dispatch({ type: 'view', ply }); }} analysis={analysis}
                 original={analysis && state.analysis.branchFromPly !== null ? { sans: state.analysis.sanMoves, fromPly: state.analysis.branchFromPly } : undefined}
-                branchUp={bottomNav} tools={bottomNav ? undefined : tools} menu={bottomNav ? <MobileMenu state={state} dispatch={dispatch} /> : undefined} />
+                branchUp={bottomNav} tools={bottomNav ? undefined : tools} menu={bottomNav && !mobileBar ? mobileMenu : undefined} hideNav={mobileBar} />
               {over && <div className="game-result" role="status"><div className="result-copy"><span className="result-eyebrow">Game over</span><strong className="result-text">{winner && <span className={`side-dot ${winner}`} aria-hidden="true" />}{resultText}</strong></div><div className="result-actions"><Button variant="primary" onClick={() => dispatch({ type: 'review' })}>Review game</Button><Button id="new-game-again" onClick={() => dispatch({ type: 'setup' })}>New game</Button></div></div>}
             </>}
             <div id="error-banner" className="error-banner" role="alert" hidden={!error}>{error}{error && ready && !request && <Button id="retry-request" variant="quiet" onClick={() => dispatch({ type: 'retry' })}>Retry</Button>}</div>
-          </section>
-          {analysis && ready && <ErrorBoundary label="insight" resetKey={insightResetKey} renderFallback={(error, retry) => <PanelError id="insight-error" title="Analysis failed to render" message={error.message || 'Unknown rendering error.'} onRetry={retry} />}><InsightPanel key={insightResetKey} state={state} dispatch={dispatch} review={review}><AnalysisActions state={state} dispatch={dispatch} /></InsightPanel></ErrorBoundary>}
+          </section></RegionRecorder>
+          {analysis && ready && <ErrorBoundary label="insight" resetKey={insightResetKey} renderFallback={(error, retry) => <PanelError id="insight-error" title="Analysis failed to render" message={error.message || 'Unknown rendering error.'} onRetry={retry} />}><RegionRecorder id="insight-panel"><InsightPanel key={insightResetKey} state={state} dispatch={dispatch} review={review}><AnalysisActions state={state} dispatch={dispatch} /></InsightPanel></RegionRecorder></ErrorBoundary>}
         </div>
-        {ready && <><PlayControls state={state} dispatch={dispatch} /><AnalysisControls state={state} dispatch={dispatch} /></>}
+        {ready && <RegionRecorder id="chrome"><><PlayControls state={state} dispatch={dispatch} /><AnalysisControls state={state} dispatch={dispatch} /></></RegionRecorder>}
       </>}
     </main>
-    {menuOnly && <div className="mobile-pagebar"><div className="menu-slot"><MobileMenu state={state} dispatch={dispatch} /></div></div>}
+    {menuOnly && !mobileBar && <div className="mobile-pagebar"><div className="menu-slot">{mobileMenu}</div></div>}
+    {mobileBar && portalHost && createPortal(
+      <div className="mobile-footer">{menuOnly ? <div className="mobile-pagebar"><div className="menu-slot">{mobileMenu}</div></div> : moveNav}</div>,
+      portalHost,
+    )}
     <PromotionDialog open={!!state.promotion} onChoose={piece => dispatch({ type: 'promote', piece })} />
     {confirmResign && !analysis && !over && <Dialog title="Resign game?" onCancel={() => setConfirmResign(false)}>
       <h2>Resign game?</h2>

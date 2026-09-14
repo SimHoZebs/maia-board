@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Chess } from 'chess.js';
-import { analysisLength, analysisLine, applyUci, positionOf, replay } from './domain';
+import { applyUci, positionOf, replay } from './domain';
 import type { MaiaModel } from './api';
 import type { State } from './state';
 import { ReviewCoordinator, reviewKey, subscribeNone, type ReviewNode } from './reviewCoordinator';
@@ -63,7 +63,12 @@ export function useReview(state: State) {
   // memos below still read the cache synchronously during render, so nothing
   // displayed goes stale; resubscribing on activation re-reads the snapshot.
   useSyncExternalStore(active ? coordinator.subscribe : subscribeNone, coordinator.snapshot, coordinator.snapshot);
-  const line = analysisLine(state.analysis, analysisLength(state.analysis));
+  // Line identity without replaying: only the normalized start and the merged
+  // move list feed the key and the node timeline below. The full position
+  // used to come along for the ride (two extra history walks per render);
+  // nothing reads it, so it is no longer built here.
+  const lineMoves = state.analysis.branchFromPly === null ? state.analysis.moves : [...state.analysis.moves.slice(0, state.analysis.branchFromPly), ...state.analysis.branchMoves];
+  const line = { initialFen: new Chess(state.analysis.initialFen).fen(), moves: lineMoves };
   const lineKey = JSON.stringify([line.initialFen, line.moves]);
   const settingsKey = JSON.stringify([state.analysisSettings.eloMaia, state.analysisSettings.model, state.stockfish]);
   const settings: RecordSettings = useMemo(() => ({ eloMaia: state.analysisSettings.eloMaia, eloUser: state.analysisSettings.eloMaia, model: state.analysisSettings.model, stockfish: state.stockfish }), [settingsKey]);
@@ -109,9 +114,9 @@ export function useReview(state: State) {
   // render with the new identity already carries the navigated index.
   const lastFocusRef = useRef(focusPly);
   useEffect(() => { lastFocusRef.current = focusPly; }, [focusPly]);
-  const nodes = useMemo(() => {
+  const nodes = useMemo<(ReviewNode & { sanMoves: string[] })[]>(() => {
     const game = replay([], line.initialFen);
-    const nodes: ReviewNode[] = [{ ...positionOf(game), initialFen: line.initialFen }];
+    const nodes: (ReviewNode & { sanMoves: string[] })[] = [{ ...positionOf(game), initialFen: line.initialFen }];
     for (const move of line.moves) { applyUci(game, move); nodes.push({ ...positionOf(game), initialFen: line.initialFen }); }
     return nodes;
   }, [lineKey, state.analysis.moves, state.analysis.branchMoves]);

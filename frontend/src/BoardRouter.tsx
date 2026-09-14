@@ -14,6 +14,7 @@ import type { Mode } from "./domain";
 import type { Action, State } from "./state";
 import { useMaiaBoard } from "./useMaiaBoard";
 import { analysisPath, parseAnalysisSearch, sameLine } from "./analysisUrl";
+import { RegionRecorder } from "./perfCommits";
 
 export const destinations = [
   { mode: "play", path: "/play", label: "Play" },
@@ -129,9 +130,11 @@ export function BoardRouter() {
     [mode, navigate, boardDispatch],
   );
   const workspace = (
-    <App state={state} dispatch={dispatch}>
-      <DestinationNav state={state} dispatch={dispatch} />
-    </App>
+    <RegionRecorder id="app">
+      <App state={state} dispatch={dispatch}>
+        <DestinationNav state={state} dispatch={dispatch} />
+      </App>
+    </RegionRecorder>
   );
   return (
     <Routes>
