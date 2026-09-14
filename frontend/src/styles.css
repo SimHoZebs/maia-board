@@ -224,7 +224,8 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
      strip with a divider. New game lives in the board toolbar instead. */
   .bottom-ui .site-header { display: none; }
   .bottom-ui main { flex: 1; display: flex; flex-direction: column; }
-  .bottom-ui .workspace, .bottom-ui .workspace.analyzing { margin: auto auto 0; }
+  .bottom-ui .workspace.analyzing { margin: auto auto 16px; }
+  .bottom-ui .workspace:not(.analyzing) { margin: auto; }
   .bottom-ui .board-stage { width: min(100%, calc(100dvh - 344px)); margin: 0 auto; }
   /* The mobile footer is a separate mount outside the padded content flow
      (portaled to the body end), so it spans edge to edge: plain sticky pins
