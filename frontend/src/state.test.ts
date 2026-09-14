@@ -673,6 +673,21 @@ describe('review qualities incremental', () => {
     expect(second.qualities[2]?.label).not.toBe('Unreviewed');
   });
 
+  it('neighbor sharing only one foreground endpoint never flashes pending', () => {
+    // Viewing P1 (after e4, before e5) foregrounds N0+N1 while move e5 needs
+    // N1+N2. The neighbor must stay blank, not spin then disappear.
+    const moves = ['e2e4', 'e7e5', 'g1f3'];
+    const nodes = testNodes(START_FEN, moves);
+    const key = (node: ReviewNode) => reviewKey('sf', node, settings);
+    const foreground = new Set([key(nodes[0]), key(nodes[1])]);
+    const cold = run(moves, nodes, () => undefined, null, foreground);
+    expect(cold.qualities[0]?.label).toBe('Unreviewed');
+    expect(cold.qualities[1]).toBeUndefined();
+    const settled = run(moves, nodes, byNodes(italianEvals.filter(([slice]) => slice.length <= 1)), null, new Set());
+    expect(settled.qualities[0]?.label).not.toBe('Unreviewed');
+    expect(settled.qualities[1]).toBeUndefined();
+  });
+
   it('matches a fresh compute exactly across build, settle, append, and takeback', () => {
     const store = new Map(italianEvals.map(([slice, entry]) => [JSON.stringify(slice), entry]));
     const lookup = (node: ReviewNode) => store.get(JSON.stringify(node.timeline.moves.slice(0, node.ply)));

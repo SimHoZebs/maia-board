@@ -24,7 +24,14 @@ export function computeQualities(args: {
     const node = nodes[index], next = nodes[index + 1];
     if (!node || !next || !active(node, index)) return;
     const before = evaluations[index], after = evaluations[index + 1];
-    const needsPending = (!before || !after) && (pending.has(keyFor(node)) || pending.has(keyFor(next)));
+    // Every missing endpoint must itself be pending. The neighbor sharing
+    // only one endpoint (viewing P1 fetches N[i]+N[i+1] while move y needs
+    // N[i+1]+N[i+2]) stays blank instead of flashing a spinner it can never
+    // settle.
+    const beforeMissing = !before, afterMissing = !after;
+    const needsPending = (beforeMissing || afterMissing)
+      && (!beforeMissing || pending.has(keyFor(node)))
+      && (!afterMissing || pending.has(keyFor(next)));
     const old = sameScope ? prev!.verdicts[index] : undefined;
     const posKey = stablePositionKey(node);
     if (old && old.posKey === posKey && old.fen === node.fen && old.move === move
