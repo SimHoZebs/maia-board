@@ -1,18 +1,16 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Chess } from 'chess.js';
-import { applyUci, replay, terminalFlags, uciFromMove } from './domain';
-import type { MaiaModel } from './api';
+import { buildTimeline, type TimelineRow } from './domain';
+import type { MaiaModel, MoveResponse } from './api';
 import type { State } from './state';
 import { ReviewCoordinator, reviewKey, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
-import { maiaRarity, reviewMove, terminalEvaluation, type Evaluation, type Quality } from './reviewMetrics';
-import { getAnalysisRecords, isFreshRecord, lineHash, putAnalysisRecord, type AnalysisRecord, type RecordSettings } from './analysisRecords';
+import { maiaRarity, reviewMove, type Evaluation, type Quality } from './reviewMetrics';
 
-export type RecordStatus = { state: 'checking' | 'fresh' | 'stale' | 'none'; record?: AnalysisRecord };
+export type RecordStatus = { state: 'checking' | 'fresh' | 'none' };
 
-// Per-position Maia identity. Changing the global rating invalidates only the
-// current move (immediate clear + foreground refetch); other moves keep
-// displaying their associated Elo until navigated to, at which point they
-// show the stale result while the new Elo fetches, then swap.
+// Per-position Maia identity: which Elo/model a displayed Maia result was
+// computed under. Maia's own moves request the pinned game identity;
+// everything else requests the adjustable analysis identity.
 export type MaiaIdentity = { eloMaia: number; model: MaiaModel };
 export function maiaIdentityOf(settings: { eloMaia: number; model: MaiaModel }): MaiaIdentity {
   return { eloMaia: settings.eloMaia, model: settings.model };
@@ -21,38 +19,16 @@ export function sameMaiaIdentity(a: MaiaIdentity, b: MaiaIdentity): boolean {
   return a.eloMaia === b.eloMaia && a.model === b.model;
 }
 
-// Pure display decision, tested without React: prefer the fresh (global)
-// result when present, otherwise keep the remembered per-move identity while
-// its stale row still exists. Missing memory defaults to the global identity.
-export function selectMaiaDisplay(params: { memory?: MaiaIdentity; global: MaiaIdentity; fresh?: unknown; stale?: unknown }):
-  { identity: MaiaIdentity; useFresh: boolean } {
-  const { memory, global, fresh, stale } = params;
-  if (!memory || sameMaiaIdentity(memory, global)) return { identity: global, useFresh: true };
-  if (fresh) return { identity: global, useFresh: true };
-  if (stale) return { identity: memory, useFresh: false };
-  return { identity: global, useFresh: true };
-}
-
-// Pure backfill for rating changes, tested without React: unvisited entries
-// keep the previous identity, the displayed move jumps to the new one.
-export function backfillMaiaMemory(prevMem: Record<number, MaiaIdentity>, prev: MaiaIdentity, next: MaiaIdentity, focusPly: number, length: number): Record<number, MaiaIdentity> {
-  const out: Record<number, MaiaIdentity> = { ...prevMem };
-  for (let i = 0; i < length; i++) if (!out[i]) out[i] = prev;
-  out[focusPly] = next;
-  return out;
-}
-
 // Pure side classification, tested without React: in an own-game main line,
 // positions where the side to move is not the user's are Maia's moves and stay
 // pinned to the game Elo. Terminals are never Maia positions (no Maia row
 // exists for them) so the rating stays adjustable there. Everything else
-// (non-own lines, branches) is adjustable.
-export function isMaiaPosition(node: Pick<ReviewNode, 'fen' | 'moves' | 'initialFen'>, userColor: 'white' | 'black', ownGame: boolean): boolean {
+// (non-own lines, branches) is adjustable. Reads turn/terminality off the
+// canonical timeline row — never a replay.
+export function isMaiaPosition(row: Pick<TimelineRow, 'turn' | 'terminal'>, userColor: 'white' | 'black', ownGame: boolean): boolean {
   if (!ownGame) return false;
-  try {
-    if (terminalEvaluation(replay(node.moves, node.initialFen))) return false;
-    return (new Chess(node.fen).turn() === 'w' ? 'white' : 'black') !== userColor;
-  } catch { return false; }
+  if (row.terminal !== null) return false;
+  return row.turn !== userColor;
 }
 
 // One ply's verdict inputs. Verdicts are pure functions of (before/after
@@ -128,11 +104,14 @@ export function computeReviewQualities(args: {
 
 export function useReview(state: State) {
   const [coordinator] = useState(() => new ReviewCoordinator());
-  const active = state.mode === 'analysis' && state.analysisLoaded;
-  // Unsubscribed while inactive (see subscribeNone): the suspended analysis
-  // coordinator's settles must not re-render the play tree. Index-independent
-  // memos below still read the cache synchronously during render, so nothing
-  // displayed goes stale; resubscribing on activation re-reads the snapshot.
+  // Mounted only inside AnalysisWorkspace: no play tree exists above this
+  // hook, so cross-mode guards are gone. `active` now means only "a line is
+  // loaded" (the importer form mounts with nothing to evaluate yet).
+  const active = state.analysisLoaded;
+  // Unsubscribed while no line is loaded (see subscribeNone): settles must
+  // not re-render the importer. Index-independent memos below still read the
+  // cache synchronously during render, so nothing displayed goes stale;
+  // resubscribing on load re-reads the snapshot.
   useSyncExternalStore(active ? coordinator.subscribe : subscribeNone, coordinator.snapshot, coordinator.snapshot);
   // Line identity without replaying: only the normalized start and the merged
   // move list feed the key and the node timeline below. The full position
@@ -141,8 +120,11 @@ export function useReview(state: State) {
   const lineMoves = state.analysis.branchFromPly === null ? state.analysis.moves : [...state.analysis.moves.slice(0, state.analysis.branchFromPly), ...state.analysis.branchMoves];
   const line = { initialFen: new Chess(state.analysis.initialFen).fen(), moves: lineMoves };
   const lineKey = JSON.stringify([line.initialFen, line.moves]);
+  // Canonical timeline, built once per line: the single progressive walk all
+  // per-ply derivations read from.
+  const timeline = useMemo(() => buildTimeline(line.initialFen, line.moves), [lineKey]);
   const settingsKey = JSON.stringify([state.analysisSettings.eloMaia, state.analysisSettings.model, state.stockfish]);
-  const settings: RecordSettings = useMemo(() => ({ eloMaia: state.analysisSettings.eloMaia, eloUser: state.analysisSettings.eloMaia, model: state.analysisSettings.model, stockfish: state.stockfish }), [settingsKey]);
+  const settings: ReviewSettings = useMemo(() => ({ eloMaia: state.analysisSettings.eloMaia, eloUser: state.analysisSettings.eloMaia, model: state.analysisSettings.model, stockfish: state.stockfish }), [settingsKey]);
   const maiaKey = JSON.stringify([state.analysisSettings.eloMaia, state.analysisSettings.model]);
   const maiaIdentity: MaiaIdentity = useMemo(() => maiaIdentityOf(state.analysisSettings), [maiaKey]);
   const currentPly = state.analysis.index;
@@ -158,7 +140,7 @@ export function useReview(state: State) {
       : state.play)
     : null;
   const pinnedKey = gameForLine ? JSON.stringify([gameForLine.settings.eloMaia, gameForLine.settings.eloUser, gameForLine.settings.model, gameForLine.settings.userColor]) : '';
-  const pinnedSettings: RecordSettings | null = useMemo(() => gameForLine
+  const pinnedSettings: ReviewSettings | null = useMemo(() => gameForLine
     ? { eloMaia: gameForLine.settings.eloMaia, eloUser: gameForLine.settings.eloUser, model: gameForLine.settings.model, stockfish: state.stockfish }
     : null, [pinnedKey, settingsKey]);
   const pinnedIdentity: MaiaIdentity | null = useMemo(() => gameForLine
@@ -168,89 +150,33 @@ export function useReview(state: State) {
   const userColorForLine = gameForLine?.settings.userColor;
   const isMaiaNode = (node: ReviewNode): boolean => {
     if (!ownGame || !userColorForLine) return false;
-    return isMaiaPosition(node, userColorForLine, ownGame);
+    // O(1) row lookup: ply === moves.length for nodes built from this line.
+    const row = timeline.rows[node.moves.length];
+    if (!row) return false;
+    return isMaiaPosition(row, userColorForLine, ownGame);
   };
   const settingsForNode = useMemo(() => {
     if (!pinnedSettings) return (_node: ReviewNode) => settings;
     return (node: ReviewNode) => (isMaiaNode(node) ? pinnedSettings : settings);
-  }, [settings, pinnedSettings, pinnedKey, ownGame, userColorForLine]);
-  const [maiaMemory, setMaiaMemory] = useState<Record<number, MaiaIdentity>>({});
-  const [prevMaia, setPrevMaia] = useState<MaiaIdentity>(maiaIdentity);
+  }, [settings, pinnedSettings, pinnedKey, ownGame, userColorForLine, timeline]);
   // Displayed move: the board shows the position after move x (and before move
   // y), so the analysis panel covers x — the move leading into the viewed
   // position — not y. Focus is that move's before-position; -1 at the start
   // (no move yet).
   const focusPly = currentPly - 1;
-  // Last committed focus, for batched rating+navigate updates where the first
-  // render with the new identity already carries the navigated index.
-  const lastFocusRef = useRef(focusPly);
-  useEffect(() => { lastFocusRef.current = focusPly; }, [focusPly]);
-  // Incremental timeline: one chess.js apply per ply plus O(1) bookkeeping.
-  // Calling positionOf per ply re-walks history each time (O(N²) total —
-  // ~1.5s of main-thread block for a 133-ply line, paid before first
-  // paint), so move/SAN lists accumulate here instead. Node contents are
-  // identical: verbose entries carry the same SAN chess.js files in its
-  // own history.
+  // Nodes keep the ReviewNode shape the coordinator API requires (its key
+  // function reads moves); the per-node slices are built here once from the
+  // canonical timeline rows, never per render. Terminal flags below read the
+  // same rows instead of walking the line a second time.
   const nodes = useMemo<(ReviewNode & { sanMoves: string[]; lastMove: [string, string] | undefined })[]>(() => {
-    const game = replay([], line.initialFen);
-    const nodes: (ReviewNode & { sanMoves: string[]; lastMove: [string, string] | undefined })[] = [{ fen: game.fen(), moves: [], sanMoves: [], lastMove: undefined, initialFen: line.initialFen }];
-    const moves: string[] = [];
     const sanMoves: string[] = [];
-    for (const uci of line.moves) {
-      const applied = applyUci(game, uci);
-      moves.push(uciFromMove(applied));
-      sanMoves.push(applied.san);
-      nodes.push({ fen: game.fen(), moves: [...moves], sanMoves: [...sanMoves], lastMove: [applied.from, applied.to], initialFen: line.initialFen });
-    }
-    return nodes;
-  }, [lineKey, state.analysis.moves, state.analysis.branchMoves]);
-  // New content owns fresh memory: stale Elo associations from another line
-  // must never leak into its headers.
-  useEffect(() => { setMaiaMemory({}); }, [lineKey]);
-  // Rating change invalidates the move viewed at change time. Render-phase
-  // state update (not a passive effect) captures that focus: the first render
-  // with the new identity backfills before any later navigation can reassign
-  // the invalidation to the wrong index. Batched rating+navigate commits also
-  // invalidate the pre-batch focus so neither move keeps stale results.
-  // Own games: only the user's moves follow the adjustable rating. Maia's
-  // moves stay pinned to the game Elo, so pinned plies are re-seeded with the
-  // game identity instead of the old global one and never invalidated.
-  if (!sameMaiaIdentity(prevMaia, maiaIdentity)) {
-    const atChange = lastFocusRef.current;
-    setPrevMaia(maiaIdentity);
-    setMaiaMemory(prevMem => {
-      // Backfill unvisited moves with the previous identity; the displayed
-      // move (focus) jumps to the new one. At the start (no move yet) nothing
-      // is invalidated, but unvisited entries still backfill.
-      let next = focusPly >= 0
-        ? backfillMaiaMemory(prevMem, prevMaia, maiaIdentity, focusPly, nodes.length)
-        : { ...prevMem };
-      if (focusPly < 0) {
-        for (let i = 0; i < nodes.length; i++) if (next[i] === undefined) next[i] = prevMaia;
-      }
-      if (atChange !== focusPly && atChange >= 0 && atChange < nodes.length) next = { ...next, [atChange]: maiaIdentity };
-      if (pinnedIdentity) {
-        for (let i = 0; i < nodes.length; i++) {
-          try {
-            if (isMaiaNode(nodes[i])) next = { ...next, [i]: pinnedIdentity };
-          } catch { /* keep backfilled identity */ }
-        }
-        // A rating change while viewing one of Maia's moves must not
-        // invalidate that pinned move.
-        if (focusPly >= 0 && focusPly < nodes.length) {
-          try {
-            if (isMaiaNode(nodes[focusPly])) next = { ...next, [focusPly]: pinnedIdentity };
-          } catch { /* keep */ }
-        }
-        if (atChange >= 0 && atChange < nodes.length) {
-          try {
-            if (isMaiaNode(nodes[atChange])) next = { ...next, [atChange]: pinnedIdentity };
-          } catch { /* keep */ }
-        }
-      }
-      return next;
+    return timeline.rows.map(row => {
+      if (row.ply > 0) sanMoves.push(row.san);
+      return { fen: row.fen, moves: line.moves.slice(0, row.ply), sanMoves: [...sanMoves], lastMove: row.lastMove, initialFen: timeline.initialFen };
     });
-  }
+    // Deps mirror the pre-split memo: the branch merge allocates per render,
+    // so depend on the source arrays, not the merged identity.
+  }, [timeline, state.analysis.moves, state.analysis.branchMoves]);
   useEffect(() => { return () => coordinator.suspend(); }, [coordinator, active, lineKey, combinedKey, state.analysis.moves, state.analysis.branchMoves]);
   useEffect(() => {
     // Mobile background freezes timers and sockets while promises stay
@@ -295,28 +221,8 @@ export function useReview(state: State) {
     const timer = setTimeout(() => coordinator.foregroundAt(focus ? [focus, current] : [current], settingsForNode, 2), 200);
     return () => { clearTimeout(timer); coordinator.clearForeground(); };
   }, [coordinator, active, nodes, state.analysis.index, combinedKey]);
-  const hash = useMemo(() => lineHash(line.initialFen, line.moves), [lineKey]);
-  const [recordStatus, setRecordStatus] = useState<RecordStatus>({ state: 'checking' });
-  useEffect(() => {
-    // Explored branches are ephemeral: only main lines record and restore.
-    if (!active || !mainLine) { setRecordStatus({ state: 'none' }); return; }
-    let cancelled = false;
-    setRecordStatus({ state: 'checking' });
-    getAnalysisRecords([hash]).then(
-      records => {
-        if (cancelled) return;
-        const fresh = records.find(record => isFreshRecord(record, settings));
-        if (fresh) { setRecordStatus({ state: 'fresh', record: fresh }); return; }
-        const latest = records.filter(record => record.failed === 0).sort((a, b) => b.completed_at.localeCompare(a.completed_at))[0];
-        setRecordStatus(latest ? { state: 'stale', record: latest } : { state: 'none' });
-      },
-      () => { if (!cancelled) setRecordStatus({ state: 'none' }); },
-    );
-    return () => { cancelled = true; };
-  }, [active, mainLine, hash, settingsKey]);
-  const recorded = useRef<string | null>(null);
   const progress = coordinator.progress;
-  const primeKey = `${hash}|${combinedKey}`;
+  const primeKey = `${lineKey}|${combinedKey}`;
   const [primedKey, setPrimedKey] = useState<string | null>(null);
   useEffect(() => {
     // Prime from the server cache on every load: reads only, never inference,
@@ -332,21 +238,18 @@ export function useReview(state: State) {
       () => { /* Superseded by navigation or settings change; the next key reprimes. */ },
     );
     return () => controller.abort();
-  }, [active, mainLine, hash, combinedKey, primedKey]);
+  }, [active, mainLine, primeKey, combinedKey, primedKey]);
   // Coverage is counted live from memory so LRU turnover after priming shows
   // up honestly instead of freezing the prime-time number.
   // Coverage and the derivations below all key on the coordinator's cache
   // version: any settled evaluation bumps it, so results refresh exactly
   // when cache contents change and reuse otherwise.
   const cacheVersion = coordinator.snapshot();
-  // Terminal flags are per-line, not per-render: replaying every prefix and
-  // generating legal moves per node on each render is quadratic and dominated
-  // the analysis render (per the DevTools profile). One progressive walk per
-  // line instead — history-identical to per-prefix replays, so repetition
-  // draws resolve exactly as before.
+  // Terminal flags are per-line, not per-render: read off the canonical
+  // timeline rows instead of walking the line a second time.
   const terminalByPly = useMemo(
-    () => terminalFlags(line.initialFen, line.moves),
-    [lineKey],
+    () => timeline.rows.map(row => row.terminal !== null),
+    [timeline],
   );
   const coverage = useMemo(() => {
     if (!(active && mainLine && primedKey === primeKey)) return null;
@@ -358,25 +261,15 @@ export function useReview(state: State) {
     }
     return { total: nodes.length, covered };
   }, [active, mainLine, primedKey, primeKey, nodes, settingsForNode, terminalByPly, cacheVersion, coordinator]);
-  useEffect(() => {
-    // Record main-line batches once per outcome: failures stay visible via
-    // retry (a clean retry records under its own key), restores skip when the
-    // fresh record that triggered them is still current, and degraded Maia
-    // answers must never masquerade as the requested model. Progress is read
-    // live, not from the render closure: the suspend cleanup in this same
-    // commit nulls the batch first, and a stale render-time snapshot would
-    // record the previous settings' completion under the new settings.
-    const live = coordinator.progress;
-    if (!active || !mainLine || !live || live.running || live.done !== live.total) return;
-    if (recordStatus.state === 'fresh' && recordStatus.record?.line_hash === hash && isFreshRecord(recordStatus.record, settings)) return;
-    const key = `${hash}|${settingsKey}|${live.failed}`;
-    if (recorded.current === key || coordinator.batchDegraded()) return;
-    recorded.current = key;
-    putAnalysisRecord(hash, settings, nodes.length, live.failed).then(
-      record => { if (record.failed === 0) setRecordStatus({ state: 'fresh', record }); },
-      () => { recorded.current = null; },
-    );
-  }, [active, mainLine, progress, hash, settingsKey, recordStatus]);
+  // Completion derives from actual cached rows, not a parallel bookkeeping
+  // record: while the prime is in flight the button shows Loading; once it
+  // settles, full coverage reads fresh and anything else reads none (the
+  // partial-coverage Analyze branch keys off coverage directly).
+  const recordStatus: RecordStatus = useMemo(() => {
+    if (!(active && mainLine)) return { state: 'none' };
+    if (primedKey !== primeKey) return { state: 'checking' };
+    return coverage && coverage.covered === coverage.total ? { state: 'fresh' } : { state: 'none' };
+  }, [active, mainLine, primedKey, primeKey, coverage]);
   // Index-independent derivations, memoized (sharing cacheVersion above):
   // evaluations, qualities, and rarities depend only on the line, settings,
   // and cache contents — not on the viewed position. Without this every
@@ -425,47 +318,48 @@ export function useReview(state: State) {
   const current = nodes[currentPly];
   const focusNode = focusPly >= 0 ? nodes[focusPly] : undefined;
   const focusIsMaia = !!focusNode && isMaiaNode(focusNode);
-  // Pinned display for Maia's own moves: always the game identity, never stale.
-  const pinnedForFocus = focusIsMaia && pinnedSettings ? coordinator.result('maia', focusNode, pinnedSettings) : undefined;
-  // Displayed Maia prefers the fresh (global) result when it exists; otherwise
-  // it falls back to the remembered per-move identity so unvisited moves keep
-  // their old Elo visible while the new one fetches in the background.
-  const memForFocus = focusPly >= 0 ? (maiaMemory[focusPly] ?? maiaIdentity) : maiaIdentity;
-  const freshForFocus = active && focusNode && !focusIsMaia ? coordinator.result('maia', focusNode, settings) : undefined;
-  const oldSettings: RecordSettings = { ...settings, eloMaia: memForFocus.eloMaia, eloUser: memForFocus.eloMaia, model: memForFocus.model };
-  const staleForFocus = focusNode && !focusIsMaia && !sameMaiaIdentity(memForFocus, maiaIdentity) && !freshForFocus
-    ? (active ? coordinator.result('maia', focusNode, oldSettings) : undefined)
-    : undefined;
-  const selection = focusIsMaia
-    ? { identity: pinnedIdentity!, useFresh: true }
-    : selectMaiaDisplay({ memory: focusPly >= 0 ? maiaMemory[focusPly] : undefined, global: maiaIdentity, fresh: freshForFocus, stale: staleForFocus });
-  const displayedIdentity = focusIsMaia ? pinnedIdentity! : (selection.useFresh ? maiaIdentity : ((focusPly >= 0 ? maiaMemory[focusPly] : undefined) ?? maiaIdentity));
-  const maiaForFocus = focusNode ? (focusIsMaia ? pinnedForFocus : (selection.useFresh ? freshForFocus : staleForFocus)) : undefined;
-  const maiaStale = focusIsMaia ? false : !sameMaiaIdentity(displayedIdentity, maiaIdentity);
-  // Once the fresh result lands (or the stale row is gone) the display already
-  // reads fresh; sync memory so the next rating change backfills correctly.
+  // Requested identity per focus: Maia's own moves stay pinned to the game
+  // Elo (settingsForNode resolves it); everything else follows the adjustable
+  // analysis rating. The evaluation cache retains rows keyed by that identity.
+  const focusSettings = focusNode ? settingsForNode(focusNode) : settings;
+  const wantedIdentity = focusIsMaia ? pinnedIdentity! : maiaIdentity;
+  const freshForFocus = focusNode && active ? coordinator.result('maia', focusNode, focusSettings) : undefined;
+  // Stale-while-revalidating with a single display entry: while the requested
+  // identity has no row yet, keep showing the last displayed row for THIS
+  // node (never another node's, never another line's). Written post-commit
+  // only — no render-phase setState, no per-ply map, no backfill.
+  const displayRef = useRef<{ line: string; ply: number; identity: MaiaIdentity; result: MoveResponse } | null>(null);
+  let maiaForFocus: MoveResponse | undefined;
+  let displayedIdentity: MaiaIdentity;
+  let maiaStale: boolean;
+  if (!focusNode) {
+    maiaForFocus = undefined; displayedIdentity = wantedIdentity; maiaStale = false;
+  } else if (freshForFocus) {
+    maiaForFocus = freshForFocus; displayedIdentity = wantedIdentity; maiaStale = false;
+  } else {
+    const kept = displayRef.current;
+    if (kept && kept.line === lineKey && kept.ply === focusPly) {
+      // Same node, requested row not settled yet (eviction, prime miss, or
+      // refetch in flight): keep showing the last displayed row while the
+      // requested one loads. Stale only when its identity differs from the
+      // requested one.
+      maiaForFocus = kept.result; displayedIdentity = kept.identity;
+      maiaStale = !sameMaiaIdentity(kept.identity, wantedIdentity);
+    } else {
+      maiaForFocus = undefined; displayedIdentity = wantedIdentity; maiaStale = false;
+    }
+  }
+  // New content clears the display entry, declared before the write so the
+  // clear wins in a same-commit line change: stale associations from another
+  // line must never leak into its headers, and the write below only stores
+  // rows computed for the current line.
+  useEffect(() => { displayRef.current = null; }, [lineKey]);
   useEffect(() => {
-    if (focusPly < 0 || !sameMaiaIdentity(displayedIdentity, maiaIdentity)) return;
-    setMaiaMemory(prev => {
-      const cur = prev[focusPly];
-      if (!cur || sameMaiaIdentity(cur, maiaIdentity)) return prev;
-      return { ...prev, [focusPly]: maiaIdentity };
-    });
-  }, [focusPly, maiaKey, displayedIdentity]);
+    if (focusPly >= 0 && maiaForFocus) displayRef.current = { line: lineKey, ply: focusPly, identity: displayedIdentity, result: maiaForFocus };
+  }, [lineKey, focusPly, maiaForFocus, displayedIdentity]);
   const startBatchAtCurrent = () => {
-    setMaiaMemory(() => {
-      const next: Record<number, MaiaIdentity> = {};
-      for (let i = 0; i < nodes.length; i++) {
-        try {
-          if (pinnedIdentity && isMaiaNode(nodes[i])) next[i] = pinnedIdentity;
-          else next[i] = maiaIdentity;
-        } catch { next[i] = maiaIdentity; }
-      }
-      return next;
-    });
     coordinator.startBatch(nodes, settingsForNode);
   };
-  const focusSettings = focusNode ? settingsForNode(focusNode) : settings;
   const currentSettings = current ? settingsForNode(current) : settings;
   // Forward Maia for the arrows (y's estimates from the viewed position).
   // Fresh identity only, no stale fallback: the foreground lane fetches it on

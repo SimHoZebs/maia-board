@@ -21,6 +21,7 @@ var (
 	evalCacheMaxKeyBytes   = 4096
 	evalCacheMaxValueBytes = 65536
 	evalHashPattern        = regexp.MustCompile(`^[0-9a-f]{1,16}$`)
+	coverageMaxHashes      = 1024
 )
 
 type cachedEvaluation struct {
@@ -215,4 +216,80 @@ func (s *server) evaluations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, entry)
+}
+
+// Bulk coverage probe: one round trip answering "which of these cache rows
+// exist" for line restores, replacing hundreds of per-position GETs. Values
+// ride along so restores seed memory without a second fan-out. Read-only:
+// missing rows stay missing for an explicit, user-gated batch.
+func (s *GameStore) cacheCoverage(hashes []string) (map[string]cachedEvaluation, error) {
+	rows := map[string]cachedEvaluation{}
+	for start := 0; start < len(hashes); start += 500 {
+		end := start + 500
+		if end > len(hashes) {
+			end = len(hashes)
+		}
+		chunk := hashes[start:end]
+		placeholders := strings.Repeat("?,", len(chunk)-1) + "?"
+		args := make([]any, len(chunk))
+		for i, hash := range chunk {
+			args[i] = hash
+		}
+		queryRows, err := s.db.Query(`SELECT key_hash, engine, cache_key, value, created_at
+			FROM evaluations WHERE key_hash IN (`+placeholders+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for queryRows.Next() {
+			var entry cachedEvaluation
+			var value string
+			if err := queryRows.Scan(&entry.KeyHash, &entry.Engine, &entry.Key, &value, &entry.CreatedAt); err != nil {
+				queryRows.Close()
+				return nil, err
+			}
+			var decoded any
+			if err := json.Unmarshal([]byte(value), &decoded); err != nil {
+				// One corrupt row degrades to a miss for its hash, never to a
+				// failed bulk: the per-position probe path treats unreadable
+				// rows the same way, and the client still validates values.
+				continue
+			}
+			entry.Value = decoded
+			rows[entry.KeyHash] = entry
+		}
+		if err := queryRows.Err(); err != nil {
+			queryRows.Close()
+			return nil, err
+		}
+		queryRows.Close()
+	}
+	return rows, nil
+}
+
+func (s *server) coverage(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET is required")
+		return
+	}
+	hashes := r.URL.Query()["hash"]
+	if len(hashes) > coverageMaxHashes {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "at most 1024 hashes per lookup")
+		return
+	}
+	for _, hash := range hashes {
+		if !evalHashPattern.MatchString(hash) {
+			writeAPIError(w, http.StatusBadRequest, "invalid_request", "evaluation key must be hex")
+			return
+		}
+	}
+	rows, err := s.store.cacheCoverage(hashes)
+	if err != nil {
+		writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"rows": rows})
 }

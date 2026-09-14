@@ -65,6 +65,43 @@ describe('outbox', () => {
     markMigrated();
     expect(isMigrated()).toBe(true);
   });
+  it('collapses consecutive saves for the same game to the latest snapshot', () => {
+    pushOutbox({ op: 'save', game: game('a', ['e2e4']), current: true });
+    pushOutbox({ op: 'save', game: game('a', ['e2e4', 'e7e5']), current: false });
+    pushOutbox({ op: 'save', game: game('a', ['e2e4', 'e7e5', 'g1f3']), current: false });
+    const ops = loadOutbox();
+    expect(ops).toHaveLength(1);
+    expect(ops[0]).toEqual({ op: 'save', game: game('a', ['e2e4', 'e7e5', 'g1f3']), current: true });
+  });
+  it('breaks coalescing runs on deletes and foreign ids', () => {
+    pushOutbox({ op: 'save', game: game('a', ['e2e4']), current: false });
+    pushOutbox({ op: 'save', game: game('b', ['d2d4']), current: false });
+    pushOutbox({ op: 'save', game: game('a', ['e2e4', 'e7e5']), current: false });
+    expect(loadOutbox()).toHaveLength(3);
+    pushOutbox({ op: 'delete', id: 'a' });
+    pushOutbox({ op: 'save', game: game('a', ['e2e4']), current: true });
+    const ops = loadOutbox();
+    expect(ops).toEqual([
+      { op: 'save', game: game('a', ['e2e4']), current: false },
+      { op: 'save', game: game('b', ['d2d4']), current: false },
+      { op: 'save', game: game('a', ['e2e4', 'e7e5']), current: false },
+      { op: 'delete', id: 'a' },
+      { op: 'save', game: game('a', ['e2e4']), current: true },
+    ]);
+    // Collapsed runs merge identically to their uncollapsed form.
+    expect(mergeSync([], null, ops).currentId).toBe('a');
+  });
+  it('merges a collapsed run exactly like its uncollapsed equivalent', () => {
+    pushOutbox({ op: 'save', game: game('a', ['e2e4']), current: false });
+    pushOutbox({ op: 'save', game: game('a', ['e2e4', 'e7e5']), current: true });
+    pushOutbox({ op: 'save', game: game('a', ['e2e4', 'e7e5', 'g1f3']), current: false });
+    const uncollapsed: OutboxOp[] = [
+      { op: 'save', game: game('a', ['e2e4']), current: false },
+      { op: 'save', game: game('a', ['e2e4', 'e7e5']), current: true },
+      { op: 'save', game: game('a', ['e2e4', 'e7e5', 'g1f3']), current: false },
+    ];
+    expect(mergeSync([], null, loadOutbox())).toEqual(mergeSync([], null, uncollapsed));
+  });
 });
 
 describe('mergeSync', () => {

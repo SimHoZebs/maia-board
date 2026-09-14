@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   matchPath,
   Navigate,
@@ -9,10 +9,11 @@ import {
   useNavigate,
 } from "react-router";
 import { App } from "./App";
-import { EvalLoadingLab } from "./EvalLoadingLab";
+const EvalLoadingLab = lazy(() => import("./EvalLoadingLab").then(module => ({ default: module.EvalLoadingLab })));
 import type { Mode } from "./domain";
 import type { Action, State } from "./state";
 import { useMaiaBoard } from "./useMaiaBoard";
+import { SyncContext } from "./syncStore";
 import { analysisPath, parseAnalysisSearch, sameLine } from "./analysisUrl";
 import { RegionRecorder } from "./perfCommits";
 
@@ -69,7 +70,7 @@ export function BoardRouter() {
     () => (mode === "analysis" ? parseAnalysisSearch(search) : undefined),
     [mode, search],
   );
-  const { state, dispatch: boardDispatch } = useMaiaBoard(mode, urlLine);
+  const { state, dispatch: boardDispatch, sync } = useMaiaBoard(mode, urlLine);
   // Loaded analyses own their URL: the address bar carries the game's content
   // (normalized FEN + UCI moves), so each game is linkable and Back walks games.
   // One effect serves both directions. A mismatch alone cannot tell a stale URL
@@ -131,14 +132,16 @@ export function BoardRouter() {
   );
   const workspace = (
     <RegionRecorder id="app">
-      <App state={state} dispatch={dispatch}>
-        <DestinationNav state={state} dispatch={dispatch} />
-      </App>
+      <SyncContext.Provider value={sync}>
+        <App state={state} dispatch={dispatch}>
+          <DestinationNav state={state} dispatch={dispatch} />
+        </App>
+      </SyncContext.Provider>
     </RegionRecorder>
   );
   return (
     <Routes>
-      <Route path="/dev/eval-loading" element={<EvalLoadingLab />} />
+      <Route path="/dev/eval-loading" element={<Suspense fallback={null}><EvalLoadingLab /></Suspense>} />
       {destinations.map(({ path }) => (
         <Route key={path} path={path} element={workspace} />
       ))}

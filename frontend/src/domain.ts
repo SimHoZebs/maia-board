@@ -69,18 +69,6 @@ export function loadLine(fen = '', pgn = ''): Analysis {
   return { initialFen, moves, sanMoves: game.history(), index: moves.length, branchFromPly: null, branchMoves: [],
     perspective: new Chess(initialFen).turn() === 'w' ? 'white' : 'black', ownGame: false };
 }
-// Test helper: per-ply review nodes for a line. Production builds these
-// incrementally where needed (useReview) instead of paying for an eager
-// per-ply timeline on every load.
-export function testNodes(initialFen: string, moves: string[]): { initialFen: string; moves: string[]; fen: string }[] {
-  const game = new Chess(initialFen);
-  const nodes = [{ initialFen, moves: [] as string[], fen: game.fen() }];
-  moves.forEach((move, index) => {
-    applyUci(game, move);
-    nodes.push({ initialFen, moves: moves.slice(0, index + 1), fen: game.fen() });
-  });
-  return nodes;
-}
 export function exportLine(analysis: Analysis): string {
   const game = replay(analysis.moves, analysis.initialFen);
   game.header('Event', 'Maia Board');
@@ -95,7 +83,15 @@ export function candidateSan(fen: string, uci: string): string {
 export function analysisLine(analysis: Analysis, at = analysis.index): Position & { initialFen: string } {
   const initialFen = new Chess(analysis.initialFen).fen();
   const moves = analysis.branchFromPly === null ? analysis.moves : [...analysis.moves.slice(0, analysis.branchFromPly), ...analysis.branchMoves];
-  return { ...positionOf(replay(moves.slice(0, at), initialFen)), initialFen };
+  const timeline = buildTimeline(initialFen, moves);
+  const clamped = Math.max(0, Math.min(at, moves.length));
+  return {
+    fen: timeline.rows[clamped].fen,
+    moves: moves.slice(0, clamped),
+    sanMoves: timeline.rows.slice(1, clamped + 1).map(row => row.san),
+    lastMove: timeline.rows[clamped].lastMove,
+    initialFen,
+  };
 }
 export function analysisLength(analysis: Analysis): number {
   return analysis.branchFromPly === null ? analysis.moves.length : analysis.branchFromPly + analysis.branchMoves.length;
@@ -120,6 +116,69 @@ export function storedGameResult(game: StoredGame): string {
 export function absoluteWdl(fen: string, wdl: MoveResponse['wdl']) {
   const [loss, draw, win] = wdl;
   return new Chess(fen).turn() === 'w' ? [win, draw, loss] : [loss, draw, win];
+}
+
+// Canonical chess timeline: one progressive walk producing every per-ply
+// fact downstream code needs, so consumers do lookups instead of replays.
+// Rows share one terminal representation (`Evaluation | null`, null =
+// ongoing) so turn/terminal/SAN answers cannot drift between call sites.
+// Throws on the first illegal UCI exactly like replay() — callers with
+// untrusted lines narrow with legalPrefixLength() first.
+export type TimelineRow = {
+  ply: number;
+  uci: string;
+  san: string;
+  fen: string;
+  turn: 'white' | 'black';
+  terminal: Evaluation | null;
+  lastMove: [Key, Key] | undefined;
+};
+export type Timeline = { initialFen: string; moves: string[]; rows: TimelineRow[] };
+
+// Test observability only: counts builder invocations, mirroring
+// lineRecordMissesForTests. Lets the suite assert that render loops and
+// navigation read rows without rebuilding the timeline.
+let timelineBuilds = 0;
+export function timelineBuildsForTests(): number { return timelineBuilds; }
+export function resetTimelinesForTests(): void { timelineBuilds = 0; }
+
+export function buildTimeline(initialFen: string, moves: string[]): Timeline {
+  timelineBuilds++;
+  const game = replay([], initialFen);
+  const normalized = game.fen();
+  const rows: TimelineRow[] = [{
+    ply: 0, uci: '', san: '', fen: game.fen(),
+    turn: game.turn() === 'w' ? 'white' : 'black',
+    terminal: terminalEvaluation(game) ?? null,
+    lastMove: undefined,
+  }];
+  for (const uci of moves) {
+    const applied = applyUci(game, uci);
+    rows.push({
+      ply: rows.length,
+      uci: uciFromMove(applied),
+      san: applied.san,
+      fen: game.fen(),
+      turn: game.turn() === 'w' ? 'white' : 'black',
+      terminal: terminalEvaluation(game) ?? null,
+      lastMove: [applied.from, applied.to],
+    });
+  }
+  return { initialFen: normalized, moves, rows };
+}
+
+// Length of the legal prefix of a possibly-untrusted move list. One plain
+// legality walk, no history evaluation: callers narrow corrupt lines before
+// paying for the full timeline build.
+export function legalPrefixLength(initialFen: string, moves: string[]): number {
+  const game = new Chess(initialFen);
+  let length = 0;
+  for (const uci of moves) {
+    try { applyUci(game, uci); }
+    catch { break; }
+    length++;
+  }
+  return length;
 }
 
 // Memoized per-line derivation for the play path. State stores only UCI move
@@ -224,19 +283,10 @@ export function retreatLine(moves: string[], initialFen: string, plies: number):
   return { moves: prefix, record: lineRecord(prefix, initialFen) };
 }
 
-// History-aware terminal flags for every prefix of a line in one progressive
-// walk. Equivalent to mapping terminalEvaluation over per-prefix replays, but
-// O(line) instead of O(line²): the walking instance accumulates the exact
-// history repetition checks need, so each prefix reads identically to its
-// replay. Used for per-ply terminal questions that must not replay.
+// History-aware terminal flags for every prefix of a line, read off the
+// canonical timeline: one progressive walk instead of per-prefix replays.
 export function terminalFlags(initialFen: string, moves: string[]): boolean[] {
-  const game = replay([], initialFen);
-  const flags = [terminalEvaluation(game) !== undefined];
-  for (const uci of moves) {
-    applyUci(game, uci);
-    flags.push(terminalEvaluation(game) !== undefined);
-  }
-  return flags;
+  return buildTimeline(initialFen, moves).rows.map(row => row.terminal !== null);
 }
 
 // Result text without a replay: checkmate is position-only (safe from a

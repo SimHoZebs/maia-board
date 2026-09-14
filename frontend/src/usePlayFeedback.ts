@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Chess } from 'chess.js';
-import { applyUci, replay, START_FEN } from './domain';
+import { applyUci, buildTimeline, legalPrefixLength, replay, START_FEN } from './domain';
 import { ReviewCoordinator, reviewKey, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
 import { reviewMove, terminalEvaluation, type Evaluation, type Quality } from './reviewMetrics';
 import { stockfishPolicy } from './stockfishSettings';
@@ -158,11 +158,14 @@ export function computePlayQualities(args: {
 
 export function usePlayFeedback(state: State): PlayFeedback {
   const [coordinator] = useState(() => new ReviewCoordinator());
-  const active = state.mode === 'play' && state.started && state.feedback;
-  // The inactive coordinator is suspended with nothing displayed from it, so
-  // don't subscribe: analysis-side settles must not re-render the play tree
-  // (and vice versa in useReview). Resubscribing on activation re-reads the
-  // snapshot, so no update is missed across the switch.
+  // Mounted only inside PlayWorkspace: no analysis tree exists above this
+  // hook, so cross-mode guards are gone. `active` now means only "a started
+  // game with feedback enabled" (the pre-start setup mounts with nothing to
+  // evaluate yet).
+  const active = state.started && state.feedback;
+  // The pre-start coordinator is suspended with nothing displayed from it, so
+  // don't subscribe: settles must not re-render the setup form.
+  // Resubscribing on start re-reads the snapshot, so no update is missed.
   useSyncExternalStore(active ? coordinator.subscribe : subscribeNone, coordinator.snapshot, coordinator.snapshot);
   const moves = state.play.moves;
   const movesKey = JSON.stringify(moves);
@@ -190,29 +193,24 @@ export function usePlayFeedback(state: State): PlayFeedback {
     let cancelled = false;
     const items: { node: ReviewNode; terminal: Evaluation | null }[] = [];
     {
-      // One progressive walk for the whole line: prefix fens plus history-aware
-      // terminals (repetition included) with zero replays — instead of a replay
-      // per node. Terminal entries seed the cache exactly as job() would.
-      const game = new Chess(START_FEN);
-      const prefixes: string[][] = [[]];
-      const fens: string[] = [game.fen()];
-      const terminals: (Evaluation | null)[] = [terminalEvaluation(game) ?? null];
-      for (const uci of moves) {
-        try {
-          applyUci(game, uci);
-        } catch {
-          break;
-        }
-        prefixes.push(moves.slice(0, prefixes.length));
-        fens.push(game.fen());
-        terminals.push(terminalEvaluation(game) ?? null);
+      // Before/after pairs for every committed user ply, read off the
+      // canonical timeline: prefix fens plus history-aware terminals
+      // (repetition included) with zero replays — instead of a replay per
+      // node. Terminal entries seed the cache exactly as job() would.
+      // Untrusted stored lines may end in an illegal move; narrow to the
+      // legal prefix rather than failing the whole prime.
+      let timeline;
+      try {
+        timeline = buildTimeline(START_FEN, moves);
+      } catch {
+        timeline = buildTimeline(START_FEN, moves.slice(0, legalPrefixLength(START_FEN, moves)));
       }
       moves.forEach((_, ply) => {
         if ((ply % 2 === 0) !== (state.settings.userColor === 'white')) return;
-        if (ply + 1 >= prefixes.length) return;
+        if (ply + 1 >= timeline.rows.length) return;
         items.push(
-          { node: { initialFen: START_FEN, moves: prefixes[ply], fen: fens[ply] }, terminal: terminals[ply] },
-          { node: { initialFen: START_FEN, moves: prefixes[ply + 1], fen: fens[ply + 1] }, terminal: terminals[ply + 1] },
+          { node: { initialFen: START_FEN, moves: moves.slice(0, ply), fen: timeline.rows[ply].fen }, terminal: timeline.rows[ply].terminal },
+          { node: { initialFen: START_FEN, moves: moves.slice(0, ply + 1), fen: timeline.rows[ply + 1].fen }, terminal: timeline.rows[ply + 1].terminal },
         );
       });
     }

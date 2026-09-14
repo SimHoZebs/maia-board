@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Chess } from 'chess.js';
 import { MaiaApiError, type MoveResponse } from './api';
-import { absoluteWdl, analysisLine, defaultSettings, exportExplored, exportLine, extendLine, lineRecord, lineRecordMissesForTests, loadLine, positionOf, replay, resetLineRecordsForTests, resultTextForTip, retreatLine, START_FEN, terminalFlags, testNodes } from './domain';
+import { absoluteWdl, analysisLine, buildTimeline, defaultSettings, exportExplored, exportLine, extendLine, legalPrefixLength, lineRecord, lineRecordMissesForTests, loadLine, positionOf, replay, resetLineRecordsForTests, resetTimelinesForTests, resultTextForTip, retreatLine, START_FEN, terminalFlags, timelineBuildsForTests } from './domain';
+import { testNodes } from './testUtils';
 import { computeReviewQualities, type ReviewQualitiesMemo, type ReviewQualitiesStats } from './useReview';
 import { reviewKey, type ReviewNode } from './reviewCoordinator';
 import { terminalEvaluation, type Evaluation } from './reviewMetrics';
-import { createDeferredDispatcher } from './useMaiaBoard';
+import { HistorySyncStore } from './syncStore';
 import { currentPosition, initialState, reducer, snapshotOf } from './state';
 import { KEYS, restoreGame } from './storage';
 
@@ -242,8 +243,6 @@ describe('server sync', () => {
     expect(state.play.id).toBe('s');
     expect(state.started).toBe(true);
     expect(state.request?.payload.moves).toEqual(['e2e4']);
-    expect(state.syncPending).toBe(0);
-    expect(state.historyTotal).toBe(1);
   });
   it('keeps unsynced local edits over the server snapshot', () => {
     const local = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
@@ -269,14 +268,8 @@ describe('server sync', () => {
     expect(state.play.id).toBe('cache');
     expect(state.started).toBe(true);
   });
-  it('tracks persistence errors, pending counts, and explicit retry', () => {
-    let state = reducer(initialState(), { type: 'sync-error', message: 'down' });
-    expect(state.syncError).toBe('down');
-    state = reducer(state, { type: 'sync-pending', pending: 3 });
-    expect(state.syncPending).toBe(3);
-    expect(reducer(state, { type: 'sync-pending', pending: 3 })).toBe(state);
-    state = reducer(state, { type: 'retry-sync' });
-    expect(state.syncError).toBe('');
+  it('bumps the flush trigger on explicit retry', () => {
+    const state = reducer(initialState(), { type: 'retry-sync' });
     expect(state.flushNonce).toBe(1);
   });
   it('keeps history beyond the old eight-game cap', () => {
@@ -284,7 +277,6 @@ describe('server sync', () => {
     const games = Array.from({ length: 12 }, (_, index) => serverGame(`g${index}`, ['e2e4']));
     state = reducer(state, { type: 'sync', saved: games, currentId: null, total: 12, pending: [] });
     expect(state.saved).toHaveLength(12);
-    expect(state.historyTotal).toBe(12);
   });
 });
 
@@ -455,42 +447,34 @@ describe('line records', () => {
   });
 });
 
-describe('deferred sync dispatcher', () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
-
-  it('coalesces rapid schedules into one fire-time read', () => {
-    const dispatch = vi.fn();
-    const dispatcher = createDeferredDispatcher(dispatch, 250);
-    let count = 0;
-    dispatcher.schedule(() => count);
-    dispatcher.schedule(() => count);
-    count = 3;
-    dispatcher.schedule(() => count);
-    expect(dispatch).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(250);
-    expect(dispatch).toHaveBeenCalledTimes(1);
-    expect(dispatch).toHaveBeenCalledWith(3);
+describe('history sync store', () => {
+  it('notifies only on change and starts from the stored outbox', () => {
+    const store = new HistorySyncStore();
+    expect(store.pending).toBe(0);
+    expect(store.error).toBe('');
+    expect(store.total).toBeNull();
+    const calls: number[] = [];
+    const stop = store.subscribe(() => calls.push(store.snapshot()));
+    store.setPending(0);
+    store.setError('');
+    store.setTotal(null);
+    expect(calls).toHaveLength(0);
+    store.setPending(3);
+    store.setError('down');
+    store.setTotal(12);
+    expect(store.pending).toBe(3);
+    expect(store.error).toBe('down');
+    expect(store.total).toBe(12);
+    expect(calls).toHaveLength(3);
+    store.clearError();
+    expect(store.error).toBe('');
+    stop();
   });
-
-  it('cancel suppresses a pending fire', () => {
-    const dispatch = vi.fn();
-    const dispatcher = createDeferredDispatcher(dispatch, 250);
-    dispatcher.schedule(() => 1);
-    dispatcher.cancel();
-    vi.advanceTimersByTime(1000);
-    expect(dispatch).not.toHaveBeenCalled();
-  });
-
-  it('fires again after a completed dispatch', () => {
-    const dispatch = vi.fn();
-    const dispatcher = createDeferredDispatcher(dispatch, 250);
-    dispatcher.schedule(() => 1);
-    vi.advanceTimersByTime(250);
-    dispatcher.schedule(() => 0);
-    vi.advanceTimersByTime(250);
-    expect(dispatch).toHaveBeenCalledTimes(2);
-    expect(dispatch).toHaveBeenNthCalledWith(2, 0);
+  it('keeps sync display state out of the game reducer', () => {
+    const state = initialState();
+    expect('syncError' in state).toBe(false);
+    expect('syncPending' in state).toBe(false);
+    expect('historyTotal' in state).toBe(false);
   });
 });
 
@@ -516,6 +500,64 @@ describe('terminal flags', () => {
     expect(mates.at(-1)).toBe(true);
     expect(mates.slice(0, -1)).toEqual([false, false, false, false]);
     expect(terminalFlags(START_FEN, []).at(-1)).toBe(false);
+  });
+});
+
+describe('canonical timeline', () => {
+  it('matches per-prefix replays for fen, turn, san, and terminality', () => {
+    const lines: [string, string[]][] = [
+      [START_FEN, ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4']],
+      [START_FEN, ['f2f3', 'e7e5', 'g2g4', 'd8h4']],
+      [START_FEN, ['g1f3', 'g8f6', 'f3g1', 'f6g8', 'g1f3', 'g8f6', 'f3g1', 'f6g8']],
+      [START_FEN, []],
+    ];
+    for (const [initialFen, moves] of lines) {
+      const timeline = buildTimeline(initialFen, moves);
+      expect(timeline.rows).toHaveLength(moves.length + 1);
+      for (let ply = 0; ply <= moves.length; ply++) {
+        const game = replay(moves.slice(0, ply), initialFen);
+        const row = timeline.rows[ply];
+        const history = game.history({ verbose: true });
+        const last = history.at(-1);
+        expect(row.ply).toBe(ply);
+        expect(row.fen).toBe(game.fen());
+        expect(row.turn).toBe(game.turn() === 'w' ? 'white' : 'black');
+        expect(row.san).toBe(last?.san ?? '');
+        expect(row.uci).toBe(last ? `${last.from}${last.to}${last.promotion ?? ''}` : '');
+        expect(row.lastMove).toEqual(last ? [last.from, last.to] : undefined);
+        expect(row.terminal !== null).toBe(terminalEvaluation(game) !== undefined);
+      }
+    }
+  });
+
+  it('agrees with the play-tip memo on tip fen, SAN, and terminality', () => {
+    const moves = ['e2e4', 'e7e5', 'g1f3', 'b8c6'];
+    resetLineRecordsForTests();
+    const record = lineRecord(moves);
+    const timeline = buildTimeline(START_FEN, moves);
+    const tip = timeline.rows.at(-1)!;
+    expect(tip.fen).toBe(record.fen);
+    expect(tip.terminal).toEqual(record.terminal);
+    expect(timeline.rows.slice(1).map(row => row.san)).toEqual(record.sanMoves);
+  });
+
+  it('builds once per line no matter how many rows are read', () => {
+    resetTimelinesForTests();
+    const timeline = buildTimeline(START_FEN, ['e2e4', 'e7e5', 'g1f3']);
+    // A coverage-style full pass plus navigation lookups: pure row reads.
+    let covered = 0;
+    for (const row of timeline.rows) if (row.terminal !== null || row.fen) covered++;
+    expect(timeline.rows[2].fen).toContain(' ');
+    expect(covered).toBe(4);
+    expect(timelineBuildsForTests()).toBe(1);
+  });
+
+  it('throws on illegal moves; legalPrefixLength narrows untrusted lines', () => {
+    expect(() => buildTimeline(START_FEN, ['e2e4', 'e7e5', 'not-a-move'])).toThrow();
+    expect(legalPrefixLength(START_FEN, ['e2e4', 'e7e5', 'not-a-move'])).toBe(2);
+    expect(legalPrefixLength(START_FEN, ['e2e4', 'e7e5'])).toBe(2);
+    const narrowed = buildTimeline(START_FEN, ['e2e4', 'e7e5', 'not-a-move'].slice(0, 2));
+    expect(narrowed.rows).toHaveLength(3);
   });
 });
 

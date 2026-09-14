@@ -3,7 +3,6 @@ import { defaultSettings, normalizeSettings, START_FEN } from './domain';
 import { initialState, reducer } from './state';
 import { defaultStockfishSettings, normalizeStockfishSettings, stockfishPolicy, STOCKFISH_STORAGE_KEY } from './stockfishSettings';
 import { fetchEvaluation, reviewKey, ReviewCoordinator } from './reviewCoordinator';
-import { isFreshRecord, recordSettings } from './analysisRecords';
 import { toStoredGame } from './serverGames';
 import { KEYS } from './storage';
 
@@ -59,7 +58,7 @@ it('restores and validates browser settings and legacy temperature', () => {
   expect(toStoredGame(row)?.settings.temperature).toBe(.7);
 });
 
-it('separates Stockfish cache and completion records while retaining Maia cache identity', () => {
+it('separates Stockfish cache identity while retaining Maia cache identity', () => {
   const node = { initialFen: START_FEN, fen: START_FEN, moves: [] };
   const settings = { ...defaultSettings, stockfish: defaultStockfishSettings };
   const changed = { ...settings, stockfish: { time_ms: 30000, lines: 5, depth: 40 } };
@@ -67,7 +66,9 @@ it('separates Stockfish cache and completion records while retaining Maia cache 
   expect(stockfishPolicy(changed.stockfish)).toBe('sf19-ms30000-mpv5-d40-t1-h64-v2');
   expect(reviewKey('sf', node, changed)).not.toBe(reviewKey('sf', node, settings));
   expect(reviewKey('maia', node, changed)).toBe(reviewKey('maia', node, settings));
-  expect(isFreshRecord({ line_hash: 'x', settings: recordSettings(settings), positions: 1, failed: 0, completed_at: 'now' }, changed)).toBe(false);
+  // Coverage derives from these same keys: a settings change misses the old
+  // rows without any parallel freshness record.
+  expect(reviewKey('sf', node, { ...settings, eloMaia: 1800 })).toBe(reviewKey('sf', node, settings));
 });
 
 it('sends requested options and rejects a response from another search policy', async () => {

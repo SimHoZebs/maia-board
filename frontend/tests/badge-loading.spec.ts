@@ -13,6 +13,12 @@ async function bootHistory(page: Page, pgn: string, primeMs: number) {
   page.on('pageerror', error => errors.push(error.message));
   await page.route('http://maia.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
+    if (path === '/evaluations/coverage') {
+      // Slow empty cache: the restore is genuinely in flight.
+      await new Promise(resolve => setTimeout(resolve, primeMs));
+      await route.fulfill({ json: { rows: {} } });
+      return;
+    }
     if (path.startsWith('/evaluations/')) {
       if (route.request().method() === 'PUT') {
         await route.fulfill({ json: { key_hash: 'x', engine: 'sf', created_at: 'now' } });
@@ -45,9 +51,6 @@ async function bootHistory(page: Page, pgn: string, primeMs: number) {
     if (path === '/games' || path.startsWith('/games/')) {
       if (route.request().method() === 'GET' && path === '/games') { await route.fulfill({ json: { games: [], current_id: null, total: 0 } }); return; }
       await route.fulfill({ status: 204, body: '' }); return;
-    }
-    if (path === '/analyses' || path.startsWith('/analyses/')) {
-      await route.fulfill({ json: { analyses: [] } }); return;
     }
     const filename = path.startsWith('/assets/') ? path.slice(1) : 'index.html';
     await route.fulfill({ body: await readFile(resolve('dist-browser', filename)), contentType: filename.endsWith('.js') ? 'text/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html' });

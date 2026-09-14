@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderToString } from 'react-dom/server';
 import { ErrorBoundary, PanelError } from './ErrorBoundary';
 import { fetchEvaluation } from './reviewCoordinator';
-import { loadLine, testNodes } from './domain';
+import { loadLine } from './domain';
+import { testNodes } from './testUtils';
 import { initialState, reducer } from './state';
 import { MaiaApiError } from './api';
 

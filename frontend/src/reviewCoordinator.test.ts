@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Chess } from 'chess.js';
-import { applyUci, loadLine, START_FEN, testNodes } from './domain';
+import { applyUci, loadLine, START_FEN } from './domain';
+import { testNodes } from './testUtils';
 import { cacheHash, JOB_STALL_MS, RESUME_ABORT_AFTER_HIDDEN_MS, ReviewCoordinator, reviewKey, type ReviewNode } from './reviewCoordinator';
 import { SEARCH_POLICY, terminalEvaluation, type Evaluation } from './reviewMetrics';
 import { stockfishPolicy } from './stockfishSettings';
@@ -44,6 +45,15 @@ function readThroughFetcher(
       transcript.push(`${path}:miss`);
       return Response.json(value);
     }
+    if (path === '/evaluations/coverage') {
+      const rows: Record<string, unknown> = {};
+      for (const hash of new URL(String(url), 'http://test').searchParams.getAll('hash')) {
+        const hit = store.get(hash);
+        if (hit) rows[hash] = { engine: hit.engine, value: hit.value };
+      }
+      transcript.push('coverage');
+      return Response.json({ rows });
+    }
     if (path.startsWith('/evaluations/')) {
       if (init?.method === 'PUT') {
         const put = JSON.parse(init.body as string) as { engine: string; key: string; value: unknown };
@@ -77,6 +87,31 @@ it('deduplicates in-flight requests and coalesces stale foreground positions', a
   releases.splice(0).forEach(resolve => resolve()); await flush();
   expect(requests.at(-1)).toBe('/evaluate:2');
   coordinator.suspend(); releases.splice(0).forEach(resolve => resolve()); await flush();
+});
+it('foreground navigation never clears settled rows or batch progress', async () => {
+  const releases: (() => void)[] = [];
+  const fetcher = vi.fn(async (url, init) => {
+    if (!init?.body) return Response.json({ code: 'not_found', message: 'missing' }, { status: 404 });
+    await new Promise<void>(resolve => releases.push(resolve));
+    return Response.json(body(String(url)));
+  }) as typeof fetch;
+  const coordinator = new ReviewCoordinator(fetcher);
+  coordinator.startBatch(nodes, settings);
+  releases.splice(0).forEach(resolve => resolve()); await flush();
+  const settledSf = coordinator.result('sf', nodes[0], settings);
+  expect(settledSf).toBeDefined();
+  const done = coordinator.progress?.done ?? 0;
+  expect(done).toBeGreaterThan(0);
+  // Navigate elsewhere mid-batch: the foreground swaps lanes (preempting the
+  // running batch job), but settled rows and completed counts survive intact.
+  coordinator.foregroundAt([nodes[3]], settings);
+  releases.splice(0).forEach(resolve => resolve()); await flush();
+  expect(coordinator.result('sf', nodes[0], settings)).toEqual(settledSf);
+  expect(coordinator.progress?.done).toBeGreaterThanOrEqual(done);
+  coordinator.suspend();
+  releases.splice(0).forEach(resolve => resolve()); await flush();
+  // Suspend clears lanes and the batch — never settled data.
+  expect(coordinator.result('sf', nodes[0], settings)).toEqual(settledSf);
 });
 it('fetches Maia for both foreground positions at depth 2, one by default', async () => {
   const requests: string[] = [];
@@ -160,6 +195,10 @@ describe('sfPendingKeys', () => {
   it('tracks prime restores in flight and releases on completion', async () => {
     const releases: (() => void)[] = [];
     const fetcher = vi.fn(async (url, init) => {
+      if (String(url).split('?')[0] === '/evaluations/coverage') {
+        await new Promise<void>(resolve => releases.push(resolve));
+        return Response.json({ rows: {} });
+      }
       if (String(url).startsWith('/evaluations/')) {
         await new Promise<void>(resolve => releases.push(resolve));
         return Response.json({ code: 'not_found', message: 'missing' }, { status: 404 });
@@ -169,6 +208,10 @@ describe('sfPendingKeys', () => {
     const coordinator = new ReviewCoordinator(fetcher);
     const primed = coordinator.primeLine(nodes, settings, new AbortController().signal);
     await flush();
+    expect(coordinator.sfPendingKeys()).toEqual(new Set(nodes.map(sfKey)));
+    // Coverage resolves empty: the fallback per-job probes gate next, so the
+    // restore is still genuinely in flight.
+    releases.splice(0).forEach(resolve => resolve()); await flush();
     expect(coordinator.sfPendingKeys()).toEqual(new Set(nodes.map(sfKey)));
     releases.splice(0).forEach(resolve => resolve());
     await expect(primed).resolves.toEqual({ covered: 0, total: nodes.length });
@@ -329,6 +372,33 @@ it('primes around degraded Maia rows instead of caching them', async () => {
   expect(coordinator.result('sf', nodes[0], settings)).toMatchObject({ depth: 12 });
   expect(coordinator.result('maia', nodes[0], settings)).toBeUndefined();
 });
+it('rejects degraded Maia rows served over bulk coverage', async () => {
+  // Same contract as the per-hash probe path, through seedFromCoverage: the
+  // bulk row validates identically (engine match plus full parse), so a
+  // degraded Maia row reads as a miss while the node's sf row still seeds.
+  const evaluation = { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4', score: { type: 'cp', value: 0 }, lines: [{ move: 'e2e4', score: { type: 'cp', value: 0 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: -20 }, depth: 12 }] };
+  const degraded = { move: 'e2e4', top_moves: [], wdl: [0, 1, 0], model_used: '79m', degraded: true };
+  const sfHash = cacheHash(reviewKey('sf', nodes[0], settings));
+  const maiaHash = cacheHash(reviewKey('maia', nodes[0], settings));
+  const calls: string[] = [];
+  const fetcher = (async (url: string | URL | Request) => {
+    const full = String(url);
+    calls.push(full.split('?')[0]);
+    if (full.split('?')[0] === '/evaluations/coverage') {
+      return Response.json({ rows: {
+        [sfHash]: { engine: 'sf', key: reviewKey('sf', nodes[0], settings), value: evaluation },
+        [maiaHash]: { engine: 'maia', key: reviewKey('maia', nodes[0], settings), value: degraded },
+      } });
+    }
+    return Response.json({ code: 'not_found' }, { status: 404 });
+  }) as unknown as typeof fetch;
+  const coordinator = new ReviewCoordinator(fetcher);
+  const coverage = await coordinator.primeLine([nodes[0]], settings, new AbortController().signal);
+  expect(coverage).toEqual({ covered: 0, total: 1 });
+  expect(coordinator.result('sf', nodes[0], settings)).toMatchObject({ depth: 12 });
+  expect(coordinator.result('maia', nodes[0], settings)).toBeUndefined();
+  expect(calls[0]).toBe('/evaluations/coverage');
+});
 describe('preemption', () => {
   const sfBody = {
     engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4',
@@ -344,7 +414,7 @@ describe('preemption', () => {
       const path = String(url).split('?')[0];
       const signal = init?.signal ?? null;
       calls.push({ url: path, signal });
-      if (path.startsWith('/evaluations/')) {
+    if (path.startsWith('/evaluations/')) {
         if (init?.method === 'PUT') return Response.json({ key_hash: 'x', engine: 'x', created_at: 'now' });
         return Response.json({ code: 'not_found', message: 'missing' }, { status: 404 });
       }
@@ -552,6 +622,9 @@ it('treats cache probe timeouts as misses instead of wedging the prime', async (
     }) as unknown as typeof fetch;
     const coordinator = new ReviewCoordinator(fetcher);
     const pending = coordinator.primeLine(nodes, settings, new AbortController().signal);
+    // Two rounds: the bulk coverage race times out first, then the fallback
+    // per-job probes time out individually — both degrade to misses.
+    await vi.advanceTimersByTimeAsync(30_000); await flush();
     await vi.advanceTimersByTimeAsync(30_000);
     await expect(pending).resolves.toEqual({ covered: 0, total: nodes.length });
     expect(live).toEqual([]);
@@ -1043,7 +1116,7 @@ describe('play prime positions', () => {
   const evalPosts = (fetcher: ReturnType<typeof vi.fn>) => callsOf(fetcher).filter(call => call === 'POST /evaluate');
   const playItems = (ns: ReviewNode[]) => ns.map(node => ({ node, terminal: null as Evaluation | null }));
 
-  it('restores exact rows with one probe each and zero POSTs', async () => {
+  it('restores exact rows with one coverage call and zero POSTs', async () => {
     const stored = new Map<string, StoredRow>();
     const seed = vi.fn(readThroughFetcher(stored, liveBody));
     const seeder = new ReviewCoordinator(seed);
@@ -1053,10 +1126,10 @@ describe('play prime positions', () => {
     const play = new ReviewCoordinator(fetcher);
     const remaining = await play.primePositions(playItems(nodes.slice(0, 2)), sf2, new AbortController().signal);
     expect(remaining).toEqual([]);
-    // Exact probes only: no superset fan-out, no inference POSTs.
-    expect(evalGets(fetcher).sort()).toEqual(
-      nodes.slice(0, 2).map(node => `GET /evaluations/${cacheHash(reviewKey('sf', node, sf2))}`).sort(),
-    );
+    // One bulk coverage round trip replaces the per-position probe fan-out:
+    // no per-hash GETs, no inference POSTs.
+    expect(callsOf(fetcher).filter(call => call === 'GET /evaluations/coverage')).toHaveLength(1);
+    expect(evalGets(fetcher)).toHaveLength(1);
     expect(evalPosts(fetcher)).toHaveLength(0);
     expect(play.result('sf', nodes[1], sf2)?.best_move).toBe('e2e4');
   });
@@ -1111,18 +1184,25 @@ describe('play prime positions', () => {
     expect(play.result('sf', nodes[0], sf2)).toBeUndefined();
   });
 
-  it('probes tip-first so visible icons restore first', async () => {
+  it('covers every position through one coverage call', async () => {
     const fetcher = vi.fn(readThroughFetcher(new Map(), liveBody));
     const play = new ReviewCoordinator(fetcher);
-    // Ascending input: the pool must still lead with the tip-most position.
+    // Ascending input: the single bulk call still covers the whole line,
+    // tip included — ordering fan-out no longer exists.
     const line = loadLine('', '1. e4 e5 2. Nf3 Nc6 3. Bb5');
     const long = testNodes(line.initialFen, line.moves);
     const items = playItems(long);
-    void play.primePositions(items, sf2, new AbortController().signal);
-    const gets = evalGets(fetcher);
-    expect(gets.length).toBeGreaterThan(0);
-    const tip = long[long.length - 1];
-    expect(gets[0]).toBe(`GET /evaluations/${cacheHash(reviewKey('sf', tip, sf2))}`);
+    const remaining = await play.primePositions(items, sf2, new AbortController().signal);
+    // Empty cache: every item misses and reaches the queue.
+    expect(remaining).toHaveLength(long.length);
+    const coverage = fetcher.mock.calls
+      .map((call: unknown[]) => String(call[0]))
+      .filter(url => url.split('?')[0] === '/evaluations/coverage');
+    expect(coverage).toHaveLength(1);
+    const params = new URL(coverage[0], 'http://test').searchParams.getAll('hash');
+    for (const item of items) {
+      expect(params).toContain(cacheHash(reviewKey('sf', item.node, sf2)));
+    }
     await flush(); await flush();
   });
 

@@ -3,7 +3,6 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { replay } from '../src/domain';
 import { cacheHash, reviewKey } from '../src/reviewCoordinator';
-import { MAIA_REF } from '../src/reviewCoordinator';
 import { stockfishPolicy } from '../src/stockfishSettings';
 
 // Regression for the duplicated-Stockfish-rows bug: a cached evaluation whose
@@ -34,6 +33,15 @@ test('duplicate stockfish ranks heal and never ghost', async ({ page }) => {
   await page.route('http://maia.test/**', async route => {
     const url = new URL(route.request().url());
     const path = url.pathname;
+    if (path === '/evaluations/coverage') {
+      const rows: Record<string, unknown> = {};
+      for (const hash of url.searchParams.getAll('hash')) {
+        const hit = server.get(hash);
+        if (hit) rows[hash] = { engine: hit.engine, value: hit.value };
+      }
+      await route.fulfill({ json: { rows } });
+      return;
+    }
     if (path.startsWith('/evaluations/')) {
       const hash = path.slice('/evaluations/'.length);
       if (route.request().method() === 'PUT') {
@@ -45,22 +53,6 @@ test('duplicate stockfish ranks heal and never ghost', async ({ page }) => {
       const hit = server.get(hash);
       if (hit) await route.fulfill({ json: { key_hash: hash, engine: hit.engine, value: hit.value, created_at: 'now' } });
       else await route.fulfill({ status: 404, json: { code: 'not_found', message: 'missing' } });
-      return;
-    }
-    if (path === '/analyses' || path.startsWith('/analyses/')) {
-      if (route.request().method() === 'PUT') {
-        await route.fulfill({ json: { line_hash: 'x', settings: {}, positions: 0, failed: 0, completed_at: 'now' } });
-        return;
-      }
-      await route.fulfill({
-        json: {
-          analyses: url.searchParams.getAll('line').map(h => ({
-            line_hash: h,
-            settings: { elo_maia: 1600, elo_user: 1600, model: '79m', search_policy: POLICY, maia_ref: MAIA_REF },
-            positions: 7, failed: 0, completed_at: '2026-09-12T08:07:08Z',
-          })),
-        },
-      });
       return;
     }
     if (path === '/move' || path === '/evaluate') {

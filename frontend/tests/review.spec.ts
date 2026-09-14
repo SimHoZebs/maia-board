@@ -9,11 +9,19 @@ import { KEYS } from '../src/storage';
 async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,20,200,-700,-680]) {
   const requests: { engine: string; moves: string[]; initial_fen: string; elo_maia?: number }[] = [];
   const evaluations = new Map<string, { engine: string; key: string; value: unknown }>();
-  const analyses: { line: string; settings: unknown; positions: number; failed: number }[] = [];
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.route('http://maia.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
+    if (path === '/evaluations/coverage') {
+      const rows: Record<string, unknown> = {};
+      for (const hash of new URL(route.request().url()).searchParams.getAll('hash')) {
+        const hit = evaluations.get(hash);
+        if (hit) rows[hash] = { engine: hit.engine, value: hit.value };
+      }
+      await route.fulfill({ json: { rows } });
+      return;
+    }
     if (path.startsWith('/evaluations/')) {
       const hash = path.slice('/evaluations/'.length);
       if (route.request().method() === 'PUT') {
@@ -49,18 +57,6 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
       if (payload.cache_hash) evaluations.set(payload.cache_hash, { engine, key: payload.cache_key, value });
       await route.fulfill({ json: value }); return;
     }
-    if (path === '/analyses' || path.startsWith('/analyses/')) {
-      const url = new URL(route.request().url());
-      if (route.request().method() === 'PUT') {
-        const put = route.request().postDataJSON();
-        analyses.push({ line: path.slice('/analyses/'.length), settings: put.settings, positions: put.positions, failed: put.failed });
-        await route.fulfill({ json: { line_hash: path.slice('/analyses/'.length), settings: put.settings, positions: put.positions, failed: put.failed, completed_at: '2026-09-11T00:00:00Z' } });
-        return;
-      }
-      const wanted = path === '/analyses' ? url.searchParams.getAll('line') : [path.slice('/analyses/'.length)];
-      await route.fulfill({ json: { analyses: analyses.filter(entry => wanted.includes(entry.line)).map(entry => ({ line_hash: entry.line, settings: entry.settings, positions: entry.positions, failed: entry.failed, completed_at: '2026-09-11T00:00:00Z' })) } });
-      return;
-    }
     if (path === '/games' || path.startsWith('/games/')) {
       const method = route.request().method();
       if (method === 'GET' && path === '/games') { await route.fulfill({ json: { games: [], current_id: null, total: 0 } }); return; }
@@ -76,7 +72,7 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
   });
   await page.goto('http://maia.test/analyze');
   await page.locator('#analysis-pgn').fill(pgn); await page.locator('#load-analysis').click();
-  return { requests, errors, evaluations, analyses };
+  return { requests, errors, evaluations };
 }
 const lines = (page: Page) => page.locator('#board svg.cg-shapes line');
 async function atStart(page: Page) {
@@ -360,7 +356,6 @@ test('completed analysis restores automatically across reload without inference'
   const app = await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
-  expect(app.analyses).toHaveLength(1);
   const inferred = () => app.requests.filter(request => request.engine === '/move' || request.engine === '/evaluate').length;
   const before = inferred();
   expect(before).toBeGreaterThan(0);
@@ -369,7 +364,6 @@ test('completed analysis restores automatically across reload without inference'
   await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
   await expect(page.locator('.candidate-list li').first()).toBeVisible();
   expect(inferred()).toBe(before);
-  expect(app.analyses).toHaveLength(1);
 });
 test('partially evicted analysis restores cached positions and gates the rest', async ({ page }) => {
   const app = await bootReview(page);
@@ -399,15 +393,16 @@ test('partially evicted analysis restores cached positions and gates the rest', 
   expect(evicted.every(hash => reRequested.has(hash))).toBe(true);
   expect(inferred('/evaluate') - evalsBefore).toBe(0);
 });
-test('changed analysis settings mark the completed record stale', async ({ page }) => {
-  const app = await bootReview(page);
+test('changed analysis settings gate the missing positions behind a new batch', async ({ page }) => {
+  await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Re-analyze' })).toBeVisible();
-  expect(app.analyses).toHaveLength(1);
   await expect(page.locator('#analysis-rating')).toBeVisible();
   await page.locator('#analysis-rating').selectOption('1800');
   await expect(page.getByRole('button', { name: 'Analyze entire game' })).toBeVisible();
-  await expect(page.locator('.analysis-record')).toContainText('Previously Maia');
+  // No parallel record layer remains: completion derives from cached rows, so
+  // no record banner can appear for the previous settings.
+  await expect(page.locator('.analysis-record')).toHaveCount(0);
 });
 test('mixed arrow sources retain their own endpoints', async ({ page }, info) => {
   await bootReview(page);

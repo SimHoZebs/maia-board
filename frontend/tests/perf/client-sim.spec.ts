@@ -179,10 +179,19 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
   // answer in CACHE_HIT_MS with the X-Eval-Cache header; misses pay the
   // live budget and file the row, mirroring the Go contract.
   const evaluations = new Map<string, { engine: string; key: string; value: unknown }>();
-  const analyses: unknown[] = [];
   await page.route('http://maia.test/**', async route => {
     const url = new URL(route.request().url());
     const path = url.pathname;
+    if (path === '/evaluations/coverage') {
+      await sleep(EVAL_GET_MS);
+      const rows: Record<string, unknown> = {};
+      for (const hash of url.searchParams.getAll('hash')) {
+        const hit = evaluations.get(hash);
+        if (hit) rows[hash] = { engine: hit.engine, value: hit.value };
+      }
+      await route.fulfill({ json: { rows } });
+      return;
+    }
     if (path.startsWith('/evaluations/')) {
       const hash = path.slice('/evaluations/'.length);
       if (route.request().method() === 'PUT') {
@@ -228,16 +237,6 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
       if (payload.cache_hash) evaluations.set(payload.cache_hash, { engine, key: payload.cache_key, value });
       net.push({ engine, ply: payload.moves.length, cache: 'live', simulatedMs: liveMs, wallMs: Date.now() - wallStart });
       await route.fulfill({ json: value });
-      return;
-    }
-    if (path === '/analyses' || path.startsWith('/analyses/')) {
-      if (route.request().method() === 'PUT') {
-        const put = route.request().postDataJSON();
-        analyses.push(put);
-        await route.fulfill({ json: { ...put, completed_at: '2026-09-13T00:00:00Z' } });
-        return;
-      }
-      await route.fulfill({ json: { analyses: [] } });
       return;
     }
     if (path === '/games' || path.startsWith('/games/')) {

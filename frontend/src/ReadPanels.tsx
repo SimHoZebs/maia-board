@@ -48,6 +48,7 @@ import {
   type Quality,
 } from "./reviewMetrics";
 import { ReviewOverview } from "./ReviewOverview";
+import { useSyncSnapshot, useSyncStore } from "./syncStore";
 
 function isComplete(review: Review): boolean {
   const progress = review.progress;
@@ -119,7 +120,9 @@ function ReviewActionButton({ state, review }: { state: State; review: Review })
       </Button>
     );
   }
-  if (review.recordStatus.state === "checking" || review.recordStatus.state === "fresh")
+  // Full coverage returns Re-analyze above, so only the priming state loads
+  // here; 'fresh' is subsumed by the coverage branch by construction.
+  if (review.recordStatus.state === "checking")
     return (
       <Button variant="primary" aria-label="Loading analysis" disabled>
         Loading…
@@ -881,6 +884,12 @@ export function SavedGames({
   const [deleting, setDeleting] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const copyTimer = useRef<number | null>(null);
+  // Sync display reads come from the isolated history-sync store, so the
+  // "Syncing…" indicator never re-renders the board through game state.
+  const sync = useSyncStore();
+  useSyncSnapshot(sync);
+  const syncPending = sync.pending;
+  const historyTotal = sync.total;
   useEffect(
     () => () => {
       if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
@@ -899,17 +908,17 @@ export function SavedGames({
   return (
     <section className="saved-panel" aria-label="Saved games">
       {!analysisOnly &&
-        (state.syncPending > 0 ||
-          (state.historyTotal !== null &&
-            state.historyTotal > state.saved.length)) && (
+        (syncPending > 0 ||
+          (historyTotal !== null &&
+            historyTotal > state.saved.length)) && (
           <div className="saved-heading">
-            {state.syncPending > 0 && <span role="status">Syncing…</span>}
-            {state.historyTotal !== null &&
-              state.historyTotal > state.saved.length && (
-                <span>
-                  Showing {state.saved.length} of {state.historyTotal}
-                </span>
-              )}
+            {syncPending > 0 && <span role="status">Syncing…</span>}
+            {historyTotal !== null &&
+              historyTotal > state.saved.length && (
+              <span>
+                Showing {state.saved.length} of {historyTotal}
+              </span>
+            )}
           </div>
         )}
       {!state.saved.length && (

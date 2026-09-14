@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import { MaiaApiError, requestMove } from './api';
 import { maiaCacheKeyForMoveRequest } from './reviewCoordinator';
 import { initialState, reducer, snapshotOf } from './state';
@@ -7,38 +7,20 @@ import {
   deleteRemote, fetchGames, isMigrated, loadOutbox, markMigrated, migrationOps,
   pushOutbox, saveRemote, ServerGamesError, storeOutbox, toStoredGame,
 } from './serverGames';
+import { HistorySyncStore } from './syncStore';
 import type { Mode, StoredGame } from './domain';
 import type { UrlLine } from './analysisUrl';
 import { STOCKFISH_STORAGE_KEY } from './stockfishSettings';
 
 const LAN_DOWN = 'Game history is unavailable. Check that the server is running on your LAN.';
 
-// Coalesced sync-indicator dispatch. Board replies animate for ~220ms
-// (see ChessBoard); a persist/flush render inside that window drops animation
-// frames, so pending-count updates wait out the animation and coalesce: rapid
-// commits reschedule instead of stacking renders, and the count is read at
-// fire time (more accurate than at schedule time). Outbox writes and flush
-// triggers are unaffected — only the indicator display. Errors still dispatch
-// immediately (exceptional, no animation to protect).
-export const ANIMATION_DEFERRAL_MS = 250;
-
-export function createDeferredDispatcher(dispatch: (pending: number) => void, delayMs: number) {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  return {
-    schedule(readPending: () => number) {
-      if (timer !== null) clearTimeout(timer);
-      timer = setTimeout(() => { timer = null; dispatch(readPending()); }, delayMs);
-    },
-    cancel() {
-      if (timer !== null) { clearTimeout(timer); timer = null; }
-    },
-  };
-}
-
 export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
   // The initializer runs once on mount: a content URL wins over the snapshot
   // on first paint so shared links never flash the previous local line.
   const [state, dispatch] = useReducer(reducer, mode, m => initialState(m, urlLine));
+  // Sync display state lives outside the game reducer: indicator updates
+  // re-render only their subscribers, never the board mid-animation.
+  const [sync] = useState(() => new HistorySyncStore());
   // URL owns destination; reducer mode is its execution context. A guarded
   // render-time update settles it before children or request effects commit.
   if (state.mode !== mode) dispatch({ type: 'mode', mode });
@@ -55,11 +37,16 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
   }, [state.analysis, state.analysisLoaded, state.analysisSourceId]);
   useEffect(() => {
     fetchGames().then(
-      list => dispatch({
-        type: 'sync',
-        saved: list.games.map(toStoredGame).filter((game): game is StoredGame => !!game),
-        currentId: list.current_id, total: list.total, pending: loadOutbox(),
-      }),
+      list => {
+        dispatch({
+          type: 'sync',
+          saved: list.games.map(toStoredGame).filter((game): game is StoredGame => !!game),
+          currentId: list.current_id, total: list.total, pending: loadOutbox(),
+        });
+        sync.setPending(loadOutbox().length);
+        sync.setTotal(list.total);
+        sync.clearError();
+      },
       () => {
         // Offline: queue anything the server has never seen so Retry uploads it.
         const have = new Set(loadOutbox().flatMap(op => op.op === 'save' ? [op.game.id] : []));
@@ -69,8 +56,8 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
           pushOutbox(op);
           added = true;
         }
-        if (added) dispatch({ type: 'sync-pending', pending: loadOutbox().length });
-        dispatch({ type: 'sync-error', message: LAN_DOWN });
+        if (added) sync.setPending(loadOutbox().length);
+        sync.setError(LAN_DOWN);
       },
     );
     if (!isMigrated()) {
@@ -78,28 +65,20 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
       const current = restoreGame(readStorage(KEYS.current));
       for (const op of migrationOps(saved, current ?? null)) pushOutbox(op);
       markMigrated();
-      dispatch({ type: 'sync-pending', pending: loadOutbox().length });
+      sync.setPending(loadOutbox().length);
     }
   }, [state.flushNonce]);
   const mountedPlay = useRef(false);
-  const deferredSync = useRef<ReturnType<typeof createDeferredDispatcher> | null>(null);
-  if (!deferredSync.current) {
-    deferredSync.current = createDeferredDispatcher(count => dispatch({ type: 'sync-pending', pending: count }), ANIMATION_DEFERRAL_MS);
-  }
-  useEffect(() => () => deferredSync.current?.cancel(), []);
   useEffect(() => {
     writeStorage(KEYS.current, state.play.moves.length || state.play.result === 'resigned' ? state.play : null);
     if (!mountedPlay.current) { mountedPlay.current = true; return; }
     // Persist every live game, including empty ones, so the current-game
     // marker and refresh resumption always agree. Fresh untouched boards
     // (never started) are the only records with nothing worth keeping.
-    // The indicator read runs regardless (a no-op render when the count is
-    // unchanged), so a superseded timer can never strand a stale count.
     if (state.started || state.play.moves.length || state.saved.some(game => game.id === state.play.id)) {
       pushOutbox({ op: 'save', game: state.play, current: state.started });
     }
-    deferredSync.current!.schedule(() => loadOutbox().length);
-    return () => deferredSync.current!.cancel();
+    sync.setPending(loadOutbox().length);
   }, [state.play, state.started]);
   const prevSavedIds = useRef<string[] | null>(null);
   useEffect(() => {
@@ -114,7 +93,7 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
       // keyed by line content and shared across duplicate lines.
       const snapshot = readStorage<{ gameId?: unknown }>(KEYS.snapshot);
       if (snapshot && typeof snapshot.gameId === 'string' && !ids.includes(snapshot.gameId)) writeStorage(KEYS.snapshot, null);
-      dispatch({ type: 'sync-pending', pending: loadOutbox().length });
+      sync.setPending(loadOutbox().length);
     }
     prevSavedIds.current = ids;
   }, [state.saved]);
@@ -134,20 +113,18 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
           } catch (error) {
             if (error instanceof ServerGamesError && error.status === 400) {
               storeOutbox(ops.slice(1));
-              dispatch({ type: 'sync-error', message: error.message });
+              sync.setError(error.message);
               continue;
             }
-            dispatch({ type: 'sync-error', message: error instanceof Error ? error.message : LAN_DOWN });
+            sync.setError(error instanceof Error ? error.message : LAN_DOWN);
             break;
           }
           storeOutbox(ops.slice(1));
         }
-        if (!loadOutbox().length) dispatch({ type: 'sync-error', message: '' });
+        if (!loadOutbox().length) sync.clearError();
       } finally {
         flushing.current = false;
-        // Same animation-window deferral as the persist path: the count is
-        // read at fire time, so coalesced commits stay accurate.
-        deferredSync.current!.schedule(() => loadOutbox().length);
+        sync.setPending(loadOutbox().length);
       }
     })();
   }, [state.saved, state.play, state.flushNonce]);
@@ -195,5 +172,5 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
     });
     return () => { active = false; window.clearTimeout(stalled); controller.abort(); };
   }, [state.request]);
-  return { state, dispatch };
+  return { state, dispatch, sync };
 }

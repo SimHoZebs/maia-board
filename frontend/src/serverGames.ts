@@ -129,7 +129,27 @@ export function storeOutbox(ops: OutboxOp[]): void {
 }
 
 export function pushOutbox(op: OutboxOp): number {
-  const ops = [...loadOutbox(), op];
+  const ops = loadOutbox();
+  if (op.op === 'save') {
+    // Collapse a trailing run of saves for the same game: each save carries
+    // the full snapshot, so intermediate entries are redundant. The run
+    // breaks on deletes or foreign-id ops, preserving save→delete→save
+    // ordering. The current marker survives when any collapsed op carried it
+    // (mergeSync never unsets a marker, so neither may collapsing).
+    let start = ops.length;
+    while (start > 0) {
+      const prev = ops[start - 1];
+      if (prev.op !== 'save' || prev.game.id !== op.game.id) break;
+      start--;
+    }
+    if (start < ops.length) {
+      const current = op.current || ops.slice(start).some(entry => entry.op === 'save' && entry.current);
+      ops.splice(start, ops.length - start, { op: 'save', game: op.game, current });
+      storeOutbox(ops);
+      return ops.length;
+    }
+  }
+  ops.push(op);
   storeOutbox(ops);
   return ops.length;
 }

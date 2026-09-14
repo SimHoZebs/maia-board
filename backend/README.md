@@ -99,16 +99,15 @@ result back explicitly, healing lax legacy rows. The key format
 stays client-owned so policy, model, or rating changes miss naturally instead
 of poisoning results.
 
-## Analysis records
+## Line coverage
 
-Whole-line batch completion lives in `analyses`, keyed by line content (not
-game id) so pasted PGNs share records and deleting a game never orphans
-results. `PUT /analyses/:hash` upserts `{settings: {elo_maia, elo_user,
-model, search_policy, maia_ref}, positions, failed}` under a 16-hex client
-line hash (`completed_at` is server-set); `GET /analyses/:hash` lists that
-line's records and `GET /analyses?line=h1&line=h2` batch-looks-up at most 200
-hashes. Unknown lines return `{analyses: []}`. Only zero-failure main-line
-batches with non-degraded Maia results are recorded.
+Line restores ask one question — "which of these cache rows exist" — via
+`GET /evaluations/coverage?hash=h1&hash=h2` (at most 1024 hex hashes). The
+response is `{rows: {hash: {engine, key, value}}}` with values riding along,
+so a restore seeds memory in a single round trip instead of hundreds of
+per-position probes. Fresh/stale/completed is derived client-side from actual
+rows; there is no whole-line bookkeeping table. (Databases created before
+this change may still contain an unused `analyses` table; it is never read.)
 
 ## Local checks
 

@@ -21,7 +21,7 @@ for (const width of [360, 1440]) test(`engine settings and Play temperature at $
       } else await route.fulfill({ json: { games: current ? [current] : [], current_id: current?.id ?? null, total: current ? 1 : 0 } });
       return;
     }
-    if (path === '/analyses') { await route.fulfill({ json: { analyses: [] } }); return; }
+    if (path === '/evaluations/coverage') { await route.fulfill({ json: { rows: {} } }); return; }
     if (path.startsWith('/evaluations/')) { await route.fulfill({ status: 404, json: {} }); return; }
     if (path === '/move' || path === '/evaluate') {
       const body = route.request().postDataJSON();

@@ -6,7 +6,7 @@ import { analysisLength, analysisLine, defaultSettings, extendLine, lineRecord, 
 import type { Evaluation } from './reviewMetrics';
 import { sameLine, type UrlLine } from './analysisUrl';
 import { KEYS, loadSaved, loadSettings, readStorage, restoreGame } from './storage';
-import { loadOutbox, mergeSync, type OutboxOp } from './serverGames';
+import { mergeSync, type OutboxOp } from './serverGames';
 import { normalizeStockfishSettings, STOCKFISH_STORAGE_KEY, type StockfishSettings } from './stockfishSettings';
 import type { BadgeLoading } from './ReviewCharts';
 
@@ -25,7 +25,7 @@ export type State = {
   inputs: { fen: string; pgn: string }; flipped: boolean; preview: string | null;
   promotion: { from: Square; to: Square } | null;
   insight: Insight | null; error: string; request: Request | null; revision: number;
-  syncError: string; syncPending: number; flushNonce: number; historyTotal: number | null;
+  flushNonce: number;
 };
 export type Action =
   | { type: 'mode'; mode: Mode }
@@ -49,8 +49,6 @@ export type Action =
   | { type: 'failure'; request: Request; error: unknown }
   | { type: 'retry' }
   | { type: 'sync'; saved: StoredGame[]; currentId: string | null; total: number | null; pending: OutboxOp[] }
-  | { type: 'sync-error'; message: string }
-  | { type: 'sync-pending'; pending: number }
   | { type: 'retry-sync' };
 
 export function currentPosition(state: State): Position & { initialFen?: string; terminal?: Evaluation | null } {
@@ -160,7 +158,7 @@ export function initialState(mode: Mode = 'play', urlLine?: UrlLine): State {
     saved: loadSaved(), analysis, analysisSettings: { eloMaia: settings.eloMaia, model: settings.model, userColor: settings.userColor }, analysisLoaded, importing: !analysisLoaded, analysisSourceId,
     stockfish: normalizeStockfishSettings(readStorage(STOCKFISH_STORAGE_KEY)), feedback: readStorage<boolean>(KEYS.feedback) === true, badgeLoading: normalizeBadgeLoading(readStorage<unknown>(KEYS.badgeLoading)), bottomNav: readStorage<boolean>(KEYS.bottomNav) !== false,
     inputs, flipped: false, preview: null, promotion: null, insight: null, error: '', request: null, revision: 0,
-    syncError: '', syncPending: loadOutbox().length, flushNonce: 0, historyTotal: null };
+    flushNonce: 0 };
   return mode === 'play' && maiaTurn(state) ? queueRequest(state) : state;
 }
 export function reducer(state: State, action: Action): State {
@@ -266,7 +264,10 @@ export function reducer(state: State, action: Action): State {
     }
     case 'sync': {
       const merged = mergeSync(action.saved, action.currentId, action.pending);
-      const base = { ...state, saved: merged.saved, syncError: '', syncPending: action.pending.length, historyTotal: action.total };
+      // Display counts (pending, total, errors) live in the HistorySyncStore,
+      // updated by the effect that dispatches this action — the reducer owns
+      // only game data, so sync display updates never re-render the board.
+      const base = { ...state, saved: merged.saved };
       const pendingPlay = action.pending.some(op => op.op === 'save' && op.game.id === state.play.id);
       if (pendingPlay || (merged.currentId === null && action.saved.length === 0 && state.started)) {
         // Local edits still in the outbox (or an offline cache with no server
@@ -285,9 +286,7 @@ export function reducer(state: State, action: Action): State {
       }
       return transition(base, { play: current, settings: { ...current.settings }, started: true, setup: null, viewedPly: null });
     }
-    case 'sync-error': return state.syncError === action.message ? state : { ...state, syncError: action.message };
-    case 'sync-pending': return state.syncPending === action.pending ? state : { ...state, syncPending: action.pending };
-    case 'retry-sync': return { ...state, syncError: '', flushNonce: state.flushNonce + 1 };
+    case 'retry-sync': return { ...state, flushNonce: state.flushNonce + 1 };
     case 'reply': {
       if (state.request !== action.request) return state;
       const insight: Insight = { response: action.response, fen: action.request.payload.fen, mode: state.mode };

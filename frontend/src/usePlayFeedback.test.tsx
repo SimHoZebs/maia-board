@@ -4,7 +4,8 @@ import { SEARCH_POLICY, type Evaluation } from './reviewMetrics';
 import { computePlayQualities, feedbackKey, lastUserPly, qualityAtPly, type PlayQualitiesMemo, type PlayQualitiesStats } from './usePlayFeedback';
 import { initialState, reducer } from './state';
 import { KEYS } from './storage';
-import { loadLine, START_FEN, testNodes } from './domain';
+import { loadLine, START_FEN } from './domain';
+import { testNodes } from './testUtils';
 
 beforeEach(() => {
   const data = new Map<string, string>();

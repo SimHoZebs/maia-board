@@ -52,18 +52,21 @@ public URL.
 2. If snappy → build static UI in same container.
 3. Then Komodo-ize (`maia-board/maia-board-komodo.toml` style) + Traefik route.
 
-## Analysis persistence (2026-09-11)
+## Analysis persistence (2026-09-11; coverage query 2026-09-14)
 
-Per-position results live in the `evaluations` cache; whole-line completion
-lives in `analyses`, keyed by line content (normalized FEN + UCI moves), not
-game id — pasted PGNs share records, deleting a game orphans nothing. Only
-clean main-line batches record (no failures, no degraded Maia answers, no
-explored branches). The loaded line snapshot (`maia-board.analysis-snapshot.v1`)
-restores the analysis board across refresh; History badges compare records
- against current analysis settings. A fresh record primes itself automatically
- on load through cache reads only, so restores never infer: full coverage
- shows results immediately, partial coverage gates exactly the missing
- positions behind one explicit click.
+Per-position results live in the `evaluations` cache, keyed by line content
+(normalized FEN + UCI moves) plus settings — not game id — so pasted PGNs
+share rows and deleting a game orphans nothing. Restores ask one question,
+`GET /evaluations/coverage?hash=h1&hash=h2` (at most 1024 hex hashes),
+and the server returns the matching `{engine, key, value}` rows in a single
+round trip; the client seeds memory from them after its usual validation.
+Fresh/stale/completed derives from actual rows — there is no whole-line
+bookkeeping table. The loaded line snapshot (`maia-board.analysis-snapshot.v1`)
+restores the analysis board across refresh; History badges compare coverage
+ against current analysis settings. Coverage primes itself automatically
+on load through cache reads only, so restores never infer: full coverage
+shows results immediately, partial coverage gates exactly the missing
+positions behind one explicit click.
 
  Each loaded analysis owns a content URL (`/analyze?moves=e2e4,e7e5`, plus
  `fen=` for custom starts; empty startpos stays bare `/analyze`), so games are
