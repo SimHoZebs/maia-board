@@ -41,7 +41,7 @@ export type BatchTimingSummary = {
   byEngine: Record<Engine, EngineTimingSummary>;
 };
 type Result = Evaluation | MoveResponse;
-type Job = { key: string; engine: Engine; node: ReviewNode; settings: ReviewSettings };
+type Job = { key: string; engine: Engine; node: ReviewNode; settings: ReviewSettings; lane?: 'play' };
 // Stall budgets. Maia inference may legally run up to the backend's 120s move
 // window, so a lane is only declared stale past that plus margin. Mobile
 // background freezes (timers and sockets stall while promises stay pending)
@@ -363,6 +363,8 @@ export class ReviewCoordinator {
     for (const key of desired.keys()) this.failures.delete(key);
     this.playQueue = this.playQueue.filter(queued => desired.has(queued.key) && !this.finished(queued));
     for (const job of desired.values()) {
+      // The lane drives execute()'s fetch order (exact-first for play).
+      job.lane = 'play';
       if (this.finished(job)) continue;
       if (this.running.sf?.key === job.key) continue;
       if (this.playQueue.some(queued => queued.key === job.key)) continue;
@@ -403,6 +405,8 @@ export class ReviewCoordinator {
     }
     this.playQueue = this.playQueue.filter(queued => desired.has(queued.key) && !this.finished(queued));
     for (const { job } of desired.values()) {
+      // The lane drives execute()'s fetch order (exact-first for play).
+      job.lane = 'play';
       if (this.finished(job)) continue;
       if (this.running.sf?.key === job.key) continue;
       if (this.playQueue.some(queued => queued.key === job.key)) continue;
@@ -666,11 +670,12 @@ export class ReviewCoordinator {
       this.emit();
     }
   }
-  // Read-only server probe used only by primeLine: positions missing
-  // server-side stay missing for an explicit, user-gated batch, so evicted
-  // rows can never trigger automatic engine work. The live path (execute)
-  // probes only for downward supersets (see probeSuperset); exact lookups
-  // ride the read-through POST /evaluate and POST /move instead.
+  // Read-only server probe used by primeLine and the play lane: positions
+  // missing server-side stay missing for an explicit, user-gated batch, so
+  // evicted rows can never trigger automatic engine work. Other live paths
+  // (execute outside the play lane) probe only for downward supersets (see
+  // probeSuperset); exact lookups otherwise ride the read-through POST
+  // /evaluate and POST /move instead.
   private async readServerCache(job: Job, signal: AbortSignal): Promise<Result | undefined> {
     const exact = await this.probeEvaluation(cacheHash(job.key), signal);
     if (exact) {
@@ -794,9 +799,21 @@ export class ReviewCoordinator {
         this.cache.sf.set(job.key, mem);
         return { result: mem, source: 'memory', retries };
       }
-      // No extra await when supersets are inapplicable (legacy settings
-      // without stockfish): the lane keeps its exact previous timing.
-      if (job.settings.stockfish) {
+      if (job.lane === 'play') {
+        // Play lane: exact-first read-through. Play positions are evaluated at
+        // the user's fixed lines setting, so the exact row is the common hit;
+        // opening with the analysis-batch superset fan-out costs 3-4 wasted
+        // round trips per job on every page load (measured: ~400 probes for a
+        // 133-ply game). readServerCache still falls back to larger rows, so
+        // established superset reuse keeps working; true misses POST as usual.
+        const hit = await this.readServerCache(job, signal);
+        if (hit) {
+          this.cache.sf.set(job.key, hit as Evaluation);
+          return { result: hit, source: 'server-cache', retries };
+        }
+      } else if (job.settings.stockfish) {
+        // No extra await when supersets are inapplicable (legacy settings
+        // without stockfish): the lane keeps its exact previous timing.
         const sup = await this.probeSuperset(job, signal);
         if (sup) {
           this.cache.sf.set(job.key, sup);

@@ -892,3 +892,133 @@ describe('syncPlayQueueResolved', () => {
     )).toThrow(/stale fen/);
   });
 });
+
+describe('play-lane fetch ordering', () => {
+  const CANDIDATES = ['e2e4', 'd2d4', 'g1f3', 'c2c4', 'b1c3'];
+  const sf2 = { ...settings, stockfish: { time_ms: 750, lines: 2, depth: 0 } };
+  const sf4 = { ...settings, stockfish: { time_ms: 750, lines: 4, depth: 0 } };
+  // Echoes the requested search policy with one line per requested mpv, so
+  // explicit settings validate — mirroring the worker's min(mpv, legal).
+  const liveBody = (path: string, request: Record<string, unknown>) => {
+    if (path === '/evaluate') {
+      const wanted = request.settings as { time_ms: number; lines: number; depth: number };
+      const policy = stockfishPolicy(wanted);
+      const count = Math.min(wanted.lines, 4);
+      const lines = CANDIDATES.slice(0, count).map((move, index) => ({ move, score: { type: 'cp', value: -index * 10 }, depth: 12 }));
+      return { engine: 'Stockfish 19', search_policy: policy, depth: 12, terminal: null, best_move: lines[0].move, score: lines[0].score, lines };
+    }
+    return body(path);
+  };
+  const callsOf = (fetcher: ReturnType<typeof vi.fn>) =>
+    fetcher.mock.calls.map((call: unknown[]) => `${(call[1] as RequestInit | undefined)?.method ?? 'GET'} ${String(call[0]).split('?')[0]}`);
+  const evalPosts = (fetcher: ReturnType<typeof vi.fn>) => callsOf(fetcher).filter(call => call === 'POST /evaluate');
+  const evalGets = (fetcher: ReturnType<typeof vi.fn>) => callsOf(fetcher).filter(call => call.startsWith('GET /evaluations/'));
+  const playItems = (ns: ReviewNode[]) => ns.map(node => ({ node, terminal: null as Evaluation | null }));
+
+  it('serves exact play rows with one probe and zero POSTs', async () => {
+    const stored = new Map<string, StoredRow>();
+    const seed = vi.fn(readThroughFetcher(stored, liveBody));
+    const seeder = new ReviewCoordinator(seed);
+    seeder.startBatch(nodes.slice(0, 1), sf2);
+    await flush(); await flush(); await flush();
+    expect(seeder.progress).toMatchObject({ running: false });
+    // Fresh play coordinator, same server rows: the exact probe hits, so no
+    // superset fan-out and no inference POST follow.
+    const fetcher = vi.fn(readThroughFetcher(stored, liveBody));
+    const play = new ReviewCoordinator(fetcher);
+    play.syncPlayQueueResolved(playItems(nodes.slice(0, 1)), sf2);
+    await flush(); await flush();
+    const gets = evalGets(fetcher);
+    expect(gets).toEqual([`GET /evaluations/${cacheHash(reviewKey('sf', nodes[0], sf2))}`]);
+    expect(evalPosts(fetcher)).toHaveLength(0);
+    expect(play.result('sf', nodes[0], sf2)?.best_move).toBe('e2e4');
+  });
+
+  it('still slices larger rows in the play lane with the exact probe first', async () => {
+    const stored = new Map<string, StoredRow>();
+    const seed = vi.fn(readThroughFetcher(stored, liveBody));
+    const seeder = new ReviewCoordinator(seed);
+    seeder.startBatch(nodes.slice(0, 1), sf4);
+    await flush(); await flush(); await flush();
+    expect(seeder.progress).toMatchObject({ running: false });
+    const fetcher = vi.fn(readThroughFetcher(stored, liveBody));
+    const play = new ReviewCoordinator(fetcher);
+    play.syncPlayQueueResolved(playItems(nodes.slice(0, 1)), sf2);
+    await flush(); await flush(); await flush();
+    // Exact probe first (misses: only 4-line rows exist), then the superset
+    // fallback slices one down — still zero inference POSTs.
+    const gets = evalGets(fetcher);
+    expect(gets[0]).toBe(`GET /evaluations/${cacheHash(reviewKey('sf', nodes[0], sf2))}`);
+    expect(evalPosts(fetcher)).toHaveLength(0);
+    expect(play.result('sf', nodes[0], sf2)?.lines.map(line => line.move)).toEqual(['e2e4', 'd2d4']);
+    expect(play.result('sf', nodes[0], sf2)?.best_move).toBe('e2e4');
+  });
+
+  it('falls through to live inference on a cold play line', async () => {
+    const stored = new Map<string, StoredRow>();
+    const fetcher = vi.fn(readThroughFetcher(stored, liveBody));
+    const play = new ReviewCoordinator(fetcher);
+    play.syncPlayQueueResolved(playItems(nodes.slice(0, 1)), sf2);
+    await flush(); await flush(); await flush();
+    expect(evalPosts(fetcher)).toHaveLength(1);
+    expect(play.result('sf', nodes[0], sf2)?.depth).toBe(12);
+    // The live answer files read-through: a second coordinator exact-hits
+    // with one probe and zero POSTs.
+    const primedFetcher = vi.fn(readThroughFetcher(stored, liveBody));
+    const primed = new ReviewCoordinator(primedFetcher);
+    primed.syncPlayQueueResolved(playItems(nodes.slice(0, 1)), sf2);
+    await flush(); await flush();
+    expect(evalGets(primedFetcher)).toHaveLength(1);
+    expect(evalPosts(primedFetcher)).toHaveLength(0);
+    expect(primed.result('sf', nodes[0], sf2)?.depth).toBe(12);
+  });
+
+  it('keeps batch jobs superset-first without an exact probe', async () => {
+    const stored = new Map<string, StoredRow>();
+    const seed = vi.fn(readThroughFetcher(stored, liveBody));
+    const seeder = new ReviewCoordinator(seed);
+    seeder.startBatch(nodes.slice(0, 1), sf2);
+    await flush(); await flush(); await flush();
+    // Same store, batch lane: superset probes first (never the exact hash),
+    // then the read-through POST serves the exact hit as before.
+    const fetcher = vi.fn(readThroughFetcher(stored, liveBody));
+    const batch = new ReviewCoordinator(fetcher);
+    batch.startBatch(nodes.slice(0, 1), sf2);
+    await flush(); await flush(); await flush();
+    expect(batch.progress).toMatchObject({ running: false, failed: 0 });
+    const gets = evalGets(fetcher);
+    expect(gets).toHaveLength(3);
+    expect(gets).not.toContain(`GET /evaluations/${cacheHash(reviewKey('sf', nodes[0], sf2))}`);
+    expect(evalPosts(fetcher)).toHaveLength(1);
+  });
+
+  it('prefers the native exact row when both exact and larger rows exist', async () => {
+    const stored = new Map<string, StoredRow>();
+    // Distinctive native 2-line row (best g1f3) plus standard 4-line rows.
+    const exactBody = (path: string) => path === '/evaluate'
+      ? {
+        engine: 'Stockfish 19', search_policy: stockfishPolicy(sf2.stockfish), depth: 14, terminal: null,
+        best_move: 'g1f3', score: { type: 'cp', value: 30 },
+        lines: [
+          { move: 'g1f3', score: { type: 'cp', value: 30 }, depth: 14 },
+          { move: 'b1c3', score: { type: 'cp', value: 10 }, depth: 14 },
+        ],
+      }
+      : body(path);
+    const seed = vi.fn(readThroughFetcher(stored, exactBody));
+    const seeder = new ReviewCoordinator(seed);
+    seeder.startBatch(nodes.slice(0, 1), sf2);
+    await flush(); await flush(); await flush();
+    const seeder4 = new ReviewCoordinator(vi.fn(readThroughFetcher(stored, liveBody)));
+    seeder4.startBatch(nodes.slice(0, 1), sf4);
+    await flush(); await flush(); await flush();
+    const fetcher = vi.fn(readThroughFetcher(stored, liveBody));
+    const play = new ReviewCoordinator(fetcher);
+    play.syncPlayQueueResolved(playItems(nodes.slice(0, 1)), sf2);
+    await flush(); await flush();
+    // Exact wins over the superset slice: one probe, zero POSTs, native row.
+    expect(evalGets(fetcher)).toEqual([`GET /evaluations/${cacheHash(reviewKey('sf', nodes[0], sf2))}`]);
+    expect(evalPosts(fetcher)).toHaveLength(0);
+    expect(play.result('sf', nodes[0], sf2)).toMatchObject({ best_move: 'g1f3', depth: 14 });
+  });
+});
