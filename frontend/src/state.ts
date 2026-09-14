@@ -1,8 +1,9 @@
 import { Chess, type Square } from 'chess.js';
 import { type MaiaColor, type MoveRequest, type MoveResponse, readableApiError } from './api';
 import { toGroundColor } from './board-colors';
-import { analysisLength, analysisLine, applyUci, defaultSettings, loadLine, newId, oppositeColor, positionOf, replay, START_FEN,
-  type Analysis, type Insight, type Mode, type Settings, type StoredGame } from './domain';
+import { analysisLength, analysisLine, defaultSettings, extendLine, lineRecord, loadLine, newId, oppositeColor, retreatLine, START_FEN,
+  type Analysis, type Insight, type Mode, type Position, type Settings, type StoredGame } from './domain';
+import type { Evaluation } from './reviewMetrics';
 import { sameLine, type UrlLine } from './analysisUrl';
 import { KEYS, loadSaved, loadSettings, readStorage, restoreGame } from './storage';
 import { loadOutbox, mergeSync, type OutboxOp } from './serverGames';
@@ -52,15 +53,19 @@ export type Action =
   | { type: 'sync-pending'; pending: number }
   | { type: 'retry-sync' };
 
-export function currentPosition(state: State) {
-  return state.mode === 'analysis' ? analysisLine(state.analysis) : positionOf(replay(state.play.moves.slice(0, state.viewedPly ?? state.play.moves.length)));
+export function currentPosition(state: State): Position & { initialFen?: string; terminal?: Evaluation | null } {
+  if (state.mode === 'analysis') return analysisLine(state.analysis);
+  return lineRecord(state.play.moves.slice(0, state.viewedPly ?? state.play.moves.length));
 }
 export function maiaTurn(state: State): boolean {
-  const game = replay(state.play.moves);
-  return state.started && state.play.result !== 'resigned' && toGroundColor(game.turn()) !== state.settings.userColor && !game.isGameOver();
+  if (!state.started || state.play.result === 'resigned') return false;
+  // The tip record resolves history-aware terminality once per line (repetition
+  // needs full history); side-to-move is position-only and safe to parse.
+  const record = lineRecord(state.play.moves);
+  return toGroundColor(new Chess(record.fen).turn()) !== state.settings.userColor && record.terminal === null;
 }
 function queueRequest(state: State): State {
-  const position = state.mode === 'play' ? positionOf(replay(state.play.moves)) : analysisLine(state.analysis);
+  const position = state.mode === 'play' ? lineRecord(state.play.moves) : analysisLine(state.analysis);
   const settings = state.mode === 'play' ? state.settings : { ...state.analysisSettings, eloUser: state.analysisSettings.eloMaia };
   return { ...state, error: '', request: { id: state.revision, mode: state.mode, payload: {
     fen: position.fen, moves: position.moves, elo_maia: settings.eloMaia, elo_user: settings.eloUser, model: settings.model,
@@ -89,9 +94,11 @@ function commitMove(state: State, from: Square, to: Square, promotion?: string):
       const branchMoves = [...analysis.branchMoves.slice(0, analysis.index - branchFromPly), `${move.from}${move.to}${move.promotion ?? ''}`];
       return transition(state, { analysis: { ...analysis, branchFromPly, branchMoves, index: analysis.index + 1 } }, false);
     }
-    const game = replay(state.play.moves);
-    game.move({ from, to, ...(promotion ? { promotion } : {}) });
-    return transition(withPlay(state, { ...state.play, moves: positionOf(game).moves }), { viewedPly: null });
+    // Play games always start from the standard position. The base tip is
+    // shared from the memo; the new tip costs its single replay inside
+    // extendLine. Throws on illegal moves exactly like the replay it replaces.
+    const { moves } = extendLine(state.play.moves, START_FEN, from, to, promotion);
+    return transition(withPlay(state, { ...state.play, moves }), { viewedPly: null });
   } catch { return { ...state, promotion: null, error: 'That move is not legal in this position.' }; }
 }
 export type AnalysisSnapshot = { initialFen: string; moves: string[]; index: number; perspective: MaiaColor; ownGame: boolean; gameId?: string };
@@ -179,21 +186,24 @@ export function reducer(state: State, action: Action): State {
     case 'unload': return transition(state, { analysisLoaded: false, importing: true, analysisSourceId: null }, false);
     case 'takeback': {
       if (state.mode !== 'play' || !state.play.moves.length || state.play.result === 'resigned') return state;
-      const game = replay(state.play.moves);
-      const count = toGroundColor(game.turn()) === state.settings.userColor ? 2 : 1;
-      for (let n = 0; n < count; n++) game.undo();
-      return transition(withPlay(state, { ...state.play, moves: positionOf(game).moves }), { viewedPly: null });
+      const tip = lineRecord(state.play.moves);
+      const count = toGroundColor(new Chess(tip.fen).turn()) === state.settings.userColor ? 2 : 1;
+      const { moves } = retreatLine(state.play.moves, START_FEN, count);
+      return transition(withPlay(state, { ...state.play, moves }), { viewedPly: null });
     }
     case 'resign': {
       if (state.mode !== 'play' || !state.started || state.play.result === 'resigned') return state;
-      if (replay(state.play.moves).isGameOver()) return state;
+      if (lineRecord(state.play.moves).terminal !== null) return state;
       // transition drops any in-flight Maia reply; its stale response is
       // rejected by request identity in 'reply'.
       return transition(withPlay(state, { ...state.play, result: 'resigned' }), { viewedPly: null }, false);
     }
     case 'move': {
-      const game = state.mode === 'play' ? replay(state.play.moves) : new Chess(currentPosition(state).fen);
-      if (state.promotion || game.isGameOver() || (state.mode !== 'play' && state.mode !== 'analysis')) return state;
+      // History-aware terminality comes from the shared tip record (repetition
+      // needs full history); the legality scan below is position-only.
+      const playRecord = state.mode === 'play' ? lineRecord(state.play.moves) : null;
+      const game = playRecord ? new Chess(playRecord.fen) : new Chess(currentPosition(state).fen);
+      if (state.promotion || (playRecord ? playRecord.terminal !== null : game.isGameOver()) || (state.mode !== 'play' && state.mode !== 'analysis')) return state;
       if (state.mode === 'play' && (!state.started || state.play.result === 'resigned' || state.viewedPly !== null || state.request || toGroundColor(game.turn()) !== state.settings.userColor)) return state;
       if (state.mode === 'analysis' && !state.analysisLoaded) return state;
       if (!game.moves({ verbose: true }).some(move => move.from === action.from && move.to === action.to)) return state;
@@ -283,9 +293,9 @@ export function reducer(state: State, action: Action): State {
       const insight: Insight = { response: action.response, fen: action.request.payload.fen, mode: state.mode };
       if (state.mode === 'analysis') return { ...state, request: null, insight };
       try {
-        const game = replay(state.play.moves);
-        applyUci(game, action.response.move);
-        return { ...withPlay(state, { ...state.play, moves: positionOf(game).moves }), request: null, insight: null };
+        const uci = action.response.move;
+        const { moves } = extendLine(state.play.moves, START_FEN, uci.slice(0, 2) as Square, uci.slice(2, 4) as Square, uci[4]);
+        return { ...withPlay(state, { ...state.play, moves }), request: null, insight: null };
       } catch { return { ...state, request: null, error: 'Maia returned an illegal move.' }; }
     }
     case 'failure': return state.request === action.request ? { ...state, request: null, error: readableApiError(action.error) } : state;

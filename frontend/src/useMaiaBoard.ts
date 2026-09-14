@@ -13,6 +13,28 @@ import { STOCKFISH_STORAGE_KEY } from './stockfishSettings';
 
 const LAN_DOWN = 'Game history is unavailable. Check that the server is running on your LAN.';
 
+// Coalesced sync-indicator dispatch. Board replies animate for ~220ms
+// (see ChessBoard); a persist/flush render inside that window drops animation
+// frames, so pending-count updates wait out the animation and coalesce: rapid
+// commits reschedule instead of stacking renders, and the count is read at
+// fire time (more accurate than at schedule time). Outbox writes and flush
+// triggers are unaffected — only the indicator display. Errors still dispatch
+// immediately (exceptional, no animation to protect).
+export const ANIMATION_DEFERRAL_MS = 250;
+
+export function createDeferredDispatcher(dispatch: (pending: number) => void, delayMs: number) {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  return {
+    schedule(readPending: () => number) {
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(() => { timer = null; dispatch(readPending()); }, delayMs);
+    },
+    cancel() {
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+    },
+  };
+}
+
 export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
   // The initializer runs once on mount: a content URL wins over the snapshot
   // on first paint so shared links never flash the previous local line.
@@ -60,15 +82,24 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
     }
   }, [state.flushNonce]);
   const mountedPlay = useRef(false);
+  const deferredSync = useRef<ReturnType<typeof createDeferredDispatcher> | null>(null);
+  if (!deferredSync.current) {
+    deferredSync.current = createDeferredDispatcher(count => dispatch({ type: 'sync-pending', pending: count }), ANIMATION_DEFERRAL_MS);
+  }
+  useEffect(() => () => deferredSync.current?.cancel(), []);
   useEffect(() => {
     writeStorage(KEYS.current, state.play.moves.length || state.play.result === 'resigned' ? state.play : null);
     if (!mountedPlay.current) { mountedPlay.current = true; return; }
     // Persist every live game, including empty ones, so the current-game
     // marker and refresh resumption always agree. Fresh untouched boards
     // (never started) are the only records with nothing worth keeping.
-    if (!state.started && !state.play.moves.length && !state.saved.some(game => game.id === state.play.id)) return;
-    pushOutbox({ op: 'save', game: state.play, current: state.started });
-    dispatch({ type: 'sync-pending', pending: loadOutbox().length });
+    // The indicator read runs regardless (a no-op render when the count is
+    // unchanged), so a superseded timer can never strand a stale count.
+    if (state.started || state.play.moves.length || state.saved.some(game => game.id === state.play.id)) {
+      pushOutbox({ op: 'save', game: state.play, current: state.started });
+    }
+    deferredSync.current!.schedule(() => loadOutbox().length);
+    return () => deferredSync.current!.cancel();
   }, [state.play, state.started]);
   const prevSavedIds = useRef<string[] | null>(null);
   useEffect(() => {
@@ -114,7 +145,9 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
         if (!loadOutbox().length) dispatch({ type: 'sync-error', message: '' });
       } finally {
         flushing.current = false;
-        dispatch({ type: 'sync-pending', pending: loadOutbox().length });
+        // Same animation-window deferral as the persist path: the count is
+        // read at fire time, so coalesced commits stay accurate.
+        deferredSync.current!.schedule(() => loadOutbox().length);
       }
     })();
   }, [state.saved, state.play, state.flushNonce]);

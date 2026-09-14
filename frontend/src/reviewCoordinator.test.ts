@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { loadLine, testNodes } from './domain';
+import { Chess } from 'chess.js';
+import { applyUci, loadLine, START_FEN, testNodes } from './domain';
 import { cacheHash, JOB_STALL_MS, RESUME_ABORT_AFTER_HIDDEN_MS, ReviewCoordinator, reviewKey, type ReviewNode } from './reviewCoordinator';
-import { SEARCH_POLICY } from './reviewMetrics';
+import { SEARCH_POLICY, terminalEvaluation, type Evaluation } from './reviewMetrics';
 import { stockfishPolicy } from './stockfishSettings';
 const settings = { eloMaia: 1600, eloUser: 1600, model: '79m' as const };
 const line = loadLine('', '1. e4 e5 2. Nf3');
@@ -841,5 +842,53 @@ describe('play-time Maia persistence', () => {
     await flush(); await flush(); await flush();
     expect(transcript.filter(call => call === '/move:miss')).toHaveLength(2);
     expect(second.batchTimingSummary()).toMatchObject({ byEngine: { maia: { live: 0, serverHits: 2 } } });
+  });
+});
+
+describe('syncPlayQueueResolved', () => {
+  const never = vi.fn(() => new Promise<Response>(() => {})) as unknown as typeof fetch;
+  // Mirrors the play hook: one progressive walk, prefix fens, history-aware
+  // terminals, zero replays.
+  const progressiveItems = (plies: string[]) => {
+    const game = new Chess(START_FEN);
+    const items: { node: ReviewNode; terminal: Evaluation | null }[] = [
+      { node: { initialFen: START_FEN, moves: [], fen: game.fen() }, terminal: terminalEvaluation(game) ?? null },
+    ];
+    for (const uci of plies) {
+      applyUci(game, uci);
+      const moves = [...items[items.length - 1].node.moves, uci];
+      items.push({ node: { initialFen: START_FEN, moves, fen: game.fen() }, terminal: terminalEvaluation(game) ?? null });
+    }
+    return items;
+  };
+
+  it('seeds terminal positions and queues only live ones without touching the Maia lane', async () => {
+    const items = progressiveItems(['f2f3', 'e7e5', 'g2g4', 'd8h4']);
+    const transcript: string[] = [];
+    const coordinator = new ReviewCoordinator(readThroughFetcher(new Map(), path => body(path), transcript));
+    coordinator.syncPlayQueueResolved(items, settings);
+    await flush();
+    const tip = items[items.length - 1].node;
+    expect(coordinator.result('sf', tip, settings)?.terminal).toBe('black_win');
+    expect(coordinator.result('sf', items[0].node, settings)).toBeDefined();
+    expect(transcript.some(call => call.startsWith('/move'))).toBe(false);
+    expect(coordinator.result('maia', tip, settings)).toBeUndefined();
+  });
+
+  it('prunes queued jobs the line no longer needs', () => {
+    const coordinator = new ReviewCoordinator(never);
+    const full = testNodes(line.initialFen, line.moves);
+    const items = full.map(node => ({ node, terminal: null as Evaluation | null }));
+    coordinator.syncPlayQueueResolved(items, settings);
+    expect(coordinator.sfPendingKeys().size).toBe(full.length);
+    coordinator.syncPlayQueueResolved(items.slice(0, 2), settings);
+    expect(coordinator.sfPendingKeys()).toEqual(new Set(items.slice(0, 2).map(({ node }) => reviewKey('sf', node, settings))));
+  });
+
+  it('rejects stale fens outside production', () => {
+    const coordinator = new ReviewCoordinator(never);
+    expect(() => coordinator.syncPlayQueueResolved(
+      [{ node: { initialFen: START_FEN, moves: ['e2e4'], fen: START_FEN }, terminal: null }], settings,
+    )).toThrow(/stale fen/);
   });
 });

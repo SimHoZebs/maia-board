@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Chess } from 'chess.js';
 import { MaiaApiError, type MoveResponse } from './api';
-import { absoluteWdl, analysisLine, defaultSettings, exportExplored, exportLine, loadLine, replay, START_FEN } from './domain';
+import { absoluteWdl, analysisLine, defaultSettings, exportExplored, exportLine, extendLine, lineRecord, lineRecordMissesForTests, loadLine, positionOf, replay, resetLineRecordsForTests, resultTextForTip, retreatLine, START_FEN } from './domain';
+import { createDeferredDispatcher } from './useMaiaBoard';
 import { currentPosition, initialState, reducer, snapshotOf } from './state';
 import { KEYS, restoreGame } from './storage';
 
@@ -305,5 +307,186 @@ describe('resign', () => {
     const over = initialState();
     expect(replay(over.play.moves).isCheckmate()).toBe(true);
     expect(reducer(over, { type: 'resign' })).toBe(over);
+  });
+});
+
+describe('line records', () => {
+  beforeEach(() => { resetLineRecordsForTests(); });
+  const italian = ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4'];
+
+  it('matches replay ground truth for fen, SAN, last move, and terminality', () => {
+    const record = lineRecord(italian);
+    const truth = replay(italian);
+    expect(record.fen).toBe(truth.fen());
+    expect(record.moves).toEqual(italian);
+    expect(record.sanMoves).toEqual(truth.history());
+    expect(record.lastMove).toEqual(['f1', 'c4']);
+    expect(record.terminal).toBeNull();
+  });
+
+  it('extends with exactly one replay for the new tip', () => {
+    lineRecord(italian);
+    expect(lineRecordMissesForTests()).toBe(1);
+    const { moves, record } = extendLine(italian, START_FEN, 'f8', 'c5');
+    expect(moves).toEqual([...italian, 'f8c5']);
+    // Base hit, new tip miss: the single replay this commit will ever cost.
+    expect(lineRecordMissesForTests()).toBe(2);
+    const truth = replay(moves);
+    expect(record.fen).toBe(truth.fen());
+    expect(record.sanMoves).toEqual(truth.history());
+    expect(record.sanMoves.at(-1)).toBe('Bc5');
+    // Re-deriving the same tip is fully shared.
+    expect(extendLine(italian, START_FEN, 'f8', 'c5').record.fen).toBe(record.fen);
+    expect(lineRecordMissesForTests()).toBe(2);
+  });
+
+  it('chains castling, en passant, and promotion identically to replay', () => {
+    const castleBase = ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4', 'f8c5'];
+    const castled = extendLine(castleBase, START_FEN, 'e1', 'g1');
+    expect(castled.moves.at(-1)).toBe('e1g1');
+    expect(castled.record.sanMoves.at(-1)).toBe('O-O');
+    expect(castled.record.fen).toBe(replay(castled.moves).fen());
+
+    const epBase = ['e2e4', 'a7a6', 'e4e5', 'd7d5'];
+    const ep = extendLine(epBase, START_FEN, 'e5', 'd6');
+    expect(ep.record.sanMoves.at(-1)).toBe('exd6');
+    expect(ep.record.fen).toBe(replay(ep.moves).fen());
+
+    const promoFen = '8/2P5/8/8/1k6/8/8/4K3 w - - 0 1';
+    const promo = extendLine([], promoFen, 'c7', 'c8', 'q');
+    expect(promo.moves).toEqual(['c7c8q']);
+    const promoTruth = replay(['c7c8q'], promoFen);
+    expect(promo.record.fen).toBe(promoTruth.fen());
+    expect(promo.record.sanMoves).toEqual(promoTruth.history());
+  });
+
+  it('serves takebacks from cache after incremental play with zero replays', () => {
+    let moves: string[] = [];
+    for (const [from, to] of [['e2', 'e4'], ['e7', 'e5'], ['g1', 'f3'], ['b8', 'c6']] as const) {
+      moves = extendLine(moves, START_FEN, from, to).moves;
+    }
+    const warm = lineRecordMissesForTests();
+    const { moves: back, record } = retreatLine(moves, START_FEN, 2);
+    expect(back).toEqual(['e2e4', 'e7e5']);
+    expect(record.fen).toBe(replay(back).fen());
+    expect(record.sanMoves).toEqual(replay(back).history());
+    expect(lineRecordMissesForTests()).toBe(warm);
+  });
+
+  it('falls back to one replay for cold takebacks', () => {
+    const { moves, record } = retreatLine(['e2e4', 'e7e5', 'g1f3'], START_FEN, 1);
+    expect(moves).toEqual(['e2e4', 'e7e5']);
+    expect(record.fen).toBe(replay(moves).fen());
+    expect(lineRecordMissesForTests()).toBe(1);
+  });
+
+  it('agrees with replay on terminality incl. repetition, stalemate, and fifty-move', () => {
+    const repetition = ['g1f3', 'g8f6', 'f3g1', 'f6g8', 'g1f3', 'g8f6', 'f3g1', 'f6g8'];
+    expect(lineRecord(repetition).terminal?.terminal).toBe('draw');
+    // A FEN-parsed instance misses the repetition: the trap the memo avoids.
+    expect(new Chess(lineRecord(repetition).fen).isGameOver()).toBe(false);
+    expect(lineRecord(['f2f3', 'e7e5', 'g2g4', 'd8h4']).terminal?.terminal).toBe('black_win');
+    expect(lineRecord([], 'k7/8/1Q6/8/8/8/8/7K b - - 0 1').terminal?.terminal).toBe('draw');
+    expect(lineRecord([], 'k7/8/8/8/8/8/8/K7 w - - 0 1').terminal?.terminal).toBe('draw');
+    expect(lineRecord([], 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 100 51').terminal?.terminal).toBe('draw');
+    expect(lineRecord([], START_FEN).terminal).toBeNull();
+  });
+
+  it('never derives history from a FEN-parsed instance', () => {
+    const base = ['e2e4', 'e7e5', 'g1f3'];
+    const truth = replay(base);
+    const parsed = new Chess(truth.fen());
+    parsed.move({ from: 'b8', to: 'c6' });
+    expect(positionOf(parsed).sanMoves).toHaveLength(1);
+    const { record } = extendLine(base, START_FEN, 'b8', 'c6');
+    expect(record.sanMoves).toHaveLength(4);
+    expect(record.sanMoves).toEqual(replay([...base, 'b8c6']).history());
+  });
+
+  it('isolates callers from cache mutations', () => {
+    const first = lineRecord(italian);
+    first.sanMoves.push('junk');
+    expect(lineRecord(italian).sanMoves).toEqual(replay(italian).history());
+  });
+
+  it('renders result text without replaying', () => {
+    const mate = lineRecord(['f2f3', 'e7e5', 'g2g4', 'd8h4']);
+    expect(resultTextForTip(mate.fen, mate.terminal)).toBe('Black wins');
+    const stale = lineRecord([], 'k7/8/1Q6/8/8/8/8/7K b - - 0 1');
+    expect(resultTextForTip(stale.fen, stale.terminal)).toBe('Draw');
+    expect(resultTextForTip(lineRecord([]).fen, lineRecord([]).terminal)).toBe('Unfinished');
+  });
+
+  it('commits an own move with at most one replay and shares derivations', () => {
+    let state = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
+    expect(state.play.moves).toEqual(['e2e4']);
+    const preReply = lineRecordMissesForTests();
+    state = reducer(state, { type: 'reply', request: state.request!, response });
+    expect(state.play.moves).toEqual(['e2e4', 'e7e5']);
+    // Reply: base hit, new tip miss — the single replay on this path too.
+    expect(lineRecordMissesForTests() - preReply).toBe(1);
+    // Warm steady state: the next commit resolves only its new tip.
+    const warm = lineRecordMissesForTests();
+    state = reducer(state, { type: 'move', from: 'g1', to: 'f3' });
+    expect(state.play.moves).toEqual(['e2e4', 'e7e5', 'g1f3']);
+    expect(lineRecordMissesForTests() - warm).toBeLessThanOrEqual(1);
+    // Render-side derivations add zero replays and agree with ground truth.
+    const settled = lineRecordMissesForTests();
+    const truth = replay(state.play.moves);
+    expect(currentPosition(state).fen).toBe(truth.fen());
+    expect(currentPosition(state).sanMoves).toEqual(truth.history());
+    expect(lineRecord(state.play.moves).fen).toBe(truth.fen());
+    expect(state.request?.payload.fen).toBe(truth.fen());
+    expect(lineRecordMissesForTests()).toBe(settled);
+  });
+
+  it('takes back through the reducer without replaying', () => {
+    let state = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
+    state = reducer(state, { type: 'reply', request: state.request!, response });
+    state = reducer(state, { type: 'move', from: 'g1', to: 'f3' });
+    const warm = lineRecordMissesForTests();
+    // Black (Maia) to move: takeback removes one ply from a cached prefix.
+    state = reducer(state, { type: 'takeback' });
+    expect(state.play.moves).toEqual(['e2e4', 'e7e5']);
+    expect(lineRecordMissesForTests()).toBe(warm);
+  });
+});
+
+describe('deferred sync dispatcher', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('coalesces rapid schedules into one fire-time read', () => {
+    const dispatch = vi.fn();
+    const dispatcher = createDeferredDispatcher(dispatch, 250);
+    let count = 0;
+    dispatcher.schedule(() => count);
+    dispatcher.schedule(() => count);
+    count = 3;
+    dispatcher.schedule(() => count);
+    expect(dispatch).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(250);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith(3);
+  });
+
+  it('cancel suppresses a pending fire', () => {
+    const dispatch = vi.fn();
+    const dispatcher = createDeferredDispatcher(dispatch, 250);
+    dispatcher.schedule(() => 1);
+    dispatcher.cancel();
+    vi.advanceTimersByTime(1000);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('fires again after a completed dispatch', () => {
+    const dispatch = vi.fn();
+    const dispatcher = createDeferredDispatcher(dispatch, 250);
+    dispatcher.schedule(() => 1);
+    vi.advanceTimersByTime(250);
+    dispatcher.schedule(() => 0);
+    vi.advanceTimersByTime(250);
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch).toHaveBeenNthCalledWith(2, 0);
   });
 });

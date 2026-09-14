@@ -372,6 +372,45 @@ export class ReviewCoordinator {
     this.emit();
   }
   clearPlayQueue() { this.playQueue = []; }
+  // Resolved play-queue sync. Same contract as syncPlayQueue, but terminals
+  // arrive precomputed from the caller's single progressive pass (history-aware
+  // via the walking instance, repetition included), so no per-node replay
+  // happens here. Used only by the play hook; batch/prime/foreground paths
+  // keep replay-based job() resolution untouched.
+  syncPlayQueueResolved(items: { node: ReviewNode; terminal: Evaluation | null }[], settings: SettingsInput) {
+    this.active = true;
+    this.foreground.maia = [];
+    const desired = new Map<string, { job: Job; terminal: Evaluation | null }>();
+    for (const { node, terminal } of items) {
+      const resolved = resolveSettings(settings, node);
+      const key = reviewKey('sf', node, resolved);
+      if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'production') {
+        // Dev/test invariant: fen must agree with moves (live requests enforce
+        // the same agreement server-side via position_mismatch). Never runs in
+        // production, where a per-item replay would restore the cliff this
+        // method avoids.
+        if (replay(node.moves, node.initialFen).fen() !== new Chess(node.fen).fen()) {
+          throw new Error(`syncPlayQueueResolved: stale fen for ${key}`);
+        }
+      }
+      if (!desired.has(key)) desired.set(key, { job: { engine: 'sf', node, settings: resolved, key }, terminal });
+    }
+    for (const key of desired.keys()) this.failures.delete(key);
+    // Terminal seeding mirrors job(): sf rows persist under the caller's
+    // search policy; terminal positions never enter any lane.
+    for (const { job, terminal } of desired.values()) {
+      if (terminal) this.cache.sf.set(job.key, { ...terminal, search_policy: stockfishPolicy(job.settings.stockfish) });
+    }
+    this.playQueue = this.playQueue.filter(queued => desired.has(queued.key) && !this.finished(queued));
+    for (const { job } of desired.values()) {
+      if (this.finished(job)) continue;
+      if (this.running.sf?.key === job.key) continue;
+      if (this.playQueue.some(queued => queued.key === job.key)) continue;
+      this.playQueue.push(job);
+    }
+    this.pump('sf');
+    this.emit();
+  }
   suspend() { this.active = false; this.clearForeground(); this.clearPlayQueue(); this.batch = null; this.emit(); }
   startBatch(nodes: ReviewNode[], settings: SettingsInput) {
     if (nodes.length > 257) return;

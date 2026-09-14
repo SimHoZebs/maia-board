@@ -1,6 +1,7 @@
 import { Chess, type Square } from 'chess.js';
 import type { Key } from '@lichess-org/chessground/types';
 import type { MaiaColor, MaiaModel, MoveResponse } from './api';
+import { terminalEvaluation, type Evaluation } from './reviewMetrics';
 
 export const START_FEN = new Chess().fen();
 export type Mode = 'play' | 'analysis' | 'history' | 'settings';
@@ -119,4 +120,116 @@ export function storedGameResult(game: StoredGame): string {
 export function absoluteWdl(fen: string, wdl: MoveResponse['wdl']) {
   const [loss, draw, win] = wdl;
   return new Chess(fen).turn() === 'w' ? [win, draw, loss] : [loss, draw, win];
+}
+
+// Memoized per-line derivation for the play path. State stores only UCI move
+// lists, and every consumer used to re-derive fen/SAN/turn/game-over from move
+// 0 independently (~6 full-line replays per commit, ~260 across the
+// feedback-queue rebuild on a 130-ply game). One cache entry per distinct line
+// holds everything a replay computes: each tip-advance costs exactly one replay
+// (the genuinely new tip, whose history-aware terminality needs full history —
+// threefold repetition is unknowable from a FEN), and every re-derivation of a
+// known line (guards, renders, queue rebuilds, takebacks) is a Map hit.
+//
+// The incremental commit path must never call positionOf() on a FEN-parsed
+// game: chess.js history starts empty on FEN load, so SAN/history would cover
+// only the applied move. Commits therefore probe legality on a single parse
+// and read the full derivation back from the memo.
+export type LineRecord = Position & { terminal: Evaluation | null };
+
+type LineEntry = {
+  fen: string;
+  sanMoves: string[];
+  lastMove: [Key, Key] | undefined;
+  // Always resolved at write time: null = ongoing. There is no "pending"
+  // state — an unknown terminal would be indistinguishable from an ongoing
+  // position (terminalEvaluation returns undefined for those), silently
+  // disabling the memo.
+  terminal: Evaluation | null;
+  plies: number;
+};
+
+// Retention: tip-most entries plus the root. Commits need the tip, takebacks
+// the tip-1/tip-2 prefixes, renders the current line; deep history navigation
+// outside the window correctly degrades to one replay.
+const LINE_CACHE_MAX = 64;
+const lineCache = new Map<string, LineEntry>();
+
+// Test observability only: counts full-line replays (computeEntry misses plus
+// terminal resolutions). Lets the suite assert the per-commit replay bound.
+// Reset per test; read-only in production.
+let lineRecordMisses = 0;
+export function lineRecordMissesForTests(): number { return lineRecordMisses; }
+export function resetLineRecordsForTests(): void { lineCache.clear(); lineRecordMisses = 0; }
+
+function lineCacheKey(moves: string[], initialFen: string): string {
+  return JSON.stringify([new Chess(initialFen).fen(), moves]);
+}
+
+function touchLineEntry(key: string, entry: LineEntry): void {
+  lineCache.delete(key);
+  lineCache.set(key, entry);
+  if (lineCache.size > LINE_CACHE_MAX) {
+    for (const oldest of lineCache.keys()) {
+      const candidate = lineCache.get(oldest);
+      if (candidate && candidate.plies > 0) { lineCache.delete(oldest); break; }
+    }
+    if (lineCache.size > LINE_CACHE_MAX) lineCache.delete(lineCache.keys().next().value!);
+  }
+}
+
+function computeLineEntry(moves: string[], initialFen: string): LineEntry {
+  lineRecordMisses++;
+  const game = replay(moves, initialFen);
+  const position = positionOf(game);
+  return { fen: position.fen, sanMoves: position.sanMoves, lastMove: position.lastMove, terminal: terminalEvaluation(game) ?? null, plies: moves.length };
+}
+
+function freshLineRecord(moves: string[], entry: LineEntry): LineRecord {
+  // Copy-on-return: cached arrays are never shared out, so no caller can
+  // poison the cache (or a sibling state version) by mutation. `moves` is the
+  // caller's own array and needs no copy.
+  return { fen: entry.fen, moves, sanMoves: [...entry.sanMoves],
+    lastMove: entry.lastMove ? [...entry.lastMove] as [Key, Key] : undefined,
+    terminal: entry.terminal ?? null };
+}
+
+export function lineRecord(moves: string[], initialFen = START_FEN): LineRecord {
+  const key = lineCacheKey(moves, initialFen);
+  let entry = lineCache.get(key);
+  if (!entry) {
+    entry = computeLineEntry(moves, initialFen);
+    touchLineEntry(key, entry);
+  } else {
+    touchLineEntry(key, entry);
+  }
+  return freshLineRecord(moves, entry);
+}
+
+// Commit step: legality probe on a single parse (throws on illegal moves like
+// game.move), canonical UCI from the applied move, and the full derivation
+// back from the shared memo — exactly one replay per genuinely new tip, zero
+// for the base or any re-derivation.
+export function extendLine(moves: string[], initialFen: string, from: Square, to: Square, promotion?: string): { moves: string[]; record: LineRecord } {
+  const probe = new Chess(lineRecord(moves, initialFen).fen);
+  const applied = probe.move({ from, to, ...(promotion ? { promotion } : {}) });
+  const nextMoves = [...moves, uciFromMove({ from: applied.from, to: applied.to, promotion: applied.promotion })];
+  return { moves: nextMoves, record: lineRecord(nextMoves, initialFen) };
+}
+
+// Takebacks address the tip-1/tip-2 prefixes, which retention keeps: normally a
+// hit, degrading to one replay after eviction or on a cold cache.
+export function retreatLine(moves: string[], initialFen: string, plies: number): { moves: string[]; record: LineRecord } {
+  const prefix = moves.slice(0, Math.max(0, moves.length - plies));
+  return { moves: prefix, record: lineRecord(prefix, initialFen) };
+}
+
+// Result text without a replay: checkmate is position-only (safe from a
+// FEN parse); draw-vs-unfinished is history-aware and comes solely from the
+// memoized terminal — never from a FEN-parsed isDraw()/isGameOver(), which
+// miss threefold repetition. Mirrors gameResult() exactly.
+export function resultTextForTip(tipFen: string, terminal: Evaluation | null): string {
+  const game = new Chess(tipFen);
+  if (game.isCheckmate()) return game.turn() === 'w' ? 'Black wins' : 'White wins';
+  return terminal ? 'Draw' : 'Unfinished';
 }

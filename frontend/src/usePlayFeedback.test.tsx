@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ReviewCoordinator } from './reviewCoordinator';
+import { ReviewCoordinator, reviewKey, type ReviewNode } from './reviewCoordinator';
 import { SEARCH_POLICY, type Evaluation } from './reviewMetrics';
-import { feedbackKey, lastUserPly, qualityAtPly } from './usePlayFeedback';
+import { computePlayQualities, feedbackKey, lastUserPly, qualityAtPly, type PlayQualitiesMemo, type PlayQualitiesStats } from './usePlayFeedback';
 import { initialState, reducer } from './state';
 import { KEYS } from './storage';
-import { loadLine, testNodes } from './domain';
+import { loadLine, START_FEN, testNodes } from './domain';
 
 beforeEach(() => {
   const data = new Map<string, string>();
@@ -251,5 +251,163 @@ describe('play queue', () => {
     expect(coordinator.result('sf', nodes[0], settings)?.depth).toBe(12);
     expect(coordinator.error('sf', nodes[0], settings)).toBeUndefined();
     coordinator.suspend();
+  });
+});
+
+describe('incremental qualities', () => {
+  const settings = { eloMaia: 1600, eloUser: 1600, model: '79m' as const };
+  const byNodes = (entries: [string[], Evaluation][]) => {
+    const map = new Map(entries.map(([slice, evaluation]) => [JSON.stringify(slice), evaluation]));
+    return (node: ReviewNode) => map.get(JSON.stringify(node.moves));
+  };
+  const italian: [string[], Evaluation][] = [
+    [[], evaluation('e2e4', 20)],
+    [['e2e4'], evaluation('e7e5', 15)],
+    [['e2e4', 'e7e5'], evaluation('g1f3', 10)],
+    [['e2e4', 'e7e5', 'g1f3'], evaluation('b8c6', 12)],
+    [['e2e4', 'e7e5', 'g1f3', 'b8c6'], evaluation('f1c4', 8)],
+    [['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4'], evaluation('d7d5', 6)],
+  ];
+  const run = (
+    moves: string[],
+    lookup: (node: ReviewNode) => Evaluation | undefined,
+    prev: PlayQualitiesMemo | null,
+    pending: Set<string> = new Set(),
+    stats?: PlayQualitiesStats,
+  ) => computePlayQualities({ gameId: 'game', moves, userColor: 'white', settings, lookup, pending, prev, stats });
+
+  it('computes settled verdicts with one walk step per ply', () => {
+    const stats: PlayQualitiesStats = { walks: 0, reviews: 0 };
+    const { qualities } = run(['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4'], byNodes(italian), null, new Set(), stats);
+    expect(stats).toEqual({ walks: 5, reviews: 3 });
+    expect(qualities[0]?.label).toBe('Best');
+    expect(qualities[1]).toBeUndefined();
+    expect(qualities[2]).toBeDefined();
+    expect(qualities[3]).toBeUndefined();
+    expect(qualities[4]).toBeDefined();
+  });
+
+  it('reuses everything on an identical rerun', () => {
+    const first = run(['e2e4', 'e7e5'], byNodes(italian), null);
+    const stats: PlayQualitiesStats = { walks: 0, reviews: 0 };
+    const second = run(['e2e4', 'e7e5'], byNodes(italian), first.memo, new Set(), stats);
+    expect(stats).toEqual({ walks: 0, reviews: 0 });
+    expect(second.qualities).toBe(first.qualities);
+  });
+
+  it('appends compute only the tail and keep prefix identity', () => {
+    const base = run(['e2e4', 'e7e5'], byNodes(italian), null);
+    const stats: PlayQualitiesStats = { walks: 0, reviews: 0 };
+    const next = run(['e2e4', 'e7e5', 'g1f3'], byNodes(italian), base.memo, new Set(), stats);
+    expect(stats).toEqual({ walks: 1, reviews: 1 });
+    expect(next.qualities[0]).toBe(base.qualities[0]);
+    expect(next.qualities[1]).toBeUndefined();
+    expect(next.qualities[2]).toBeDefined();
+  });
+
+  it('settle arrival recomputes only the changed ply', () => {
+    const baseEntries: [string[], Evaluation][] = [
+      [[], evaluation('e2e4', 20)],
+      [['e2e4'], evaluation('e7e5', 15)],
+      [['e2e4', 'e7e5'], evaluation('g1f3', 10)],
+    ];
+    const moves = ['e2e4', 'e7e5', 'g1f3'];
+    const afterNode: ReviewNode = { initialFen: START_FEN, moves, fen: testNodes(START_FEN, moves)[3].fen };
+    const pending = new Set([reviewKey('sf', afterNode, settings)]);
+    const first = run(moves, byNodes(baseEntries), null, pending);
+    expect(first.qualities[0]?.label).toBe('Best');
+    expect(first.qualities[2]?.label).toBe('Unreviewed');
+    const settledEntries: [string[], Evaluation][] = [...baseEntries, [moves, evaluation('b8c6', 12)]];
+    const stats: PlayQualitiesStats = { walks: 0, reviews: 0 };
+    const second = run(moves, byNodes(settledEntries), first.memo, new Set(), stats);
+    expect(stats).toEqual({ walks: 0, reviews: 1 });
+    expect(second.qualities[0]).toBe(first.qualities[0]);
+    expect(second.qualities[2]).toBeDefined();
+    expect(second.qualities[2]?.label).not.toBe('Unreviewed');
+  });
+
+  it('matches a fresh compute exactly across build, settle, append, and takeback', () => {
+    const full = byNodes(italian);
+    const fresh = (moves: string[], lookup: (node: ReviewNode) => Evaluation | undefined, pending = new Set<string>()) =>
+      computePlayQualities({ gameId: 'game', moves, userColor: 'white', settings, lookup, pending, prev: null }).qualities;
+    let prev: PlayQualitiesMemo | null = null;
+    const steps: { moves: string[]; lookup: (node: ReviewNode) => Evaluation | undefined; pending?: Set<string> }[] = [
+      { moves: ['e2e4', 'e7e5'] },
+      { moves: ['e2e4', 'e7e5', 'g1f3'] },
+      { moves: ['e2e4', 'e7e5', 'g1f3', 'b8c6'] },
+      { moves: ['e2e4', 'e7e5'] },
+      { moves: ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4'] },
+    ].map(step => ({ ...step, lookup: full }));
+    // Eviction simulation: the middle lookup loses a settled row mid-sequence.
+    const degraded = byNodes(italian.filter(([slice]) => JSON.stringify(slice) !== JSON.stringify(['e2e4', 'e7e5'])));
+    steps.splice(3, 0, { moves: ['e2e4', 'e7e5', 'g1f3'], lookup: degraded });
+    for (const step of steps) {
+      const pending = step.pending ?? new Set<string>();
+      const next = run(step.moves, step.lookup, prev, pending);
+      expect(next.qualities).toEqual(fresh(step.moves, step.lookup, pending));
+      prev = next.memo;
+    }
+  });
+
+  it('takebacks truncate without work', () => {
+    const full = run(['e2e4', 'e7e5', 'g1f3'], byNodes(italian), null);
+    const stats: PlayQualitiesStats = { walks: 0, reviews: 0 };
+    const back = run(['e2e4'], byNodes(italian), full.memo, new Set(), stats);
+    expect(stats).toEqual({ walks: 0, reviews: 0 });
+    expect(back.qualities).toEqual(full.qualities.slice(0, 1));
+    expect(back.qualities[0]).toBe(full.qualities[0]);
+  });
+
+  it('diverged middles recompute fully while sharing untouched verdicts', () => {
+    const entries: [string[], Evaluation][] = [
+      ...italian,
+      [[ 'e2e4', 'e7e5', 'b1c3' ], evaluation('b1c3', 5)],
+    ];
+    const first = run(['e2e4', 'e7e5', 'g1f3'], byNodes(entries), null);
+    const stats: PlayQualitiesStats = { walks: 0, reviews: 0 };
+    const second = run(['e2e4', 'e7e5', 'b1c3'], byNodes(entries), first.memo, new Set(), stats);
+    expect(stats.walks).toBe(3);
+    expect(second.qualities[0]).toBe(first.qualities[0]);
+    expect(second.qualities[2]).toBeDefined();
+    expect(second.qualities[2]).not.toBe(first.qualities[2]);
+  });
+
+  it('policy change reuses the walk but re-derives verdicts', () => {
+    const moves = ['e2e4', 'e7e5'];
+    const first = run(moves, byNodes(italian), null);
+    const faster = { ...settings, stockfish: { time_ms: 1500, lines: 2, depth: 0 } };
+    const stats: PlayQualitiesStats = { walks: 0, reviews: 0 };
+    const second = computePlayQualities({ gameId: 'game', moves, userColor: 'white', settings: faster, lookup: byNodes(italian), pending: new Set(), prev: first.memo, stats });
+    expect(stats.walks).toBe(0);
+    expect(stats.reviews).toBe(1);
+    expect(second.qualities).toEqual(first.qualities);
+  });
+
+  it('userColor change re-derives verdicts without walking', () => {
+    const moves = ['e2e4', 'e7e5'];
+    const first = run(moves, byNodes(italian), null);
+    const stats: PlayQualitiesStats = { walks: 0, reviews: 0 };
+    const second = computePlayQualities({ gameId: 'game', moves, userColor: 'black', settings, lookup: byNodes(italian), pending: new Set(), prev: first.memo, stats });
+    expect(stats.walks).toBe(0);
+    expect(second.qualities[0]).toBeUndefined();
+    expect(second.qualities[1]).toBeDefined();
+  });
+
+  it('keeps corrupt tails undefined and deterministic', () => {
+    const lookup = byNodes(italian);
+    const first = run(['e2e4', 'e7e5', 'e2e4'], lookup, null);
+    expect(first.qualities[2]).toBeUndefined();
+    const second = run(['e2e4', 'e7e5', 'e2e4'], lookup, first.memo);
+    expect(second.qualities).toEqual(first.qualities);
+  });
+
+  it('recomputes verdicts for a new game id', () => {
+    const moves = ['e2e4'];
+    const first = run(moves, byNodes(italian), null);
+    const stats: PlayQualitiesStats = { walks: 0, reviews: 0 };
+    const second = computePlayQualities({ gameId: 'other', moves, userColor: 'white', settings, lookup: byNodes(italian), pending: new Set(), prev: first.memo, stats });
+    expect(stats.walks).toBe(0);
+    expect(stats.reviews).toBe(1);
+    expect(second.qualities).toEqual(first.qualities);
   });
 });
