@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, type ReactNode } from "react";
 import {
   ArrowLeft,
   ArrowRight,
+  BookOpen,
   CornerDownRight,
   CornerUpRight,
   SkipBack,
@@ -10,6 +11,7 @@ import {
 import { IconButton } from "./components";
 import { QualityBadge, type BadgeLoading } from "./ReviewCharts";
 import type { Quality } from "./reviewMetrics";
+import type { Opening } from "./openings";
 
 export function MoveNavBar({
   ply,
@@ -71,6 +73,8 @@ type MovesCore = {
   initialFen: string;
   qualities?: (Quality | undefined)[];
   badgeLoading?: BadgeLoading;
+  opening?: Pick<Opening, "eco" | "name" | "isExact"> | null;
+  bookFlags?: boolean[];
 };
 
 type MovesNavigation = {
@@ -100,6 +104,8 @@ function BaseMovesPanel({
   branchUp = false,
   menu,
   hideNav = false,
+  opening = null,
+  bookFlags = undefined,
 }: MovesCore & MovesNavigation & MovesBranch & { analysis?: boolean }) {
   const active = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -136,6 +142,8 @@ function BaseMovesPanel({
   // Every move reserves its badge box up front through the shared
   // QualityBadge: qualities fill in as evaluations settle, and mounting the
   // badge late would shift the row and push the selected move out of view.
+  // The book mark is visual-only (aria-hidden): screen readers get the same
+  // fact once from the opening header.
   const move = (san: string, index: number) => (
     <button
       ref={ply === index + 1 ? active : undefined}
@@ -145,6 +153,7 @@ function BaseMovesPanel({
       onClick={() => onView(index + 1)}
     >
       {number(index)} {san}{" "}
+      {bookFlags?.[index] && <BookOpen size={12} aria-hidden="true" className="book-mark" />}{" "}
       {qualities && <QualityBadge quality={qualities[index]} reserveSpace loading={badgeLoading} />}
     </button>
   );
@@ -153,6 +162,13 @@ function BaseMovesPanel({
       className={`notation${analysis ? " analysis-notation" : ""}`}
       aria-label="Move history"
     >
+      {opening && (
+        <p className="opening-line" role="status">
+          <BookOpen size={14} aria-hidden="true" />
+          <strong>{opening.eco} · {opening.name}</strong>
+          {!opening.isExact && <span className="opening-out"> · out of book</span>}
+        </p>
+      )}
       <div className="move-list" id="move-list" ref={list}>
         {!sans.length && <span className="empty-copy">Moves appear here</span>}
         {original ? (
@@ -227,6 +243,8 @@ export function PlayMovesPanel({
   menu,
   hideNav,
   branchUp,
+  opening,
+  bookFlags,
 }: MovesCore & Pick<MovesNavigation, "onView" | "tools" | "menu" | "hideNav"> & Pick<MovesBranch, "branchUp">) {
   return (
     <BaseMovesPanel
@@ -242,6 +260,8 @@ export function PlayMovesPanel({
       branchUp={branchUp}
       menu={menu}
       hideNav={hideNav}
+      opening={opening}
+      bookFlags={bookFlags}
     />
   );
 }
@@ -261,6 +281,8 @@ export function AnalysisMovesPanel({
   branchUp,
   menu,
   hideNav,
+  opening,
+  bookFlags,
 }: MovesCore & MovesNavigation & MovesBranch) {
   return (
     <BaseMovesPanel
@@ -277,6 +299,8 @@ export function AnalysisMovesPanel({
       branchUp={branchUp}
       menu={menu}
       hideNav={hideNav}
+      opening={opening}
+      bookFlags={bookFlags}
     />
   );
 }
@@ -295,7 +319,7 @@ export type MoveNavBarProps = {
   menu?: ReactNode;
 };
 
-// Backwards-compatible 13-prop entry: existing callers pass play/analysis/
+// Backwards-compatible flat-prop entry: existing callers pass play/analysis/
 // branch/mobile flags flat. Delegates without behavior change so DOM, class
 // names, and order stay identical.
 export function MovesPanel({
@@ -312,6 +336,8 @@ export function MovesPanel({
   branchUp = false,
   menu,
   hideNav = false,
+  opening = null,
+  bookFlags = undefined,
 }: MovesPanelProps) {
   return (
     <BaseMovesPanel
@@ -328,6 +354,8 @@ export function MovesPanel({
       branchUp={branchUp}
       menu={menu}
       hideNav={hideNav}
+      opening={opening}
+      bookFlags={bookFlags}
     />
   );
 }

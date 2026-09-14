@@ -51,6 +51,11 @@ p { line-height: 1.5; color: var(--muted); }
 .player-side { color: var(--muted); font-size: 12px; }
 .turn-indicator { margin-left: auto; color: var(--accent); font-size: 12px; }
 .notation { border-top: 1px solid var(--line); }
+.opening-line { display: flex; align-items: center; gap: 6px; margin: 6px 0 2px; font-size: 13px; color: var(--muted); }
+.opening-line strong { font-weight: 600; color: inherit; }
+.opening-line svg { flex: none; }
+.opening-out { color: var(--muted); }
+.book-mark { vertical-align: -2px; margin-left: 2px; color: var(--muted); }
 .move-list { position: relative; display: flex; align-items: center; gap: 2px; height: 40px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; white-space: nowrap; }
 .move-cell { flex: none; border-color: transparent; background: transparent; padding: 4px 6px; font-size: 14px; }
 .move-cell span { color: var(--muted); font-size: 12px; }

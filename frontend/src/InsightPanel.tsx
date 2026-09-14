@@ -6,6 +6,7 @@ import { Button, CandidateList, CandidateRow, EngineSection } from "./components
 import { Chess } from "chess.js";
 import type { Review } from "./useReview";
 import { describeMove } from "./reviewMetrics";
+import { useLineOpenings } from "./openings";
 import { ReviewOverview } from "./ReviewOverview";
 import { SkeletonList, SkeletonText, StockfishBody } from "./StockfishBar";
 
@@ -122,6 +123,10 @@ export function MoveAnalysis({
   const evaluation = hasMove ? review.focus : review.current;
   const afterEvaluation = hasMove ? review.evaluations[ply] : undefined;
   const bestUci = evaluation?.best_move ?? undefined;
+  // Named book lines outrank engine grades in the verdict: theory is calmer
+  // than low-depth scores in the opening, and the name needs no inference.
+  const { opening: lineOpening } = useLineOpenings(review.timeline.moves, state.analysis.initialFen, ply);
+  const exactOpening = lineOpening?.isExact ? { eco: lineOpening.eco, name: lineOpening.name } : null;
   const verdict = played
     ? describeMove({
         san: review.nodes[ply].san ?? played,
@@ -129,6 +134,7 @@ export function MoveAnalysis({
         rarity: review.rarities?.[focus],
         elo: review.maiaElo,
         bestSan: bestUci ? candidateSan(node.fen, bestUci) : undefined,
+        opening: exactOpening,
       })
     : null;
   // Exploring a candidate means playing it instead of x, so step back to

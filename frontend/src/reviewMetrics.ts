@@ -25,11 +25,15 @@ function pointsText(loss: number): string {
   const rounded = Math.round(loss * 10) / 10;
   return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}%`;
 }
-// One natural-English sentence combining both axes for the move just played.
-// Quality (Stockfish) carries the verdict; rarity (Maia) colours it. Returns
-// null when there is nothing to say (unreviewed or pre-first-move).
-export function describeMove(args: { san: string; quality: Quality | undefined; rarity: Rarity | undefined; elo: number; bestSan?: string }): string | null {
-  const { san, quality, rarity, elo, bestSan } = args;
+// One natural-English sentence for the move just played. A named book line
+// wins outright: engine grades are noisiest exactly where theory exists, and
+// the name is available before any inference settles. Otherwise quality
+// (Stockfish) carries the verdict and rarity (Maia) colours it. Returns null
+// when there is nothing to say (unreviewed and off-book, or pre-first-move).
+export type OpeningRef = { eco: string; name: string };
+export function describeMove(args: { san: string; quality: Quality | undefined; rarity: Rarity | undefined; elo: number; bestSan?: string; opening?: OpeningRef | null }): string | null {
+  const { san, quality, rarity, elo, bestSan, opening } = args;
+  if (opening) return `${san} — ${opening.name} (${opening.eco}). Book move.`;
   if (!quality || quality.label === 'Unreviewed') return null;
   if (quality.label === 'Forced') return `${san} was the only legal move.`;
   const prediction = rarity?.prob != null

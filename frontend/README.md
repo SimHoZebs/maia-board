@@ -98,6 +98,27 @@ stops syncing and asks the user to export this tab's pending work before reloadi
 local play can continue in memory. Recovery exports include local games, the current
 marker, pending operations, and malformed records retained for recovery.
 
+### Opening book
+
+Move sequences resolve to ECO names through a position-keyed lookup, so
+transpositions converge and branches resolve through their full line. The
+source is the pinned
+[lichess-org/chess-openings](https://github.com/lichess-org/chess-openings)
+TSVs (CC0); `scripts/build-openings.mjs` replays every row with `chess.js`
+and emits the checked-in `src/openings.generated.ts` artifact. Regenerate
+after changing the pin:
+
+```sh
+node scripts/build-openings.mjs          # from frontend/
+node scripts/build-openings.mjs --check  # CI freshness check
+```
+
+`src/openings.ts` owns EPD normalization and the deepest-match lookup. The
+generated map loads as a split chunk on first Play/Analyze mount, never in
+the main bundle. `MovesPanel.tsx` renders the header and per-move book marks
+from cursor-resolved props; the move verdict in `InsightPanel.tsx` names an
+exact book hit instead of restating engine grades.
+
 ## Browser checks
 
 ```sh

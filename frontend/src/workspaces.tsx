@@ -20,6 +20,7 @@ import { reviewShapes } from './reviewArrows';
 import { ErrorBoundary, PanelError } from './ErrorBoundary';
 import { destinations } from './BoardRouter';
 import { RegionRecorder } from './perfCommits';
+import { useLineOpenings } from './openings';
 
 // Bottom-bar page menu (mobile bottom navigation): a hamburger on the left
 // end of the move-navigation bar that opens the same destinations as the
@@ -168,6 +169,7 @@ export function PlayWorkspace({ state, dispatch }: Props) {
   const viewedOver = (position.terminal ?? null) !== null;
   const enabled = ready && !state.promotion && !resigned && !viewedOver && !tipOver && !historic && !request && userTurn;
   const full = { sanMoves: playLine ? playLine.sanMoves : live.history() };
+  const { opening: playOpening, bookFlags: playBookFlags } = useLineOpenings(state.play.moves, START_FEN, ply);
   // Narrow-boundary reset keys: new content deserves a fresh render attempt
   // instead of a stale panel fallback. Each workspace keys only its own
   // inputs — cross-mode navigation unmounts the other workspace, which
@@ -194,7 +196,7 @@ export function PlayWorkspace({ state, dispatch }: Props) {
           position={position} transition={{ line: state.play.id, ply }} orientation={orientation} enabled={enabled} over={over} withEvaluation={false} boardResetKey={boardResetKey} shapes={[]} evalBar={null} renderStrip={strip}
           movesPanel={ready ? <MovesPanel sans={full.sanMoves} ply={ply} initialFen={START_FEN} qualities={moveFeedback.qualities} badgeLoading={state.badgeLoading} onView={ply => dispatch({ type: 'view', ply })} onOriginalView={ply => { dispatch({ type: 'original' }); dispatch({ type: 'view', ply }); }} analysis={false}
             original={undefined} hideNav={mobileBar}
-            branchUp={mobileBar} tools={mobileBar ? undefined : tools} /> : null}
+            branchUp={mobileBar} tools={mobileBar ? undefined : tools} opening={playOpening} bookFlags={playBookFlags} /> : null}
           resultOverlay={over ? <div className="game-result" role="status"><div className="result-copy"><span className="result-eyebrow">Game over</span><strong className="result-text">{winner && <span className={`side-dot ${winner}`} aria-hidden="true" />}{resultText}</strong></div><div className="result-actions"><Button variant="primary" onClick={() => dispatch({ type: 'review' })}>Review game</Button><Button id="new-game-again" onClick={() => dispatch({ type: 'setup' })}>New game</Button></div></div> : null} />
       </RegionRecorder>
     </div>
@@ -226,6 +228,7 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   // The full SAN list comes from the tip of the same timeline: identical to
   // replaying the whole line, but free after the once-per-line build.
   const full = { sanMoves: review.timeline.rows.slice(1).map(row => row.san) };
+  const { opening: analysisOpening, bookFlags: analysisBookFlags } = useLineOpenings(review.timeline.moves, state.analysis.initialFen, ply);
   // Forward estimates for the next move: the board shows the position after
   // x, so the arrows project y. White draws the played continuation (the
   // board's tile highlight only covers x); red/blue are Maia/Stockfish top
@@ -254,7 +257,7 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
           renderStrip={strip}
           movesPanel={ready ? <MovesPanel sans={full.sanMoves} ply={ply} initialFen={state.analysis.initialFen} qualities={review.qualities} badgeLoading={state.badgeLoading} onView={ply => dispatch({ type: 'view', ply })} onOriginalView={ply => { dispatch({ type: 'original' }); dispatch({ type: 'view', ply }); }} analysis={true}
             original={state.analysis.branchFromPly !== null ? { sans: state.analysis.sanMoves, fromPly: state.analysis.branchFromPly } : undefined}
-            branchUp={mobileBar} tools={mobileBar ? undefined : tools} hideNav={mobileBar} /> : null}
+            branchUp={mobileBar} tools={mobileBar ? undefined : tools} hideNav={mobileBar} opening={analysisOpening} bookFlags={analysisBookFlags} /> : null}
           resultOverlay={null} />
       </RegionRecorder>
       {ready && <ErrorBoundary label="insight" resetKey={insightResetKey} renderFallback={(error, retry) => <PanelError id="insight-error" title="Analysis failed to render" message={error.message || 'Unknown rendering error.'} onRetry={retry} />}><RegionRecorder id="insight-panel"><InsightPanel key={insightResetKey} state={state} dispatch={dispatch} review={review}><AnalysisActions state={state} dispatch={dispatch} /></InsightPanel></RegionRecorder></ErrorBoundary>}
