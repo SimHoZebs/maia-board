@@ -11,10 +11,11 @@ import {
 import { App } from "./App";
 const EvalLoadingLab = lazy(() => import("./EvalLoadingLab").then(module => ({ default: module.EvalLoadingLab })));
 import type { Mode } from "./domain";
+import { loadLine } from "./domain";
 import type { Action, State } from "./state";
 import { useMaiaBoard } from "./useMaiaBoard";
 import { SyncContext } from "./syncStore";
-import { analysisPath, parseAnalysisSearch, sameLine } from "./analysisUrl";
+import { analysisPath, analysisSearch, parseAnalysisSearch, sameLine } from "./analysisUrl";
 import { RegionRecorder } from "./perfCommits";
 
 export const destinations = [
@@ -86,14 +87,51 @@ export function BoardRouter() {
   // newer), so the previous search breaks the tie: a moved location loads into
   // state, an unchanged one is brought along by navigation.
   const prevSearch = useRef(search);
+  const prevMode = useRef(mode);
+  const prevLoaded = useRef(state.analysisLoaded);
+  // Latest push to a game URL; backs the popstate unload below. Declared up
+  // here so the sync effect can record it.
+  const lastContentRef = useRef("");
+  // Set while an in-app unload's bare push is still pending: the board is
+  // already empty at the old game URL, which must not reload. Cleared when
+  // the bare URL lands. Back/Forward never set it (pushes don't pop).
+  const unloadPendingRef = useRef(false);
   useEffect(() => {
-    if (mode !== "analysis" || !state.analysisLoaded) {
-      prevSearch.current = search;
+    const wasMode = prevMode.current;
+    const wasLoaded = prevLoaded.current;
+    const syncRefs = (nextSearch: string) => {
+      prevSearch.current = nextSearch;
+      prevMode.current = mode;
+      prevLoaded.current = state.analysisLoaded;
+    };
+    if (mode !== "analysis") {
+      syncRefs(search);
+      return;
+    }
+    if (!state.analysisLoaded) {
+      syncRefs(search);
+      // The board is empty but the URL names a game: Forward back to it after
+      // backing out to the importer, or a pasted link. Load it so the view
+      // matches the address bar. Bare stays the importer (and clears a
+      // pending in-app unload). An in-app unload still in flight keeps its
+      // empty board instead of reloading the old URL.
+      if (!urlLine) {
+        unloadPendingRef.current = false;
+      } else if (!unloadPendingRef.current) {
+        boardDispatch({
+          type: "url-line",
+          initialFen: urlLine.initialFen,
+          moves: urlLine.moves,
+        });
+      }
       return;
     }
     if (search !== prevSearch.current) {
-      prevSearch.current = search;
-      // Bare `/analyze` never clears: it is the empty importer, not a game.
+      syncRefs(search);
+      // Bare `/analyze` never clears here: in-app unloads already unloaded,
+      // and Back/Forward bare landings unload via the popstate listener
+      // below, which a same-commit second setup pass cannot double-fire.
+      // A content URL naming another line loads it; Back and Forward walk games.
       if (urlLine && !sameLine(urlLine, state.analysis)) {
         boardDispatch({
           type: "url-line",
@@ -104,13 +142,29 @@ export function BoardRouter() {
       return;
     }
     const wanted = analysisPath(state.analysis);
-    if (`/analyze${search}` === wanted) return;
+    if (`/analyze${search}` === wanted) {
+      syncRefs(search);
+      return;
+    }
     // Canonicalize in place when the URL already names this line (hand-edited
     // variants, present-but-empty ?moves=); only a genuinely new game pushes a
     // history entry, so Back still walks games instead of encodings.
-    void navigate(wanted, {
-      replace: !urlLine || sameLine(urlLine, state.analysis),
-    });
+    // Bare `/analyze` is the importer, not an intermediate: in-app loads push
+    // to preserve it so Back returns to the list. Boot canonicalization (the
+    // line was already loaded at mount) and bare pushes that just arrived
+    // from another mode still replace.
+    let replace: boolean;
+    if (!urlLine) {
+      replace = wasMode !== "analysis" || wasLoaded;
+    } else {
+      replace = sameLine(urlLine, state.analysis);
+    }
+    // Optimistic sync: a second setup pass on the same commit (StrictMode)
+    // then takes the location-changed branch above instead of pushing again.
+    // Bare URLs carry no line to clobber, so that pass dispatches nothing.
+    syncRefs(analysisSearch(state.analysis));
+    if (analysisSearch(state.analysis)) lastContentRef.current = analysisSearch(state.analysis);
+    void navigate(wanted, { replace });
   }, [
     mode,
     search,
@@ -120,6 +174,36 @@ export function BoardRouter() {
     navigate,
     boardDispatch,
   ]);
+  // Back out of a game to the bare importer restores the list itself, not the
+  // game behind the importer's URL: the location effect above deliberately
+  // leaves bare URLs alone, so this popstate listener unloads instead. Pushes
+  // never fire popstate, so in-app unloads and game loads cannot trip it, and
+  // a same-commit second setup pass cannot double-fire a DOM listener.
+  // lastContent records the latest push to a game URL, so backing to a bare
+  // URL that was already bare (e.g. the empty startpos line, whose URL is the
+  // importer) restores its content intact instead of unloading it. It clears
+  // on explicit unload; a stale entry can only unload an empty line, whose
+  // inputs stay put for one more Load.
+  const loadedRef = useRef(state.analysisLoaded);
+  loadedRef.current = state.analysisLoaded;
+  useEffect(() => {
+    const onPopState = () => {
+      const url = new URL(window.location.href);
+      if (url.pathname !== "/analyze" || parseAnalysisSearch(url.search)) return;
+      if (loadedRef.current && lastContentRef.current) {
+        lastContentRef.current = "";
+        boardDispatch({ type: "unload" });
+      }
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [boardDispatch]);
+  // Latest committed board state for event handlers: a repository sync can
+  // land between render and click, so the review push below must read the
+  // ref, not the render-time snapshot, or it can push a stale URL that the
+  // sync effect then loads over the fresh game.
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const dispatch = useCallback(
     (action: Action) => {
       if (action.type === "mode") {
@@ -128,15 +212,46 @@ export function BoardRouter() {
       }
       // Loading a game and changing its URL form one React event update. The reducer
       // establishes the execution context before any request effect can run.
-      // Never push the destination already shown: Back must leave analysis.
-      if (action.type === "review" && mode !== "analysis")
+      // Reviews from outside analysis push the game's content URL directly, so
+      // Back returns to the list they came from (history or play). The state
+      // update lands while the URL is still outside analysis, where the sync
+      // effect stays inert, so this push is the only entry. Reviews from the
+      // importer are left to the sync effect, which pushes the game onto the
+      // importer instead of replacing it away.
+      if (action.type === "review" && mode !== "analysis") {
+        const play = action.id
+          ? stateRef.current.saved.find((game) => game.id === action.id)
+          : stateRef.current.play;
+        if (play) {
+          try {
+            const line = loadLine("", play.moves.join(" "));
+            const wanted = analysisPath(line);
+            if (`${pathname}${search}` !== wanted) {
+              void navigate(wanted);
+              const content = analysisSearch(line);
+              if (content) lastContentRef.current = content;
+            }
+          } catch {
+            // Invalid lines fall through: the reducer surfaces the error.
+          }
+        }
+        boardDispatch(action);
+        return;
+      }
+      if (action.type === "review") {
+        boardDispatch(action);
+        return;
+      }
+      if (action.type === "unload") {
+        lastContentRef.current = "";
+        unloadPendingRef.current = true;
         void navigate(pathFor("analysis"));
-      if (action.type === "unload") void navigate(pathFor("analysis"));
+      }
       if (action.type === "saved" && mode !== "play")
         void navigate(pathFor("play"));
       boardDispatch(action);
     },
-    [mode, navigate, boardDispatch],
+    [mode, navigate, boardDispatch, pathname, search],
   );
   const workspace = (
     <RegionRecorder id="app">

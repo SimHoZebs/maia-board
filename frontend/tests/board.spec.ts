@@ -191,6 +191,11 @@ test('direct play resumes once; Back/Forward preserves game viewing and analysis
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 4');
   await piece(page, 'c4', 'white pawn');
   await expect(page.getByLabel('Explored variation', { exact: true })).toBeVisible();
+  // Loading from the importer preserves it: Back returns to the importer
+  // first, then to play.
+  await page.goBack();
+  await expect(page).toHaveURL('http://maia.test/analyze');
+  await expect(page.locator('#analysis-controls')).toBeVisible();
   await page.goBack();
   await expect(page).toHaveURL('http://maia.test/play');
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 3');
@@ -199,8 +204,14 @@ test('direct play resumes once; Back/Forward preserves game viewing and analysis
   await page.locator('#analysis-last').click();
   await piece(page, 'e5', 'black pawn');
   await page.goForward();
+  await expect(page).toHaveURL('http://maia.test/analyze');
+  await page.goForward();
   await expect(page).toHaveURL('http://maia.test/analyze?moves=d2d4,d7d5');
-  await piece(page, 'c4', 'white pawn');
+  // Backing out to the importer unloaded the line, discarding the ephemeral
+  // exploration: Forward restores the clean tip, not the branch.
+  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
+  await piece(page, 'd5', 'black pawn');
+  await expect(page.getByLabel('Explored variation', { exact: true })).toHaveCount(0);
   await page.goForward();
   await expect(page).toHaveURL('http://maia.test/history');
   expect(app.requests.filter(request => !request.payload.initial_fen)).toHaveLength(1);
@@ -261,7 +272,7 @@ for (const path of ['/', '/unknown/destination']) {
     await expect(page).toHaveURL('http://maia.test/play');
   });
 }
-test('Analyze current game loads on Analyze without adding a history entry', async ({ page }) => {
+test('Analyze current game keeps the importer behind its analysis URL', async ({ page }) => {
   const game = record(['e2e4', 'e7e5']);
   const app = await boot(page, { [KEYS.current]: game }, false, '/history');
   await page.locator('#mode-analysis').click();
@@ -271,10 +282,18 @@ test('Analyze current game loads on Analyze without adding a history entry', asy
   await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
   await piece(page, 'e5', 'black pawn');
   await page.goBack();
+  await expect(page).toHaveURL('http://maia.test/analyze');
+  await expect(page.locator('#analysis-controls')).toBeVisible();
+  await page.goBack();
   await expect(page).toHaveURL('http://maia.test/history');
   await expect(page.locator('.saved-panel')).toBeVisible();
   await page.goForward();
+  await expect(page).toHaveURL('http://maia.test/analyze');
+  await page.goForward();
   await expect(page).toHaveURL('http://maia.test/analyze?moves=e2e4,e7e5');
+  // Forward restores the full game view, not just the retained board: the
+  // move list is back, so the line reloaded.
+  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
   await piece(page, 'e5', 'black pawn');
   // Play requests never send initial_fen; the analysis foreground always
   // does. Review must never resume play inference, while its own 200ms

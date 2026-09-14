@@ -217,8 +217,10 @@ export function reducer(state: State, action: Action): State {
     }
     case 'url-line': {
       // Back/Forward (or tab link) navigation between content URLs. Same line
-      // is a no-op so canonical replaces never reset the cursor or branch.
-      if (state.mode !== 'analysis' || sameLine(state.analysis, action)) return state;
+      // is a no-op while loaded so canonical replaces never reset the cursor
+      // or branch; while unloaded the same line still loads, restoring the
+      // view Forward took back to.
+      if (state.mode !== 'analysis' || (state.analysisLoaded && sameLine(state.analysis, action))) return state;
       try { return transition(state, { analysis: loadLine(action.initialFen, action.moves.join(' ')), analysisLoaded: true, importing: false, analysisSourceId: null }, false); }
       catch { return state; }
     }
@@ -239,7 +241,9 @@ export function reducer(state: State, action: Action): State {
     case 'review': {
       const play = action.id ? state.saved.find(game => game.id === action.id) : state.play;
       if (!play) return state;
-      const analysis = loadLine('', play.moves.join(' '));
+      let analysis: Analysis;
+      try { analysis = loadLine('', play.moves.join(' ')); }
+      catch { return { ...state, error: 'Could not load this game.' }; }
       // Analysis defaults to the Elo the game was played at, so the first
       // review reuses play-time Maia compute instead of re-inferring at a
       // stale global rating. Changing the rating later only affects the
