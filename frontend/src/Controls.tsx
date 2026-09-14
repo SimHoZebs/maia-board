@@ -30,8 +30,7 @@ export function PlayControls({ state, dispatch }: Props) {
 
 function ImportForm({ state, dispatch }: Props) {
   const [source, setSource] = useState<'pgn' | 'fen' | 'history' | 'start'>('pgn');
-  return <section className="panel import-panel" id="analysis-controls">
-    <h1>Analyze a game or position</h1>
+  return <section id="analysis-controls" aria-label="Analyze game or position">
     <div className="source-options" aria-label="Analysis source">{(['history', 'pgn', 'fen', 'start'] as const).map(value => <button key={value} aria-pressed={source === value} onClick={() => setSource(value)}>{({ history: 'History', pgn: 'PGN', fen: 'FEN', start: 'Starting position' })[value]}</button>)}</div>
     {source === 'history' ? <><Button disabled={!state.started} onClick={() => dispatch({ type: 'review' })}>Analyze current game</Button><ErrorBoundary label="saved games" resetKey={JSON.stringify([state.saved.map(game => game.id), state.saved.length])} renderFallback={(error, retry) => <PanelError title="Saved games failed to render" message={error.message || 'Unknown rendering error.'} onRetry={retry} />}><SavedGames state={state} dispatch={dispatch} analysisOnly /></ErrorBoundary></> : <>
       {source === 'pgn' && <label className="field">Game PGN<textarea id="analysis-pgn" rows={5} spellCheck={false} value={state.inputs.pgn} onChange={event => dispatch({ type: 'inputs', inputs: { pgn: event.target.value } })} placeholder="1. e4 e5 2. Nf3" /></label>}

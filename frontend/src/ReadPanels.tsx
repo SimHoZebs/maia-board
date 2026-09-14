@@ -1,7 +1,6 @@
 import {
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type Dispatch,
@@ -13,7 +12,6 @@ import {
   loadLine,
   replay,
   sideName,
-  START_FEN,
   storedGameResult,
 } from "./domain";
 import type { Action, State } from "./state";
@@ -42,7 +40,6 @@ import { Chess } from "chess.js";
 import { BoardThumbnail } from "./BoardThumbnail";
 import type { Review } from "./useReview";
 import { QualityBadge, type BadgeLoading } from "./ReviewCharts";
-import { getAnalysisRecords, isFreshRecord, lineHash } from "./analysisRecords";
 import {
   describeMove,
   scoreValueText,
@@ -676,6 +673,60 @@ function StockfishBody({
   );
 }
 
+export function MoveNavBar({
+  ply,
+  total,
+  onView,
+  tools,
+  menu,
+}: {
+  ply: number;
+  total: number;
+  onView: (ply: number | null) => void;
+  tools?: ReactNode;
+  menu?: ReactNode;
+}) {
+  return (
+    <div className="move-navigation">
+      {tools && <div className="board-actions">{tools}</div>}
+      {menu && <div className="menu-slot">{menu}</div>}
+      <div className="nav-buttons">
+        {[
+          { id: "first", label: "First position", Icon: SkipBack, to: 0 },
+          {
+            id: "prev",
+            label: "Previous position",
+            Icon: ArrowLeft,
+            to: ply - 1,
+          },
+          {
+            id: "next",
+            label: "Next position",
+            Icon: ArrowRight,
+            to: ply + 1,
+          },
+          {
+            id: "last",
+            label: "Last position",
+            Icon: SkipForward,
+            to: total,
+          },
+        ].map((item) => (
+          <IconButton
+            key={item.id}
+            id={`analysis-${item.id}`}
+            label={item.label}
+            disabled={item.to < 0 || item.to > total || item.to === ply}
+            onClick={() => onView(item.to)}
+          >
+            <item.Icon size={16} aria-hidden="true" />
+          </IconButton>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function MovesPanel({
   sans,
   ply,
@@ -689,6 +740,7 @@ export function MovesPanel({
   tools,
   branchUp = false,
   menu,
+  hideNav = false,
 }: {
   sans: string[];
   ply: number;
@@ -702,6 +754,7 @@ export function MovesPanel({
   tools?: ReactNode;
   branchUp?: boolean;
   menu?: ReactNode;
+  hideNav?: boolean;
 }) {
   const active = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -800,43 +853,15 @@ export function MovesPanel({
           sans.map(move)
         )}
       </div>
-      <div className="move-navigation">
-        {tools && <div className="board-actions">{tools}</div>}
-        {menu && <div className="menu-slot">{menu}</div>}
-        <div className="nav-buttons">
-          {[
-            { id: "first", label: "First position", Icon: SkipBack, to: 0 },
-            {
-              id: "prev",
-              label: "Previous position",
-              Icon: ArrowLeft,
-              to: ply - 1,
-            },
-            {
-              id: "next",
-              label: "Next position",
-              Icon: ArrowRight,
-              to: ply + 1,
-            },
-            {
-              id: "last",
-              label: "Last position",
-              Icon: SkipForward,
-              to: sans.length,
-            },
-          ].map((item) => (
-            <IconButton
-              key={item.id}
-              id={`analysis-${item.id}`}
-              label={item.label}
-              disabled={item.to < 0 || item.to > sans.length || item.to === ply}
-              onClick={() => onView(item.to)}
-            >
-              <item.Icon size={16} aria-hidden="true" />
-            </IconButton>
-          ))}
-        </div>
-      </div>
+      {!hideNav && (
+        <MoveNavBar
+          ply={ply}
+          total={sans.length}
+          onView={onView}
+          tools={tools}
+          menu={menu}
+        />
+      )}
       <span id="analysis-index">
         Position {ply + 1} / {sans.length + 1}
       </span>
@@ -871,44 +896,6 @@ export function SavedGames({
         copyTimer.current = window.setTimeout(() => setCopiedId(null), 2000);
       },
     );
-  // Line-level analyzed lookup, memoized on the saved list plus the current
-  // analysis settings: the badge must agree with the detail view, which
-  // compares records against global analysisSettings (History→Analyze keeps
-  // them). Chunked client-side past the 200-hash server cap.
-  const badgeKey = `${state.saved.map((game) => `${game.id}:${game.moves.join(",")}`).join("|")}|${state.analysisSettings.eloMaia}|${state.analysisSettings.model}|${JSON.stringify(state.stockfish)}`;
-  const [analyzedLines, setAnalyzedLines] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    const settings = {
-      eloMaia: state.analysisSettings.eloMaia,
-      eloUser: state.analysisSettings.eloMaia,
-      model: state.analysisSettings.model,
-      stockfish: state.stockfish,
-    };
-    const hashes = state.saved.map((game) => lineHash(START_FEN, game.moves));
-    let cancelled = false;
-    getAnalysisRecords(hashes).then(
-      (records) => {
-        if (!cancelled)
-          setAnalyzedLines(
-            new Set(
-              records
-                .filter((record) => isFreshRecord(record, settings))
-                .map((record) => record.line_hash),
-            ),
-          );
-      },
-      () => {
-        if (!cancelled) setAnalyzedLines(new Set());
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [badgeKey]);
-  const badgeHashes = useMemo(
-    () => state.saved.map((game) => lineHash(START_FEN, game.moves)),
-    [badgeKey],
-  );
   return (
     <section className="saved-panel" aria-label="Saved games">
       {!analysisOnly &&
@@ -929,7 +916,7 @@ export function SavedGames({
         <p className="empty-copy">Your games will appear here.</p>
       )}
       <div id="saved-games">
-        {state.saved.map((game, index) => {
+        {state.saved.map((game) => {
           const position = replay(game.moves);
           const result = storedGameResult(game);
           return (
@@ -960,7 +947,6 @@ export function SavedGames({
                   </h2>
                   <p>
                     {result}
-                    {analyzedLines.has(badgeHashes[index]) && " · Analyzed"}
                   </p>
                 </div>
               </button>

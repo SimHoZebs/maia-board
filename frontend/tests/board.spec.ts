@@ -102,7 +102,7 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
   // With bottom navigation on phones the header tabs are replaced by the
   // bottom-bar menu; everywhere else they stay visible.
   const destination = page.getByRole('navigation', { name: 'Destination' });
-  if ((page.viewportSize()?.width ?? 1440) <= 760 && storage[KEYS.bottomNav] === true) await expect(destination).toBeHidden();
+  if ((page.viewportSize()?.width ?? 1440) <= 760 && storage[KEYS.bottomNav] !== false) await expect(destination).toBeHidden();
   else await expect(destination).toBeVisible();
   if (path === '/' || path === '/play') {
     if (start && !storage[KEYS.current]) await page.locator('#start-game').click();
@@ -127,7 +127,9 @@ function countCaptures(game: StoredGame) { return replay(game.moves).history({ v
 for (const width of [390, 640, 1440]) {
   test(`destination tabs stay in place across modes at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
-    await boot(page);
+    // Header-tab geometry needs the header tabs visible: opt out of the
+    // default-on bottom navigation for this loop (mobile hides them).
+    await boot(page, { [KEYS.bottomNav]: false });
     const tabs = page.getByRole('navigation', { name: 'Destination' });
     const positions = () => tabs.getByRole('link').evaluateAll(links => links.map(link => {
       const { x, y, width, height } = link.getBoundingClientRect();
@@ -754,6 +756,67 @@ test('new analysis and the Analyze tab return to the importer', async ({ page })
   expect(app.errors).toEqual([]);
 });
 
+test('mobile bottom bar pins to the viewport without clipping trailing content', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const viewport = page.viewportSize()!;
+  const game = record(['e2e4', 'e7e5'], 'white', 'g1');
+  const mate = record(['f2f3', 'e7e5', 'g2g4', 'd8h4'], 'white', 'mate');
+  // A long list so the page actually scrolls: the gap check below only
+  // means something when content runs past the viewport.
+  const many = Array.from({ length: 12 }, (_, index) => record(['e2e4', 'e7e5'], 'white', `g${index}`));
+  await boot(page, { [KEYS.current]: game, [KEYS.saved]: [game, mate, ...many] }, false, '/history');
+  // Menu-only bar on a list page: pinned to the viewport bottom …
+  const pagebar = page.locator('.mobile-pagebar');
+  await expect(pagebar).toBeVisible();
+  // … and full-bleed: outside the content gutters, edge to edge. (Pinning
+  // is asserted on the footer root: the inner bar sits above its padding.)
+  const footer = page.locator('.mobile-footer');
+  const footerBox = (await footer.boundingBox())!;
+  expect(Math.abs(footerBox.y + footerBox.height - viewport.height)).toBeLessThanOrEqual(2);
+  expect(footerBox.x).toBeLessThanOrEqual(1);
+  expect(Math.abs(footerBox.x + footerBox.width - viewport.width)).toBeLessThanOrEqual(1);
+  // … and trailing content scrolls fully clear of it: no clipping, and the
+  // measured spacer leaves no dead gap behind.
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  const lastCard = (await page.locator('.saved-game').last().boundingBox())!;
+  const pinned = (await footer.boundingBox())!;
+  expect(lastCard.y + lastCard.height).toBeLessThanOrEqual(pinned.y + 1);
+  expect(pinned.y - (lastCard.y + lastCard.height)).toBeLessThan(64);
+  // Same pinning for the in-game move bar and the loaded analysis bar
+  // (bounds on the footer root: the inner row sits above its padding).
+  await page.goto('http://maia.test/play');
+  const notation = page.locator('.mobile-footer .move-navigation');
+  await expect(notation).toBeVisible();
+  const notationBox = (await footer.boundingBox())!;
+  expect(Math.abs(notationBox.y + notationBox.height - viewport.height)).toBeLessThanOrEqual(2);
+  await page.goto('http://maia.test/analyze?moves=e2e4,e7e5');
+  await expect(notation).toBeVisible();
+  const analysisBox = (await footer.boundingBox())!;
+  expect(Math.abs(analysisBox.y + analysisBox.height - viewport.height)).toBeLessThanOrEqual(2);
+});
+
+test('bottom bar swaps mounts across the mobile breakpoint without duplicating', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await boot(page, { [KEYS.current]: record(['e2e4', 'e7e5']) });
+  // Mobile: footer mount only, IDs unique, menu works from the footer.
+  await expect(page.locator('.mobile-footer .move-navigation')).toBeVisible();
+  await expect(page.locator('.board-stage .move-navigation')).toHaveCount(0);
+  await expect(page.locator('#mobile-menu')).toHaveCount(1);
+  await page.locator('#analysis-first').click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 3');
+  // Desktop: footer unmounts, inline row returns, still unique.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.locator('.mobile-footer')).toHaveCount(0);
+  await expect(page.locator('.board-stage .move-navigation')).toBeVisible();
+  await expect(page.locator('#mobile-menu')).toHaveCount(1);
+  await page.locator('#analysis-last').click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
+  // And back to mobile.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.mobile-footer .move-navigation')).toBeVisible();
+  await expect(page.locator('.board-stage .move-navigation')).toHaveCount(0);
+});
+
 for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900 }, { width: 360, height: 800 }, { width: 390, height: 844 }]) {
   test(`workspace geometry and horizontal notation ${viewport.width}x${viewport.height}`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport);
@@ -823,7 +886,7 @@ for (const width of [320, 390]) {
     expect(menuBox.y).toBe(firstBox.y);
     expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(firstBox.x);
     // Bar rides above the board on the top z axis.
-    expect(await page.locator('.notation').evaluate(el => getComputedStyle(el).zIndex)).toBe('50');
+    expect(await page.locator('.mobile-footer').evaluate(el => getComputedStyle(el).zIndex)).toBe('50');
     // Move navigation works from the bar.
     await page.locator('#analysis-first').click();
     await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 3');
@@ -996,7 +1059,8 @@ test('analysis keeps one scrolling main row and adds height only for a branch', 
 
 test('default layout keeps tools in the move row and branches downward', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await boot(page);
+  // The off layout: opt out of the default-on bottom navigation.
+  await boot(page, { [KEYS.bottomNav]: false });
   // Original layout: no toolbar above the board; flip shares the move row.
   await expect(page.locator('.board-toolbar')).toHaveCount(0);
   await expect(page.locator('.move-navigation .board-actions #flip-board')).toBeVisible();

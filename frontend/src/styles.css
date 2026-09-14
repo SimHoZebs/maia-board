@@ -63,7 +63,7 @@ p { line-height: 1.5; color: var(--muted); }
 .branch-connector { flex: none; color: var(--muted); }
 .board-toolbar { display: flex; justify-content: flex-end; margin-bottom: 4px; min-height: 40px; }
 .move-navigation { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-/* Experimental bottom navigation: branches grow upward so the detached move
+/* Bottom navigation: branches grow upward so the detached move
    bar below stays put. */
 .bottom-ui .analysis-notation .move-list { align-items: flex-end; }
 .bottom-ui .original-line, .bottom-ui .variation-line { align-items: flex-end; }
@@ -78,6 +78,8 @@ p { line-height: 1.5; color: var(--muted); }
    tabs stay the desktop (and no-JS-resize) path. */
 .menu-slot { display: none; }
 .mobile-pagebar { display: none; }
+/* Backstop: the footer mount is viewport-gated, this hides any stray copy. */
+@media (min-width: 761px) { .mobile-footer { display: none; } }
 .menu-root { position: relative; flex: none; }
 .mobile-menu-sheet { position: absolute; bottom: calc(100% + 10px); left: 0; z-index: 60; display: flex; flex-direction: column; min-width: 180px; padding: 6px; background: #282a2b; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.5); }
 .mobile-menu-sheet a { display: flex; align-items: center; min-height: 44px; padding: 8px 14px; color: inherit; text-decoration: none; border-radius: 4px; font-size: 14px; }
@@ -224,10 +226,20 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
   .bottom-ui main { flex: 1; display: flex; flex-direction: column; }
   .bottom-ui .workspace, .bottom-ui .workspace.analyzing { margin: auto auto 0; }
   .bottom-ui .board-stage { width: min(100%, calc(100dvh - 344px)); margin: 0 auto; }
-  .bottom-ui .workspace, .bottom-ui .workspace.analyzing { padding-bottom: 165px; }
-  .bottom-ui .menu-slot { display: block; }
-  .bottom-ui .mobile-pagebar { display: block; position: fixed; bottom: 0; left: 0; right: 0; margin: 0 auto; width: min(100%, 560px); z-index: 50; background: #202122; border-top: 1px solid var(--line); padding: 10px 12px calc(16px + env(safe-area-inset-bottom)); }
-  .bottom-ui .workspace .notation { position: fixed; bottom: 0; left: 0; right: 0; margin: 0 auto; width: min(100%, 560px); z-index: 50; background: #202122; border-top: 1px solid var(--line); box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45); padding: 10px 12px calc(16px + env(safe-area-inset-bottom)); }
+  /* The mobile footer is a separate mount outside the padded content flow
+     (portaled to the body end), so it spans edge to edge: plain sticky pins
+     it to the viewport, its own box reserves the space, and nothing drifts
+     when the bar size changes. Hidden off-mobile as a backstop; the mount
+     itself is viewport-gated. */
+  .mobile-footer { position: sticky; bottom: 0; z-index: 50; background: #202122; border-top: 1px solid var(--line); box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45); padding: 10px 12px calc(16px + env(safe-area-inset-bottom)); }
+  .mobile-footer > * { max-width: 560px; margin: 0 auto; }
+  .mobile-footer .move-navigation { margin-top: 0; }
+  .mobile-footer .menu-slot { display: block; }
+  .mobile-footer .mobile-pagebar { display: block; }
+  .mobile-footer .nav-buttons { flex: 1; justify-content: space-evenly; }
+  /* The bar owns the bottom edge: the shell's own bottom padding would just
+     stack trailing space behind it. */
+  .app-shell.bottom-ui { padding-bottom: 0; }
   /* The position counter row is redundant with the highlighted move above
      it: drop it from the bar to keep the bar short and mis-tap-proof. */
   .bottom-ui .notation #analysis-index { display: none; }

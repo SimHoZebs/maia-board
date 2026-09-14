@@ -38,13 +38,13 @@ describe('feedback setting', () => {
 });
 
 describe('bottom navigation setting', () => {
-  it('defaults off and round-trips through storage', () => {
-    expect(initialState().bottomNav).toBe(false);
-    const on = reducer(initialState(), { type: 'bottom-nav', enabled: true });
-    expect(on.bottomNav).toBe(true);
-    expect(reducer(on, { type: 'bottom-nav', enabled: true })).toBe(on);
-    localStorage.setItem(KEYS.bottomNav, JSON.stringify(true));
+  it('defaults on and round-trips through storage', () => {
     expect(initialState().bottomNav).toBe(true);
+    const off = reducer(initialState(), { type: 'bottom-nav', enabled: false });
+    expect(off.bottomNav).toBe(false);
+    expect(reducer(off, { type: 'bottom-nav', enabled: false })).toBe(off);
+    localStorage.setItem(KEYS.bottomNav, JSON.stringify(false));
+    expect(initialState().bottomNav).toBe(false);
   });
 });
 
