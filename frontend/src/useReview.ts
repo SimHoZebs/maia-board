@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { buildTimeline, type TimelineRow } from './domain';
 import type { State } from './state';
 import { ReviewCoordinator, reviewKey, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
+import { useServerBatch } from './useServerBatch';
 import { computeQualities, type UnifiedMemo, type UnifiedVerdict } from './qualities';
 import { maiaRarity, type Evaluation, type Quality } from './reviewMetrics';
 import { selectMaiaDisplay, type MaiaDisplayEntry } from './maiaDisplay';
@@ -83,6 +84,8 @@ export function useReview(state: State) {
   }, [coordinator, active, tooLong, nodes, currentPly, combinedKey]);
 
   const primeKey = `${lineKey}|${combinedKey}`;
+  const batch = useServerBatch({ active: active && !tooLong, submitKey: primeKey, auto: false,
+    nodes, settings: settingsForNode, coordinator });
   const [prime, setPrime] = useState<{ key: string; error?: string } | null>(null);
   const [primeAttempt, setPrimeAttempt] = useState(0);
   useEffect(() => {
@@ -115,7 +118,8 @@ export function useReview(state: State) {
   const maiaCurrent = active ? maiaResults[currentPly] : undefined;
   const currentError = active ? coordinator.error('sf', currentNode, currentSettings) : undefined;
   const error = currentError || (active && focusNode ? coordinator.error('sf', focusNode, focusSettings) || coordinator.error('maia', focusNode, focusSettings) : undefined)
-    || (active ? coordinator.error('maia', currentNode, currentSettings) : undefined) || (prime?.key === primeKey ? prime.error : undefined);
+    || (active ? coordinator.error('maia', currentNode, currentSettings) : undefined) || (prime?.key === primeKey ? prime.error : undefined)
+    || batch.error;
   return { timeline, nodes, evaluations, qualities: computed.qualities, rarities, coverage,
     current: evaluations[currentPly], focus: evaluations[focusPly], focusPly, maia, maiaCurrent,
     maiaElo: displayed.entry?.eloMaia ?? focusSettings.eloMaia, maiaModel: maia?.model_used ?? focusSettings.model,
@@ -124,7 +128,7 @@ export function useReview(state: State) {
     maiaCurrentModel: maiaCurrent?.model_used, maiaCurrentDegraded: maiaCurrent?.degraded ?? false,
     maiaCurrentPending: active && coordinator.isPending('maia', currentNode, currentSettings),
     gameElo: gameForLine?.settings.eloMaia, error, currentError,
-    progress: coordinator.progress, recordStatus, start: () => { coordinator.ensure(nodes, settingsForNode, { retain: true }); },
-    retry: () => { coordinator.retry(); if (prime?.error) setPrimeAttempt(attempt => attempt + 1); }, tooLong };
+    progress: batch.progress, recordStatus, start: batch.start,
+    retry: () => { coordinator.retry(); batch.retry(); if (prime?.error) setPrimeAttempt(attempt => attempt + 1); }, tooLong };
 }
 export type Review = ReturnType<typeof useReview>;

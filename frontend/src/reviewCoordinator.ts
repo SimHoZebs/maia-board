@@ -1,4 +1,4 @@
-import { requestMove, type MoveResponse } from './api';
+import { MaiaApiError, requestMove, type MoveResponse } from './api';
 import type { Evaluation } from './reviewMetrics';
 import { EvaluationStore, evaluationStore, evaluationRequest, fetchEvaluation, reviewKey, resolveSettings, stablePositionKey,
   type Engine, type EvaluationResult, type Job, type ReviewNode, type ReviewSettings, type SettingsInput } from './evaluationStore';
@@ -8,18 +8,19 @@ export { EvaluationStore, fetchEvaluation, parseEvaluation, resolveSettings, rev
 export const JOB_STALL_MS = 150_000;
 export const RESUME_ABORT_AFTER_HIDDEN_MS = 10_000;
 export function subscribeNone(): () => void { return () => undefined; }
-type Pending = { job: Job; foreground: boolean; retained: boolean };
+type Pending = { job: Job };
 type Running = { job: Job; controller: AbortController; started: number };
 const engines = ['sf', 'maia'] as const;
 
-// One keyed queue per engine. Foreground gets priority; explicit batch/play
-// requests remain FIFO until settled, failed, or removed with their workspace.
+// One keyed queue per engine for interactive (foreground) work: immediate
+// priority requests preempt each other latest-wins. Whole-game batches run
+// on the server (see batchReview); this scheduler never queues them, so it
+// stays a small foreground pump plus the cache-restore path.
 export class ReviewCoordinator {
   readonly store: EvaluationStore;
   private pending: Record<Engine, Map<string, Pending>> = { sf: new Map(), maia: new Map() };
   private running: Partial<Record<Engine, Running>> = {};
   private failures = new Map<string, string>();
-  private batch: Map<string, Job> | null = null;
   private restoring = new Map<string, { count: number; engine: Engine }>();
   private restores = new Set<AbortController>();
   private listeners = new Set<() => void>();
@@ -39,76 +40,57 @@ export class ReviewCoordinator {
   private notify() { this.version++; this.listeners.forEach(listener => listener()); }
   result<E extends Engine>(engine: E, node: ReviewNode, settings: ReviewSettings): (E extends 'sf' ? EvaluationResult : MoveResponse) | undefined { return this.store.result(engine, node, settings); }
   error(engine: Engine, node: ReviewNode, settings: ReviewSettings) { return this.failures.get(reviewKey(engine, node, settings)); }
+  // Server-batch failures live in the same map so the UI has one error
+  // source. Keys from the previous batch are dropped; unrelated (foreground)
+  // failures are left alone.
+  replaceFailures(keys: Set<string>, errors: Map<string, string>) {
+    for (const key of keys) this.failures.delete(key);
+    for (const [key, message] of errors) this.failures.set(key, message);
+    this.notify();
+  }
   private job(engine: Engine, node: ReviewNode, settings: ReviewSettings): Job | null {
     if (node.outcome || node.ply > 256) return null;
     return { engine, node, settings, key: reviewKey(engine, node, settings) };
   }
   private finished(job: Job) { return !!this.store.peek(job.engine, job.key) || this.failures.has(job.key); }
-  private enqueue(job: Job, foreground: boolean, retained: boolean) {
-    const prior = this.pending[job.engine].get(job.key);
-    this.pending[job.engine].set(job.key, { job, foreground: foreground || !!prior?.foreground, retained: retained || !!prior?.retained });
-  }
-  // Single queue + restore core. Modes collapse onto flags:
-  // - foreground (priority, no retain): immediate preempting jobs, caller slices depth.
-  // - play sync (retain, engines ['sf']): retained set syncs to desired, no batch.
-  // - batch (retain, engines both): retained FIFO for all engines + progress.
-  // - prime (signal, no queue flags): bulk lookup only, no scheduling.
   // Queue-only calls return void synchronously; signal calls return coverage.
   ensure(
     nodes: ReviewNode[],
     settings: SettingsInput,
-    opts: { priority?: boolean; retain?: boolean; engines?: Engine[]; signal?: AbortSignal } = {},
+    opts: { priority?: boolean; engines?: Engine[]; signal?: AbortSignal } = {},
   ): Promise<{ total: number; covered: number }> | void {
-    const { priority = false, retain = false, engines: enginesOpt, signal } = opts;
+    const { priority = false, engines: enginesOpt, signal } = opts;
     const wanted = (enginesOpt ?? [...engines]) as Engine[];
-    if (priority || retain) {
-      const batchMode = retain && !priority && wanted.includes('sf') && wanted.includes('maia');
-      const playMode = retain && !priority && wanted.length === 1 && wanted[0] === 'sf';
-      if (!(batchMode && nodes.some(node => node.ply > 256))) {
-        this.active = true;
-        if (priority) this.clearForeground();
-        if (batchMode) {
-          for (const engine of engines) for (const [key, entry] of this.pending[engine]) { entry.retained = false; if (!entry.foreground) this.pending[engine].delete(key); }
-          this.batch = new Map();
-        }
-        const desired: Job[] = [];
-        for (const node of nodes) for (const engine of wanted) {
-          const job = this.job(engine, node, resolveSettings(settings, node));
-          if (job) desired.push(job);
-        }
-        if (playMode) {
-          const keys = new Set(desired.map(job => job.key));
-          for (const [key, entry] of this.pending.sf) if (entry.retained && !keys.has(key)) this.pending.sf.delete(key);
-        }
-        for (const job of desired) {
-          if (retain) this.failures.delete(job.key);
-          this.enqueue(job, priority, retain);
-          if (batchMode) this.batch!.set(job.key, job);
-        }
-        if (priority) {
-          for (const engine of wanted) {
-            const current = this.running[engine];
-            const waiting = [...this.pending[engine].values()].some(entry => entry.foreground && !this.finished(entry.job));
-            if (current && waiting && !this.pending[engine].get(current.job.key)?.foreground) this.abort(engine);
-          }
-        }
-        wanted.forEach(engine => this.pump(engine));
-        this.notify();
+    if (priority) {
+      this.active = true;
+      this.clearForeground();
+      const desired: Job[] = [];
+      for (const node of nodes) for (const engine of wanted) {
+        const job = this.job(engine, node, resolveSettings(settings, node));
+        if (job) desired.push(job);
       }
+      for (const job of desired) {
+        this.failures.delete(job.key);
+        this.pending[job.engine].set(job.key, { job });
+      }
+      for (const engine of wanted) {
+        const current = this.running[engine];
+        const waiting = [...this.pending[engine].values()].some(entry => !this.finished(entry.job));
+        if (current && waiting && !this.pending[engine].get(current.job.key)) this.abort(engine);
+      }
+      wanted.forEach(engine => this.pump(engine));
+      this.notify();
     }
     if (signal) return this.restore(nodes, settings, signal, wanted);
   }
   clearForeground() {
-    for (const engine of engines) for (const [key, entry] of this.pending[engine]) {
-      entry.foreground = false;
-      if (!entry.retained) this.pending[engine].delete(key);
-    }
+    for (const engine of engines) this.pending[engine].clear();
   }
   suspend() {
     this.active = false;
     this.restores.forEach(controller => controller.abort());
     for (const engine of engines) { this.abort(engine); this.pending[engine].clear(); }
-    this.batch = null; this.notify();
+    this.notify();
   }
   private async restore(nodes: ReviewNode[], settings: SettingsInput, signal: AbortSignal, wanted: Engine[]) {
     const controller = new AbortController();
@@ -127,13 +109,6 @@ export class ReviewCoordinator {
       for (const [key, engine] of keys) { const count = this.restoring.get(key)!.count - 1; if (count) this.restoring.set(key, { count, engine }); else this.restoring.delete(key); }
       this.notify();
     }
-  }
-  get progress() {
-    if (!this.batch) return null;
-    const jobs = [...this.batch.values()];
-    const failed = jobs.filter(job => this.failures.has(job.key)).length;
-    const done = jobs.filter(job => this.finished(job)).length;
-    return { total: jobs.length, done, failed, running: this.active && done < jobs.length };
   }
   sfPendingKeys(): Set<string> {
     const keys = new Set([...this.restoring].filter(([, entry]) => entry.engine === 'sf').map(([key]) => key));
@@ -168,8 +143,7 @@ export class ReviewCoordinator {
   }
   private pump(engine: Engine) {
     if (!this.active || this.running[engine]) return;
-    const eligible = [...this.pending[engine].values()].filter(entry => !this.finished(entry.job));
-    const entry = eligible.find(entry => entry.foreground) ?? eligible[0];
+    const entry = [...this.pending[engine].values()].find(entry => !this.finished(entry.job));
     if (!entry) return;
     const job = entry.job;
     const running: Running = { job, controller: new AbortController(), started: Date.now() };
@@ -180,6 +154,9 @@ export class ReviewCoordinator {
       else this.store.store('maia', job.key, result as MoveResponse);
     }).catch(error => {
       if (this.running[engine] !== running || running.controller.signal.aborted) return;
+      // A superseded focus request was replaced by a newer one; the newer
+      // request covers the position, so this is not a failure to surface.
+      if (error instanceof MaiaApiError && error.code === 'superseded') return;
       this.failures.set(job.key, error instanceof Error ? error.message : 'Analysis failed.');
     }).finally(() => {
       // A late completion belongs to its generation, even for the same key.

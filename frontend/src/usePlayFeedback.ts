@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { buildTimeline, legalPrefixLength, START_FEN, type Timeline } from './domain';
 import { ReviewCoordinator, reviewKey, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
+import { useServerBatch } from './useServerBatch';
 import { computeQualities, type UnifiedMemo } from './qualities';
 import type { Evaluation, Quality } from './reviewMetrics';
 import type { State } from './state';
@@ -44,16 +45,19 @@ export function usePlayFeedback(state: State): PlayFeedback {
     return [...wanted];
   }, [timeline, userColor]);
   useEffect(() => () => coordinator.suspend(), [coordinator, gameId, settingsKey]);
+  // Cache restore runs independently of the batch: even when submit fails,
+  // settled rows still grade through the bulk lookup.
   useEffect(() => {
-    if (!active) { coordinator.suspend(); return; }
+    if (!active) return;
     const controller = new AbortController();
-    const primed = coordinator.ensure(nodes, settings, { engines: ['sf'], signal: controller.signal });
-    void Promise.resolve(primed).then(
-      () => { if (!controller.signal.aborted) coordinator.ensure(nodes, settings, { retain: true, engines: ['sf'] }); },
-      () => { if (!controller.signal.aborted) coordinator.ensure(nodes, settings, { retain: true, engines: ['sf'] }); },
-    );
+    void Promise.resolve(coordinator.ensure(nodes, settings, { engines: ['sf'], signal: controller.signal })).catch(() => undefined);
     return () => controller.abort();
   }, [coordinator, active, nodes, settings]);
+  // Live grades run as a server batch (sf only): each move resubmits the
+  // line and the intake filter skips cached plies, so only new positions
+  // compute — including ones missed while the tab was backgrounded.
+  useServerBatch({ active, submitKey: `${gameId}|${movesKey}|${settingsKey}`, auto: true,
+    nodes, settings, engines: ['sf'], coordinator });
   const previous = useRef<PlayQualitiesMemo | null>(null);
   const computed = useMemo(() => active ? computePlayQualities({ gameId, timeline, userColor, settings,
     lookup: node => coordinator.result('sf', node, settings), pending: coordinator.sfPendingKeys(), prev: previous.current }) : null,
