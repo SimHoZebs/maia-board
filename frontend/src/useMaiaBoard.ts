@@ -112,6 +112,14 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
   useEffect(() => {
     current.current = state;
   });
+  // Backstop for play requests produced outside dispatch: the render-phase
+  // mode adjustment above setStates a queued request without firing it.
+  // Dispatch already fired its own requests, and the same-id guard makes
+  // this a no-op for them — without this, switching into play with Maia to
+  // move shows Thinking… but never starts a flight.
+  useEffect(() => {
+    firePlayRequest(state.request, flight, dispatch);
+  }, [state.request, dispatch]);
 
   useEffect(() => {
     sync.loadMore = repository.loadMore;

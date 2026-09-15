@@ -178,8 +178,7 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 	}
 	engineRequest, validated, err := validateMoveRequest(request)
 	if err != nil {
-		var reqErr *requestError
-		if errors.As(err, &reqErr) {
+		if reqErr, ok := errors.AsType[*requestError](err); ok {
 			writeAPIError(w, http.StatusBadRequest, reqErr.Code, reqErr.Message)
 			return
 		}

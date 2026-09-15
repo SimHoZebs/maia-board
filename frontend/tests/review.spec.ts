@@ -7,40 +7,79 @@ const SEARCH_POLICY = stockfishPolicy(defaultStockfishSettings);
 import { KEYS } from '../src/storage';
 import { EvaluationFixture, evaluationIdentity } from './evaluation-fixture';
 
-async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,20,200,-700,-680]) {
+async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,20,200,-700,-680], opts: { blockOpenings?: boolean } = {}) {
   const requests: { engine: string; moves: string[]; initial_fen: string; elo_maia?: number }[] = [];
   const cache = new EvaluationFixture();
   const evaluations = cache.entries;
   const errors: string[] = [];
   // Fake review-batch server: accept the submitted items and immediately
-  // report a finished job. Actual evaluations still flow through the
-  // foreground /move + /evaluate mocks below via the batch prime, so panel
-  // content stays computed live exactly as in production.
-  const batches = new Map<string, number>();
+  // report a finished job, filing computed values for every submitted item
+  // into the lookup cache first — mirroring the backend, which files batch
+  // results into its eval cache so the post-batch prime resolves by lookup.
+  // Without that filing, finished batches would leave every position missing
+  // and no test could observe a settled line.
+  const batches = new Map<string, { total: number; requests: any[]; filed: boolean }>();
   let batchSeq = 0;
+  // Best-move selection shared by both engines: stay on the main test
+  // line while it is legal, else fall back to the first legal move. The
+  // /move branch historically shares this preferred override (not raw
+  // moves[0]); keep it so mocked Maia play follows the PGN under test.
+  const bestMove = (payload: any) => {
+    const game = replay(payload.moves, payload.initial_fen);
+    const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
+    const preferred = ['e2e4', 'e7e5', 'g1f3', 'b8c6'][payload.moves.length];
+    return legal.includes(preferred) ? preferred : legal[0];
+  };
+  const maiaValue = (payload: any) => {
+    const best = bestMove(payload);
+    return { move: best, top_moves: [{ move: best, prob: .6 }], wdl: [.2,.3,.5], model_used: payload.model, degraded: false };
+  };
+  const sfValue = (payload: any) => {
+    const game = replay(payload.moves, payload.initial_fen);
+    const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
+    const best = bestMove(payload);
+    const score = { type: 'cp', value: scores[payload.moves.length] ?? 0 };
+    return {
+      engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12 + payload.moves.length, terminal: null, best_move: best, score,
+      lines: [{ move: best, score, depth: 12 + payload.moves.length }, ...legal.filter(move => move !== best).slice(0, 1).map(move => ({ move, score: { type: 'cp', value: game.turn() === 'w' ? -500 : 500 }, depth: 12 + payload.moves.length }))],
+    };
+  };
+  const fileBatch = (jobId: string) => {
+    const job = batches.get(jobId);
+    if (!job || job.filed) return;
+    job.filed = true;
+    for (const request of job.requests) {
+      cache.set(request.engine, request, request.engine === 'maia' ? maiaValue(request) : sfValue(request));
+    }
+  };
   page.on('pageerror', error => errors.push(error.message));
   await page.route('http://maia.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
+    // Opt-out of book chips: in-book moves render a chip in the badge box
+    // instead of a quality badge, so tests asserting badges use lines (or a
+    // blocked chunk) where every move shows its verdict.
+    if (opts.blockOpenings && path.includes('openings.generated')) { await route.abort('failed'); return; }
     const method = route.request().method();
     if (await cache.lookup(route)) return;
     if (path === '/reviews' && method === 'POST') {
       const body = route.request().postDataJSON();
-      const total = Array.isArray(body?.requests) ? body.requests.length : 0;
+      const requests = Array.isArray(body?.requests) ? body.requests : [];
       const jobId = `mock-batch-${++batchSeq}`;
-      batches.set(jobId, total);
-      await route.fulfill({ json: { job_id: jobId, total, cached: 0, pending: total } });
+      batches.set(jobId, { total: requests.length, requests, filed: false });
+      await route.fulfill({ json: { job_id: jobId, total: requests.length, cached: 0, pending: requests.length } });
       return;
     }
     if (path.startsWith('/reviews/')) {
       const segments = path.slice('/reviews/'.length).split('/');
       const job = batches.get(segments[0]);
       if (job === undefined) { await route.fulfill({ status: 404, body: '' }); return; }
-      const progress = { job_id: segments[0], total: job, done: job, failed: 0, cancelled: false, finished: true };
+      if (method === 'DELETE') { batches.delete(segments[0]); await route.fulfill({ status: 204, body: '' }); return; }
+      fileBatch(segments[0]);
+      const progress = { job_id: segments[0], total: job.total, done: job.total, failed: 0, cancelled: false, finished: true };
       if (segments[1] === 'events') {
         await route.fulfill({ body: `data: ${JSON.stringify({ progress })}\n\n`, contentType: 'text/event-stream' });
         return;
       }
-      if (method === 'DELETE') { await route.fulfill({ status: 204, body: '' }); return; }
       await route.fulfill({ json: progress });
       return;
     }
@@ -54,15 +93,7 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
         await route.fulfill({ json: hit.value, headers: { 'X-Eval-Cache': 'hit' } });
         return;
       }
-      const game = replay(payload.moves, payload.initial_fen);
-      const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
-      const preferred = ['e2e4', 'e7e5', 'g1f3', 'b8c6'][payload.moves.length];
-      const best = legal.includes(preferred) ? preferred : legal[0];
-      const score = { type: 'cp', value: scores[payload.moves.length] ?? 0 };
-      const value = path === '/move' ? { move: best, top_moves: [{ move: best, prob: .6 }], wdl: [.2,.3,.5], model_used: payload.model, degraded: false } : {
-        engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12 + payload.moves.length, terminal: null, best_move: best, score,
-        lines: [{ move: best, score, depth: 12 + payload.moves.length }, ...legal.filter(move => move !== best).slice(0, 1).map(move => ({ move, score: { type: 'cp', value: game.turn() === 'w' ? -500 : 500 }, depth: 12 + payload.moves.length }))],
-      };
+      const value = path === '/move' ? maiaValue(payload) : sfValue(payload);
       cache.set(engine, payload, value);
       await route.fulfill({ json: value }); return;
     }
@@ -80,8 +111,8 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
     await route.fulfill({ body: await readFile(resolve('dist-browser', filename)), contentType: filename.endsWith('.js') ? 'text/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html' });
   });
   await page.goto('http://maia.test/analyze');
-  await page.locator('#analysis-pgn').fill(pgn); await page.locator('#load-analysis').click();
-  return { requests, errors, evaluations };
+  await page.locator('#analysis-pgn').fill(pgn);   await page.locator('#load-analysis').click();
+  return { requests, errors, evaluations, batches };
 }
 const lines = (page: Page) => page.locator('#board svg.cg-shapes line');
 test('standalone FEN shows current candidates and clears correct-frame previews', async ({ page }) => {
@@ -161,15 +192,26 @@ test('automatic review shows real overlapping SVG arrows', async ({ page }, info
   expect(app.requests.filter(request => request.engine === '/move' && request.moves.length === 0)).toHaveLength(1);
 });
 test('whole game completes independently of viewing and updates the position balance', async ({ page }, info) => {
-  const app = await bootReview(page);
+  // Book chips would occupy the badge boxes on this all-book line (see
+  // badge-loading.spec.ts): block the lazy chunk so verdicts render.
+  const app = await bootReview(page, '1. e4 e5 2. Nf3 Nc6', [20,20,200,-700,-680], { blockOpenings: true });
   await expect(page.locator('.balance-score')).toHaveText('-6.80');
-  await expect(page.locator('.review-charts, .win-hero')).toHaveCount(0);
+  // The charts shell mounts pre-analysis (lines stay empty until verdicts
+  // settle); only the hero must stay absent before the review runs.
+  await expect(page.locator('.win-hero')).toHaveCount(0);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await page.locator('#analysis-first').click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
-  await expect(page.locator('.move-cell .quality-great')).toHaveCount(2);
+  // Top verdicts now grade 'Best' (engine top choice), not 'Great': the
+  // Sep-15 verdict rework reserves Great for near-best non-best moves.
+  await expect(page.locator('.move-cell .quality-best')).toHaveCount(2);
   await expect(page.locator('.move-cell .quality-mistake')).toHaveCount(1);
   await expect(page.locator('.move-cell .quality-blunder')).toHaveCount(1);
+  // Viewing must not infer: capture the foreground count before navigating
+  // and require it unchanged after. (A fixed count would encode the focus
+  // window; the batch covers the rest server-side now.)
+  const inferred = () => app.requests.filter(request => request.engine === '/evaluate').length;
+  const settled = inferred();
   await page.locator('.move-cell').nth(2).click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
   await expect(page.locator('.balance-score')).toHaveText('-7.00');
@@ -177,7 +219,7 @@ test('whole game completes independently of viewing and updates the position bal
   await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
   await page.screenshot({ path: info.outputPath('completed-review.png'), fullPage: true });
   expect(app.errors).toEqual([]);
-  expect(app.requests.filter(request => request.engine === '/evaluate')).toHaveLength(5);
+  expect(inferred()).toBe(settled);
 });
 for (const width of [320, 1440]) {
   test(`analysis container spaces both sides of section dividers at ${width}px`, async ({ page }, info) => {
@@ -425,8 +467,12 @@ test('completed analysis restores automatically across reload without inference'
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   const inferred = () => app.requests.filter(request => request.engine === '/move' || request.engine === '/evaluate').length;
+  // Settle first: foreground prime trails the instant-mock batch by design
+  // (priority-lane delay), so a synchronous request count here would race
+  // it. Rendered candidates prove values landed; the count below only needs
+  // to be unchanged by the reload, whatever foreground fired pre-reload.
+  await expect(page.locator('.candidate-list li').first()).toBeVisible();
   const before = inferred();
-  expect(before).toBeGreaterThan(0);
   await page.reload();
   // No click: the fresh record primes itself from the server eval cache.
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
@@ -443,22 +489,25 @@ test('partially evicted analysis restores cached positions and gates the rest', 
   for (const hash of evicted) app.evaluations.delete(hash);
   const inferred = (engine: string) => app.requests.filter(request => request.engine === engine).length;
   const evalsBefore = inferred('/evaluate');
+  const jobsBefore = app.batches.size;
   const reloadMark = app.requests.length;
   await page.reload();
   await expect(page.getByRole('button', { name: 'Analyze entire game' })).toBeVisible();
   await expect(page.getByRole('status').filter({ hasText: /of \d+ positions cached/ })).toHaveCount(0);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
-  // Every evicted Maia position re-infers at least once; Stockfish never does.
+  // Every evicted Maia position is gated behind the new batch: the fresh
+  // submit must cover each evicted row (foreground only primes the viewed
+  // position, so per-request inference is the wrong place to look for them).
   // Set membership instead of exact counts: the insight single and the
   // foreground may legitimately re-request the viewed position alongside the
   // batch, so duplicates are allowed but omissions are not.
-  const reRequested = new Set(
-    app.requests.slice(reloadMark)
-      .filter(request => request.engine === '/move')
-      .map(request => evaluationIdentity('maia', request)),
+  const resubmitted = new Set(
+    [...app.batches.values()].slice(jobsBefore)
+      .flatMap(job => job.requests)
+      .map(request => evaluationIdentity(request.engine, request)),
   );
-  expect(evicted.every(hash => reRequested.has(hash))).toBe(true);
+  expect(evicted.every(hash => resubmitted.has(hash))).toBe(true);
   expect(inferred('/evaluate') - evalsBefore).toBe(0);
 });
 test('changed analysis settings gate the missing positions behind a new batch', async ({ page }) => {
@@ -503,17 +552,22 @@ test('current position balance replaces the win-rate sections', async ({ page })
 test('analysis progress replaces the analyze button while running without a cancel option', async ({ page }) => {
   await bootReview(page);
   await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 15' })).toBeVisible();
-  const held: Route[] = [];
-  await page.route('http://maia.test/move', route => { held.push(route); });
-  await page.route('http://maia.test/evaluate', route => { held.push(route); });
+  // Hold the batch event stream open: the job stays running until the
+  // stream resolves, so progress UI is observable deterministically instead
+  // of racing the instant-mock finish. (Holding foreground fetches cannot
+  // stall a server batch; whole-game inference runs server-side now.)
+  const heldEvents: Route[] = [];
+  await page.route('http://maia.test/reviews/*/events', route => { heldEvents.push(route); });
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
-  await expect.poll(() => held.length).toBe(2);
+  await expect.poll(() => heldEvents.length).toBeGreaterThan(0);
+  await expect(page.locator('.tab-action').getByRole('status')).toHaveText(/Analyzing \d+ of \d+…/);
   await expect(page.getByRole('button', { name: 'Analyze entire game' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Cancel analysis' })).toHaveCount(0);
-  await expect(page.locator('.tab-action').getByRole('status')).toHaveText(/Analyzing \d+ of \d+…/);
-  await page.unroute('http://maia.test/move');
-  await page.unroute('http://maia.test/evaluate');
-  for (const route of held) await route.fulfill({ json: route.request().url().endsWith('/move') ? { move: 'e2e4', top_moves: [{ move: 'e2e4', prob: .6 }], wdl: [.2,.3,.5], model_used: '79m', degraded: false } : { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'e2e4', score: { type: 'cp', value: 20 }, lines: [{ move: 'e2e4', score: { type: 'cp', value: 20 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: 0 }, depth: 12 }] } });
+  for (const route of heldEvents) {
+    const match = /\/reviews\/([^/]+)\/events/.exec(route.request().url());
+    const progress = { job_id: match?.[1] ?? 'mock-batch-1', total: 10, done: 10, failed: 0, cancelled: false, finished: true };
+    await route.fulfill({ body: `data: ${JSON.stringify({ progress })}\n\n`, contentType: 'text/event-stream' });
+  }
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   await expect(page.locator('.tab-action').getByRole('status')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Cancel analysis' })).toHaveCount(0);

@@ -84,8 +84,8 @@ export function loadLine(fen = '', pgn = ''): Analysis {
 }
 export function exportLine(analysis: Analysis): string {
   const game = replay(analysis.moves, analysis.initialFen);
-  game.header('Event', 'Maia Board');
-  if (analysis.initialFen !== START_FEN) game.header('SetUp', '1', 'FEN', analysis.initialFen);
+  game.setHeader('Event', 'Maia Board');
+  if (analysis.initialFen !== START_FEN) { game.setHeader('SetUp', '1'); game.setHeader('FEN', analysis.initialFen); }
   return game.pgn();
 }
 export function candidateSan(fen: string, uci: string): string {

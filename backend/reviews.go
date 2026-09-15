@@ -60,9 +60,8 @@ func resolveMaiaQuery(query lookupRequest) (EngineRequest, string, *requestError
 	req, model, err := validateMoveRequest(moveRequest{FEN: query.FEN, InitialFEN: query.InitialFEN,
 		Moves: query.Moves, EloMaia: query.EloMaia, EloUser: query.EloUser, Model: query.Model, MaiaColor: color})
 	if err != nil {
-		var reqErr *requestError
 		message := "position or move history is invalid"
-		if errors.As(err, &reqErr) {
+		if reqErr, ok := errors.AsType[*requestError](err); ok {
 			message = reqErr.Message
 		}
 		return EngineRequest{}, "", &requestError{"invalid_request", message}
@@ -558,8 +557,7 @@ func (job *batchJob) claim(entry *batchEntry) bool {
 }
 
 func batchErrMessage(err error) string {
-	var reqErr *requestError
-	if errors.As(err, &reqErr) {
+	if reqErr, ok := errors.AsType[*requestError](err); ok {
 		return reqErr.Message
 	}
 	return sanitizeError(err.Error())

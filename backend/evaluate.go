@@ -35,6 +35,9 @@ type evaluationLine struct {
 	Move  string          `json:"move"`
 	Score evaluationScore `json:"score"`
 	Depth int             `json:"depth"`
+	// Optional rank-1 PV (up to 5 UCI, first == Move) rooted at the evaluated
+	// position. Old rows omit it and remain valid; they yield no material note.
+	PV []string `json:"pv,omitempty"`
 }
 
 type evaluationResponse struct {
@@ -106,14 +109,14 @@ func (s *server) evaluate(w http.ResponseWriter, r *http.Request) {
 	live, hit, runErr := s.executeSF(r.Context(), execCtx, PriorityFocus, "", request, false)
 	if runErr != nil {
 		err := runErr
-		var requestErr *requestError
+		requestErr, isRequestErr := errors.AsType[*requestError](err)
 		switch {
 		case errors.Is(err, ErrSuperseded):
 			writeAPIError(w, 409, "superseded", "a newer request superseded this position")
 		case errors.Is(err, ErrWorkerBusy):
 			w.Header().Set("Retry-After", "1")
 			writeAPIError(w, 503, "engine_busy", "Stockfish is busy")
-		case errors.As(err, &requestErr):
+		case isRequestErr:
 			writeAPIError(w, 400, requestErr.Code, requestErr.Message)
 		default:
 			writeAPIError(w, 502, "engine_unavailable", "Stockfish evaluation is unavailable")

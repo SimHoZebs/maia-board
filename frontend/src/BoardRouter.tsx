@@ -1,4 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef } from "react";
+import { flushSync } from "react-dom";
 import {
   matchPath,
   Navigate,
@@ -247,8 +248,13 @@ export function BoardRouter() {
         unloadPendingRef.current = true;
         void navigate(pathFor("analysis"));
       }
-      if (action.type === "saved" && mode !== "play")
-        void navigate(pathFor("play"));
+      if (action.type === "saved" && mode !== "play") {
+        // Commit the navigation synchronously before dispatching: the
+        // reducer flips mode to play immediately, and a lagging location
+        // would make the render-phase adjustment flap back to history and
+        // orphan the new request with a same-payload twin.
+        flushSync(() => { void navigate(pathFor("play")); });
+      }
       boardDispatch(action);
     },
     [mode, navigate, boardDispatch, pathname, search],

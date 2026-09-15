@@ -102,21 +102,21 @@ test('live play shows the actual 5m fallback after requesting 79m', async ({ pag
   expect(app.errors).toEqual([]);
 });
 
-test('migration uploads local games once, reload resumes from the server', async ({ page }) => {
+test('legacy games seed read-only display without uploading', async ({ page }) => {
+  // The v1 migration was deleted: pre-database keys seed local display but
+  // never create upload ops, so the server stays untouched.
   const game = stored('local-1', ['e2e4', 'e7e5']);
   const app = await bootGames(page, { [KEYS.current]: game, [KEYS.saved]: [game] });
   await page.goto('http://maia.test/history');
   await expect(page.locator('.saved-game')).toHaveCount(1);
-  await expect.poll(() => app.store.games.size).toBe(1);
-  await expect.poll(() => app.store.currentId).toBe('local-1');
-  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('maia-board.games.v2') || '{}').pending)).toEqual([]);
+  await expect(page.locator('.saved-game').first()).toContainText('White · Maia 1600');
+  await expect(page.locator('.sync-banner')).toHaveCount(0);
+  await page.waitForTimeout(1000);
+  expect(app.store.games.size).toBe(0);
+  expect(app.store.writes).toEqual([]);
   await page.evaluate(() => localStorage.clear());
   await page.reload();
-  await expect(page.locator('.saved-game')).toHaveCount(1);
-  await expect(page.locator('.saved-game').first()).toContainText('White · Maia 1600');
-  await page.locator('.saved-game').first().getByRole('button', { name: 'Resume' }).click();
-  await expect(page).toHaveURL('http://maia.test/play');
-  await expect(page.locator('#board cg-board')).toBeVisible();
+  await expect(page.locator('.saved-game')).toHaveCount(0);
   expect(app.errors).toEqual([]);
 });
 
@@ -145,7 +145,9 @@ test('history loads older pages while keeping the current game independent', asy
 });
 
 test('invalid pending data is exportable and discarded only after confirmation', async ({ page }) => {
-  await bootGames(page, { 'maia-board.outbox.v1': [{ op: 'unknown', original: 'keep me' }] });
+  // The v1 outbox is no longer read; invalid entries reach recovery through
+  // a v2 document instead.
+  await bootGames(page, { 'maia-board.games.v2': { schema: 2, games: [], currentId: null, pending: [{ op: 'unknown', original: 'keep me', version: 'v1' }], recovery: [] } });
   await page.goto('http://maia.test/history');
   await expect(page.getByRole('button', { name: 'Export recovery data' })).toBeVisible();
   const download = page.waitForEvent('download');
@@ -191,6 +193,22 @@ test('offline boot falls back to cache and retry syncs later', async ({ page }) 
   await page.goto('http://maia.test/history');
   await expect(page.locator('.saved-game')).toHaveCount(1);
   await expect(page.locator('.sync-banner')).toBeVisible();
+  // Legacy seeds carry no upload ops, so queue v2-native work while offline:
+  // a played move saves locally and pends the upload the aborted flush
+  // cannot clear. Retry then syncs exactly that game.
+  await page.goto('http://maia.test/play');
+  await expect(page.locator('.turn-indicator')).toHaveText('To move');
+  await clickSquare(page, 'g1');
+  await clickSquare(page, 'f3');
+  await expect.poll(() => page.evaluate(() => {
+    const repository = JSON.parse(localStorage.getItem('maia-board.games.v2') || 'null');
+    const game = repository?.games.find((item: any) => item.id === repository.currentId);
+    return Array.isArray(game?.moves) ? game.moves.length : -1;
+  })).toBe(3);
+  // Still offline: the failed move flush leaves Retry visible. Flip online
+  // only when clicking it, so the mount flush cannot self-heal first.
+  await page.goto('http://maia.test/history');
+  await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
   app.store.offline = false;
   await page.getByRole('button', { name: 'Retry', exact: true }).click();
   await expect.poll(() => app.store.games.size).toBe(1);

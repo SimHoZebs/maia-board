@@ -77,14 +77,28 @@ export function maiaTurn(state: State): boolean {
   maiaTurnMemo.set(state.play.moves, { userColor: state.play.settings.userColor, resigned: false, result });
   return result;
 }
+type PlayRequest = NonNullable<State['request']>;
+let lastQueuedRequest: { key: string; request: PlayRequest } | null = null;
 function queueRequest(state: State): State {
   const position = lineRecord(state.play.moves);
   const settings = state.play.settings;
   if (position.moves.length > 256) return { ...state, request: null, error: 'Maia inference supports at most 256 plies.' };
-  return { ...state, error: '', request: { id: state.revision, mode: 'play', payload: {
+  const request: PlayRequest = { id: state.revision, mode: 'play', payload: {
     fen: position.fen, moves: position.moves, elo_maia: clampMaiaElo(settings.eloMaia), elo_user: clampMaiaElo(settings.eloUser), model: settings.model,
     maia_color: oppositeColor(settings.userColor), temperature: settings.temperature ?? 0,
-  } } };
+  } };
+  // Identical work must yield an identical request object: concurrent
+  // renders and URL-lag flaps (navigate+dispatch leaves the URL behind, so
+  // the render-phase adjustment swings back and forth) can queue several
+  // same-payload requests, which would read as supersedes — dropping the
+  // first flight's reply and stalling. Keying the memo on game plus payload
+  // keeps one identity per logical request, so the flight guard and reply
+  // matching stay sound. Different games, positions, or settings always key
+  // differently (the payload carries moves and full settings).
+  const key = `${state.play.id}:${JSON.stringify(request.payload)}`;
+  if (lastQueuedRequest?.key === key) return { ...state, error: '', request: lastQueuedRequest.request };
+  lastQueuedRequest = { key, request };
+  return { ...state, error: '', request };
 }
 function transition(state: State, changes: Partial<State>, resumePlay = true): State {
   const next = { ...state, ...changes, revision: state.revision + 1, request: null, promotion: null, preview: null, insight: null, error: '' };
@@ -216,7 +230,7 @@ export function reducer(state: State, action: Action): State {
       if (state.promotion || (playRecord ? playRecord.terminal !== null : game.isGameOver()) || (state.mode !== 'play' && state.mode !== 'analysis')) return state;
       if (state.mode === 'play' && (!state.started || state.play.result === 'resigned' || state.viewedPly !== null || state.request || toGroundColor(game.turn()) !== state.play.settings.userColor)) return state;
       if (state.mode === 'analysis' && !state.analysisLoaded) return state;
-      if (!game.moves({ verbose: true }).some(move => move.from === action.from && move.to === action.to)) return state;
+      if (!game.moves({ square: action.from, verbose: true }).some(move => move.to === action.to)) return state;
       if (game.get(action.from)?.type === 'p' && /[18]$/.test(action.to)) return { ...state, promotion: { from: action.from, to: action.to } };
       return commitMove(state, action.from, action.to);
     }

@@ -12,7 +12,7 @@ export function epdKey(fen: string): string {
   let ep = normalized[3];
   if (ep !== '-') {
     const probe = new Chess(fen);
-    if (!probe.moves({ verbose: true }).some((move) => move.flags.includes('e'))) ep = '-';
+    if (!probe.moves({ verbose: true }).some((move) => move.isEnPassant())) ep = '-';
   }
   return `${normalized[0]} ${normalized[1]} ${normalized[2]} ${ep}`;
 }

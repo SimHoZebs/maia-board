@@ -50,6 +50,27 @@ export function useServerBatch(args: {
   jobIdRef.current = jobId;
   const jobScopeRef = useRef<string | null>(null);
   jobScopeRef.current = jobScopeKey;
+  // Batch state is scoped to the settings it was submitted under (both call
+  // sites pass memo-stable settings objects, so identity change means a real
+  // settings edit). A settings change retires settled progress: its
+  // completion says nothing about the new settings, so without this the
+  // button would linger on "Analyzed" while coverage correctly reports the
+  // new settings as missing. A running job keeps its progress and settles
+  // normally; completion then primes under the current settings refs.
+  const progressRef = useRef(progress);
+  progressRef.current = progress;
+  const prevSettingsRef = useRef(settings);
+  useEffect(() => {
+    if (prevSettingsRef.current === settings) return;
+    prevSettingsRef.current = settings;
+    if (!progressRef.current?.running) {
+      setJobId(null);
+      setJobScopeKey(null);
+      setProgress(null);
+      setError(undefined);
+      itemsRef.current = [];
+    }
+  }, [settings]);
 
   const start = useCallback(() => {
     const current = scopeRef.current;
@@ -215,6 +236,8 @@ export function useServerBatch(args: {
   // does not run this: only a line change, unmount, or active=false cancels.
   // Optimistic reattach progress (scope key set, no id yet) is owned the same
   // way: leaving it behind would stick Analyzing with no job behind it.
+  // Finished progress resets too: it belongs to the previous line, and
+  // leaving it would linger "Analyzed" over a line that still needs a batch.
   useEffect(() => {
     return () => {
       const id = jobIdRef.current;
@@ -222,6 +245,11 @@ export function useServerBatch(args: {
       if (id && jobKey && (jobKey === scopeKey || scopeKey === null)) {
         void cancelBatch(id, fetcher).catch(() => undefined);
         clearPersistedBatch(id);
+        jobIdRef.current = null;
+        jobScopeRef.current = null;
+        setJobId(null);
+        setJobScopeKey(null);
+        setProgress(null);
       } else if (!id && jobKey && jobKey === scopeKey) {
         setProgress(null);
         setJobScopeKey(null);
