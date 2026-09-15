@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MaiaApiError, requestMove } from './api';
-import { initialState, reducer, snapshotOf, type Action } from './state';
+import { initialState, reducer, snapshotOf, type Action, type State } from './state';
 import { KEYS, readStorage, writeStorage } from './storage';
 import { GameRepository } from './gameRepository';
 import { HistorySyncStore } from './syncStore';
@@ -8,11 +8,58 @@ import type { Mode } from './domain';
 import type { UrlLine } from './analysisUrl';
 import { STOCKFISH_STORAGE_KEY } from './stockfishSettings';
 
+type PlayFlight = { id: number; controller: AbortController; stalled: number; cancelled: boolean };
+type FlightRef = { current: PlayFlight | null };
+
+// Play POST execution, shared by dispatch and the mount effect. Firing is
+// deferred a microtask so a supersede (or StrictMode rehearsal cleanup) that
+// lands in the same tick cancels before any byte is sent — the same timing
+// the old state-keyed effect relied on. Reply and failure match by request
+// identity in the reducer, and the flight record guards the commit itself,
+// so a late response can never land on a newer game.
+function firePlayRequest(request: State['request'], flight: FlightRef, commit: (action: Action) => void) {
+  const running = flight.current;
+  if (!request) {
+    if (running) { running.cancelled = true; running.controller.abort(); window.clearTimeout(running.stalled); flight.current = null; }
+    return;
+  }
+  if (running && running.id === request.id) return;
+  if (running) { running.cancelled = true; running.controller.abort(); window.clearTimeout(running.stalled); }
+  const controller = new AbortController();
+  const record: PlayFlight = { id: request.id, controller, stalled: 0, cancelled: false };
+  record.stalled = window.setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), 150_000);
+  flight.current = record;
+  queueMicrotask(() => {
+    if (record.cancelled || flight.current !== record) return;
+    void requestMove(request.payload, fetch, controller.signal, { priority: 'play' }).then(
+      response => {
+        window.clearTimeout(record.stalled);
+        if (record.cancelled || flight.current !== record) return;
+        flight.current = null;
+        commit({ type: 'reply', request, response });
+      },
+      error => {
+        window.clearTimeout(record.stalled);
+        if (record.cancelled || flight.current !== record) return;
+        flight.current = null;
+        commit({ type: 'failure', request, error: error instanceof DOMException ? new MaiaApiError('server_unreachable', 'The Maia server could not be reached.') : error });
+      },
+    );
+  });
+}
+
 export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
   const [repository] = useState(() => new GameRepository());
   const [state, setState] = useState(() => initialState(mode, urlLine, repository.snapshot()));
   const current = useRef(state);
   const [sync] = useState(() => new HistorySyncStore());
+  // In-flight play POST, owned by dispatch — the shared function every board
+  // event funnels through (the doc's "extract a function called from event
+  // handlers"). An interaction-caused POST runs because of the interaction,
+  // not because the component displayed. state.request stays the UI source
+  // of truth (thinking indicator, retry gating); firePlayRequest only owns
+  // the network flight.
+  const flight = useRef<PlayFlight | null>(null);
   const dispatch = useCallback((action: Action) => {
     const before = current.current;
     const next = reducer(before, action);
@@ -30,7 +77,25 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
     } else if (action.type !== 'sync' && next !== before && (next.play !== before.play || action.type === 'saved' && next.started)) {
       if (next.started || next.play.moves.length || next.play.result === 'resigned') repository.save(next.play, next.started);
     }
+    // Execute a fresh play request; abort a superseded flight (takeback,
+    // resign, and new games clear `request` through transition, so the abort
+    // rides along with the same dispatch — no separate effect needed).
+    firePlayRequest(next.request, flight, dispatch);
   }, [repository, sync]);
+  // Boot + unmount: a restored game with Maia to move carries a request from
+  // initialState that no dispatch may ever produce (e.g. history sync fails
+  // or returns nothing new), so the mount pass fires it directly — the
+  // same-id guard makes the later sync dispatch a no-op, and StrictMode
+  // rehearsal single-fires through the microtask cancellation above.
+  // Unmount aborts the flight; its handlers ignore it via cancelled.
+  useEffect(() => {
+    const boot = current.current.request;
+    if (boot && !flight.current) firePlayRequest(boot, flight, dispatch);
+    return () => {
+      const running = flight.current;
+      if (running) { running.cancelled = true; running.controller.abort(); window.clearTimeout(running.stalled); flight.current = null; }
+    };
+  }, [dispatch]);
   // TODO: split god State into play/analysis/ui slices. Kept whole here:
   // slicing the reducer + persistence + sync projection risks scope creep
   // beyond the eval refactor.
@@ -83,23 +148,5 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
     sync.setPreferenceError(errorMessage);
   }, [state.play.settings, state.feedback, state.badgeLoading, state.coordinatesOnSquares, state.stockfish, state.inputs, state.analysisLoaded, state.analysis, state.analysisSourceId, sync]);
 
-  useEffect(() => {
-    const request = state.request;
-    if (!request) return;
-    const controller = new AbortController();
-    let active = true;
-    const stalled = window.setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), 150_000);
-    queueMicrotask(() => {
-      if (!active) return;
-      void requestMove(request.payload, fetch, controller.signal, { priority: 'play' }).then(
-        response => { window.clearTimeout(stalled); if (active) dispatch({ type: 'reply', request, response }); },
-        error => {
-          window.clearTimeout(stalled);
-          if (active) dispatch({ type: 'failure', request, error: error instanceof DOMException ? new MaiaApiError('server_unreachable', 'The Maia server could not be reached.') : error });
-        },
-      );
-    });
-    return () => { active = false; window.clearTimeout(stalled); controller.abort(); };
-  }, [state.request, dispatch]);
   return { state, dispatch, sync, repository };
 }
