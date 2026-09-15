@@ -1,6 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildTimeline, START_FEN } from './domain';
-import { BatchBusyError, BatchGoneError, buildBatchItems, cancelBatch, fetchBatchStatus, submitBatch, subscribeBatchEvents, type BatchProgress } from './batchReview';
+import { BatchBusyError, BatchGoneError, BATCH_PERSIST_KEY, buildBatchItems, cancelBatch, clearPersistedBatch,
+  fetchBatchStatus, hashBatchKeys, readPersistedBatch, submitBatch, subscribeBatchEvents, writePersistedBatch,
+  type BatchProgress } from './batchReview';
 import { jsonResponse } from './evaluationTestFixtures';
 import { reviewNodes } from './evaluationStore';
 import type { ReviewSettings } from './evaluationStore';
@@ -84,5 +86,43 @@ describe('subscribeBatchEvents', () => {
     const hanging = vi.fn<typeof fetch>(async () => new Response(new ReadableStream({ start() {} })));
     controller.abort();
     await subscribeBatchEvents('job1', () => undefined, controller.signal, hanging);
+  });
+});
+
+describe('batch persistence', () => {
+  beforeEach(() => {
+    const data = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => data.set(key, value),
+      removeItem: (key: string) => { data.delete(key); },
+    });
+  });
+  it('hashes keys deterministically and order-sensitively', () => {
+    expect(hashBatchKeys(['a', 'b'])).toBe(hashBatchKeys(['a', 'b']));
+    expect(hashBatchKeys(['a', 'b'])).not.toBe(hashBatchKeys(['b', 'a']));
+    expect(hashBatchKeys(['a'])).not.toBe(hashBatchKeys(['a', 'b']));
+  });
+  it('round-trips a persisted batch and clears by job id', () => {
+    expect(readPersistedBatch()).toBeNull();
+    writePersistedBatch({ jobId: 'job1', lineKey: 'lineA', keysHash: 'abc123', total: 6 });
+    expect(readPersistedBatch()).toEqual({ jobId: 'job1', lineKey: 'lineA', keysHash: 'abc123', total: 6 });
+    clearPersistedBatch('other');
+    expect(readPersistedBatch()?.jobId).toBe('job1');
+    clearPersistedBatch('job1');
+    expect(readPersistedBatch()).toBeNull();
+  });
+  it('rejects corrupt entries and binds reattach to exact content', () => {
+    localStorage.setItem(BATCH_PERSIST_KEY, '{not-json');
+    expect(readPersistedBatch()).toBeNull();
+    localStorage.setItem(BATCH_PERSIST_KEY, JSON.stringify({ jobId: '', lineKey: 'x', keysHash: 'y', total: 1 }));
+    expect(readPersistedBatch()).toBeNull();
+    const keys = items().map(item => item.key);
+    const hash = hashBatchKeys(keys);
+    writePersistedBatch({ jobId: 'job1', lineKey: 'lineA', keysHash: hash, total: keys.length });
+    const stored = readPersistedBatch()!;
+    // Same line but different settings produce different keys: no reattach.
+    const other = buildBatchItems(nodes, { ...settings, eloMaia: 2000 });
+    expect(hashBatchKeys(other.map(item => item.key))).not.toBe(stored.keysHash);
   });
 });

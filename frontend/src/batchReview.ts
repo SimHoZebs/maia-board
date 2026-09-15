@@ -8,6 +8,76 @@ export type BatchProgress = {
 };
 export type BatchSubmitted = { job_id: string; total: number; cached: number; pending: number };
 
+// Persisted batch identity: lets a reloaded tab reattach to its own running
+// job instead of showing Analyze again and submitting a duplicate (which the
+// single-active server would treat as a replacement, discarding progress).
+// Single entry is enough: the server runs at most one batch at a time, so the
+// latest submit is the active job. keysHash binds the entry to the exact
+// content (line + engine settings); a settings change or different line never
+// reattaches.
+export const BATCH_PERSIST_KEY = 'maia-board.review-batch.v1';
+export type PersistedBatch = { jobId: string; lineKey: string; keysHash: string; total: number };
+
+// FNV-1a 32-bit over the ordered cache keys. Order-sensitive on purpose: the
+// server echoes per-index errors in submit order, so the same set in a
+// different order is a different job.
+export function hashBatchKeys(keys: string[]): string {
+  let hash = 0x811c9dc5;
+  for (const key of keys) {
+    for (let i = 0; i < key.length; i++) {
+      hash ^= key.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    hash ^= 0x1f;
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function batchStorage(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null {
+  try {
+    const storage = (globalThis as { localStorage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> }).localStorage;
+    return storage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function readPersistedBatch(): PersistedBatch | null {
+  try {
+    const raw = batchStorage()?.getItem(BATCH_PERSIST_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PersistedBatch>;
+    if (typeof parsed.jobId !== 'string' || !parsed.jobId || typeof parsed.lineKey !== 'string'
+      || typeof parsed.keysHash !== 'string' || typeof parsed.total !== 'number' || !Number.isInteger(parsed.total)) return null;
+    return { jobId: parsed.jobId, lineKey: parsed.lineKey, keysHash: parsed.keysHash, total: parsed.total };
+  } catch {
+    return null;
+  }
+}
+
+export function writePersistedBatch(entry: PersistedBatch): void {
+  try {
+    batchStorage()?.setItem(BATCH_PERSIST_KEY, JSON.stringify(entry));
+  } catch {
+    // Private-mode/quota failures keep analysis working; reattach just skips.
+  }
+}
+
+export function clearPersistedBatch(jobId?: string): void {
+  try {
+    const storage = batchStorage();
+    if (!storage) return;
+    if (jobId) {
+      const current = readPersistedBatch();
+      if (!current || current.jobId !== jobId) return;
+    }
+    storage.removeItem(BATCH_PERSIST_KEY);
+  } catch {
+    // Clearing is best-effort; a stale entry only costs one status fetch.
+  }
+}
+
 export class BatchBusyError extends Error {
   readonly jobId: string;
   readonly progress: BatchProgress;
