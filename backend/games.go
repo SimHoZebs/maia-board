@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -50,27 +51,43 @@ type gamePayload struct {
 	Current     bool     `json:"current,omitempty"`
 }
 
+// gameStoreDSN carries the connection pragmas in validated shorthand form so
+// every pooled connection inherits them (an Exec would only reach one).
+func gameStoreDSN(path string) string {
+	const params = "_journal_mode=WAL&_timeout=5000&_fk=1"
+	if strings.HasPrefix(path, "file:") {
+		sep := "?"
+		if strings.Contains(path, "?") {
+			sep = "&"
+		}
+		return path + sep + params
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	dsn := (&url.URL{Scheme: "file", Path: abs}).String()
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	return dsn + sep + params
+}
+
 func NewGameStore(path string) (*GameStore, error) {
 	if dir := filepath.Dir(path); dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, err
 		}
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", gameStoreDSN(path))
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	for _, pragma := range []string{
-		"PRAGMA journal_mode=WAL",
-		"PRAGMA busy_timeout=5000",
-		"PRAGMA foreign_keys=ON",
-	} {
-		if _, err := db.Exec(pragma); err != nil {
-			db.Close()
-			return nil, err
-		}
-	}
+	// WAL keeps readers unblocked during batch write bursts; every pooled
+	// connection inherits the pragmas from the DSN (Exec pragmas would only
+	// reach one pooled connection). Writes still serialize inside SQLite.
+	db.SetMaxOpenConns(8)
 	schema := `
 	CREATE TABLE IF NOT EXISTS games (
 		id TEXT PRIMARY KEY,

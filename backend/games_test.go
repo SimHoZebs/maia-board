@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
@@ -17,6 +19,40 @@ func testStore(t *testing.T) *GameStore {
 	}
 	t.Cleanup(func() { store.db.Close() })
 	return store
+}
+
+// Every pooled connection must inherit WAL + busy-timeout + foreign-keys
+// from the DSN: with MaxOpenConns > 1 an Exec-only setup would leave later
+// connections on defaults and invite database-is-locked bursts.
+func TestGameStoreDSNPragmas(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	first, err := store.db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := store.db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	for i, conn := range []interface {
+		QueryRowContext(context.Context, string, ...any) *sql.Row
+	}{first, second} {
+		var journal string
+		if err := conn.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&journal); err != nil || journal != "wal" {
+			t.Fatalf("conn %d journal_mode=%q err=%v", i, journal, err)
+		}
+		var timeout int
+		if err := conn.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&timeout); err != nil || timeout != 5000 {
+			t.Fatalf("conn %d busy_timeout=%d err=%v", i, timeout, err)
+		}
+		var fk int
+		if err := conn.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&fk); err != nil || fk != 1 {
+			t.Fatalf("conn %d foreign_keys=%d err=%v", i, fk, err)
+		}
+	}
 }
 
 // normalizeJSON re-encodes so semantically identical documents compare equal

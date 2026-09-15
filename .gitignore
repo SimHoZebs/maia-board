@@ -1,1 +1,3 @@
 test-results/
+# `go build ./...` drops the server binary into backend/.
+backend/backend
