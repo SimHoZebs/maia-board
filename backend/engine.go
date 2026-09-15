@@ -11,16 +11,16 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
 
 const (
-	workerAcquireWait = 100 * time.Millisecond
-	workerStartWait   = 300 * time.Second
-	workerMoveWait    = 120 * time.Second
-	maxMultiPV        = 5
-	workerLineLimit   = 64 * 1024
+	workerStartWait = 300 * time.Second
+	workerMoveWait  = 120 * time.Second
+	maxMultiPV      = 5
+	workerLineLimit = 64 * 1024
 )
 
 var (
@@ -29,7 +29,26 @@ var (
 	ErrPositionMismatch = errors.New("position mismatch")
 	ErrInvalidPosition  = errors.New("invalid position")
 	ErrNoLegalMoves     = errors.New("position has no legal moves")
+	// ErrJoined reports that a deterministic duplicate joined the owner's
+	// inference at the scheduler. The caller must re-read the cache: the
+	// owner stores its result before releasing the slot.
+	ErrJoined = errors.New("duplicate request joined")
 )
+
+// Bounded waits for synchronous admission. Batch work waits without a
+// deadline on a detached context instead; vars (not consts) so tests shrink
+// them without touching production budgets.
+var (
+	syncWaitPlay  = 30 * time.Second
+	syncWaitFocus = 10 * time.Second
+)
+
+func syncWait(prio Priority) time.Duration {
+	if prio == PriorityPlay {
+		return syncWaitPlay
+	}
+	return syncWaitFocus
+}
 
 type EngineRequest struct {
 	FEN         string   `json:"fen"`
@@ -64,7 +83,7 @@ type WorkerStatus struct {
 	LastError string      `json:"last_error,omitempty"`
 }
 type predictor interface {
-	predict(context.Context, EngineRequest) (EngineResult, error)
+	predict(waitCtx, execCtx context.Context, prio Priority, batchID string, request EngineRequest) (EngineResult, func(), error)
 	snapshot() WorkerStatus
 }
 type workerProcess struct {
@@ -73,31 +92,32 @@ type workerProcess struct {
 	stdout *bufio.Reader
 }
 type workerOperation struct {
-	key    string
-	done   chan struct{}
-	result EngineResult
-	err    error
+	key       string
+	grant     *Grant
+	done      chan struct{}
+	abandoned atomic.Bool
+	result    EngineResult
+	err       error
 }
 
 // One operation owns the process and slot independently of its HTTP waiters.
-// A deterministic duplicate joins that operation; sampled requests never join.
+// Scheduler dedup joins deterministic duplicates before they reach the
+// worker; sampled requests never join.
 type Worker struct {
 	name                string
 	command             []string
 	startWait, moveWait time.Duration
-	slot                chan struct{}
+	sched               *Scheduler
 	mu                  sync.Mutex
 	stateMu             sync.RWMutex
 	proc                *workerProcess
 	state               workerState
 	last                string
 	busy                bool
-	opMu                sync.Mutex
-	operation           *workerOperation
 }
 
 func NewWorker(name string, command []string) *Worker {
-	return &Worker{name: name, command: append([]string(nil), command...), startWait: workerStartWait, moveWait: workerMoveWait, slot: make(chan struct{}, 1), state: stateUnloaded}
+	return &Worker{name: name, command: append([]string(nil), command...), startWait: workerStartWait, moveWait: workerMoveWait, sched: NewScheduler(), state: stateUnloaded}
 }
 func (w *Worker) snapshot() WorkerStatus {
 	w.stateMu.RLock()
@@ -108,74 +128,94 @@ func (w *Worker) snapshot() WorkerStatus {
 	}
 	return WorkerStatus{State: state, LastError: sanitizeError(w.last)}
 }
-func (w *Worker) acquire(ctx context.Context) error {
-	timer := time.NewTimer(workerAcquireWait)
-	defer timer.Stop()
-	select {
-	case w.slot <- struct{}{}:
-		w.stateMu.Lock()
-		w.busy = true
-		w.stateMu.Unlock()
-		return nil
-	case <-timer.C:
-		return ErrWorkerBusy
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-func (w *Worker) release() {
+func (w *Worker) setBusy(busy bool) {
 	w.stateMu.Lock()
-	w.busy = false
+	w.busy = busy
 	w.stateMu.Unlock()
-	<-w.slot
 }
-func (w *Worker) predict(ctx context.Context, request EngineRequest) (EngineResult, error) {
-	if err := ctx.Err(); err != nil {
-		return EngineResult{}, err
+
+// predict admits through the priority scheduler, then runs one inference.
+// waitCtx bounds queue waiting (and dequeues on disconnect); execCtx bounds
+// waiting for the operation itself. batchID tags batch-lane tickets so a
+// batch cancel finds them; sync callers pass "". The returned release must be
+// called exactly once after the caller persists the result (nil when there is
+// nothing to persist: acquire failure, join, or caller abandonment).
+func (w *Worker) predict(waitCtx, execCtx context.Context, prio Priority, batchID string, request EngineRequest) (EngineResult, func(), error) {
+	if err := waitCtx.Err(); err != nil {
+		return EngineResult{}, nil, err
 	}
 	request.Moves = append([]string{}, request.Moves...)
 	data, err := json.Marshal(request)
 	if err != nil || len(data) > workerLineLimit {
-		return EngineResult{}, ErrInvalidPosition
+		return EngineResult{}, nil, ErrInvalidPosition
 	}
-	key := string(data)
+	key := ""
 	if request.Temperature == 0 {
-		_, key = maiaIdentity(request, w.name).coordinates()
+		key, _ = maiaIdentity(request, w.name).coordinates()
 	}
-	w.opMu.Lock()
-	op := w.operation
-	if op != nil && request.Temperature == 0 && op.key == key {
-		w.opMu.Unlock()
-		return awaitOperation(ctx, op)
+	// Sync lanes bound their queue wait; batch work waits until granted or
+	// cancelled, since it runs detached without a client deadline.
+	wait := waitCtx
+	cancel := context.CancelFunc(func() {})
+	if prio != PriorityBatch {
+		wait, cancel = context.WithTimeout(waitCtx, syncWait(prio))
 	}
-	w.opMu.Unlock()
-	if err := w.acquire(ctx); err != nil {
-		return EngineResult{}, err
+	grant, joined, err := w.sched.Acquire(wait, prio, key, batchID)
+	cancel()
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrSchedulerBusy):
+			return EngineResult{}, nil, ErrWorkerBusy
+		case errors.Is(err, ErrSuperseded):
+			return EngineResult{}, nil, err
+		case waitCtx.Err() != nil:
+			return EngineResult{}, nil, waitCtx.Err()
+		default:
+			return EngineResult{}, nil, ErrWorkerBusy
+		}
 	}
-	op = &workerOperation{key: key, done: make(chan struct{})}
-	w.opMu.Lock()
-	w.operation = op
-	w.opMu.Unlock()
+	if joined {
+		return EngineResult{}, nil, ErrJoined
+	}
+	w.setBusy(true)
+	release := func() {
+		w.sched.Release(grant)
+		w.setBusy(false)
+	}
+	op := &workerOperation{key: key, grant: grant, done: make(chan struct{})}
 	go func() {
 		w.mu.Lock()
 		op.result, op.err = w.predictLocked(context.Background(), request)
 		w.mu.Unlock()
-		w.opMu.Lock()
-		w.operation = nil
-		w.release()
+		// done's close publishes result/err to the waiter; abandoned is
+		// atomic because the waiter may set it concurrently on disconnect.
+		if op.abandoned.Load() {
+			w.sched.Release(op.grant)
+			w.setBusy(false)
+		}
 		close(op.done)
-		w.opMu.Unlock()
 	}()
-	return awaitOperation(ctx, op)
-}
-func awaitOperation(ctx context.Context, op *workerOperation) (EngineResult, error) {
-	select {
-	case <-ctx.Done():
-		return EngineResult{}, ctx.Err()
-	case <-op.done:
+	completed := func() (EngineResult, func(), error) {
 		result := op.result
 		result.Candidates = append([]Candidate(nil), result.Candidates...)
-		return result, op.err
+		if op.err != nil {
+			return EngineResult{}, release, op.err
+		}
+		return result, release, nil
+	}
+	select {
+	case <-execCtx.Done():
+		// Completion and cancellation race: a closed op wins so a ready
+		// result is never discarded.
+		select {
+		case <-op.done:
+			return completed()
+		default:
+			op.abandoned.Store(true)
+			return EngineResult{}, nil, execCtx.Err()
+		}
+	case <-op.done:
+		return completed()
 	}
 }
 func (w *Worker) predictLocked(parent context.Context, request EngineRequest) (EngineResult, error) {
@@ -375,23 +415,42 @@ type EnginePool struct{ large, small predictor }
 func NewEnginePool(large, small predictor) *EnginePool {
 	return &EnginePool{large: large, small: small}
 }
-func (p *EnginePool) predict(ctx context.Context, model string, request EngineRequest) (EngineResult, string, bool, error) {
+func (p *EnginePool) predict(waitCtx, execCtx context.Context, prio Priority, batchID, model string, request EngineRequest) (EngineResult, func(), string, bool, error) {
 	if model == "5m" {
-		result, err := p.small.predict(ctx, request)
-		return result, "5m", false, err
+		result, release, err := p.small.predict(waitCtx, execCtx, prio, batchID, request)
+		return result, release, "5m", false, err
 	}
-	result, err := p.large.predict(ctx, request)
+	result, release, err := p.large.predict(waitCtx, execCtx, prio, batchID, request)
 	if err == nil {
-		return result, "79m", false, nil
+		return result, release, "79m", false, nil
 	}
-	if errors.Is(err, ErrWorkerBusy) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrPositionMismatch) || errors.Is(err, ErrInvalidPosition) || errors.Is(err, ErrNoLegalMoves) {
-		return EngineResult{}, "", false, err
+	// The worker returns a release with operation errors (nothing was
+	// stored); free it here since the caller only releases on success.
+	// Joins and admission failures carry no grant.
+	if release != nil {
+		release()
 	}
-	result, fallbackErr := p.small.predict(ctx, request)
+	if errors.Is(err, ErrWorkerBusy) || errors.Is(err, ErrJoined) || errors.Is(err, ErrSuperseded) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrPositionMismatch) || errors.Is(err, ErrInvalidPosition) || errors.Is(err, ErrNoLegalMoves) {
+		return EngineResult{}, nil, "", false, err
+	}
+	result, release, fallbackErr := p.small.predict(waitCtx, execCtx, prio, batchID, request)
 	if fallbackErr != nil {
-		return EngineResult{}, "", false, fmt.Errorf("engine fallback failed: %w", errors.Join(err, fallbackErr))
+		if release != nil {
+			release()
+		}
+		return EngineResult{}, nil, "", false, fmt.Errorf("engine fallback failed: %w", errors.Join(err, fallbackErr))
 	}
-	return result, "5m", true, nil
+	return result, release, "5m", true, nil
+}
+
+// cancelBatch drops queued batch-lane tickets on the concrete workers.
+// Predictor fakes in tests have no scheduler and ignore the call.
+func (p *EnginePool) cancelBatch(batchID string) {
+	for _, pr := range []predictor{p.large, p.small} {
+		if w, ok := pr.(*Worker); ok {
+			w.sched.CancelBatch(batchID)
+		}
+	}
 }
 func (p *EnginePool) health() (string, map[string]WorkerStatus, int) {
 	large, small := p.large.snapshot(), p.small.snapshot()

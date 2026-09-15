@@ -48,15 +48,17 @@ type evaluationResponse struct {
 	ActualSettings *stockfishSettings `json:"actual_settings,omitempty"`
 }
 
-// Evaluator owns the single admission slot and trusted process configuration.
+// Evaluator owns the priority scheduler and trusted process configuration.
+// Each search still spawns one isolated process; the scheduler only orders
+// admission to protect the CPU from fork/exec + search overlap.
 type Evaluator struct {
 	command []string
-	gate    chan struct{}
+	sched   *Scheduler
 	timeout time.Duration
 }
 
 func NewEvaluator(python, helper, binary string) *Evaluator {
-	return &Evaluator{command: []string{python, helper, "--binary", binary}, gate: make(chan struct{}, 1), timeout: 8 * time.Second}
+	return &Evaluator{command: []string{python, helper, "--binary", binary}, sched: NewScheduler(), timeout: 8 * time.Second}
 }
 
 func (s *server) evaluate(w http.ResponseWriter, r *http.Request) {
@@ -96,22 +98,42 @@ func (s *server) evaluate(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 400, err.Code, err.Message)
 		return
 	}
-	// Cache lookup runs before the single admission slot is touched: hits
+	// Cache lookup runs before the admission scheduler is touched: hits
 	// must never queue behind live searches.
-	if cached, ok := s.cachedSF(request); ok {
-		result = cached
-		w.Header().Set("X-Eval-Cache", "hit")
-		writeJSON(w, 200, cached)
-		return
-	}
 	if s.evaluator == nil {
+		if cached, ok := s.cachedSF(request); ok {
+			result = cached
+			w.Header().Set("X-Eval-Cache", "hit")
+			writeJSON(w, 200, cached)
+			return
+		}
 		writeAPIError(w, 502, "engine_unavailable", "Stockfish is unavailable")
 		return
 	}
-	result, err := s.evaluator.run(r.Context(), request)
-	if err != nil {
+	prio := requestPriority(r)
+	var release func()
+	var runErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if cached, ok := s.cachedSF(request); ok {
+			result = cached
+			w.Header().Set("X-Eval-Cache", "hit")
+			writeJSON(w, 200, cached)
+			return
+		}
+		result, release, runErr = s.evaluator.run(r.Context(), r.Context(), prio, "", request)
+		if !errors.Is(runErr, ErrJoined) {
+			break
+		}
+	}
+	if runErr != nil {
+		if release != nil {
+			release()
+		}
+		err := runErr
 		var requestErr *requestError
 		switch {
+		case errors.Is(err, ErrSuperseded):
+			writeAPIError(w, 409, "superseded", "a newer request superseded this position")
 		case errors.Is(err, ErrWorkerBusy):
 			w.Header().Set("Retry-After", "1")
 			writeAPIError(w, 503, "engine_busy", "Stockfish is busy")
@@ -125,6 +147,9 @@ func (s *server) evaluate(w http.ResponseWriter, r *http.Request) {
 	result.ActualSettings = request.Settings
 	hash, key := sfIdentity(request).coordinates()
 	s.storeCache(hash, "sf", key, result)
+	if release != nil {
+		release()
+	}
 	w.Header().Set("X-Eval-Cache", "miss")
 	writeJSON(w, 200, result)
 }
@@ -166,22 +191,44 @@ func (b *cappedOutput) Write(p []byte) (int, error) {
 	return b.buffer.Write(p)
 }
 
-func (e *Evaluator) run(parent context.Context, request evaluationRequest) (*evaluationResponse, error) {
-	select {
-	case e.gate <- struct{}{}:
-	default:
-		return nil, ErrWorkerBusy
+func (e *Evaluator) run(waitCtx, execCtx context.Context, prio Priority, batchID string, request evaluationRequest) (*evaluationResponse, func(), error) {
+	key, _ := sfIdentity(request).coordinates()
+	wait := waitCtx
+	cancel := context.CancelFunc(func() {})
+	if prio != PriorityBatch {
+		wait, cancel = context.WithTimeout(waitCtx, syncWait(prio))
 	}
-	defer func() { <-e.gate }()
+	grant, joined, err := e.sched.Acquire(wait, prio, key, batchID)
+	cancel()
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrSchedulerBusy):
+			return nil, nil, ErrWorkerBusy
+		case errors.Is(err, ErrSuperseded):
+			return nil, nil, err
+		case waitCtx.Err() != nil:
+			return nil, nil, waitCtx.Err()
+		default:
+			return nil, nil, ErrWorkerBusy
+		}
+	}
+	if joined {
+		return nil, nil, ErrJoined
+	}
+	release := func() { e.sched.Release(grant) }
+	fail := func(err error) (*evaluationResponse, func(), error) {
+		release()
+		return nil, nil, err
+	}
 	timeout := e.timeout
 	if request.Settings != nil {
 		timeout += time.Duration(request.Settings.TimeMS) * time.Millisecond
 	}
-	ctx, cancel := context.WithTimeout(parent, timeout)
+	ctx, cancel := context.WithTimeout(execCtx, timeout)
 	defer cancel()
 	input, err := json.Marshal(request)
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 	cmd := exec.CommandContext(ctx, e.command[0], e.command[1:]...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -201,42 +248,42 @@ func (e *Evaluator) run(parent context.Context, request evaluationRequest) (*eva
 	cmd.Stdout = &output
 	cmd.Stderr = newWorkerDiagnostics("stockfish")
 	if err := cmd.Start(); err != nil {
-		return nil, err
+		return fail(err)
 	}
 	pid := cmd.Process.Pid
 	if err := cmd.Wait(); err != nil {
 		// Clean up only when the wrapper did not exit cleanly; a successful
 		// Python finally block already quits the engine.
 		cleanupEvaluationGroup(pid)
-		return nil, err
+		return fail(err)
 	}
 	if err := ctx.Err(); err != nil {
 		cleanupEvaluationGroup(pid)
-		return nil, err
+		return fail(err)
 	}
 	var workerError apiError
 	if err := json.Unmarshal(output.Bytes(), &workerError); err != nil {
-		return nil, err
+		return fail(err)
 	}
 	if workerError.Code != "" {
 		switch workerError.Code {
 		case "invalid_fen", "invalid_position":
-			return nil, &requestError{workerError.Code, "position or move history is invalid"}
+			return fail(&requestError{workerError.Code, "position or move history is invalid"})
 		case "position_mismatch":
-			return nil, &requestError{workerError.Code, "moves do not produce fen"}
+			return fail(&requestError{workerError.Code, "moves do not produce fen"})
 		default:
-			return nil, errors.New("worker unavailable")
+			return fail(errors.New("worker unavailable"))
 		}
 	}
 	var result evaluationResponse
 	var document any
 	if err := json.Unmarshal(output.Bytes(), &document); err != nil {
-		return nil, err
+		return fail(err)
 	}
 	if !evaluationDocument(document) || !strictDocument(document, &result) || !validEvaluationValue(result, request.Settings) {
-		return nil, errors.New("invalid worker response")
+		return fail(errors.New("invalid worker response"))
 	}
-	return &result, nil
+	return &result, release, nil
 }
 
 func cleanupEvaluationGroup(pid int) {

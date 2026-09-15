@@ -27,24 +27,24 @@ type fakePredictor struct {
 	status WorkerStatus
 }
 
-func (f *fakePredictor) predict(context.Context, EngineRequest) (EngineResult, error) {
+func (f *fakePredictor) predict(_, _ context.Context, _ Priority, _ string, _ EngineRequest) (EngineResult, func(), error) {
 	f.calls++
-	return f.result, f.err
+	return f.result, nil, f.err
 }
 func (f *fakePredictor) snapshot() WorkerStatus { return f.status }
 
 func TestEnginePoolFallsBackPerRequest(t *testing.T) {
 	large := &fakePredictor{err: errors.New("79m failed")}
 	small := &fakePredictor{result: engineFixture("e2e4")}
-	result, used, degraded, err := NewEnginePool(large, small).predict(context.Background(), "79m", EngineRequest{})
+	result, _, used, degraded, err := NewEnginePool(large, small).predict(context.Background(), context.Background(), PriorityFocus, "", "79m", EngineRequest{})
 	if err != nil || used != "5m" || !degraded || result.Move != "e2e4" || large.calls != 1 || small.calls != 1 {
 		t.Fatalf("fallback: %+v %s %t %v", result, used, degraded, err)
 	}
 }
 func TestEnginePoolDoesNotFallbackForRequestErrors(t *testing.T) {
-	for _, failure := range []error{ErrWorkerBusy, context.Canceled, context.DeadlineExceeded, ErrPositionMismatch, ErrInvalidPosition, ErrNoLegalMoves} {
+	for _, failure := range []error{ErrWorkerBusy, ErrJoined, ErrSuperseded, context.Canceled, context.DeadlineExceeded, ErrPositionMismatch, ErrInvalidPosition, ErrNoLegalMoves} {
 		large, small := &fakePredictor{err: failure}, &fakePredictor{}
-		_, _, _, err := NewEnginePool(large, small).predict(context.Background(), "79m", EngineRequest{})
+		_, _, _, _, err := NewEnginePool(large, small).predict(context.Background(), context.Background(), PriorityFocus, "", "79m", EngineRequest{})
 		if !errors.Is(err, failure) || small.calls != 0 {
 			t.Fatalf("fallback on %v", failure)
 		}
@@ -160,32 +160,54 @@ func awaitPID(t *testing.T, path string) int {
 	return 0
 }
 func TestCanceledCallerKeepsWarmWorkerAndSlot(t *testing.T) {
+	oldWait := syncWaitFocus
+	syncWaitFocus = 100 * time.Millisecond
+	defer func() { syncWaitFocus = oldWait }()
 	w, path := persistentWorker(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	r := EngineRequest{FEN: startFEN, SelfElo: 400, OppoElo: 1}
-	go func() { _, err := w.predict(ctx, r); done <- err }()
+	go func() {
+		_, release, err := w.predict(ctx, ctx, PriorityFocus, "", r)
+		if release != nil {
+			release()
+		}
+		done <- err
+	}()
 	pid := awaitPID(t, path)
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	if len(w.slot) != 1 || w.snapshot().State != stateBusy {
+	if w.snapshot().State != stateBusy {
 		t.Fatal("canceled caller released slot")
 	}
-	if _, err := w.predict(context.Background(), EngineRequest{FEN: startFEN, OppoElo: 2}); !errors.Is(err, ErrWorkerBusy) {
+	// A different position waits for the drain, then reports busy: it must
+	// not cut in front of the running operation.
+	if _, _, err := w.predict(context.Background(), context.Background(), PriorityFocus, "", EngineRequest{FEN: startFEN, OppoElo: 2}); !errors.Is(err, ErrWorkerBusy) {
 		t.Fatalf("second request: %v", err)
 	}
-	// Joining the same operation drains its original response without rerunning.
+	// The same deterministic work joins instead of inferring twice. The join
+	// waits on the owner, so it gets a generous budget here.
 	r.InitialFEN = startFEN // Equivalent explicit history root shares canonical identity.
-	result, err := w.predict(context.Background(), r)
+	syncWaitFocus = 10 * time.Second
+	if _, _, err := w.predict(context.Background(), context.Background(), PriorityFocus, "", r); !errors.Is(err, ErrJoined) {
+		t.Fatalf("duplicate: %v", err)
+	}
+	// The drain owns the slot until the reply lands; afterwards the warm
+	// process serves fresh work.
+	deadline := time.Now().Add(10 * time.Second)
+	for !w.sched.Idle() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !w.sched.Idle() {
+		t.Fatal("drain retained slot")
+	}
+	result, err := predictSync(t, w, r)
 	if err != nil || result.Move != "e2e4" {
-		t.Fatalf("join: %+v %v", result, err)
+		t.Fatalf("re-infer: %+v %v", result, err)
 	}
-	if len(w.slot) != 0 {
-		t.Fatal("completed slot retained")
-	}
-	result, err = w.predict(context.Background(), EngineRequest{FEN: startFEN, OppoElo: 2})
+	result, err = predictSync(t, w, EngineRequest{FEN: startFEN, OppoElo: 2})
 	if err != nil || result.Move != "d2d4" {
 		t.Fatalf("cross-talk: %+v %v", result, err)
 	}
@@ -196,34 +218,48 @@ func TestCanceledCallerKeepsWarmWorkerAndSlot(t *testing.T) {
 		t.Fatalf("warm PID changed: %d -> %d", pid, nextPID)
 	}
 }
+
+// predictSync runs one inference and releases the slot, mirroring the
+// handler's release-after-store discipline (tests have nothing to store).
+func predictSync(t *testing.T, w *Worker, r EngineRequest) (EngineResult, error) {
+	t.Helper()
+	result, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, "", r)
+	if release != nil {
+		release()
+	}
+	return result, err
+}
 func TestHardTimeoutKillsReapsAndReleases(t *testing.T) {
 	w, path := persistentWorker(t)
 	w.moveWait = 150 * time.Millisecond
 	done := make(chan error, 1)
 	go func() {
-		_, err := w.predict(context.Background(), EngineRequest{FEN: startFEN, SelfElo: 4999})
+		_, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, "", EngineRequest{FEN: startFEN, SelfElo: 4999})
+		if release != nil {
+			release()
+		}
 		done <- err
 	}()
 	pid := awaitPID(t, path)
 	if err := <-done; !errors.Is(err, ErrProtocol) {
 		t.Fatalf("timeout: %v", err)
 	}
-	if len(w.slot) != 0 || w.snapshot().State != stateFailed {
+	if !w.sched.Idle() || w.snapshot().State != stateFailed {
 		t.Fatal("hard timeout retained slot")
 	}
 	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
 		t.Fatalf("PID %d not reaped: %v", pid, err)
 	}
-	if _, err := w.predict(context.Background(), EngineRequest{FEN: startFEN, OppoElo: 2}); err != nil {
+	if _, err := predictSync(t, w, EngineRequest{FEN: startFEN, OppoElo: 2}); err != nil {
 		t.Fatalf("recovery: %v", err)
 	}
 }
 func TestWorkerRejectsOversizedResponse(t *testing.T) {
 	w, _ := persistentWorker(t)
-	if _, err := w.predict(context.Background(), EngineRequest{FEN: startFEN, OppoElo: 3}); !errors.Is(err, ErrProtocol) {
+	if _, err := predictSync(t, w, EngineRequest{FEN: startFEN, OppoElo: 3}); !errors.Is(err, ErrProtocol) {
 		t.Fatal(err)
 	}
-	if len(w.slot) != 0 {
+	if !w.sched.Idle() {
 		t.Fatal("slot leaked")
 	}
 }
@@ -233,12 +269,18 @@ func TestInitializationTimeoutKillsAndReaps(t *testing.T) {
 	t.Setenv("MAIA_JSON_SLOW_INIT", "1")
 	w.startWait = 150 * time.Millisecond
 	done := make(chan error, 1)
-	go func() { _, err := w.predict(context.Background(), EngineRequest{FEN: startFEN}); done <- err }()
+	go func() {
+		_, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, "", EngineRequest{FEN: startFEN})
+		if release != nil {
+			release()
+		}
+		done <- err
+	}()
 	pid := awaitPID(t, path)
 	if err := <-done; !errors.Is(err, ErrProtocol) {
-		t.Fatal(err)
+		t.Fatalf("timeout: %v", err)
 	}
-	if len(w.slot) != 0 {
+	if !w.sched.Idle() {
 		t.Fatal("initialization slot leaked")
 	}
 	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
@@ -248,13 +290,13 @@ func TestInitializationTimeoutKillsAndReaps(t *testing.T) {
 
 func TestInvalidPositionResponseLeavesWarmWorkerReady(t *testing.T) {
 	w, _ := persistentWorker(t)
-	if _, err := w.predict(context.Background(), EngineRequest{FEN: startFEN, OppoElo: 4}); !errors.Is(err, ErrInvalidPosition) {
+	if _, err := predictSync(t, w, EngineRequest{FEN: startFEN, OppoElo: 4}); !errors.Is(err, ErrInvalidPosition) {
 		t.Fatal(err)
 	}
 	w.mu.Lock()
 	pid := w.proc.cmd.Process.Pid
 	w.mu.Unlock()
-	result, err := w.predict(context.Background(), EngineRequest{FEN: startFEN, OppoElo: 2})
+	result, err := predictSync(t, w, EngineRequest{FEN: startFEN, OppoElo: 2})
 	if err != nil || result.Move != "d2d4" {
 		t.Fatalf("stale error: %+v %v", result, err)
 	}
@@ -266,23 +308,47 @@ func TestInvalidPositionResponseLeavesWarmWorkerReady(t *testing.T) {
 	}
 }
 func TestSampledRequestsDoNotJoin(t *testing.T) {
+	oldWait := syncWaitFocus
+	syncWaitFocus = 100 * time.Millisecond
+	defer func() { syncWaitFocus = oldWait }()
 	w, path := persistentWorker(t)
 	request := EngineRequest{FEN: startFEN, SelfElo: 400, Temperature: .7}
 	done := make(chan error, 1)
-	go func() { _, err := w.predict(context.Background(), request); done <- err }()
+	go func() {
+		_, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, "", request)
+		if release != nil {
+			release()
+		}
+		done <- err
+	}()
 	awaitPID(t, path)
-	if _, err := w.predict(context.Background(), request); !errors.Is(err, ErrWorkerBusy) {
+	// The same sampled content queues behind the running op (it must never
+	// join: a join would report ErrJoined, not busy).
+	if _, _, err := w.predict(context.Background(), context.Background(), PriorityFocus, "", request); !errors.Is(err, ErrWorkerBusy) {
 		t.Fatalf("sampled duplicate joined: %v", err)
 	}
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
+	// The queued duplicate never ran; a fresh inference still succeeds.
+	if _, err := predictSync(t, w, request); err != nil {
+		t.Fatal(err)
+	}
 }
 func TestWorkerAcquireReturnsBusyWithoutStartingProcess(t *testing.T) {
 	w := NewWorker("test", nil)
-	w.slot <- struct{}{}
-	if _, err := w.predict(context.Background(), EngineRequest{}); !errors.Is(err, ErrWorkerBusy) {
+	grant, joined, err := w.sched.Acquire(context.Background(), PriorityBatch, "hold", "")
+	if err != nil || joined {
+		t.Fatalf("hold: %v %t", err, joined)
+	}
+	defer w.sched.Release(grant)
+	oldWait := syncWaitFocus
+	syncWaitFocus = 50 * time.Millisecond
+	defer func() { syncWaitFocus = oldWait }()
+	if _, _, err := w.predict(context.Background(), context.Background(), PriorityFocus, "", EngineRequest{}); !errors.Is(err, ErrWorkerBusy) {
 		t.Fatal(err)
 	}
-	<-w.slot
+	if w.proc != nil {
+		t.Fatal("busy admission started a process")
+	}
 }

@@ -131,7 +131,7 @@ func TestMoveHandlerPersistsAfterClientStopsWaiting(t *testing.T) {
 				t.Fatal("handler returned before bounded inference settled")
 			case <-time.After(30 * time.Millisecond):
 			}
-			if len(worker.slot) != 1 {
+			if worker.sched.Idle() {
 				t.Fatal("disconnected client released inference slot")
 			}
 			if err := os.WriteFile(release, []byte("ready"), 0600); err != nil {

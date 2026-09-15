@@ -64,9 +64,9 @@ func (i evaluationIdentity) coordinates() (string, string) {
 }
 
 var (
-	docAllowNull = map[string]bool{"terminal": true, "best_move": true, "actual_settings": true, "winning_side": true}
-	evalRequired = []string{"engine", "search_policy", "depth", "score", "lines", "terminal", "best_move"}
-	moveRequired = []string{"move", "top_moves", "wdl", "model_used", "degraded"}
+	docAllowNull         = map[string]bool{"terminal": true, "best_move": true, "actual_settings": true, "winning_side": true}
+	evalRequired         = []string{"engine", "search_policy", "depth", "score", "lines", "terminal", "best_move"}
+	moveRequired         = []string{"move", "top_moves", "wdl", "model_used", "degraded"}
 	engineResultRequired = []string{"move", "candidates", "wdl"}
 )
 

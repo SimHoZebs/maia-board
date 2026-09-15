@@ -74,7 +74,7 @@ func TestEvaluationHelper(t *testing.T) {
 func fakeEvaluator(t *testing.T, mode string) *Evaluator {
 	t.Helper()
 	t.Setenv("SF_TEST_HELPER", mode)
-	return &Evaluator{command: []string{os.Args[0], "-test.run=TestEvaluationHelper"}, gate: make(chan struct{}, 1), timeout: time.Second}
+	return &Evaluator{command: []string{os.Args[0], "-test.run=TestEvaluationHelper"}, sched: NewScheduler(), timeout: time.Second}
 }
 
 func TestEvaluateHTTP(t *testing.T) {
@@ -118,7 +118,14 @@ func TestEvaluateHTTP(t *testing.T) {
 		})
 	}
 	e := fakeEvaluator(t, "ok")
-	e.gate <- struct{}{}
+	hold, joined, err := e.sched.Acquire(context.Background(), PriorityBatch, "hold", "")
+	if err != nil || joined {
+		t.Fatalf("hold: %v %t", err, joined)
+	}
+	defer e.sched.Release(hold)
+	oldWait := syncWaitFocus
+	syncWaitFocus = 50 * time.Millisecond
+	defer func() { syncWaitFocus = oldWait }()
 	w := httptest.NewRecorder()
 	(&server{evaluator: e}).evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(valid)))
 	if w.Code != 503 || w.Header().Get("Retry-After") != "1" {
@@ -202,7 +209,7 @@ func TestEvaluationCancellationKillsGroup(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			done := make(chan error, 1)
-			go func() { _, err := e.run(ctx, evaluationRequest{FEN: startFEN}); done <- err }()
+			go func() { _, _, err := e.run(ctx, ctx, PriorityFocus, "", evaluationRequest{FEN: startFEN}); done <- err }()
 			var pids []byte
 			deadline := time.Now().Add(2 * time.Second)
 			for time.Now().Before(deadline) {
@@ -238,7 +245,7 @@ func TestEvaluationCancellationKillsGroup(t *testing.T) {
 					t.Fatalf("PID 1 failed to reap process %d", pid)
 				}
 			}
-			if len(e.gate) != 0 {
+			if !e.sched.Idle() {
 				t.Fatal("admission slot leaked")
 			}
 		})
@@ -266,7 +273,7 @@ func TestRealStockfishHTTPAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { _, err := e.run(ctx, evaluationRequest{FEN: startFEN}); done <- err }()
+	go func() { _, _, err := e.run(ctx, ctx, PriorityFocus, "", evaluationRequest{FEN: startFEN}); done <- err }()
 	// Observe the real native engine in the wrapper's inherited group before canceling.
 	var group, enginePID int
 	deadline := time.Now().Add(2 * time.Second)
