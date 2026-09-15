@@ -149,7 +149,7 @@ function BoardShell({ state, dispatch, ready, toolbar, position, transition, ori
   return <section className={`board-stage${over ? ' game-over' : ''}`} aria-label="Chess workspace">
     {toolbar}
     {renderStrip(oppositeColor(orientation))}
-    <div className={`board-frame${withEvaluation ? ' with-evaluation' : ''}`}><ErrorBoundary label="board" resetKey={boardResetKey} renderFallback={(error, retry) => <PanelError id="board-error" title="Board failed to render" message={error.message || 'Unknown rendering error.'} onRetry={retry} />}><ChessBoard position={position} transition={transition} orientation={orientation} enabled={enabled} thinking={!!request} interactionVersion={revision} shapes={shapes} onMove={(from, to) => dispatch({ type: 'move', from, to })} />{evalBar}</ErrorBoundary></div>
+    <div className={`board-frame${withEvaluation ? ' with-evaluation' : ''}`}><ErrorBoundary label="board" resetKey={boardResetKey} renderFallback={(error, retry) => <PanelError id="board-error" title="Board failed to render" message={error.message || 'Unknown rendering error.'} onRetry={retry} />}><ChessBoard key={state.coordinatesOnSquares ? 'squares' : 'outside'} position={position} transition={transition} orientation={orientation} enabled={enabled} thinking={!!request} interactionVersion={revision} coordinatesOnSquares={state.coordinatesOnSquares} shapes={shapes} onMove={(from, to) => dispatch({ type: 'move', from, to })} />{evalBar}</ErrorBoundary></div>
     {renderStrip(orientation)}
     {movesPanel}
     {resultOverlay}

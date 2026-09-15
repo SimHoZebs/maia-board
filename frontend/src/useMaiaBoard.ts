@@ -58,7 +58,7 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
   useEffect(() => {
     let errorMessage = '';
     for (const [key, value] of [
-      [KEYS.settings, state.play.settings], [KEYS.feedback, state.feedback], [KEYS.badgeLoading, state.badgeLoading],
+      [KEYS.settings, state.play.settings], [KEYS.feedback, state.feedback], [KEYS.badgeLoading, state.badgeLoading], [KEYS.coordinatesOnSquares, state.coordinatesOnSquares],
       [STOCKFISH_STORAGE_KEY, state.stockfish], [KEYS.analysis, state.inputs],
       [KEYS.snapshot, state.analysisLoaded ? snapshotOf(state.analysis, state.analysisSourceId ?? undefined) : null],
     ] as const) {
@@ -66,7 +66,7 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
       if (error) errorMessage = error.message;
     }
     sync.setPreferenceError(errorMessage);
-  }, [state.play.settings, state.feedback, state.badgeLoading, state.stockfish, state.inputs, state.analysisLoaded, state.analysis, state.analysisSourceId, sync]);
+  }, [state.play.settings, state.feedback, state.badgeLoading, state.coordinatesOnSquares, state.stockfish, state.inputs, state.analysisLoaded, state.analysis, state.analysisSourceId, sync]);
 
   useEffect(() => {
     const request = state.request;

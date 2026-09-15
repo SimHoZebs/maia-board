@@ -29,6 +29,16 @@ describe('feedback settings', () => {
     localStorage.setItem(KEYS.badgeLoading, JSON.stringify(true));
     expect(initialState().badgeLoading).toBe('reel');
   });
+  it('defaults coordinates inside squares and round-trips through storage', () => {
+    expect(initialState().coordinatesOnSquares).toBe(true);
+    const outside = reducer(initialState(), { type: 'coordinates-on-squares', enabled: false });
+    expect(outside.coordinatesOnSquares).toBe(false);
+    expect(reducer(outside, { type: 'coordinates-on-squares', enabled: false })).toBe(outside);
+    localStorage.setItem(KEYS.coordinatesOnSquares, JSON.stringify(false));
+    expect(initialState().coordinatesOnSquares).toBe(false);
+    localStorage.setItem(KEYS.coordinatesOnSquares, JSON.stringify('squares'));
+    expect(initialState().coordinatesOnSquares).toBe(true);
+  });
 });
 
 describe('timeline-backed move feedback', () => {

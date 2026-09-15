@@ -30,6 +30,24 @@ export function SettingsPage({ state, dispatch }: Props) {
   ] as { value: BadgeLoading; label: string; hint: string }[];
   const badgeIndex = Math.max(0, badgeOptions.findIndex(option => option.value === state.badgeLoading));
   return <section className="engine-settings panel" aria-labelledby="settings-title">
+    <p className="settings-eyebrow">BOARD</p>
+    <h2 className="settings-subhead">Display</h2>
+    <div className="settings-control">
+      <div className="field field--row">
+        <span className="field-label" id="coordinates-style-label">Coordinates</span>
+        <div role="radiogroup" aria-labelledby="coordinates-style-label" className="segmented">
+          <label>
+            <input type="radio" name="coordinates-style" value="squares" checked={state.coordinatesOnSquares} onChange={() => dispatch({ type: 'coordinates-on-squares', enabled: true })} />
+            <span>Inside</span>
+          </label>
+          <label>
+            <input type="radio" name="coordinates-style" value="outside" checked={!state.coordinatesOnSquares} onChange={() => dispatch({ type: 'coordinates-on-squares', enabled: false })} />
+            <span>Outside</span>
+          </label>
+        </div>
+      </div>
+      <p>Inside squares stay aligned at any board size. Outside matches the classic look.</p>
+    </div>
     <p className="settings-eyebrow">ANALYSIS ENGINE</p>
     <h1 id="settings-title">Stockfish</h1>
     <div className="settings-control">

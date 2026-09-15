@@ -10,9 +10,9 @@ import { candidatePreviewShape, reviewBrushes } from './reviewArrows';
 
 export type BoardPosition = { fen: string; lastMove?: readonly string[] | null };
 export type BoardTransition = { line: string; ply: number };
-type Props = { position: BoardPosition; transition: BoardTransition; orientation: Color; enabled: boolean; thinking: boolean; interactionVersion: number; preview?: string | null; shapes?: DrawShape[]; onMove: (from: Square, to: Square) => void };
+type Props = { position: BoardPosition; transition: BoardTransition; orientation: Color; enabled: boolean; thinking: boolean; interactionVersion: number; coordinatesOnSquares: boolean; preview?: string | null; shapes?: DrawShape[]; onMove: (from: Square, to: Square) => void };
 
-export function ChessBoard({ position, transition, orientation, enabled, thinking, interactionVersion, preview, shapes, onMove }: Props) {
+export function ChessBoard({ position, transition, orientation, enabled, thinking, interactionVersion, coordinatesOnSquares, preview, shapes, onMove }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const api = useRef<Api | null>(null);
   const callback = useRef(onMove);
@@ -31,7 +31,7 @@ export function ChessBoard({ position, transition, orientation, enabled, thinkin
       fen: initial.current!.fen,
       orientation: initial.current!.orientation,
       addDimensionsCssVarsTo: container.current!.closest<HTMLElement>('.board-frame') ?? undefined,
-      viewOnly: false, coordinates: true, animation: { enabled: true, duration: 220 },
+      viewOnly: false, coordinates: true, coordinatesOnSquares, animation: { enabled: true, duration: 220 },
       // Hold-and-drag (press, hold, move, release) shares the board with
       // tap-tap: draggable stays enabled for the press path while selectable
       // keeps the tap path. blockTouchScroll keeps a touch drag on the piece
@@ -49,6 +49,8 @@ export function ChessBoard({ position, transition, orientation, enabled, thinkin
     // so refresh the memo whenever the board resizes.
     const observer = new ResizeObserver(() => api.current?.state.dom.bounds.clear());
     if (container.current) observer.observe(container.current);
+    // Chessground builds the coords DOM once at construction; the caller
+    // forces a fresh mount (via key) when the style switches.
     return () => { observer.disconnect(); ground.destroy(); api.current = null; container.current?.replaceChildren(); };
   }, []);
   const lastMove = position.lastMove?.join(',');
