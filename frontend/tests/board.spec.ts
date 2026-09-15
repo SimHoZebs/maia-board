@@ -729,8 +729,9 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
     await expect(page.locator(`#${id}`)).toHaveText(/copied/i);
     await expect.poll(() => copiedTexts(page)).toContain(expected);
   }
-  await page.locator('#return-original').click();
-  await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
+  await page.locator('#analysis-prev').click();
+  await page.locator('#analysis-prev').click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 6');
   await piece(page, 'g8', 'black knight');
   await page.locator('#mode-play').click();
   await expect(page.locator('.player-strip').filter({ hasText: 'Maia' })).toContainText('1600');
@@ -1079,9 +1080,11 @@ for (const width of [320, 390]) {
     await expect(page.getByText('Engine moves', { exact: true })).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath(`variation-${width}.png`), fullPage: true });
-    await page.locator('#return-original').click();
-    await expect(variation).toHaveCount(0);
+    // No return button: step back to the fork, then Next continues original.
+    await page.locator('#analysis-prev').click();
+    await page.locator('#analysis-prev').click();
     await page.locator('#analysis-next').click();
+    await expect(variation).toHaveCount(0);
     await piece(page, 'e5', 'black pawn');
   });
 }
@@ -1117,7 +1120,10 @@ for (const originPly of [0, 9, 12]) {
     await page.locator('#analysis-prev').click();
     await expect(page.locator('#analysis-index')).toHaveText(`Position ${originPly + 1} / ${originPly + 2}`);
     await page.locator('#analysis-next').click();
-    await expect(page.locator('.variation-line .move-cell')).toHaveAttribute('aria-current', 'step');
+    // Next at the fork continues the original line, dropping the branch.
+    // (At the tip fork there is no original continuation, so it just exits.)
+    await expect(page.locator('#analysis-index')).toHaveText(originPly === 12 ? 'Position 13 / 13' : `Position ${originPly + 2} / 13`);
+    await expect(page.getByLabel('Explored variation', { exact: true })).toHaveCount(0);
   });
 }
 
@@ -1128,7 +1134,7 @@ test('tapping an original move after the branch exits the branch', async ({ page
   await page.locator('#analysis-next').click();
   await move(page, 'c7', 'c5');
   await expect(page.getByLabel('Explored variation', { exact: true })).toBeVisible();
-  await expect(page.locator('#return-original')).toBeVisible();
+  await expect(page.locator('#return-original')).toHaveCount(0);
   await page.locator('.original-move').first().click();
   await expect(page.getByLabel('Explored variation', { exact: true })).toHaveCount(0);
   await expect(page.locator('#return-original')).toHaveCount(0);
@@ -1163,17 +1169,19 @@ test('analysis keeps one scrolling main row and adds height only for a branch', 
   expect(branchRows[0]).toBe(mainRows[0] - 32);
   await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
   await page.locator('#analysis-first').click();
-  await page.locator('#analysis-next').click();
+  // Enter the branch through the notation (Next at the fork rejoins original).
+  await page.locator('.variation-line .move-cell').first().click();
   await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
   await page.locator('#analysis-last').click();
   await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath('horizontal-variation.png'), fullPage: true });
-  await page.locator('#return-original').click();
+  // No return button: clicking an original move exits the branch instead.
+  await page.locator('.original-move').first().click();
   expect(await list.evaluate(el => el.clientHeight)).toBe(height);
 });
 
-test('desktop layout keeps tools in the move row and branches downward', async ({ page }) => {
+test('desktop analysis branches downward with no board tools, next rejoins original', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await boot(page);
   // Original layout: no toolbar above the board; flip shares the move row.
@@ -1190,7 +1198,14 @@ test('desktop layout keeps tools in the move row and branches downward', async (
   const origin = (await page.locator('.branch-point > button').boundingBox())!;
   const branch = (await variation.boundingBox())!;
   expect(branch.y).toBeGreaterThanOrEqual(origin.y + origin.height);
-  await expect(page.locator('.move-navigation .board-actions #flip-board')).toBeVisible();
+  // Analysis has no board tools at all: no flip, no return button. Next at
+  // the fork continues the original line, dropping the branch.
+  await expect(page.locator('.move-navigation .board-actions')).toHaveCount(0);
+  await page.locator('#analysis-prev').click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 3');
+  await page.locator('#analysis-next').click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 7');
+  await expect(page.getByLabel('Explored variation', { exact: true })).toHaveCount(0);
 });
 
 test('complete game navigation keeps board size stable', async ({ page }) => {

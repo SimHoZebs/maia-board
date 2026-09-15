@@ -12,10 +12,38 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
   const cache = new EvaluationFixture();
   const evaluations = cache.entries;
   const errors: string[] = [];
+  // Fake review-batch server: accept the submitted items and immediately
+  // report a finished job. Actual evaluations still flow through the
+  // foreground /move + /evaluate mocks below via the batch prime, so panel
+  // content stays computed live exactly as in production.
+  const batches = new Map<string, number>();
+  let batchSeq = 0;
   page.on('pageerror', error => errors.push(error.message));
   await page.route('http://maia.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
+    const method = route.request().method();
     if (await cache.lookup(route)) return;
+    if (path === '/reviews' && method === 'POST') {
+      const body = route.request().postDataJSON();
+      const total = Array.isArray(body?.requests) ? body.requests.length : 0;
+      const jobId = `mock-batch-${++batchSeq}`;
+      batches.set(jobId, total);
+      await route.fulfill({ json: { job_id: jobId, total, cached: 0, pending: total } });
+      return;
+    }
+    if (path.startsWith('/reviews/')) {
+      const segments = path.slice('/reviews/'.length).split('/');
+      const job = batches.get(segments[0]);
+      if (job === undefined) { await route.fulfill({ status: 404, body: '' }); return; }
+      const progress = { job_id: segments[0], total: job, done: job, failed: 0, cancelled: false, finished: true };
+      if (segments[1] === 'events') {
+        await route.fulfill({ body: `data: ${JSON.stringify({ progress })}\n\n`, contentType: 'text/event-stream' });
+        return;
+      }
+      if (method === 'DELETE') { await route.fulfill({ status: 204, body: '' }); return; }
+      await route.fulfill({ json: progress });
+      return;
+    }
     if (path === '/move' || path === '/evaluate') {
       const payload = route.request().postDataJSON(); requests.push({ engine: path, ...payload });
       const engine = path === '/move' ? 'maia' : 'sf';
@@ -115,7 +143,7 @@ async function atStart(page: Page) {
   await page.locator('#analysis-first').click();
   await expect(lines(page)).toHaveCount(3);
 }
-test('automatic review shows real overlapping SVG arrows and orientation', async ({ page }, info) => {
+test('automatic review shows real overlapping SVG arrows', async ({ page }, info) => {
   const app = await bootReview(page); await atStart(page);
   const strokes = async () => lines(page).evaluateAll(elements => elements.map(el => ({ color: el.getAttribute('stroke'), opacity: el.getAttribute('opacity'), width: el.getAttribute('stroke-width'), from: [el.getAttribute('x1'), el.getAttribute('y1')], to: [el.getAttribute('x2'), el.getAttribute('y2')] })));
   const arrows = await strokes();
@@ -124,9 +152,9 @@ test('automatic review shows real overlapping SVG arrows and orientation', async
   expect(arrows.map(arrow => arrow.opacity)).toEqual(['0.45','0.45','0.45']);
   expect(arrows.every(arrow => JSON.stringify(arrow.from) === JSON.stringify(arrows[0].from) && JSON.stringify(arrow.to) === JSON.stringify(arrows[0].to))).toBe(true);
   await expect(lines(page)).toHaveCount(3);
-  await page.locator('#flip-board').click();
-  expect(Number((await strokes())[0].from[0])).toBe(-Number(arrows[0].from[0]));
-  await page.locator('#flip-board').click();
+  // Analysis board is fixed white-side up (no flip button).
+  await expect(page.locator('#flip-board')).toHaveCount(0);
+  await expect(page.locator('#board .cg-wrap')).toHaveClass(/orientation-white/);
   await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
   await page.screenshot({ path: info.outputPath('coincident-arrows.png'), fullPage: true });
   expect(app.errors).toEqual([]);
@@ -233,7 +261,10 @@ test('moves to review distinguishes empty games, no issues, and explored lines',
   await page.mouse.click(board.x + board.width * 3.5 / 8, board.y + board.height * 4.5 / 8);
   await page.getByRole('tab', { name: 'Moves to review', exact: true }).click();
   await expect(page.locator('.tab-action').getByRole('button', { name: 'Analyze explored line' })).toBeVisible();
-  await page.locator('#return-original').click();
+  // No return button: step back to the fork, then Next continues original.
+  await page.locator('#analysis-prev').click();
+  await page.locator('#analysis-next').click();
+  await expect(page.getByLabel('Explored variation', { exact: true })).toHaveCount(0);
   await page.getByRole('tab', { name: 'Move analysis', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Game overview' })).toBeVisible();
   await page.getByRole('tab', { name: 'Moves to review', exact: true }).click();
@@ -326,7 +357,6 @@ test('move analysis shows only your moves with your decision points on the graph
   await expect(page.locator('.chart-line')).toHaveCount(1);
   expect(await page.locator('.chart-point span').allTextContents()).toEqual(['1…', '2…']);
   await expect(page.locator('.chart-point:disabled')).toHaveCount(0);
-  await page.locator('#flip-board').click();
   await expect(page.getByRole('region', { name: 'Black accuracy', exact: true })).toContainText('Black · You');
   expect(app.errors).toEqual([]);
 });
@@ -510,11 +540,9 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
     expect(bar.height).toBeCloseTo(squares.height, 0);
     const white = (await page.locator('.balance-white').boundingBox())!;
     expect(white.y + white.height).toBeCloseTo(bar.y + bar.height, 0);
-    await page.locator('#flip-board').click();
-    const flipped = (await page.locator('.balance-white').boundingBox())!;
-    expect(flipped.y).toBeCloseTo(bar.y, 0);
-    expect(flipped.height).toBeCloseTo(white.height, 0);
-    await page.locator('#flip-board').click();
+    // Analysis board is fixed white-side up (no flip button).
+    await expect(page.locator('#flip-board')).toHaveCount(0);
+    await expect(page.locator('#board .cg-wrap')).toHaveClass(/orientation-white/);
     await page.screenshot({ path: info.outputPath(`review-${viewport.width}.png`), fullPage: true });
   });
 }

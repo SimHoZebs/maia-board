@@ -202,7 +202,12 @@ export class GameRepository {
       });
       const games = new Map(this.value.games.map(g => [g.id, g]));
       for (const game of rows) games.set(game.id, game);
-      const merged = mergeSync([...games.values()], list.current_id, pendingAtStart);
+      // A null server marker only clears the current game when it is gone
+      // locally too: a seeded/imported game the server hasn't seen yet keeps
+      // its marker (an empty server list must not retire the live game).
+      // Explicit deletes still win through mergeSync's pending-delete rule.
+      const currentId = list.current_id ?? (this.value.currentId !== null && games.has(this.value.currentId) ? this.value.currentId : null);
+      const merged = mergeSync([...games.values()], currentId, pendingAtStart);
       this.update({ games: merged.saved, currentId: merged.currentId, total: list.total,
         nextOffset: list.next_offset === undefined ? (offset + list.games.length < list.total && list.games.length ? offset + list.games.length : null) : list.next_offset,
         error: this.value.pending.length ? this.value.error : '' });

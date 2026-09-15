@@ -329,7 +329,7 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
     await expect(page.locator('#analysis-index')).toContainText(`Position ${positions} / ${positions}`);
     const explore = page.getByRole('button', { name: /^Explore / }).first();
     await explore.click();
-    await expect(page.locator('#return-original')).toBeVisible();
+    await expect(page.getByLabel('Explored variation', { exact: true })).toBeVisible();
   });
 
   const perf = await page.evaluate(() => ({

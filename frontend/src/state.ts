@@ -52,7 +52,7 @@ export type Action =
   | { type: 'preview'; uci: string | null } | { type: 'original' }
   | { type: 'promote'; piece: string | null }
   | { type: 'inputs'; inputs: Partial<State['inputs']> }
-  | { type: 'load' } | { type: 'unload' } | { type: 'url-line'; initialFen: string; moves: string[] } | { type: 'step'; delta: number } | { type: 'view'; ply: number | null }
+  | { type: 'load' } | { type: 'unload' } | { type: 'url-line'; initialFen: string; moves: string[] } | { type: 'step'; delta: number } | { type: 'advance' } | { type: 'view'; ply: number | null }
   | { type: 'saved'; id: string } | { type: 'review'; id?: string } | { type: 'delete'; id: string }
   | { type: 'reply'; request: Request; response: MoveResponse }
   | { type: 'failure'; request: Request; error: unknown }
@@ -99,7 +99,7 @@ function commitMove(state: State, from: Square, to: Square, promotion?: string):
   try {
     if (state.mode === 'analysis') {
       const { analysis } = state;
-      if (analysis.branchFromPly !== null && analysis.index < analysis.branchFromPly) return { ...state, error: 'Return to original before exploring from another starting point.' };
+      if (analysis.branchFromPly !== null && analysis.index < analysis.branchFromPly) return { ...state, error: 'Step forward to the branching point before exploring from an earlier position.' };
       const game = new Chess(currentPosition(state).fen);
       const move = game.move({ from, to, ...(promotion ? { promotion } : {}) });
       const branchFromPly = analysis.branchFromPly ?? analysis.index;
@@ -243,6 +243,19 @@ export function reducer(state: State, action: Action): State {
       catch { return state; }
     }
     case 'step': return reducer(state, { type: 'view', ply: (state.mode === 'play' ? state.viewedPly ?? state.play.moves.length : state.analysis.index) + action.delta });
+    case 'advance': {
+      // Next-arrow semantics in analysis: stepping forward from the fork
+      // continues the original line, dropping the explored branch. Notation
+      // clicks keep entering the branch through 'view', so this stays a
+      // separate action instead of overloading 'view'.
+      if (state.mode !== 'analysis' || !state.analysisLoaded) return state;
+      const { analysis } = state;
+      if (analysis.branchFromPly !== null && analysis.index === analysis.branchFromPly) {
+        return transition(state, { analysis: { ...analysis, branchFromPly: null, branchMoves: [], index: Math.min(analysis.branchFromPly + 1, analysis.moves.length) } }, false);
+      }
+      const index = Math.min(analysis.index + 1, analysisLength(analysis));
+      return index === analysis.index ? state : transition(state, { analysis: { ...analysis, index } }, false);
+    }
     case 'view': {
       if (state.mode !== 'play' && state.mode !== 'analysis') return state;
       if (state.mode === 'play') {

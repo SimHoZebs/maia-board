@@ -25,7 +25,7 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
     const keydown = (event: KeyboardEvent) => {
       if (!ready || (mode !== 'play' && mode !== 'analysis') || event.altKey || event.ctrlKey || event.metaKey || (event.target as HTMLElement).closest('input, textarea, select, [contenteditable="true"], dialog')) return;
       const delta = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : null;
-      if (delta !== null) { event.preventDefault(); dispatch({ type: 'step', delta }); }
+      if (delta !== null) { event.preventDefault(); if (delta === 1 && mode === 'analysis') dispatch({ type: 'advance' }); else dispatch({ type: 'step', delta }); }
       else if (event.key === 'Home' || event.key === 'End') { event.preventDefault(); dispatch({ type: 'view', ply: event.key === 'Home' ? 0 : null }); }
     };
     document.addEventListener('keydown', keydown);

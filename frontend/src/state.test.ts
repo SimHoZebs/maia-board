@@ -128,6 +128,28 @@ describe('task lifecycles', () => {
     expect(state.analysis.index).toBe(1);
     expect(state.analysis.moves).toHaveLength(3);
   });
+  it('advances from the fork back onto the original line, dropping the branch', () => {
+    let state = reducer(started(), { type: 'mode', mode: 'analysis' });
+    state = reducer(state, { type: 'inputs', inputs: { pgn: '1. e4 e5 2. Nf3' } });
+    state = reducer(state, { type: 'load' });
+    state = reducer(state, { type: 'view', ply: 1 });
+    state = reducer(state, { type: 'move', from: 'c7', to: 'c5' });
+    expect(state.analysis.branchFromPly).toBe(1);
+    // Notation clicks still enter the branch.
+    state = reducer(state, { type: 'view', ply: 1 });
+    state = reducer(state, { type: 'view', ply: 2 });
+    expect(analysisLine(state.analysis).moves).toEqual(['e2e4', 'c7c5']);
+    // Next from the fork continues the original instead.
+    state = reducer(state, { type: 'view', ply: 1 });
+    state = reducer(state, { type: 'advance' });
+    expect(state.analysis.branchFromPly).toBeNull();
+    expect(state.analysis.branchMoves).toEqual([]);
+    expect(state.analysis.index).toBe(2);
+    expect(analysisLine(state.analysis).moves).toEqual(['e2e4', 'e7e5']);
+    // Plain advance without a branch steps forward.
+    state = reducer(state, { type: 'advance' });
+    expect(state.analysis.index).toBe(3);
+  });
   it('explores candidate UCI moves without a promotion dialog', () => {
     let state = reducer(started(), { type: 'mode', mode: 'analysis' });
     state = reducer(state, { type: 'inputs', inputs: { pgn: '1. e4 e5 2. Nf3' } });

@@ -16,12 +16,14 @@ export function MoveNavBar({
   ply,
   total,
   onView,
+  onAdvance,
   tools,
   menu,
 }: {
   ply: number;
   total: number;
   onView: (ply: number | null) => void;
+  onAdvance?: () => void;
   tools?: ReactNode;
   menu?: ReactNode;
 }) {
@@ -56,7 +58,7 @@ export function MoveNavBar({
             id={`analysis-${item.id}`}
             label={item.label}
             disabled={item.to < 0 || item.to > total || item.to === ply}
-            onClick={() => onView(item.to)}
+            onClick={() => item.id === 'next' && onAdvance ? onAdvance() : onView(item.to)}
           >
             <item.Icon size={16} aria-hidden="true" />
           </IconButton>
@@ -78,6 +80,7 @@ type MovesCore = {
 type MovesNavigation = {
   onView: (ply: number | null) => void;
   onOriginalView?: (ply: number) => void;
+  onAdvance?: () => void;
   tools?: ReactNode;
   menu?: ReactNode;
   hideNav?: boolean;
@@ -93,6 +96,7 @@ function MovesPanel({
   ply,
   onView,
   onOriginalView,
+  onAdvance,
   initialFen,
   qualities,
   analysis = false,
@@ -215,6 +219,7 @@ function MovesPanel({
           ply={ply}
           total={sans.length}
           onView={onView}
+          onAdvance={onAdvance}
           tools={tools}
           menu={menu}
         />
@@ -236,6 +241,7 @@ export type MoveNavBarProps = {
   ply: number;
   total: number;
   onView: (ply: number | null) => void;
+  onAdvance?: () => void;
   tools?: ReactNode;
   menu?: ReactNode;
 };

@@ -118,7 +118,7 @@ export function MobileBarPortal({ state, dispatch }: Props) {
   if (!mobileBar || !host) return null;
   const menu = <MobileMenu state={state} dispatch={dispatch} />;
   const nav = state.mode === 'analysis'
-    ? <MoveNavBar ply={state.analysis.index} total={analysisLength(state.analysis)} onView={ply => dispatch({ type: 'view', ply })} menu={menu} />
+    ? <MoveNavBar ply={state.analysis.index} total={analysisLength(state.analysis)} onView={ply => dispatch({ type: 'view', ply })} onAdvance={() => dispatch({ type: 'advance' })} menu={menu} />
     : <MoveNavBar ply={state.viewedPly ?? state.play.moves.length} total={state.play.moves.length} onView={ply => dispatch({ type: 'view', ply })} menu={menu} />;
   return createPortal(
     <div className="mobile-footer">{isMenuOnly(state) ? <div className="mobile-pagebar"><div className="menu-slot">{menu}</div></div> : nav}</div>,
@@ -241,7 +241,7 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   const position = review.nodes[ply] ?? review.nodes[review.nodes.length - 1];
   const game = new Chess(position.fen);
   const ready = state.analysisLoaded;
-  const orientation = state.flipped ? oppositeColor('white') : 'white';
+  const orientation: 'white' | 'black' = 'white';
   const viewedOver = position.outcome !== null;
   const enabled = ready && !state.promotion && !viewedOver;
   // The full SAN list comes from the tip of the same timeline: identical to
@@ -268,17 +268,16 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
     return <div className={`player-strip${active && ready ? ' active' : ''}`}><span className={`side-dot ${color}`} /><strong>{sideName(color)}</strong><MaterialSummary by={color} captures={analysisCaptures[color]} lead={materialLeadFor(analysisDiff, color)} /><span className="player-side"></span>{active && ready && <span className="turn-indicator" role="status">To move</span>}</div>;
   };
   const mobileBar = useMobileBar();
-  const tools = <><IconButton id="flip-board" label="Flip board" onClick={() => dispatch({ type: 'flip' })}><RotateCw size={16} aria-hidden="true" /></IconButton>{state.analysis.branchFromPly !== null && <IconButton id="return-original" label="Return to original" onClick={() => dispatch({ type: 'original' })}><Undo2 size={16} aria-hidden="true" /></IconButton>}</>;
   return <>
     <div className={`workspace${ready ? ' analyzing' : ''}${!ready ? ' awaiting' : ''}`}>
       <RegionRecorder id="board-stage">
-        <BoardShell state={state} dispatch={dispatch} ready={ready} toolbar={ready && mobileBar ? <div className="board-actions board-toolbar" role="toolbar" aria-label="Board actions">{tools}</div> : null}
+        <BoardShell state={state} dispatch={dispatch} ready={ready} toolbar={null}
           position={position} transition={{ line: insightResetKey, ply }} orientation={orientation} enabled={enabled} over={false} withEvaluation={ready} boardResetKey={boardResetKey} shapes={shapes}
           evalBar={ready ? <StockfishBar key={`${insightResetKey}|${review.tooLong ? 1 : 0}`} evaluation={review.current} orientation={orientation} failed={!!review.currentError} /> : null}
           renderStrip={strip}
-          movesPanel={ready ? <MovesPanel sans={full.sanMoves} ply={ply} initialFen={state.analysis.initialFen} qualities={review.qualities} badgeLoading={state.badgeLoading} onView={ply => dispatch({ type: 'view', ply })} onOriginalView={ply => { dispatch({ type: 'original' }); dispatch({ type: 'view', ply }); }} analysis={true}
+          movesPanel={ready ? <MovesPanel sans={full.sanMoves} ply={ply} initialFen={state.analysis.initialFen} qualities={review.qualities} badgeLoading={state.badgeLoading} onView={ply => dispatch({ type: 'view', ply })} onOriginalView={ply => { dispatch({ type: 'original' }); dispatch({ type: 'view', ply }); }} onAdvance={() => dispatch({ type: 'advance' })} analysis={true}
             original={state.analysis.branchFromPly !== null ? { sans: state.analysis.sanMoves, fromPly: state.analysis.branchFromPly } : undefined}
-            branchUp={mobileBar} tools={mobileBar ? undefined : tools} hideNav={mobileBar} bookFlags={analysisBookFlags} /> : null}
+            branchUp={mobileBar} hideNav={mobileBar} bookFlags={analysisBookFlags} /> : null}
           resultOverlay={null} />
       </RegionRecorder>
       {ready && <ErrorBoundary label="insight" resetKey={insightResetKey} renderFallback={(error, retry) => <PanelError id="insight-error" title="Analysis failed to render" message={error.message || 'Unknown rendering error.'} onRetry={retry} />}><RegionRecorder id="insight-panel"><InsightPanel key={insightResetKey} state={state} dispatch={dispatch} review={review}><AnalysisActions state={state} dispatch={dispatch} /></InsightPanel></RegionRecorder></ErrorBoundary>}
