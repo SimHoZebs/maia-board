@@ -1,12 +1,12 @@
 import { Chess } from 'chess.js';
 import { reviewKey, stablePositionKey, type ReviewNode, type ReviewSettings } from './evaluationStore';
-import { reviewMove, type Evaluation, type Quality } from './reviewMetrics';
+import { reviewMove, type EngineGrade, type Evaluation } from './reviewMetrics';
 
 export type UnifiedVerdict = {
   posKey: string; fen: string; move: string;
-  before?: Evaluation; after?: Evaluation; needsPending: boolean; quality?: Quality;
+  before?: Evaluation; after?: Evaluation; needsPending: boolean; quality?: EngineGrade;
 };
-export type UnifiedMemo = { scope: string; verdicts: (UnifiedVerdict | undefined)[]; qualities: (Quality | undefined)[] };
+export type UnifiedMemo = { scope: string; verdicts: (UnifiedVerdict | undefined)[]; qualities: (EngineGrade | undefined)[] };
 
 // Single quality loop for review + play. Callers supply scope (game/user for
 // play, constant for review), per-node cache keys, and an activity predicate
@@ -16,7 +16,7 @@ export function computeQualities(args: {
   scope: string; moves: string[]; nodes: ReviewNode[]; evaluations: (Evaluation | undefined)[];
   keyFor: (node: ReviewNode) => string; active: (node: ReviewNode, index: number) => boolean;
   pending: Set<string>; prev: UnifiedMemo | null; stats?: { reviews: number };
-}): { qualities: (Quality | undefined)[]; memo: UnifiedMemo } {
+}): { qualities: (EngineGrade | undefined)[]; memo: UnifiedMemo } {
   const { scope, moves, nodes, evaluations, keyFor, active, pending, prev, stats } = args;
   const sameScope = prev?.scope === scope;
   let allReused = !!prev && sameScope && prev.qualities.length === moves.length;
@@ -55,7 +55,7 @@ export function computeLineQualities(args: {
   settingsForNode: (node: ReviewNode) => ReviewSettings;
   active?: (node: ReviewNode, index: number) => boolean;
   pending: Set<string>; prev: UnifiedMemo | null; stats?: { reviews: number };
-}): { qualities: (Quality | undefined)[]; memo: UnifiedMemo } {
+}): { qualities: (EngineGrade | undefined)[]; memo: UnifiedMemo } {
   const { scope, moves, nodes, evaluations, settingsForNode, active, pending, prev, stats } = args;
   return computeQualities({ scope, moves, nodes, evaluations,
     keyFor: node => reviewKey('sf', node, settingsForNode(node)),

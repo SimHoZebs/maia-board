@@ -4,6 +4,7 @@ import type { MaiaColor, MaiaModel, MoveResponse } from './api';
 import type { Evaluation } from './reviewMetrics';
 import { outcomeFromGame } from './reviewMetrics';
 import { outcomeEvaluation } from './outcomeEvaluation';
+import { clampMaiaElo } from './BoardTools';
 
 export const START_FEN = new Chess().fen();
 export type Mode = 'play' | 'analysis' | 'history' | 'settings';
@@ -19,8 +20,12 @@ export const newId = () => typeof crypto.randomUUID === 'function' ? crypto.rand
 
 export function normalizeSettings(stored?: Partial<Settings> | null): Settings {
   const elo = (value: unknown, fallback: number) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 5000 ? value : fallback;
+  // Opponent/analysis Maia strength never leaves the trained range (a stored
+  // 400 still conditions, displays, and caches as 800); the player's own
+  // identity stays raw for the coming global-Elo pass.
+  const maiaElo = (value: unknown, fallback: number) => clampMaiaElo(elo(value, fallback));
   return { userColor: stored?.userColor === 'black' ? 'black' : 'white', model: stored?.model === '5m' ? '5m' : '79m',
-    eloMaia: elo(stored?.eloMaia, 1600), eloUser: elo(stored?.eloUser, elo(stored?.eloMaia, 1600)),
+    eloMaia: maiaElo(stored?.eloMaia, 1600), eloUser: elo(stored?.eloUser, elo(stored?.eloMaia, 1600)),
     temperature: typeof stored?.temperature === 'number' && Number.isFinite(stored.temperature) && stored.temperature >= 0 && stored.temperature <= 2 ? stored.temperature : 0 };
 }
 

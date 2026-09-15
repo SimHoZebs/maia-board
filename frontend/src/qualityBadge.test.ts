@@ -8,6 +8,8 @@ import { QualityBadge, qualityGlyphs, qualitySlug } from './ReviewCharts';
 
 it('renders the Allowed mate badge with glyph, class, and label', () => {
   expect(qualityGlyphs['Allowed mate']).toBe('💀');
+  expect(qualityGlyphs['Excellent']).toBe('!!');
+  expect(qualityGlyphs).not.toHaveProperty('Miss');
   expect(Object.keys(qualityGlyphs)).toHaveLength(9);
   const html = renderToStaticMarkup(
     createElement(QualityBadge, { quality: { label: 'Allowed mate', accuracy: 0, loss: 2 } }),
@@ -22,6 +24,8 @@ it('ships Allowed mate styles and a seamless reel loop for all nine verdicts', (
   const styles = readFileSync(resolve(root, 'styles.css'), 'utf8');
   const overview = readFileSync(resolve(root, 'review-overview.css'), 'utf8');
   expect(styles).toContain('.quality-allowed-mate');
+  expect(styles).toContain('.quality-excellent');
+  expect(styles).not.toContain('.quality-miss');
   expect(styles).toContain('#7f1d1d');
   expect(styles).toContain('calc(-22px * 9)');
   expect(overview).toContain('.chart-dot-allowed-mate');

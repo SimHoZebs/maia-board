@@ -1,7 +1,7 @@
 import type { ReviewNode } from './reviewCoordinator';
 import type { Quality } from './reviewMetrics';
 
-export const issueLabels = ['Inaccuracy', 'Mistake', 'Miss', 'Blunder', 'Allowed mate'] as const;
+export const issueLabels = ['Inaccuracy', 'Mistake', 'Blunder', 'Allowed mate'] as const;
 type IssueLabel = typeof issueLabels[number];
 export type ReviewSide = 'white' | 'black';
 export type SideSummary = {
@@ -23,7 +23,7 @@ export type ReviewIssue = {
 export function summarizeReview(nodes: readonly Pick<ReviewNode, 'turn' | 'ply' | 'san' | 'uci' | 'fen'>[], qualities: readonly (Quality | undefined)[], onlySide?: ReviewSide) {
   const sides: SideSummary[] = (['white', 'black'] as const).map(color => ({
     color, total: 0, reviewed: 0, accuracy: null,
-    issues: { Inaccuracy: 0, Mistake: 0, Miss: 0, Blunder: 0, 'Allowed mate': 0 },
+    issues: { Inaccuracy: 0, Mistake: 0, Blunder: 0, 'Allowed mate': 0 },
   }));
   const scores = { white: 0, black: 0 };
   const issues: ReviewIssue[] = [];

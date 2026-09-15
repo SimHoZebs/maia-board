@@ -17,16 +17,16 @@ it('averages each side independently and counts every actual move', () => {
   expect(summary.sides[1]).toMatchObject({ color: 'black', total: 2, reviewed: 2, accuracy: 70, issues: { Inaccuracy: 0, Mistake: 1, Blunder: 0 } });
 });
 
-it('counts misses alongside inaccuracies, mistakes, and blunders', () => {
-  const summary = summarizeReview(nodes(['e2e4', 'e7e5']), [quality(20, 'Miss'), quality(100, 'Best')]);
-  expect(summary.sides[0]).toMatchObject({ issues: { Inaccuracy: 0, Mistake: 0, Miss: 1, Blunder: 0 } });
+it('counts blunders alongside inaccuracies and mistakes', () => {
+  const summary = summarizeReview(nodes(['e2e4', 'e7e5']), [quality(20, 'Blunder'), quality(100, 'Best')]);
+  expect(summary.sides[0]).toMatchObject({ issues: { Inaccuracy: 0, Mistake: 0, Blunder: 1 } });
   expect(summary.issues).toEqual([
-    { beforePly: 0, color: 'white', moveNumber: 1, san: 'e4', label: 'Miss', accuracy: 20 },
+    { beforePly: 0, color: 'white', moveNumber: 1, san: 'e4', label: 'Blunder', accuracy: 20 },
   ]);
 });
 it('counts allowed mates separately from blunders with zero accuracy', () => {
   const summary = summarizeReview(nodes(['e2e4', 'e7e5']), [quality(0, 'Allowed mate'), quality(100, 'Best')]);
-  expect(summary.sides[0]).toMatchObject({ issues: { Inaccuracy: 0, Mistake: 0, Miss: 0, Blunder: 0, 'Allowed mate': 1 } });
+  expect(summary.sides[0]).toMatchObject({ issues: { Inaccuracy: 0, Mistake: 0, Blunder: 0, 'Allowed mate': 1 } });
   expect(summary.issues).toEqual([
     { beforePly: 0, color: 'white', moveNumber: 1, san: 'e4', label: 'Allowed mate', accuracy: 0 },
   ]);

@@ -9,6 +9,7 @@ import { KEYS, loadSettings, readStorage } from './storage';
 import { mergeSync, type OutboxOp } from './serverGames';
 import { readGameRepository } from './gameRepository';
 import { normalizeStockfishSettings, STOCKFISH_STORAGE_KEY, type StockfishSettings } from './stockfishSettings';
+import { clampMaiaElo } from './BoardTools';
 import type { BadgeLoading } from './ReviewCharts';
 
 export function normalizeBadgeLoading(stored: unknown): BadgeLoading {
@@ -81,7 +82,7 @@ function queueRequest(state: State): State {
   const settings = state.play.settings;
   if (position.moves.length > 256) return { ...state, request: null, error: 'Maia inference supports at most 256 plies.' };
   return { ...state, error: '', request: { id: state.revision, mode: 'play', payload: {
-    fen: position.fen, moves: position.moves, elo_maia: settings.eloMaia, elo_user: settings.eloUser, model: settings.model,
+    fen: position.fen, moves: position.moves, elo_maia: clampMaiaElo(settings.eloMaia), elo_user: clampMaiaElo(settings.eloUser), model: settings.model,
     maia_color: oppositeColor(settings.userColor), temperature: settings.temperature ?? 0,
   } } };
 }
@@ -188,7 +189,8 @@ export function reducer(state: State, action: Action): State {
       const settings: Settings = { ...draft, userColor: action.resolvedColor ?? (draft.userColor === 'black' ? 'black' : 'white'), eloUser: draft.eloMaia };
       return transition(state, { started: true, setup: null, viewedPly: null, play: { id: action.id, createdAt: action.createdAt, moves: [], settings } });
     }
-    case 'analysis-settings': return transition(state, { analysisSettings: { ...state.analysisSettings, ...action.settings } }, false);
+    case 'analysis-settings': return transition(state, { analysisSettings: { ...state.analysisSettings, ...action.settings,
+      ...(action.settings.eloMaia === undefined ? {} : { eloMaia: clampMaiaElo(action.settings.eloMaia) }) } }, false);
     case 'flip': return { ...state, flipped: !state.flipped };
     case 'preview': return { ...state, preview: action.uci };
     case 'unload': return transition(state, { analysisLoaded: false, importing: true, analysisSourceId: null }, false);

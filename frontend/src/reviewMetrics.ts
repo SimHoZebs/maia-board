@@ -5,52 +5,89 @@ export const SEARCH_POLICY = 'sf19-n100k-ms750-mpv2-t1-h64-v1';
 export const REVIEW_METHOD = 'maia-board-review-v1';
 export type Score = { type: 'cp' | 'mate'; value: number; winning_side?: 'white' | 'black' };
 export type Evaluation = { engine: 'Stockfish 19'; search_policy: string; depth: number; terminal: null | 'white_win' | 'black_win' | 'draw'; best_move: string | null; score: Score; lines: { move: string; score: Score; depth: number }[] };
-export type Quality = { label: 'Forced' | 'Allowed mate' | 'Blunder' | 'Mistake' | 'Miss' | 'Inaccuracy' | 'Great' | 'Best' | 'Good' | 'Unreviewed'; accuracy: number | null; loss: number | null };
+export type Quality = { label: 'Forced' | 'Allowed mate' | 'Blunder' | 'Mistake' | 'Inaccuracy' | 'Excellent' | 'Great' | 'Best' | 'Good' | 'Unreviewed'; accuracy: number | null; loss: number | null };
+// Engine facts (Stockfish only — no praise, no difficulty). reviewMove speaks
+// this vocabulary; the display layer translates it once via
+// effectiveQuality, so an engine-Critical is never mistaken for a displayed
+// Great and an engine-Top never for a displayed Best:
+// - Critical: the engine's only good move (best, clean, wide gap).
+// - Top: played the engine's top move, but not critically.
+// - Holds: not the top move, yet nothing meaningful lost.
+export type EngineGrade = { label: 'Forced' | 'Allowed mate' | 'Blunder' | 'Mistake' | 'Inaccuracy' | 'Critical' | 'Top' | 'Holds' | 'Unreviewed'; accuracy: number | null; loss: number | null };
 // Additive Maia difficulty axis, measured against the top move rather than
 // 100%: r = prob(played) / prob(top). A 13% move under a 15% top (r = 0.87)
 // is the same band as the top itself, while a 12% rank-1 in a wide opening
-// is still Expected. Unlisted (outside Maia's top 5) is Unseen by
+// is still Expected. Unlisted (outside Maia's top 5) is Absent by
 // construction; missing or degraded Maia data is Unknown and renders nothing.
-export type Rarity = { label: 'Expected' | 'Seen' | 'Unseen' | 'Unknown'; r: number | null; prob: number | null; topProb: number | null };
+export type Rarity = { label: 'Expected' | 'Uncommon' | 'Rare' | 'Absent' | 'Unknown'; r: number | null; prob: number | null; topProb: number | null };
 export function maiaRarity(maia: Pick<MoveResponse, 'top_moves' | 'degraded'> | undefined, played: string): Rarity {
   if (!maia || maia.degraded || !Array.isArray(maia.top_moves) || maia.top_moves.length === 0) return { label: 'Unknown', r: null, prob: null, topProb: null };
   const topProb = maia.top_moves[0].prob;
   if (typeof topProb !== 'number' || !Number.isFinite(topProb) || topProb <= 0) return { label: 'Unknown', r: null, prob: null, topProb: null };
   const found = maia.top_moves.find(candidate => candidate.move === played);
-  if (!found || typeof found.prob !== 'number' || !Number.isFinite(found.prob)) return { label: 'Unseen', r: null, prob: null, topProb };
+  if (!found || typeof found.prob !== 'number' || !Number.isFinite(found.prob)) return { label: 'Absent', r: null, prob: null, topProb };
   const r = found.prob / topProb;
-  return { label: r >= 0.6 ? 'Expected' : r >= 0.25 ? 'Seen' : 'Unseen', r, prob: found.prob, topProb };
+  return { label: r >= 0.6 ? 'Expected' : r >= 0.25 ? 'Uncommon' : 'Rare', r, prob: found.prob, topProb };
 }
 // The verdict carries only the quality × rarity synthesis. Grades, scores,
 // and best lines already live in the badges, charts, and candidate lists, so
-// restating them here is repetition. Positive grades meet findability (a great
-// move nobody's model expects is a genuine find); negative grades meet
-// temptation (a blunder the model saw coming is an easy mistake). Wording
-// stays model-relative — Maia's predicted likelihood, never population
-// claims — and the raw probability grounds each characterization.
+// restating them here is repetition. Praise (Excellent/Great) meets
+// findability (a critical move nobody's model expects is an exceptional
+// find); negative grades meet temptation (a blunder the model saw coming is
+// an easy mistake). Wording stays model-relative — Maia's predicted
+// likelihood, never population claims — and the raw probability grounds each
+// characterization.
+// Praise gating lives in effectiveQuality, not reviewMove (which stays pure
+// engine so memo/cache keys never go stale on Maia changes). It translates
+// engine facts into displayed judgments:
+// - Critical + Absent or Rare-and-tiny (prob<5%) → Excellent (!!).
+//   The relative leg (Rare/Absent) blocks wide-opening inflation where the
+//   Maia top itself sits under 5% (r=1 there, not a find).
+// - Critical + Uncommon/Rare at >=5% → Great (!).
+// - Critical + Expected/Unknown → Best; Top → Best; Holds → Good.
+// Unknown is transient/error only — callers hold the spinner while either
+// engine is pending, and SF-settled non-critical moves complete without Maia
+// (fast path), so the cap never flickers a settled badge.
+export const EXCELLENT_MAX_PROB = 0.05;
+export function effectiveQuality(grade: EngineGrade | undefined, rarity: Rarity | undefined): Quality | undefined {
+  if (!grade) return undefined;
+  if (grade.label === 'Critical') {
+    if (!rarity || rarity.label === 'Expected' || rarity.label === 'Unknown') return { ...grade, label: 'Best' };
+    if (rarity.label === 'Absent') return { ...grade, label: 'Excellent' };
+    if (rarity.label === 'Rare' && rarity.prob != null && rarity.prob < EXCELLENT_MAX_PROB) return { ...grade, label: 'Excellent' };
+    return { ...grade, label: 'Great' };
+  }
+  if (grade.label === 'Top') return { ...grade, label: 'Best' };
+  if (grade.label === 'Holds') return { ...grade, label: 'Good' };
+  return grade as Quality;
+}
 function rarityVerdict(quality: Quality, rarity: Rarity | undefined, elo: number): string | null {
   if (!rarity || rarity.label === 'Unknown') return null;
-  const positive = quality.label === 'Great' || quality.label === 'Best' || quality.label === 'Good';
-  if (rarity.label === 'Unseen' && rarity.prob == null) {
-    return positive
-      ? `A genuine find — absent from Maia's top choices at ${elo}.`
-      : `Worth a second look — absent from Maia's top choices at ${elo}.`;
+  const praise = quality.label === 'Excellent' || quality.label === 'Great' || quality.label === 'Best';
+  const holds = quality.label === 'Good';
+  if (rarity.label === 'Absent') {
+    if (quality.label === 'Excellent') return `An exceptional find — absent from Maia's top choices at ${elo}.`;
+    if (praise) return `A genuine find — absent from Maia's top choices at ${elo}.`;
+    if (holds) return `Absent from Maia's top choices at ${elo}, and it holds.`;
+    return `Worth a second look — absent from Maia's top choices at ${elo}.`;
   }
   if (rarity.prob == null) return null;
   const pct = `${(rarity.prob * 100).toFixed(1).replace(/\.0$/, '')}%`;
   if (rarity.label === 'Expected') {
-    return positive
+    return praise || holds
       ? `The natural choice — Maia at ${elo} predicts ${pct} for this move.`
       : `An easy mistake to make — Maia at ${elo} predicts ${pct} for this move.`;
   }
-  if (rarity.label === 'Seen') {
-    return positive
-      ? `A sharp find — Maia at ${elo} predicts only ${pct}.`
-      : `A tempting sidestep — Maia at ${elo} predicts only ${pct}.`;
+  if (rarity.label === 'Uncommon') {
+    if (quality.label === 'Excellent') return `An exceptional find — Maia at ${elo} predicts only ${pct}.`;
+    if (praise) return `A sharp find — Maia at ${elo} predicts only ${pct}.`;
+    if (holds) return `An uncommon choice that holds — Maia at ${elo} predicts only ${pct}.`;
+    return `A tempting sidestep — Maia at ${elo} predicts only ${pct}.`;
   }
-  return positive
-    ? `A rare find — Maia at ${elo} predicts only ${pct}.`
-    : `An unusual slip — Maia at ${elo} predicts only ${pct}.`;
+  if (quality.label === 'Excellent') return `An exceptional find — Maia at ${elo} predicts only ${pct}.`;
+  if (praise) return `A rare find — Maia at ${elo} predicts only ${pct}.`;
+  if (holds) return `A rarely played choice that holds — Maia at ${elo} predicts only ${pct}.`;
+  return `An unusual slip — Maia at ${elo} predicts only ${pct}.`;
 }
 // One verdict sentence for the move just played: the book name, the only
 // legal move, or the rarity synthesis — never a restated grade. Returns null
@@ -69,25 +106,18 @@ export function whiteWin(score: Score): number {
 }
 export function moveAccuracy(loss: number): number { return loss === 0 ? 100 : Math.max(0, Math.min(100, 103.1668 * Math.exp(-.04354 * loss) - 3.1669)); }
 export function classifyLoss(loss: number): 'Blunder' | 'Mistake' | 'Inaccuracy' | null { return loss >= 20 ? 'Blunder' : loss >= 10 ? 'Mistake' : loss >= 5 ? 'Inaccuracy' : null; }
-// Miss thresholds: a win is on the board (best-play ceiling >= 80) and gone
-// (mover keeps <= 60), yet the move didn't self-destruct (keeps >= 40).
-// The 40 floor is what separates missed opportunity from damage: below it the
-// Blunder stands. Note loss >= 20 always holds here (80 - 60), so Miss lives
-// inside the Blunder band and must be checked before classifyLoss.
-export const MISS_AVAILABLE = 80;
-export const MISS_CAP = 60;
-export const MISS_ALIVE_FLOOR = 40;
 // Mate allowed when avoidable: the mover had no forced mate against them
 // (best play survives) but the played move lets the opponent force mate.
 // Winner resolution mirrors whiteWin: explicit winning_side, else mate-value
-// sign. Checked before Miss (disjoint: Miss needs winB >= 80, which is never
-// a losing mate) and before classifyLoss, whose win% delta is blind to
-// mate-to-mate (0 - 0) and lost-cp-to-mate (< 5) cases.
+// sign. Checked before classifyLoss, whose win% delta is blind to
+// mate-to-mate (0 - 0) and lost-cp-to-mate (< 5) cases. There is no Miss
+// label: a missed win that stays alive reads Blunder by loss (>= 20 always
+// holds there), matching the engine-measures-loss-only principle.
 export function isMateFor(score: Score, side: 'white' | 'black'): boolean {
   if (score.type !== 'mate') return false;
   return (score.winning_side ?? (score.value > 0 ? 'white' : 'black')) === side;
 }
-export function reviewMove(before: Evaluation | undefined, after: Evaluation | undefined, game: Chess, played: string): Quality {
+export function reviewMove(before: Evaluation | undefined, after: Evaluation | undefined, game: Chess, played: string): EngineGrade {
   if (!before || !after) return { label: 'Unreviewed', accuracy: null, loss: null };
   const legal = game.moves().length;
   if (legal === 1) return { label: 'Forced', accuracy: 100, loss: 0 };
@@ -95,13 +125,11 @@ export function reviewMove(before: Evaluation | undefined, after: Evaluation | u
   const loss = Math.max(0, pov(before.score) - pov(after.score));
   const [first, second] = before.lines;
   const best = played === before.best_move;
-  const winA = pov(after.score);
   const mover = game.turn() === 'w' ? 'white' : 'black';
   const opp = mover === 'white' ? 'black' : 'white';
   if (!best && isMateFor(after.score, opp) && !isMateFor(before.score, opp)) return { label: 'Allowed mate', accuracy: 0, loss };
-  if (!best && pov(before.score) >= MISS_AVAILABLE && winA <= MISS_CAP && winA >= MISS_ALIVE_FLOOR) return { label: 'Miss', accuracy: moveAccuracy(loss), loss };
-  const great = best && loss <= 1 && legal >= 2 && before.score.type === 'cp' && after.score.type === 'cp' && first?.move === played && second?.move !== played && first.score.type === 'cp' && second?.score.type === 'cp' && pov(first.score) - pov(second.score) >= 10;
-  return { label: classifyLoss(loss) ?? (great ? 'Great' : best ? 'Best' : 'Good'), accuracy: moveAccuracy(loss), loss };
+  const critical = best && loss <= 1 && legal >= 2 && before.score.type === 'cp' && after.score.type === 'cp' && first?.move === played && second?.move !== played && first.score.type === 'cp' && second?.score.type === 'cp' && pov(first.score) - pov(second.score) >= 10;
+  return { label: classifyLoss(loss) ?? (critical ? 'Critical' : best ? 'Top' : 'Holds'), accuracy: moveAccuracy(loss), loss };
 }
 // Single terminal source of truth. Winner resolution mirrors whiteWin:
 // explicit winning_side, else mate-value sign. domain.ts outcome() and both

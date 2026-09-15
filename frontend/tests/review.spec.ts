@@ -226,7 +226,7 @@ test('moves to review distinguishes empty games, no issues, and explored lines',
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   await page.getByRole('tab', { name: 'Moves to review', exact: true }).click();
-  await expect(page.getByText('No inaccuracies, mistakes, misses, blunders, or allowed mates found.', { exact: true })).toBeVisible();
+  await expect(page.getByText('No inaccuracies, mistakes, blunders, or allowed mates found.', { exact: true })).toBeVisible();
   await page.getByRole('tab', { name: 'Move analysis', exact: true }).click();
   const board = (await page.locator('#board cg-board').boundingBox())!;
   await page.mouse.click(board.x + board.width * 3.5 / 8, board.y + board.height * 6.5 / 8);
@@ -237,7 +237,7 @@ test('moves to review distinguishes empty games, no issues, and explored lines',
   await page.getByRole('tab', { name: 'Move analysis', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Game overview' })).toBeVisible();
   await page.getByRole('tab', { name: 'Moves to review', exact: true }).click();
-  await expect(page.getByText('No inaccuracies, mistakes, misses, blunders, or allowed mates found.', { exact: true })).toBeVisible();
+  await expect(page.getByText('No inaccuracies, mistakes, blunders, or allowed mates found.', { exact: true })).toBeVisible();
   await page.locator('#mode-analysis').click();
   await page.locator('#analysis-pgn').fill('1. d4');
   await page.locator('#load-analysis').click();

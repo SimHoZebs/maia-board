@@ -4,6 +4,7 @@ import { outcomeEvaluation } from './outcomeEvaluation';
 import { fetchJsonWithBusyRetry } from './evaluationTransport';
 import type { Evaluation, Score } from './reviewMetrics';
 import { defaultStockfishSettings, stockfishPolicy, type StockfishSettings } from './stockfishSettings';
+import { clampMaiaElo } from './BoardTools';
 
 export type ReviewNode = TimelineRow & { timeline: Timeline; initialFen: string };
 // Rows are exposed directly as frozen plain objects. No wrapper class or
@@ -28,7 +29,7 @@ function prefixOf(node: ReviewNode): string[] {
   return node.timeline.moves.slice(0, node.ply);
 }
 export function settingsHash(engine: Engine, settings: ReviewSettings): string {
-  return engine === 'sf' ? stockfishPolicy(settings.stockfish) : JSON.stringify([settings.eloMaia, settings.eloUser, settings.model]);
+  return engine === 'sf' ? stockfishPolicy(settings.stockfish) : JSON.stringify([clampMaiaElo(settings.eloMaia), clampMaiaElo(settings.eloUser), settings.model]);
 }
 export function stablePositionKey(node: ReviewNode): string {
   return posId(node.initialFen, prefixOf(node));
@@ -41,7 +42,7 @@ export function reviewKey(engine: Engine, node: ReviewNode, settings: ReviewSett
 export function evaluationRequest(engine: Engine, node: ReviewNode, settings: ReviewSettings) {
   return { engine, fen: node.fen, initial_fen: node.initialFen, moves: prefixOf(node),
     ...(engine === 'sf' ? { ...(settings.stockfish ? { settings: settings.stockfish } : {}) }
-      : { elo_maia: settings.eloMaia, elo_user: settings.eloUser, model: settings.model }) };
+      : { elo_maia: clampMaiaElo(settings.eloMaia), elo_user: clampMaiaElo(settings.eloUser), model: settings.model }) };
 }
 const uci = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
 function isScore(value: unknown): value is Score {

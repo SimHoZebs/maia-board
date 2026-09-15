@@ -6,9 +6,9 @@ const FACES = [
   { label: "Best", glyph: "B", cls: "quality-best" },
   { label: "Good", glyph: "G", cls: "quality-good" },
   { label: "Great", glyph: "!", cls: "quality-great" },
+  { label: "Excellent", glyph: "!!", cls: "quality-excellent" },
   { label: "Inaccuracy", glyph: "?!", cls: "quality-inaccuracy" },
   { label: "Mistake", glyph: "?", cls: "quality-mistake" },
-  { label: "Miss", glyph: "M", cls: "quality-miss" },
   { label: "Blunder", glyph: "??", cls: "quality-blunder" },
   { label: "Allowed mate", glyph: "💀", cls: "quality-allowed-mate" },
   { label: "Forced", glyph: "F", cls: "quality-forced" },
@@ -76,7 +76,7 @@ function ShimmerBadge() {
 
 /** 5 — Escalation: ? → ?! → ??, dread building like the engine found something. */
 function EscalationBadge({ ms = 500 }: { ms?: number }) {
-  const steps = [FACES[4], FACES[3], FACES[6]] as const; // ?, ?!, ??
+  const steps = [FACES[5], FACES[4], FACES[6]] as const; // ?, ?!, ?? (by label, not position)
   const i = useCycle(steps.length, ms);
   const face = steps[i];
   return (

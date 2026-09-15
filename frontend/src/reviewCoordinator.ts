@@ -1,4 +1,5 @@
 import { MaiaApiError, requestMove, type MoveResponse } from './api';
+import { clampMaiaElo } from './BoardTools';
 import type { Evaluation } from './reviewMetrics';
 import { EvaluationStore, evaluationStore, evaluationRequest, fetchEvaluation, reviewKey, resolveSettings, stablePositionKey,
   type Engine, type EvaluationResult, type Job, type ReviewNode, type ReviewSettings, type SettingsInput } from './evaluationStore';
@@ -152,9 +153,15 @@ export class ReviewCoordinator {
     }
   }
   sfPendingKeys(): Set<string> {
-    const keys = new Set([...this.restoring].filter(([, entry]) => entry.engine === 'sf').map(([key]) => key));
-    for (const { job } of this.pending.sf.values()) if (!this.finished(job)) keys.add(job.key);
-    const running = this.running.sf;
+    return this.pendingKeys('sf');
+  }
+  maiaPendingKeys(): Set<string> {
+    return this.pendingKeys('maia');
+  }
+  private pendingKeys(engine: Engine): Set<string> {
+    const keys = new Set([...this.restoring].filter(([, entry]) => entry.engine === engine).map(([key]) => key));
+    for (const { job } of this.pending[engine].values()) if (!this.finished(job)) keys.add(job.key);
+    const running = this.running[engine];
     if (running && !this.finished(running.job)) keys.add(running.job.key);
     return keys;
   }
@@ -167,6 +174,20 @@ export class ReviewCoordinator {
     for (const engine of engines) this.abort(engine);
     this.failures.clear();
     engines.forEach(engine => this.pump(engine)); this.notify();
+  }
+  // Drop queued (not running) jobs for one engine, optionally limited to a
+  // key set. Grants are non-preemptive, so running work still completes and
+  // its sentence arrives free. Used by the play fast path: SF-settled
+  // non-best moves need no Maia for their badge, so queued Maia predictions
+  // for them are pure queue-slot waste.
+  cancelQueued(engine: Engine, keys?: ReadonlySet<string>) {
+    let dropped = false;
+    for (const key of [...this.pending[engine].keys()]) {
+      if (keys && !keys.has(key)) continue;
+      this.pending[engine].delete(key);
+      dropped = true;
+    }
+    if (dropped) this.notify();
   }
   private abort(engine: Engine) {
     const running = this.running[engine];
@@ -200,6 +221,6 @@ export class ReviewCoordinator {
     if (job.engine === 'sf') return fetchEvaluation(job.node, signal, this.fetcher, job.settings.stockfish);
     const request = evaluationRequest('maia', job.node, job.settings);
     return requestMove({ fen: request.fen, moves: request.moves, initial_fen: request.initial_fen,
-      elo_maia: job.settings.eloMaia, elo_user: job.settings.eloUser, model: job.settings.model, maia_color: job.node.turn }, this.fetcher, signal);
+      elo_maia: clampMaiaElo(job.settings.eloMaia), elo_user: clampMaiaElo(job.settings.eloUser), model: job.settings.model, maia_color: job.node.turn }, this.fetcher, signal);
   }
 }

@@ -4,7 +4,7 @@ import type { State } from './state';
 import { ReviewCoordinator, createLineScope, cancelScope, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
 import { useServerBatch } from './useServerBatch';
 import { computeLineQualities, type UnifiedMemo } from './qualities';
-import { maiaRarity, type Evaluation, type Quality } from './reviewMetrics';
+import { effectiveQuality, maiaRarity, type EngineGrade, type Evaluation, type Quality } from './reviewMetrics';
 import { selectMaiaDisplay, type MaiaDisplayEntry } from './maiaDisplay';
 
 export type RecordStatus = { state: 'checking' | 'fresh' | 'none' };
@@ -19,7 +19,7 @@ export type ReviewQualitiesStats = { reviews: number };
 export function computeReviewQualities(args: {
   line: { moves: string[] }; nodes: ReviewNode[]; evaluations: (Evaluation | undefined)[];
   settingsForNode: (node: ReviewNode) => ReviewSettings; pending: Set<string>; prev: ReviewQualitiesMemo | null; stats?: ReviewQualitiesStats;
-}): { qualities: (Quality | undefined)[]; memo: ReviewQualitiesMemo } {
+}): { qualities: (EngineGrade | undefined)[]; memo: ReviewQualitiesMemo } {
   const { line, nodes, evaluations, settingsForNode, pending, prev, stats } = args;
   return computeLineQualities({ scope: '', moves: line.moves, nodes, evaluations, settingsForNode, pending, prev, stats });
 }
@@ -97,6 +97,35 @@ export function useReview(state: State) {
   const computed = useMemo(() => computeReviewQualities({ line: timeline, nodes, evaluations, settingsForNode, pending: coordinator.sfPendingKeys(), prev: previous.current }), [timeline, nodes, evaluations, settingsForNode, version, coordinator]);
   useEffect(() => { previous.current = computed.memo; }, [computed]);
   const rarities = useMemo(() => timeline.moves.map((move, ply) => maiaRarity(maiaResults[ply], move)), [timeline, maiaResults]);
+  // Badges show the Maia-aware judgment translated from engine facts
+  // (Critical/Top/Holds → Excellent/Great/Best/Good). Praise needs hard-find
+  // evidence; Expected/Unknown cap at Best. Engine-critical praise with Maia
+  // still in flight holds the spinner instead of flashing a provisional
+  // Best; SF-settled non-critical moves complete without Maia (fast path).
+  // (The translated array is fresh per call; raw memo reuse underneath is
+  // what avoids recompute.)
+  const qualities = useMemo(() => {
+    let changed = false;
+    const mapped: (Quality | undefined)[] = computed.qualities.map((grade, ply) => {
+      if (grade?.label !== 'Critical') return effectiveQuality(grade, undefined);
+      const node = nodes[ply];
+      const maia = maiaResults[ply];
+      let next: Quality | undefined;
+      if (!maia) {
+        next = node && coordinator.isPending('maia', node, settingsForNode(node))
+          ? { label: 'Unreviewed' as const, accuracy: null, loss: null }
+          : effectiveQuality(grade, { label: 'Unknown', r: null, prob: null, topProb: null });
+      } else {
+        next = effectiveQuality(grade, rarities[ply]);
+      }
+      if (next !== (grade as Quality | undefined)) changed = true;
+      return next;
+    });
+    return changed ? mapped : (computed.qualities as (Quality | undefined)[]);
+  }, [computed.qualities, rarities, maiaResults, nodes, settingsForNode, version, coordinator]);
+  // Coverage is completeness (badges + sentences), not badge readiness:
+  // badges fast-path on SF alone, but progress stays partial until Maia
+  // lands for every non-outcome node.
   const coverage = useMemo(() => active && prime?.key === primeKey ? { total: nodes.length,
     covered: nodes.filter((node, ply) => evaluations[ply] && (node.outcome || maiaResults[ply])).length } : null,
   [active, prime, primeKey, nodes, evaluations, maiaResults]);
@@ -119,7 +148,7 @@ export function useReview(state: State) {
     : batchComplete || coverageComplete ? 'complete'
     : !prime || prime.key !== primeKey || !coverage ? 'loading'
     : 'partial';
-  return { timeline, nodes, evaluations, qualities: computed.qualities, rarities, coverage,
+  return { timeline, nodes, evaluations, qualities, rarities, coverage,
     current: evaluations[currentPly], focus: evaluations[focusPly], focusPly, maia, maiaCurrent,
     maiaElo: displayed.entry?.eloMaia ?? focusSettings.eloMaia, maiaModel: maia?.model_used ?? focusSettings.model,
     maiaWantedElo: focusSettings.eloMaia, maiaWantedModel: focusSettings.model,

@@ -644,7 +644,7 @@ describe('review qualities incremental', () => {
     const { qualities } = run(italianMoves, italianNodes, byNodes(italianEvals), null, new Set(), stats);
     expect(stats).toEqual({ reviews: 5 });
     expect(qualities).toHaveLength(5);
-    expect(qualities[0]?.label).toBe('Best');
+    expect(qualities[0]?.label).toBe('Top');
     expect(qualities[4]).toBeDefined();
   });
 
@@ -663,7 +663,7 @@ describe('review qualities incremental', () => {
     const afterNode = nodes[3];
     const pending = new Set([reviewKey('sf', afterNode, settings)]);
     const first = run(moves, nodes, byNodes(partial), null, pending);
-    expect(first.qualities[0]?.label).toBe('Best');
+    expect(first.qualities[0]?.label).toBe('Top');
     expect(first.qualities[2]?.label).toBe('Unreviewed');
     const stats: ReviewQualitiesStats = { reviews: 0 };
     const second = run(moves, nodes, byNodes(italianEvals), first.memo, new Set(), stats);
