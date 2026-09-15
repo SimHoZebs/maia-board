@@ -250,8 +250,8 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   const arrowMoves = { actual: review.nodes[ply + 1]?.uci ?? undefined, maia: review.maiaCurrent?.top_moves[0]?.move, stockfish: review.current?.best_move };
   const playedQuality = ready && ply > 0 ? review.qualities[ply - 1] : undefined;
   const playedUci = ready && ply > 0 ? review.nodes[ply]?.uci : undefined;
-  const badge = playedQuality && (playedQuality.label === 'Skull' || playedQuality.label === 'Blunder' || playedQuality.label === 'Mistake') && playedUci
-    ? { square: playedUci.slice(2, 4) as Key, glyph: (playedQuality.label === 'Skull' ? '💀' : playedQuality.label === 'Blunder' ? '??' : '?') as '💀' | '??' | '?' } : null;
+  const badge = playedQuality && (playedQuality.label === 'Allowed mate' || playedQuality.label === 'Blunder' || playedQuality.label === 'Mistake') && playedUci
+    ? { square: playedUci.slice(2, 4) as Key, glyph: (playedQuality.label === 'Allowed mate' ? '💀' : playedQuality.label === 'Blunder' ? '??' : '?') as '💀' | '??' | '?' } : null;
   const shapes = ready ? reviewShapes(arrowMoves, { actual: true, maia: true, stockfish: true }, state.preview, badge) : [];
   const boardResetKey = JSON.stringify(['analysis', state.play.id, state.play.moves.length, state.analysis.index, state.analysisSourceId, orientation]);
   const insightResetKey = JSON.stringify([state.analysis.initialFen, state.analysis.moves, state.analysisSourceId]);

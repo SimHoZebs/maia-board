@@ -5,7 +5,7 @@ export const SEARCH_POLICY = 'sf19-n100k-ms750-mpv2-t1-h64-v1';
 export const REVIEW_METHOD = 'maia-board-review-v1';
 export type Score = { type: 'cp' | 'mate'; value: number; winning_side?: 'white' | 'black' };
 export type Evaluation = { engine: 'Stockfish 19'; search_policy: string; depth: number; terminal: null | 'white_win' | 'black_win' | 'draw'; best_move: string | null; score: Score; lines: { move: string; score: Score; depth: number }[] };
-export type Quality = { label: 'Forced' | 'Skull' | 'Blunder' | 'Mistake' | 'Miss' | 'Inaccuracy' | 'Great' | 'Best' | 'Good' | 'Unreviewed'; accuracy: number | null; loss: number | null };
+export type Quality = { label: 'Forced' | 'Allowed mate' | 'Blunder' | 'Mistake' | 'Miss' | 'Inaccuracy' | 'Great' | 'Best' | 'Good' | 'Unreviewed'; accuracy: number | null; loss: number | null };
 // Additive Maia difficulty axis, measured against the top move rather than
 // 100%: r = prob(played) / prob(top). A 13% move under a 15% top (r = 0.87)
 // is the same band as the top itself, while a 12% rank-1 in a wide opening
@@ -98,7 +98,7 @@ export function reviewMove(before: Evaluation | undefined, after: Evaluation | u
   const winA = pov(after.score);
   const mover = game.turn() === 'w' ? 'white' : 'black';
   const opp = mover === 'white' ? 'black' : 'white';
-  if (!best && isMateFor(after.score, opp) && !isMateFor(before.score, opp)) return { label: 'Skull', accuracy: 0, loss };
+  if (!best && isMateFor(after.score, opp) && !isMateFor(before.score, opp)) return { label: 'Allowed mate', accuracy: 0, loss };
   if (!best && pov(before.score) >= MISS_AVAILABLE && winA <= MISS_CAP && winA >= MISS_ALIVE_FLOOR) return { label: 'Miss', accuracy: moveAccuracy(loss), loss };
   const great = best && loss <= 1 && legal >= 2 && before.score.type === 'cp' && after.score.type === 'cp' && first?.move === played && second?.move !== played && first.score.type === 'cp' && second?.score.type === 'cp' && pov(first.score) - pov(second.score) >= 10;
   return { label: classifyLoss(loss) ?? (great ? 'Great' : best ? 'Best' : 'Good'), accuracy: moveAccuracy(loss), loss };

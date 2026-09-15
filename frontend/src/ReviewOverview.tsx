@@ -6,19 +6,17 @@ import "./review-overview.css";
 import { QualityBadge, ReviewCharts } from "./ReviewCharts";
 import { useLineOpenings } from "./openings";
 
-export function ReviewOverview({
+export function ReviewSummary({
   review,
   ply,
   userSide,
   branch,
-  onInspect,
   onGraphView,
 }: {
   review: Review;
   ply: number;
   userSide?: ReviewSide;
   branch: boolean;
-  onInspect: (beforePly: number) => void;
   onGraphView: (ply: number) => void;
 }) {
   const summary = summarizeReview(review.nodes, review.qualities, userSide);
@@ -102,6 +100,38 @@ export function ReviewOverview({
               summary.
             </p>
           )}
+        </>
+      )}
+    </section>
+  );
+}
+
+export function ReviewIssues({
+  review,
+  userSide,
+  branch,
+  onInspect,
+}: {
+  review: Review;
+  userSide?: ReviewSide;
+  branch: boolean;
+  onInspect: (beforePly: number) => void;
+}) {
+  const summary = summarizeReview(review.nodes, review.qualities, userSide);
+  const complete = summary.reviewed === summary.total;
+  const sideLabel = (color: ReviewSide) =>
+    `${sideName(color)}${userSide === color ? " · You" : ""}`;
+  return (
+    <section
+      className="review-overview"
+      aria-label={branch ? "Explored line moves to review" : "Moves to review"}
+    >
+      {!summary.total ? (
+        <p className="empty-copy">
+          Play or load some moves to see moves to review.
+        </p>
+      ) : (
+        <>
           <div className="overview-issues-heading">
             <h3>Moves to review</h3>
             <span>{summary.issues.length}</span>
@@ -141,12 +171,46 @@ export function ReviewOverview({
           ) : (
             <p className="empty-copy">
               {complete
-                ? "No inaccuracies, mistakes, misses, blunders, or skulls found."
-                : "Inaccuracies, mistakes, misses, blunders, and skulls will appear here as moves are reviewed."}
+                ? "No inaccuracies, mistakes, misses, blunders, or allowed mates found."
+                : "Inaccuracies, mistakes, misses, blunders, and allowed mates will appear here as moves are reviewed."}
             </p>
           )}
         </>
       )}
     </section>
+  );
+}
+
+export function ReviewOverview({
+  review,
+  ply,
+  userSide,
+  branch,
+  onInspect,
+  onGraphView,
+}: {
+  review: Review;
+  ply: number;
+  userSide?: ReviewSide;
+  branch: boolean;
+  onInspect: (beforePly: number) => void;
+  onGraphView: (ply: number) => void;
+}) {
+  return (
+    <>
+      <ReviewSummary
+        review={review}
+        ply={ply}
+        userSide={userSide}
+        branch={branch}
+        onGraphView={onGraphView}
+      />
+      <ReviewIssues
+        review={review}
+        userSide={userSide}
+        branch={branch}
+        onInspect={onInspect}
+      />
+    </>
   );
 }

@@ -1,12 +1,15 @@
-import { useId, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { Review } from './useReview';
 import { scoreText, whiteWin, type Quality } from './reviewMetrics';
 import type { ReviewSide } from './reviewSummary';
 
-export const qualityGlyphs = { Forced: 'F', Skull: '💀', Blunder: '??', Mistake: '?', Miss: 'M', Inaccuracy: '?!', Great: '!', Best: 'B', Good: 'G' } as const;
+export const qualityGlyphs = { Forced: 'F', 'Allowed mate': '💀', Blunder: '??', Mistake: '?', Miss: 'M', Inaccuracy: '?!', Great: '!', Best: 'B', Good: 'G' } as const;
+// Labels double as CSS hooks, so multi-word verdicts slug to a single token:
+// "Allowed mate" -> "allowed-mate" (quality-allowed-mate, chart-dot-allowed-mate).
+export const qualitySlug = (label: string) => label.toLowerCase().replace(/\s+/g, '-');
 // Slot-reel deck: every real verdict, so the loading spinner previews the
 // exact glyphs it can settle on. Order matches the lab page row 03.
-const loadingFaces: { glyph: string; cls: string }[] = (Object.keys(qualityGlyphs) as (keyof typeof qualityGlyphs)[]).map(label => ({ glyph: qualityGlyphs[label], cls: `quality-${label.toLowerCase()}` }));
+const loadingFaces: { glyph: string; cls: string }[] = (Object.keys(qualityGlyphs) as (keyof typeof qualityGlyphs)[]).map(label => ({ glyph: qualityGlyphs[label], cls: `quality-${qualitySlug(label)}` }));
 const loadingStrip = [...loadingFaces, ...loadingFaces, ...loadingFaces];
 
 // Pending-badge treatment while evaluations settle. Reel is the default;
@@ -32,7 +35,7 @@ export function QualityBadge({ quality, reserveSpace, loading = 'reel' }: { qual
     return <span className="quality quality-slot" aria-hidden="true" title="Evaluating…"><span className="quality-slot-window"><span className="quality-slot-strip">{loadingStrip.map((face, index) => <span key={index} className={`quality-slot-cell ${face.cls}`}>{face.glyph}</span>)}</span></span></span>;
   }
   const label = quality.label;
-  return <span className={`quality quality-${label.toLowerCase()}`} title={`${label}${quality.accuracy == null ? '' : ` · ${quality.accuracy.toFixed(1)}% move accuracy`}`} aria-label={label}>{qualityGlyphs[label]}</span>;
+  return <span className={`quality quality-${qualitySlug(label)}`} title={`${label}${quality.accuracy == null ? '' : ` · ${quality.accuracy.toFixed(1)}% move accuracy`}`} aria-label={label}>{qualityGlyphs[label]}</span>;
 }
 export function ReviewCharts({ review, ply, sans, onView, side }: { review: Review; ply: number; sans: string[]; onView: (ply: number) => void; side?: ReviewSide }) {
   const [tab, setTab] = useState<'evaluation' | 'accuracy'>('accuracy');
@@ -40,6 +43,25 @@ export function ReviewCharts({ review, ply, sans, onView, side }: { review: Revi
   const tabs = [{ id: 'accuracy', label: 'Move accuracy' }, { id: 'evaluation', label: 'Evaluation' }] as const;
   const selected = useRef<HTMLButtonElement>(null);
   const chart = useRef<HTMLDivElement>(null);
+  // Hovered graphs claim the wheel for horizontal panning: a vertical wheel
+  // gesture scrolls the track sideways instead of the page. At either edge
+  // the gesture falls through so the outer panel can still scroll vertically.
+  // Trackpads already emit deltaX, so only dominant-vertical wheels convert.
+  useEffect(() => {
+    const el = chart.current;
+    if (!el) return;
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey) return;
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      const canLeft = el.scrollLeft > 0;
+      const canRight = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+      if ((event.deltaY > 0 && !canRight) || (event.deltaY < 0 && !canLeft)) return;
+      el.scrollLeft += event.deltaY;
+      event.preventDefault();
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [tab]);
   // Accuracy points sit on the after-move position (point i reviews the move
   // leading into it); point 0 is the start with no move, so nothing selects.
   const selectedPly = tab === "accuracy" && ply === 0 ? -1 : ply;
@@ -92,7 +114,7 @@ export function ReviewCharts({ review, ply, sans, onView, side }: { review: Revi
           {kept.map((point, pos) => pos > 0 && point.value !== null && kept[pos - 1].value !== null ? <line key={point.origIndex} x1={(pos - 1) * 44 + 22} y1={110 - kept[pos - 1].value!} x2={pos * 44 + 22} y2={110 - point.value} className="chart-line" /> : null)}
         </svg>
         {kept.map((point, pos) => {
-          return <button key={point.origIndex} type="button" ref={pos === selectedPos ? selected : undefined} className="chart-point" disabled={tab === 'accuracy' && point.origIndex === 0} aria-label={point.description} aria-current={pos === selectedPos ? 'step' : undefined} title={point.description} onClick={() => onView(point.origIndex)} style={{ left: pos * 44 }}>{point.value !== null && <i className={tab === 'accuracy' && point.quality ? `chart-dot-${point.quality.label.toLowerCase()}` : undefined} style={{ top: 110 - point.value }} />}<span>{point.moveNumber}</span></button>;
+          return <button key={point.origIndex} type="button" ref={pos === selectedPos ? selected : undefined} className="chart-point" disabled={tab === 'accuracy' && point.origIndex === 0} aria-label={point.description} aria-current={pos === selectedPos ? 'step' : undefined} title={point.description} onClick={() => onView(point.origIndex)} style={{ left: pos * 44 }}>{point.value !== null && <i className={tab === 'accuracy' && point.quality ? `chart-dot-${qualitySlug(point.quality.label)}` : undefined} style={{ top: 110 - point.value }} />}<span>{point.moveNumber}</span></button>;
         })}
       </div>
       </div>

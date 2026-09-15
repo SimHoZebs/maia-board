@@ -11,7 +11,7 @@
 .chart-point .chart-dot-inaccuracy { background: #7c691e; }
 .chart-point .chart-dot-mistake, .chart-point .chart-dot-miss { background: #985920; }
 .chart-point .chart-dot-blunder { background: #a63c3c; }
-.chart-point .chart-dot-skull { background: #7f1d1d; }
+.chart-point .chart-dot-allowed-mate { background: #7f1d1d; }
 .chart-point .chart-dot-great { background: #286b89; }
 .chart-point .chart-dot-best, .chart-point .chart-dot-good { background: #496336; }
 .review-overview .review-charts { margin: 0 0 18px; }
@@ -27,7 +27,14 @@
 .quality-counts dt { display: flex; align-items: center; gap: 6px; color: var(--muted); }
 .quality-counts dd { margin: 0; font-variant-numeric: tabular-nums; }
 .overview-partial { margin: 12px 0; padding: 10px 12px; border-left: 2px solid var(--accent); background: #b8c99809; font-size: 12px; }
-.overview-issues-heading { display: flex; align-items: center; justify-content: space-between; margin-top: 20px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.overview-issues-heading { display: flex; align-items: center; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+/* Separation from the summary above lives on the section boundary, not the
+   heading: the heading is also the first child of the standalone Moves to
+   review tab, where a top margin would collapse through and break the
+   panel's 12px rhythm. */
+.review-overview + .review-overview { margin-top: 20px; }
+/* The summary now continues the Move analysis tab below the engines. */
+.engine-duo + .review-overview { margin-top: 20px; }
 .overview-issues-heading h3 { margin: 0; font-size: 13px; }
 .overview-issues-heading > span { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .review-issues { list-style: none; margin: 0; padding: 0; }

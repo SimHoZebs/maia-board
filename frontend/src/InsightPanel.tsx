@@ -7,7 +7,7 @@ import { Chess } from "chess.js";
 import type { Review } from "./useReview";
 import { describeMove } from "./reviewMetrics";
 import { useLineOpenings } from "./openings";
-import { ReviewOverview } from "./ReviewOverview";
+import { ReviewIssues, ReviewSummary } from "./ReviewOverview";
 import { SkeletonList, SkeletonText, StockfishBody } from "./StockfishBar";
 
 // Tab-bar action: the Analyze / Analyzed button owns the right
@@ -245,12 +245,12 @@ export function InsightPanel({
   review: Review;
   children?: ReactNode;
 }) {
-  const [tab, setTab] = useState<"moves" | "overview">("moves");
+  const [tab, setTab] = useState<"moves" | "issues">("moves");
   const moveTab = useRef<HTMLButtonElement>(null);
-  const overviewTab = useRef<HTMLButtonElement>(null);
+  const issuesTab = useRef<HTMLButtonElement>(null);
   const tabs = [
     { id: "moves", label: "Move analysis", ref: moveTab },
-    { id: "overview", label: "Overview", ref: overviewTab },
+    { id: "issues", label: "Moves to review", ref: issuesTab },
   ] as const;
   const inspect = (beforePly: number) => {
     setTab("moves");
@@ -260,8 +260,8 @@ export function InsightPanel({
     moveTab.current?.focus({ preventScroll: true });
     document.getElementById("board")?.scrollIntoView({ block: "start" });
   };
-  // Graph points move the viewed position without leaving the Overview tab:
-  // the selection marker follows and the board updates underneath.
+  // Graph points move the viewed position without leaving the Move analysis
+  // tab: the selection marker follows and the board updates underneath.
   const viewInPlace = (ply: number) => {
     dispatch({ type: "view", ply });
   };
@@ -269,6 +269,9 @@ export function InsightPanel({
     review.tooLong ||
     !!review.error ||
     !!review.progress?.failed;
+  const userSide = state.analysis.ownGame ? state.analysis.perspective : undefined;
+  const branch = state.analysis.branchFromPly !== null;
+  const ply = state.analysis.index;
   return (
     <aside className="panel insight-panel" aria-label="Game analysis">
       <div className="analysis-tabs analysis-section">
@@ -340,27 +343,32 @@ export function InsightPanel({
         tabIndex={0}
       >
         {tab === "moves" && (
-          <MoveAnalysis state={state} dispatch={dispatch} review={review} />
+          <>
+            <MoveAnalysis state={state} dispatch={dispatch} review={review} />
+            <ReviewSummary
+              review={review}
+              ply={ply}
+              userSide={userSide}
+              branch={branch}
+              onGraphView={viewInPlace}
+            />
+          </>
         )}
       </div>
       <div
         className="analysis-section"
         role="tabpanel"
-        id="analysis-panel-overview"
-        aria-labelledby="analysis-tab-overview"
-        hidden={tab !== "overview"}
+        id="analysis-panel-issues"
+        aria-labelledby="analysis-tab-issues"
+        hidden={tab !== "issues"}
         tabIndex={0}
       >
-        {tab === "overview" && (
-          <ReviewOverview
+        {tab === "issues" && (
+          <ReviewIssues
             review={review}
-            ply={state.analysis.index}
-            userSide={
-              state.analysis.ownGame ? state.analysis.perspective : undefined
-            }
-            branch={state.analysis.branchFromPly !== null}
+            userSide={userSide}
+            branch={branch}
             onInspect={inspect}
-            onGraphView={viewInPlace}
           />
         )}
       </div>

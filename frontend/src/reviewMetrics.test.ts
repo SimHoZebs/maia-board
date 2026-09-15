@@ -37,36 +37,36 @@ it('includes forced moves at 100 despite engine noise and ignores preserved mate
   expect(reviewMove(before, after, new Chess(), 'e2e4').accuracy).toBe(100);
   expect(reviewMove(before, { ...after, score: { type: 'mate', value: -1 } }, new Chess(), 'e2e4').label).toBe('Blunder');
 });
-it('flags avoidable mate as Skull with zero accuracy but preserved loss', () => {
+it('flags avoidable mate as Allowed mate with zero accuracy but preserved loss', () => {
   // fxg3-type case: dead lost on cp (~2.5%) but not mated; the played move
   // lets Black force mate while the best move survives. Win% loss alone
-  // (< 5) would read Good — Skull must fire first with accuracy 0.
+  // (< 5) would read Good — Allowed mate must fire first with accuracy 0.
   const before = evaluation(-1000); before.best_move = 'g1f3';
   const after = { ...evaluation(0), score: { type: 'mate' as const, value: -1, winning_side: 'black' as const } };
-  const skull = reviewMove(before, after, new Chess(), 'e2e4');
-  expect(skull.label).toBe('Skull');
-  expect(skull.accuracy).toBe(0);
-  expect(skull.loss).toBeGreaterThan(0);
-  expect(skull.loss!).toBeLessThan(5);
+  const allowedMate = reviewMove(before, after, new Chess(), 'e2e4');
+  expect(allowedMate.label).toBe('Allowed mate');
+  expect(allowedMate.accuracy).toBe(0);
+  expect(allowedMate.loss).toBeGreaterThan(0);
+  expect(allowedMate.loss!).toBeLessThan(5);
   // Black-mover mirror: White mates after Black's move, best avoided it.
   const game = new Chess(); game.move('e4');
   const bBefore = evaluation(1000); bBefore.best_move = 'e7e5';
   const bAfter = { ...evaluation(0), score: { type: 'mate' as const, value: 1, winning_side: 'white' as const } };
-  expect(reviewMove(bBefore, bAfter, game, 'd7d5').label).toBe('Skull');
+  expect(reviewMove(bBefore, bAfter, game, 'd7d5').label).toBe('Allowed mate');
   // Winner falls back to mate-value sign when winning_side is absent.
   expect(isMateFor({ type: 'mate', value: -3 }, 'black')).toBe(true);
   expect(isMateFor({ type: 'mate', value: 3 }, 'black')).toBe(false);
   expect(isMateFor({ type: 'cp', value: -1000 }, 'black')).toBe(false);
 });
-it('never skulls unavoidable or best-played mates, and forced still wins', () => {
-  // Mate acceleration (already mated, M5 -> M1) with non-best play: not Skull.
+it('never allows mate on unavoidable or best-played mates, and forced still wins', () => {
+  // Mate acceleration (already mated, M5 -> M1) with non-best play: not Allowed mate.
   const mated = { ...evaluation(0), score: { type: 'mate' as const, value: -5, winning_side: 'black' as const }, best_move: 'g1f3' };
   const faster = { ...evaluation(0), score: { type: 'mate' as const, value: -1, winning_side: 'black' as const } };
-  expect(reviewMove(mated, faster, new Chess(), 'e2e4').label).not.toBe('Skull');
-  // Best move played: never Skull even if the after-position reads as mate.
+  expect(reviewMove(mated, faster, new Chess(), 'e2e4').label).not.toBe('Allowed mate');
+  // Best move played: never Allowed mate even if the after-position reads as mate.
   const best = evaluation(-1000); best.best_move = 'e2e4';
   const matedAfter = { ...evaluation(0), score: { type: 'mate' as const, value: -1, winning_side: 'black' as const } };
-  expect(reviewMove(best, matedAfter, new Chess(), 'e2e4').label).not.toBe('Skull');
+  expect(reviewMove(best, matedAfter, new Chess(), 'e2e4').label).not.toBe('Allowed mate');
   // Single legal move allowing mate stays Forced.
   const forced = new Chess('5Q1k/8/5K2/8/8/8/8/8 b - - 0 1');
   expect(forced.moves()).toHaveLength(1);
@@ -122,9 +122,9 @@ it('verdicts only the quality-by-rarity synthesis, never the grade', () => {
     .toBe('A tempting sidestep — Maia at 1600 predicts only 40%.');
   expect(describeMove({ san: 'Kd2', quality: quality('Miss'), rarity: rarity('Seen'), elo: 1600 }))
     .toBe('A tempting sidestep — Maia at 1600 predicts only 40%.');
-  expect(describeMove({ san: 'fxg3', quality: quality('Skull'), rarity: rarity('Expected'), elo: 1600 }))
+  expect(describeMove({ san: 'fxg3', quality: quality('Allowed mate'), rarity: rarity('Expected'), elo: 1600 }))
     .toBe('An easy mistake to make — Maia at 1600 predicts 40% for this move.');
-  expect(describeMove({ san: 'fxg3', quality: quality('Skull'), rarity: rarity('Unseen'), elo: 1600 }))
+  expect(describeMove({ san: 'fxg3', quality: quality('Allowed mate'), rarity: rarity('Unseen'), elo: 1600 }))
     .toBe('An unusual slip — Maia at 1600 predicts only 40%.');
   expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity: rarity('Unknown'), elo: 1600 })).toBeNull();
   expect(describeMove({ san: 'e4', quality: quality('Forced'), rarity: rarity('Unknown'), elo: 1600 }))

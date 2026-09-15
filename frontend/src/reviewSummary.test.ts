@@ -24,11 +24,11 @@ it('counts misses alongside inaccuracies, mistakes, and blunders', () => {
     { beforePly: 0, color: 'white', moveNumber: 1, san: 'e4', label: 'Miss', accuracy: 20 },
   ]);
 });
-it('counts skulls separately from blunders with zero accuracy', () => {
-  const summary = summarizeReview(nodes(['e2e4', 'e7e5']), [quality(0, 'Skull'), quality(100, 'Best')]);
-  expect(summary.sides[0]).toMatchObject({ issues: { Inaccuracy: 0, Mistake: 0, Miss: 0, Blunder: 0, Skull: 1 } });
+it('counts allowed mates separately from blunders with zero accuracy', () => {
+  const summary = summarizeReview(nodes(['e2e4', 'e7e5']), [quality(0, 'Allowed mate'), quality(100, 'Best')]);
+  expect(summary.sides[0]).toMatchObject({ issues: { Inaccuracy: 0, Mistake: 0, Miss: 0, Blunder: 0, 'Allowed mate': 1 } });
   expect(summary.issues).toEqual([
-    { beforePly: 0, color: 'white', moveNumber: 1, san: 'e4', label: 'Skull', accuracy: 0 },
+    { beforePly: 0, color: 'white', moveNumber: 1, san: 'e4', label: 'Allowed mate', accuracy: 0 },
   ]);
 });
 it('keeps unavailable moves out of means while retaining incomplete coverage', () => {
