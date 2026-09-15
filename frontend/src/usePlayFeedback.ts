@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { buildTimeline, legalPrefixLength, lineKeyFor, START_FEN, type Timeline } from './domain';
-import { ReviewCoordinator, cancelScope, createLineScope, reviewKey, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
+import { ReviewCoordinator, reviewKey, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
+import { useLineScope } from './useLineScope';
 import { useServerBatch } from './useServerBatch';
 import { computeLineQualities, type UnifiedMemo } from './qualities';
 import { effectiveQuality, maiaRarity, type Evaluation, type Quality } from './reviewMetrics';
@@ -67,8 +68,7 @@ export function usePlayFeedback(state: State): PlayFeedback {
   const userColor = playSettings.userColor;
   const gameId = state.play.id;
   const lineKey = useMemo(() => lineKeyFor(START_FEN, moves), [movesKey]);
-  const scope = useMemo(() => createLineScope(lineKey), [lineKey]);
-  useEffect(() => () => cancelScope(scope), [scope]);
+  const scope = useLineScope(lineKey);
   const nodes = useMemo(() => {
     const all = reviewNodes(timeline);
     const wanted = new Set<ReviewNode>();
@@ -92,28 +92,21 @@ export function usePlayFeedback(state: State): PlayFeedback {
   useServerBatch({ active, nodes, settings, engines: ['sf', 'maia'], coordinator, scope: active ? scope : null, auto: true });
   const previous = useRef<PlayQualitiesMemo | null>(null);
   const sfPending = coordinator.sfPendingKeys(), maiaPending = coordinator.maiaPendingKeys();
-  const computed = useMemo(() => active ? computePlayQualities({ gameId, timeline, userColor, settings,
-    sfLookup: node => coordinator.result('sf', node, settings), maiaLookup: node => coordinator.result('maia', node, settings),
-    sfPending, maiaPending, prev: previous.current }) : null,
+  // Same effect-free memo cache as useReview: synchronous carry-forward,
+  // content-keyed so a speculative cache can only cost a recompute.
+  const computed = useMemo(() => {
+    const result = active ? computePlayQualities({ gameId, timeline, userColor, settings,
+      sfLookup: node => coordinator.result('sf', node, settings), maiaLookup: node => coordinator.result('maia', node, settings),
+      sfPending, maiaPending, prev: previous.current }) : null;
+    previous.current = result?.memo ?? null;
+    return result;
+  },
   [active, gameId, timeline, userColor, settings, version, coordinator]);
-  useEffect(() => { previous.current = computed?.memo ?? null; }, [computed]);
-  // Fast-path abort: SF-settled (both endpoints) non-best moves need no Maia
-  // for their badge, so drop still-queued Maia predictions for them and free
-  // the foreground Play queue. Running predictions are non-preemptive and
-  // keep their sentence; the server batch may still compute them.
-  useEffect(() => {
-    if (!active || !computed) return;
-    const keys = new Set<string>();
-    const all = reviewNodes(timeline);
-    for (let ply = 0; ply < timeline.moves.length && ply < 256; ply++) {
-      if (all[ply].turn !== userColor) continue;
-      const sf = coordinator.result('sf', all[ply], settings);
-      // Badge needs both endpoints; abort only once it can settle without Maia.
-      if (!sf || !coordinator.result('sf', all[ply + 1], settings) || timeline.moves[ply] === sf.best_move) continue;
-      if (coordinator.result('maia', all[ply], settings)) continue;
-      keys.add(reviewKey('maia', all[ply], settings));
-    }
-    if (keys.size) coordinator.cancelQueued('maia', keys);
-  }, [active, computed, timeline, userColor, settings, version, coordinator]);
+  // No fast-path prune effect: the play workspace never queues foreground
+  // jobs (data arrives via bulk restore + the server batch, both of which
+  // skip cached plies at intake), so there is no queued Maia work to cancel.
+  // Badges still settle on SF alone via computePlayQualities; the
+  // coordinator keeps sole ownership of its queues (latest-wins priority
+  // ensure in analysis, cancelQueued as explicit API).
   return { active, qualities: computed?.qualities ?? [] };
 }

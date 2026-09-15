@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type Dispatch } from 'react';
+import { useState, type Dispatch } from 'react';
 import { exportExplored, exportLine, newId, sideName } from './domain';
 import type { Action, State } from './state';
 import { Dialog } from './Dialog';
@@ -7,6 +7,7 @@ import { resolveSide } from './randomSide';
 import { SavedGames } from './ReadPanels';
 import { ErrorBoundary, PanelError } from './ErrorBoundary';
 import { Rating, copyText } from './BoardTools';
+import { useFlash } from './useFlash';
 
 export type Props = { state: State; dispatch: Dispatch<Action> };
 export function PlayControls({ state, dispatch }: Props) {
@@ -49,14 +50,7 @@ export function AnalysisControls(props: Props) {
   return <ImportForm {...props} />;
 }
 export function AnalysisActions({ state, dispatch }: Props) {
-  const [copied, setCopied] = useState<'pgn' | 'explored' | 'link' | null>(null);
-  const timer = useRef<number | null>(null);
-  useEffect(() => () => { if (timer.current !== null) window.clearTimeout(timer.current); }, []);
-  const flash = (key: 'pgn' | 'explored' | 'link') => {
-    setCopied(key);
-    if (timer.current !== null) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => setCopied(null), 2000);
-  };
+  const [copied, flash] = useFlash<'pgn' | 'explored' | 'link'>();
   const copyPgn = (explored: boolean) =>
     void copyText(explored ? exportExplored(state.analysis) : exportLine(state.analysis)).then(ok => {
       if (ok) flash(explored ? 'explored' : 'pgn');

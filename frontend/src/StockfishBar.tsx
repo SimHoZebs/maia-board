@@ -102,11 +102,12 @@ export function StockfishBar({
   // Retain the last settled evaluation while the next position loads: the bar
   // keeps showing the previous value (dimmed/pulsing via .loading) so the
   // tween runs previous -> current instead of previous -> 50 -> current.
-  const lastRef = useRef<Evaluation | undefined>(evaluation);
-  useEffect(() => {
-    if (evaluation) lastRef.current = evaluation;
-  }, [evaluation]);
-  const display = evaluation ?? lastRef.current;
+  // Render-phase retention (no effect): the committed value is available to
+  // the same commit's tween input, with no one-commit ref lag. Evaluation
+  // objects are cache-stable identities, so this settles after one commit.
+  const [last, setLast] = useState<Evaluation | undefined>(evaluation);
+  if (evaluation && evaluation !== last) setLast(evaluation);
+  const display = evaluation ?? last;
   const percent = display ? whiteWin(display.score) : 50;
   const shown = useTweenedPercent(percent);
   const score = display ? scoreValueText(display.score) : "—";

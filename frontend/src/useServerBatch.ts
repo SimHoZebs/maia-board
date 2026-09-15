@@ -82,11 +82,15 @@ export function useServerBatch(args: {
 
   const retry = useCallback(() => { coordinator.retry(); start(); }, [coordinator, start]);
 
-  useEffect(() => { if (auto && active && scope) start(); }, [auto, active, scope, settings, start]);
+  // Auto-submit on activation, line change, or settings change. Keyed on the
+  // stable scopeKey string (not the scope object identity) plus settings, so
+  // a parent re-render that rebuilds object identities cannot resubmit.
+  // start() itself reads nodes/settings/scope from refs.
+  const scopeKey = scope?.lineKey ?? null;
+  useEffect(() => { if (auto && active && scopeKey) start(); }, [auto, active, scopeKey, settings, start]);
 
   // Scope teardown or deactivation drops its own job. Backgrounding the tab
   // does not run this: only a line change, unmount, or active=false cancels.
-  const scopeKey = scope?.lineKey ?? null;
   useEffect(() => {
     return () => {
       const id = jobIdRef.current;

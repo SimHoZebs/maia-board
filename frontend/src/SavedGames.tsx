@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   exportLine,
   loadLine,
@@ -14,6 +14,7 @@ import { Dialog } from "./Dialog";
 import { Check, Copy, Play, Trash2 } from "lucide-react";
 import { BoardThumbnail } from "./BoardThumbnail";
 import { useSyncSnapshot, useSyncStore } from "./syncStore";
+import { useFlash } from "./useFlash";
 
 export function SavedGames({
   state,
@@ -25,8 +26,7 @@ export function SavedGames({
   analysisOnly?: boolean;
 }) {
   const [deleting, setDeleting] = useState<string | null>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const copyTimer = useRef<number | null>(null);
+  const [copiedId, flashCopied] = useFlash<string>();
   // Sync display reads come from the isolated history-sync store, so the
   // "Syncing…" indicator never re-renders the board through game state.
   const sync = useSyncStore();
@@ -37,19 +37,11 @@ export function SavedGames({
     const position = lineRecord(game.moves);
     return { game, position, result: game.result === 'resigned' ? storedGameResult(game) : resultTextForTip(position.fen, position.terminal) };
   }), [state.saved]);
-  useEffect(
-    () => () => {
-      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
-    },
-    [],
-  );
   const copyGame = (game: { id: string; moves: string[] }) =>
     void copyText(exportLine(loadLine("", game.moves.join(" ")))).then(
       (ok) => {
         if (!ok) return;
-        setCopiedId(game.id);
-        if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
-        copyTimer.current = window.setTimeout(() => setCopiedId(null), 2000);
+        flashCopied(game.id);
       },
     );
   return (

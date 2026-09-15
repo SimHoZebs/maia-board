@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { buildTimeline, lineKeyFor, type TimelineRow } from './domain';
 import type { State } from './state';
-import { ReviewCoordinator, createLineScope, cancelScope, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
+import { ReviewCoordinator, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
+import { useLineScope } from './useLineScope';
 import { useServerBatch } from './useServerBatch';
 import { computeLineQualities, type UnifiedMemo } from './qualities';
 import { effectiveQuality, maiaRarity, type EngineGrade, type Evaluation, type Quality } from './reviewMetrics';
@@ -34,11 +35,9 @@ export function useReview(state: State) {
     : [...state.analysis.moves.slice(0, state.analysis.branchFromPly), ...state.analysis.branchMoves],
   [state.analysis.moves, state.analysis.branchFromPly, state.analysis.branchMoves]);
   const lineKey = useMemo(() => lineKeyFor(state.analysis.initialFen, moves), [state.analysis.initialFen, moves]);
-  // One abort scope per line: a line change or unmount aborts the previous
-  // foreground signal; the batch hook DELETEs its job on scope match.
-  // Backgrounding never aborts: there are no visibility/suspend listeners.
-  const scope = useMemo(() => createLineScope(lineKey), [lineKey]);
-  useEffect(() => () => cancelScope(scope), [scope]);
+  // One abort scope per line (shared hook); the batch hook DELETEs its job
+  // on scope match. Backgrounding never aborts.
+  const scope = useLineScope(lineKey);
   const timeline = useMemo(() => buildTimeline(state.analysis.initialFen, moves), [lineKey]);
   const nodes = useMemo(() => reviewNodes(timeline), [timeline]);
   const settingsKey = JSON.stringify([state.analysisSettings.eloMaia, state.analysisSettings.model, state.stockfish]);
@@ -94,8 +93,15 @@ export function useReview(state: State) {
   const evaluations = useMemo(() => nodes.map(node => coordinator.result('sf', node, settingsForNode(node))), [nodes, settingsForNode, version, coordinator]);
   const maiaResults = useMemo(() => nodes.map(node => coordinator.result('maia', node, settingsForNode(node))), [nodes, settingsForNode, version, coordinator]);
   const previous = useRef<ReviewQualitiesMemo | null>(null);
-  const computed = useMemo(() => computeReviewQualities({ line: timeline, nodes, evaluations, settingsForNode, pending: coordinator.sfPendingKeys(), prev: previous.current }), [timeline, nodes, evaluations, settingsForNode, version, coordinator]);
-  useEffect(() => { previous.current = computed.memo; }, [computed]);
+  // Memo cache without an effect: the ref carries the last computed memo into
+  // the next computation synchronously, so reuse never lags one commit
+  // behind. Worst case (abandoned concurrent render) is a recompute — keys
+  // are stable content, so correctness never depends on the cache.
+  const computed = useMemo(() => {
+    const result = computeReviewQualities({ line: timeline, nodes, evaluations, settingsForNode, pending: coordinator.sfPendingKeys(), prev: previous.current });
+    previous.current = result.memo;
+    return result;
+  }, [timeline, nodes, evaluations, settingsForNode, version, coordinator]);
   const rarities = useMemo(() => timeline.moves.map((move, ply) => maiaRarity(maiaResults[ply], move)), [timeline, maiaResults]);
   // Best-move rarity per ply: for mistakes, avoidance difficulty is the
   // rarity of the move they had to find, not the one they played. UCI-level

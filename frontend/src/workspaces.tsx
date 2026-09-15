@@ -112,8 +112,9 @@ export function isMenuOnly(state: { mode: string; analysisLoaded: boolean; start
 // bar can pin to the viewport without shifting content.
 export function MobileBarPortal({ state, dispatch }: Props) {
   const mobileBar = useMobileBar();
-  const [host, setHost] = useState<HTMLElement | null>(null);
-  useEffect(() => { setHost(document.body); }, []);
+  // Client-only static app (no SSR): document.body is available on first
+  // render, so no mount effect + second commit is needed for the portal host.
+  const [host] = useState<HTMLElement | null>(() => typeof document !== 'undefined' ? document.body : null);
   if (!mobileBar || !host) return null;
   const menu = <MobileMenu state={state} dispatch={dispatch} />;
   const nav = state.mode === 'analysis'
@@ -198,7 +199,11 @@ export function PlayWorkspace({ state, dispatch }: Props) {
     return <div className={`player-strip${active && ready ? ' active' : ''}`}><span className={`side-dot ${color}`} /><strong>{color === settings.userColor ? 'You' : `Maia · ${settings.eloMaia}`}</strong><MaterialSummary by={color} captures={playCaptures[color]} lead={materialLeadFor(playDiff, color)} />{color !== settings.userColor && replyIdentity?.degraded && <span role="status">{replyIdentity.model_used} fallback · requested {settings.model}</span>}<span className="player-side">{sideName(color)}</span>{active && ready && <span className="turn-indicator" role="status">{historic ? 'At this position' : request ? 'Thinking…' : 'To move'}</span>}</div>;
   };
   const over = boardOver || resigned;
-  useEffect(() => { if (over) setConfirmResign(false); }, [over]);
+  // Render-phase dismissal (no effect): a finished game cannot keep the
+  // resign confirmation. Resetting during render avoids one commit with the
+  // dialog open over the result overlay, and avoids a stale `true` reopening
+  // the dialog on the next game.
+  if (over && confirmResign) setConfirmResign(false);
   const winner = resigned ? oppositeColor(settings.userColor) : over && live.isCheckmate() ? oppositeColor(toGroundColor(live.turn())) : null;
   const resultText = resigned ? storedGameResult(state.play) : playLine ? resultTextForTip(playLine.fen, playLine.terminal) : gameResult(live);
   const mobileBar = useMobileBar();

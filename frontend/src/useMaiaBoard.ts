@@ -33,11 +33,20 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
   }, [repository, sync]);
   // TODO: split god State into play/analysis/ui slices. Kept whole here:
   // slicing the reducer + persistence + sync projection risks scope creep
-  // beyond the eval refactor; the render-time nav dispatch below is the
-  // cheap correctness fix (dispatch moved into an effect).
+  // beyond the eval refactor.
+  // Render-phase mode adjustment (no effect): the router owns the mode, so a
+  // changed destination is applied before commit instead of flashing one
+  // commit of the previous mode. Only setState runs here: the command ref
+  // below realigns with committed state in a passive effect, so an abandoned
+  // concurrent render can never leave it ahead of what actually committed.
+  // A mode action carries no play mutation, so no repository side effect runs
+  // on this path; persistence stays in dispatch.
+  if (state.mode !== mode) {
+    setState(reducer(state, { type: 'mode', mode }));
+  }
   useEffect(() => {
-    if (current.current.mode !== mode) dispatch({ type: 'mode', mode });
-  }, [mode, dispatch, state.mode]);
+    current.current = state;
+  });
 
   useEffect(() => {
     sync.loadMore = repository.loadMore;

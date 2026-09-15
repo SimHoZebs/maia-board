@@ -177,9 +177,9 @@ export class ReviewCoordinator {
   }
   // Drop queued (not running) jobs for one engine, optionally limited to a
   // key set. Grants are non-preemptive, so running work still completes and
-  // its sentence arrives free. Used by the play fast path: SF-settled
-  // non-best moves need no Maia for their badge, so queued Maia predictions
-  // for them are pure queue-slot waste.
+  // its sentence arrives free. Queue ownership stays here: workspaces never
+  // prune from hook effects. (Play needs no call: it queues no foreground
+  // jobs — restore + server batch skip cached plies at intake.)
   cancelQueued(engine: Engine, keys?: ReadonlySet<string>) {
     let dropped = false;
     for (const key of [...this.pending[engine].keys()]) {

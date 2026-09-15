@@ -4,16 +4,22 @@ import { defaultStockfishSettings } from './stockfishSettings';
 import { QualityBadge, type BadgeLoading } from './ReviewCharts';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import './settings.css';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 function NumberSetting({ id, value, min, max, step, onChange, disabled, label }: { id: string; value: number; min: number; max: number; step: number; onChange: (value: number) => void; disabled?: boolean; label: string }) {
-  const [draft, setDraft] = useState(String(value));
-  useEffect(() => setDraft(String(value)), [value]);
-  return <input id={id} type="number" min={min} max={max} step={step} value={draft} disabled={disabled} aria-label={label}
+  // Uncommitted text lives in draft; null means "show the committed value".
+  // No sync effect: while editing, parent updates from our own keystrokes
+  // must not overwrite the text (effect versions fight typing); when idle,
+  // draft is null so external changes (reset defaults, reload) display
+  // directly. Blur discards the draft. Intended: an external change that
+  // lands mid-edit (e.g. Reset defaults while focused) appears on blur —
+  // editing wins until then.
+  const [draft, setDraft] = useState<string | null>(null);
+  return <input id={id} type="number" min={min} max={max} step={step} value={draft ?? String(value)} disabled={disabled} aria-label={label}
     onChange={e => {
       setDraft(e.target.value);
       if (e.target.value !== '' && e.target.validity.valid) onChange(e.target.valueAsNumber);
-    }} onBlur={() => setDraft(String(value))} />;
+    }} onBlur={() => setDraft(null)} />;
 }
 
 export function SettingsPage({ state, dispatch }: Props) {
