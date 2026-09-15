@@ -172,7 +172,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .engine-duo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
 .move-verdict { margin: 0 0 12px; font-size: 14px; line-height: 1.5; }
 .engine-duo > section { min-width: 0; }
-.engine-duo h2 { line-height: 1.35; min-height: 2lh; }
+.engine-duo h2 { margin: 0 0 6px; line-height: 1.35; min-height: 2lh; }
 .engine-duo .model-context { line-height: 1.4; min-height: 2lh; }
 .engine-duo h3 { margin: 14px 0 6px; font-size: 13px; }
 .engine-duo .win-hero strong { line-height: 1.2; }
