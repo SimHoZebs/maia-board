@@ -239,6 +239,11 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
   .bottom-ui .workspace.analyzing { margin: auto auto 16px; }
   .bottom-ui .workspace:not(.analyzing) { margin: auto; }
   .bottom-ui .board-stage { width: min(100%, calc(100dvh - 344px)); margin: 0 auto; }
+  /* Keep the board and its supplemental strips/toolbar/move list pinned to
+     the top while the insight panel scrolls beneath on phones. Sticky (not
+     fixed) keeps the stage in flow so nothing jumps, and releases at the
+     workspace end. Below the footer (z 50) and banners (z 60). */
+  .bottom-ui .board-stage { position: sticky; top: 0; z-index: 40; background: #202122; padding-top: calc(8px + env(safe-area-inset-top)); padding-bottom: 8px; border-bottom: 1px solid var(--line); }
   /* The mobile footer is a separate mount outside the padded content flow
      (portaled to the body end), so it spans edge to edge: plain sticky pins
      it to the viewport, its own box reserves the space, and nothing drifts

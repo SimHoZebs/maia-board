@@ -891,6 +891,23 @@ test('mobile bottom bar pins to the viewport without clipping trailing content',
   expect(Math.abs(analysisBox.y + analysisBox.height - viewport.height)).toBeLessThanOrEqual(2);
 });
 
+test('mobile board stage stays fixed while the insight panel scrolls', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await boot(page, { [KEYS.current]: record(['e2e4', 'e7e5', 'g1f3', 'g8f6', 'f1c4', 'f8c5']) }, false, '/analyze?moves=e2e4,e7e5,g1f3,g8f6,f1c4,f8c5');
+  const stage = page.locator('.board-stage');
+  await expect(page.locator('#board cg-board')).toHaveCount(1);
+  await expect.poll(() => stage.evaluate(el => getComputedStyle(el).position)).toBe('sticky');
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  const box = (await stage.boundingBox())!;
+  // Pinned to the viewport top (safe-area padding keeps it just below 0).
+  expect(box.y).toBeLessThanOrEqual(16);
+  // Supplemental pieces stay attached inside the pinned stage.
+  for (const selector of ['.board-toolbar', '.player-strip', '#move-list', '#board']) for (const inner of await page.locator(selector).evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; }))) {
+    expect(inner.top).toBeGreaterThanOrEqual(box.y - 1);
+    expect(inner.bottom).toBeLessThanOrEqual(box.y + box.height + 1);
+  }
+});
+
 test('bottom bar swaps mounts across the mobile breakpoint without duplicating', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await boot(page, { [KEYS.current]: record(['e2e4', 'e7e5']) });
