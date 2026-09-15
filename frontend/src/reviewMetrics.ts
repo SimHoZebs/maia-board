@@ -61,7 +61,7 @@ export function effectiveQuality(grade: EngineGrade | undefined, rarity: Rarity 
   if (grade.label === 'Holds') return { ...grade, label: 'Good' };
   return grade as Quality;
 }
-function rarityVerdict(quality: Quality, rarity: Rarity | undefined, elo: number): string | null {
+function rarityVerdict(quality: Quality, rarity: Rarity | undefined, elo: number, bestRarity?: Rarity | null): string | null {
   if (!rarity || rarity.label === 'Unknown') return null;
   const praise = quality.label === 'Excellent' || quality.label === 'Great' || quality.label === 'Best';
   const holds = quality.label === 'Good';
@@ -69,37 +69,47 @@ function rarityVerdict(quality: Quality, rarity: Rarity | undefined, elo: number
     if (quality.label === 'Excellent') return `An exceptional find — absent from Maia's top choices at ${elo}.`;
     if (praise) return `A genuine find — absent from Maia's top choices at ${elo}.`;
     if (holds) return `Absent from Maia's top choices at ${elo}, and it holds.`;
-    return `Worth a second look — absent from Maia's top choices at ${elo}.`;
+    return hardToAvoid(bestRarity, elo) ?? `Worth a second look — absent from Maia's top choices at ${elo}.`;
   }
   if (rarity.prob == null) return null;
   const pct = `${(rarity.prob * 100).toFixed(1).replace(/\.0$/, '')}%`;
   if (rarity.label === 'Expected') {
-    return praise || holds
-      ? `The natural choice — Maia at ${elo} predicts ${pct} for this move.`
-      : `An easy mistake to make — Maia at ${elo} predicts ${pct} for this move.`;
+    if (praise || holds) return `The natural choice — Maia at ${elo} predicts ${pct} for this move.`;
+    return hardToAvoid(bestRarity, elo) ?? `An easy mistake to make — Maia at ${elo} predicts ${pct} for this move.`;
   }
   if (rarity.label === 'Uncommon') {
     if (quality.label === 'Excellent') return `An exceptional find — Maia at ${elo} predicts only ${pct}.`;
     if (praise) return `A sharp find — Maia at ${elo} predicts only ${pct}.`;
     if (holds) return `An uncommon choice that holds — Maia at ${elo} predicts only ${pct}.`;
-    return `A tempting sidestep — Maia at ${elo} predicts only ${pct}.`;
+    return hardToAvoid(bestRarity, elo) ?? `A tempting sidestep — Maia at ${elo} predicts only ${pct}.`;
   }
   if (quality.label === 'Excellent') return `An exceptional find — Maia at ${elo} predicts only ${pct}.`;
   if (praise) return `A rare find — Maia at ${elo} predicts only ${pct}.`;
   if (holds) return `A rarely played choice that holds — Maia at ${elo} predicts only ${pct}.`;
-  return `An unusual slip — Maia at ${elo} predicts only ${pct}.`;
+  return hardToAvoid(bestRarity, elo) ?? `An unusual slip — Maia at ${elo} predicts only ${pct}.`;
+}
+// A mistake whose avoidance was itself a rare find: the best move sat under
+// 5% (Rare) or outside Maia's top choices (Absent) at this Elo, so the slip
+// was hard to avoid. Expected/Uncommon/Unknown best moves leave the standard
+// temptation wording alone. Verdict-only: badges still read pure loss.
+function hardToAvoid(bestRarity: Rarity | null | undefined, elo: number): string | null {
+  if (!bestRarity || bestRarity.label === 'Expected' || bestRarity.label === 'Uncommon' || bestRarity.label === 'Unknown') return null;
+  if (bestRarity.label === 'Absent') return `Hard to avoid — the best move is absent from Maia's top choices at ${elo}.`;
+  if (bestRarity.prob == null || bestRarity.prob >= EXCELLENT_MAX_PROB) return null;
+  const pct = `${(bestRarity.prob * 100).toFixed(1).replace(/\.0$/, '')}%`;
+  return `Hard to avoid — Maia at ${elo} predicts only ${pct} for the best move.`;
 }
 // One verdict sentence for the move just played: the book name, the only
 // legal move, or the rarity synthesis — never a restated grade. Returns null
 // when there is nothing additive to say (unreviewed, off-book without Maia
 // data, or pre-first-move); the badges and charts already carry the grades.
 export type OpeningRef = { eco: string; name: string };
-export function describeMove(args: { san: string; quality: Quality | undefined; rarity: Rarity | undefined; elo: number; opening?: OpeningRef | null }): string | null {
-  const { san, quality, rarity, elo, opening } = args;
+export function describeMove(args: { san: string; quality: Quality | undefined; rarity: Rarity | undefined; elo: number; opening?: OpeningRef | null; bestRarity?: Rarity | null }): string | null {
+  const { san, quality, rarity, elo, opening, bestRarity } = args;
   if (opening) return `${san} — ${opening.name} (${opening.eco}). Book move.`;
   if (!quality || quality.label === 'Unreviewed') return null;
   if (quality.label === 'Forced') return `${san} was the only legal move.`;
-  return rarityVerdict(quality, rarity, elo);
+  return rarityVerdict(quality, rarity, elo, bestRarity);
 }
 export function whiteWin(score: Score): number {
   return score.type === 'cp' ? 100 / (1 + Math.exp(-.00368208 * score.value)) : (score.winning_side ?? (score.value > 0 ? 'white' : 'black')) === 'white' ? 100 : 0;

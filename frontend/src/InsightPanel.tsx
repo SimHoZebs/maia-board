@@ -91,12 +91,13 @@ export function MoveAnalysis({
   const { opening: lineOpening } = useLineOpenings(review.timeline.moves, state.analysis.initialFen, ply);
   const exactOpening = lineOpening?.isExact ? { eco: lineOpening.eco, name: lineOpening.name } : null;
   const verdict = played
-    ? describeMove({
+      ? describeMove({
         san: review.nodes[ply].san ?? played,
         quality: review.qualities[focus],
         rarity: review.rarities?.[focus],
         elo: review.maiaElo,
         opening: exactOpening,
+        bestRarity: review.bestRarities?.[focus],
       })
     : null;
   // Exploring a candidate means playing it instead of x, so step back to

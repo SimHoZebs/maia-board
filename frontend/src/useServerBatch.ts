@@ -33,6 +33,13 @@ export function useServerBatch(args: {
   settingsRef.current = settings;
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
+  // engines arrives as an inline literal at the call sites: mirror it into a
+  // ref like nodes/settings/scope. Otherwise `start` (and the auto-start
+  // effect below, which depends on it) gets a new identity every render and
+  // re-submits forever: start() → setProgress → render → new array → start().
+  // That is React error #185 the moment auto && active (play + feedback on).
+  const enginesRef = useRef(engines);
+  enginesRef.current = engines;
   const jobIdRef = useRef<string | null>(null);
   jobIdRef.current = jobId;
   const jobScopeRef = useRef<string | null>(null);
@@ -42,7 +49,7 @@ export function useServerBatch(args: {
     const current = scopeRef.current;
     if (!active || !current) return;
     const submittedKey = current.lineKey;
-    const batchItems = buildBatchItems(nodesRef.current, settingsRef.current, engines);
+    const batchItems = buildBatchItems(nodesRef.current, settingsRef.current, enginesRef.current);
     itemsRef.current = batchItems;
     coordinator.replaceFailures(new Set(batchItems.map(item => item.key)), new Map());
     setError(undefined);
@@ -71,7 +78,7 @@ export function useServerBatch(args: {
         setProgress(current => current && { ...current, running: false });
       }
     })();
-  }, [active, coordinator, engines, fetcher]);
+  }, [active, coordinator, fetcher]);
 
   const retry = useCallback(() => { coordinator.retry(); start(); }, [coordinator, start]);
 

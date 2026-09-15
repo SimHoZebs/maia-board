@@ -97,6 +97,11 @@ export function useReview(state: State) {
   const computed = useMemo(() => computeReviewQualities({ line: timeline, nodes, evaluations, settingsForNode, pending: coordinator.sfPendingKeys(), prev: previous.current }), [timeline, nodes, evaluations, settingsForNode, version, coordinator]);
   useEffect(() => { previous.current = computed.memo; }, [computed]);
   const rarities = useMemo(() => timeline.moves.map((move, ply) => maiaRarity(maiaResults[ply], move)), [timeline, maiaResults]);
+  // Best-move rarity per ply: for mistakes, avoidance difficulty is the
+  // rarity of the move they had to find, not the one they played. UCI-level
+  // only (no SAN plumbing — the engine candidate list already names it), so
+  // verdicts stay text-only and badges untouched. Missing best_move or Maia
+  // yields undefined, which reads as standard temptation wording.
   // Badges show the Maia-aware judgment translated from engine facts
   // (Critical/Top/Holds → Excellent/Great/Best/Good). Praise needs hard-find
   // evidence; Expected/Unknown cap at Best. Engine-critical praise with Maia
@@ -123,6 +128,11 @@ export function useReview(state: State) {
     });
     return changed ? mapped : (computed.qualities as (Quality | undefined)[]);
   }, [computed.qualities, rarities, maiaResults, nodes, settingsForNode, version, coordinator]);
+  const bestRarities = useMemo(() => timeline.moves.map((_move, ply) => {
+    const best = evaluations[ply]?.best_move;
+    const maia = maiaResults[ply];
+    return best && maia ? maiaRarity(maia, best) : undefined;
+  }), [timeline, evaluations, maiaResults]);
   // Coverage is completeness (badges + sentences), not badge readiness:
   // badges fast-path on SF alone, but progress stays partial until Maia
   // lands for every non-outcome node.
@@ -148,7 +158,7 @@ export function useReview(state: State) {
     : batchComplete || coverageComplete ? 'complete'
     : !prime || prime.key !== primeKey || !coverage ? 'loading'
     : 'partial';
-  return { timeline, nodes, evaluations, qualities, rarities, coverage,
+  return { timeline, nodes, evaluations, qualities, rarities, bestRarities, coverage,
     current: evaluations[currentPly], focus: evaluations[focusPly], focusPly, maia, maiaCurrent,
     maiaElo: displayed.entry?.eloMaia ?? focusSettings.eloMaia, maiaModel: maia?.model_used ?? focusSettings.model,
     maiaWantedElo: focusSettings.eloMaia, maiaWantedModel: focusSettings.model,

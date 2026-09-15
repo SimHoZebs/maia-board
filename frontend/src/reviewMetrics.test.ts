@@ -176,3 +176,31 @@ it('gates praise on Maia: Excellent needs absent-or-tiny, Expected/Unknown cap a
   expect(effectiveQuality({ ...critical, label: 'Holds' }, expected)?.label).toBe('Good');
   expect(effectiveQuality(undefined, expected)).toBeUndefined();
 });
+it('notes when a mistake was hard to avoid because the best move was rare', () => {
+  const blunder: Quality = { label: 'Blunder', accuracy: 20, loss: 25 };
+  const expected: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
+  const rareBest: Rarity = { label: 'Rare', r: 0.1, prob: 0.02, topProb: 0.2 };
+  const absentBest: Rarity = { label: 'Absent', r: null, prob: null, topProb: 0.4 };
+  // Obvious mistake, elusive best move: forgivable.
+  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, elo: 1400, bestRarity: rareBest }))
+    .toBe('Hard to avoid — Maia at 1400 predicts only 2% for the best move.');
+  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, elo: 1400, bestRarity: absentBest }))
+    .toBe("Hard to avoid — the best move is absent from Maia's top choices at 1400.");
+  // Obvious mistake, obvious best move: damning as before.
+  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, elo: 1400, bestRarity: expected }))
+    .toBe('An easy mistake to make — Maia at 1400 predicts 40% for this move.');
+  // No best-move evidence: standard wording.
+  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, elo: 1400 }))
+    .toBe('An easy mistake to make — Maia at 1400 predicts 40% for this move.');
+  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, elo: 1400, bestRarity: { label: 'Unknown', r: null, prob: null, topProb: null } }))
+    .toBe('An easy mistake to make — Maia at 1400 predicts 40% for this move.');
+  // Overrides every negative temptation sentence, not just Expected.
+  const uncommon: Rarity = { label: 'Uncommon', r: 0.4, prob: 0.2, topProb: 0.5 };
+  expect(describeMove({ san: 'd5', quality: { ...blunder, label: 'Mistake' }, rarity: uncommon, elo: 1400, bestRarity: rareBest }))
+    .toBe('Hard to avoid — Maia at 1400 predicts only 2% for the best move.');
+  // Praise and holds never read the best-move axis.
+  expect(describeMove({ san: 'Nf3', quality: { ...blunder, label: 'Best' }, rarity: expected, elo: 1400, bestRarity: rareBest }))
+    .toBe('The natural choice — Maia at 1400 predicts 40% for this move.');
+  expect(describeMove({ san: 'h3', quality: { ...blunder, label: 'Good' }, rarity: uncommon, elo: 1400, bestRarity: rareBest }))
+    .toBe('An uncommon choice that holds — Maia at 1400 predicts only 20%.');
+});
