@@ -51,6 +51,39 @@ describe('requestMove', () => {
     expect((error as MaiaApiError).code).toBe('server_unreachable');
   });
 
+  it('sends the play priority lane only when requested', async () => {
+    const body = JSON.stringify({
+      move: 'e2e4',
+      top_moves: [{ move: 'e2e4', prob: 0.6 }],
+      wdl: [0.2, 0.3, 0.5],
+      model_used: '79m',
+      degraded: false,
+    });
+    const fetchImpl = vi.fn().mockImplementation(async () => new Response(body));
+    await requestMove(payload, fetchImpl, undefined, { priority: 'play' });
+    expect(fetchImpl).toHaveBeenCalledWith('/move', expect.objectContaining({
+      headers: expect.objectContaining({ 'X-Priority': 'play' }),
+    }));
+    fetchImpl.mockClear();
+    await requestMove(payload, fetchImpl);
+    expect(fetchImpl).toHaveBeenCalledWith('/move', expect.objectContaining({
+      headers: expect.not.objectContaining({ 'X-Priority': expect.anything() }),
+    }));
+  });
+
+  it('preserves the scheduler 409 codes without retrying them', async () => {
+    for (const [code, status] of [['superseded', 409], ['batch_busy', 409]] as const) {
+      const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code, message: code }), { status }));
+      const error = await requestMove(payload, fetchImpl).catch((value: unknown) => value);
+      expect(error).toBeInstanceOf(MaiaApiError);
+      expect((error as MaiaApiError).code).toBe(code);
+      // retryBusy only retries engine_busy: exactly one attempt here.
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    }
+    expect(readableApiError(new MaiaApiError('superseded', 'x'))).toBe('A newer request replaced this position.');
+    expect(readableApiError(new MaiaApiError('batch_busy', 'x'))).toBe('A full-game review is already running. Wait for it or cancel it first.');
+  });
+
   it.each([
     ['invalid_elo', 'The Elo settings are invalid. Choose both ratings before trying again.'],
     ['missing_elo', 'The Elo settings are invalid. Choose both ratings before trying again.'],

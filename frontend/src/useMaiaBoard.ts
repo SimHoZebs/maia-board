@@ -76,7 +76,7 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
     const stalled = window.setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), 150_000);
     queueMicrotask(() => {
       if (!active) return;
-      void requestMove(request.payload, fetch, controller.signal).then(
+      void requestMove(request.payload, fetch, controller.signal, { priority: 'play' }).then(
         response => { window.clearTimeout(stalled); if (active) dispatch({ type: 'reply', request, response }); },
         error => {
           window.clearTimeout(stalled);

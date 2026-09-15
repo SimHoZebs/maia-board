@@ -28,6 +28,7 @@ export type MoveResponse = {
 };
 
 export type ApiErrorCode =
+  | 'batch_busy'
   | 'engine_busy'
   | 'engine_unavailable'
   | 'game_over'
@@ -46,6 +47,7 @@ export type ApiErrorCode =
   | 'not_maia_turn'
   | 'position_mismatch'
   | 'server_unreachable'
+  | 'superseded'
   | 'unknown';
 
 export class MaiaApiError extends Error {
@@ -123,22 +125,24 @@ export function parseMoveResponse(value: unknown, expected?: { model: MaiaModel;
 function parseErrorCode(value: unknown): ApiErrorCode {
   if (!isRecord(value) || typeof value.code !== 'string') return 'unknown';
   const known: ApiErrorCode[] = [
-    'engine_busy', 'engine_unavailable', 'game_over', 'history_too_long', 'invalid_elo',
+    'batch_busy', 'engine_busy', 'engine_unavailable', 'game_over', 'history_too_long', 'invalid_elo',
     'invalid_fen', 'invalid_initial_fen', 'invalid_json', 'invalid_maia_color',
     'invalid_model', 'invalid_move', 'invalid_position', 'invalid_request',
     'method_not_allowed', 'missing_elo', 'not_maia_turn', 'position_mismatch',
-    'server_unreachable', 'unknown',
+    'server_unreachable', 'superseded', 'unknown',
   ];
   return known.includes(value.code as ApiErrorCode) ? value.code as ApiErrorCode : 'unknown';
 }
 
-export async function requestMove(payload: MoveRequest, fetchImpl: FetchLike = fetch, signal?: AbortSignal): Promise<MoveResponse & { cached?: boolean }> {
+export type RequestPriority = 'play' | 'focus';
+
+export async function requestMove(payload: MoveRequest, fetchImpl: FetchLike = fetch, signal?: AbortSignal, opts?: { priority?: RequestPriority }): Promise<MoveResponse & { cached?: boolean }> {
   return withDeadline(async transportSignal => {
     let response: Response;
     try {
       response = await retryBusy(fetchImpl, '/move', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(opts?.priority ? { 'X-Priority': opts.priority } : {}) },
         body: JSON.stringify(payload),
       }, transportSignal);
     } catch (error) {
@@ -171,6 +175,10 @@ export function readableApiError(error: unknown): string {
       return 'Maia is unreachable. Check that the server is running on your LAN.';
     case 'engine_busy':
       return 'Maia is busy. Wait a moment and try again.';
+    case 'batch_busy':
+      return 'A full-game review is already running. Wait for it or cancel it first.';
+    case 'superseded':
+      return 'A newer request replaced this position.';
     case 'not_maia_turn':
       return 'Maia is not on move in this position.';
     case 'game_over':
