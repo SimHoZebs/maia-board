@@ -99,6 +99,10 @@ it('bands Maia rarity by ratio to the top move, not rank or absolute prob', () =
   expect(maiaRarity(maia([['e2e4', 0.12], ['d2d4', 0.05]]), 'e2e4').label).toBe('Expected');
   expect(maiaRarity(maia([['e2e4', 0.4], ['d2d4', 0.15]]), 'd2d4').label).toBe('Uncommon');
   expect(maiaRarity(maia([['e2e4', 0.4], ['d2d4', 0.05]]), 'd2d4').label).toBe('Rare');
+  // Qe3-like 9.5% under a 32% top (r ~= 0.30) reads Rare against the
+  // majority; f3-like 14.9% under a 34% top (r ~= 0.44) stays Uncommon.
+  expect(maiaRarity(maia([['f2f3', 0.32], ['h2h3', 0.28], ['d3d4', 0.11], ['e1e3', 0.095], ['d2f3', 0.08]]), 'e1e3').label).toBe('Rare');
+  expect(maiaRarity(maia([['h2h3', 0.34], ['f2f3', 0.149], ['d2f3', 0.14], ['d3d4', 0.13], ['g5f3', 0.06]]), 'f2f3').label).toBe('Uncommon');
   expect(maiaRarity(close, 'g1f3').label).toBe('Absent');
   expect(maiaRarity(maia([]), 'e2e4').label).toBe('Unknown');
   expect(maiaRarity(undefined, 'e2e4').label).toBe('Unknown');
@@ -116,7 +120,7 @@ it('verdicts only the quality-by-rarity synthesis, never the grade', () => {
   expect(describeMove({ san: 'Re8', quality: quality('Great'), rarity: rarity('Expected'), elo: 1400 }))
     .toBe('The natural choice — Maia at 1400 predicts 40% for this move.');
   expect(describeMove({ san: 'h3', quality: quality('Good'), rarity: rarity('Uncommon'), elo: 1600 }))
-    .toBe('An uncommon choice that holds — Maia at 1600 predicts only 40%.');
+    .toBe('A meaningful minority that holds — Maia at 1600 predicts 40% for this move.');
   expect(describeMove({ san: 'Nxh7+', quality: quality('Excellent'), rarity: rarity('Rare'), elo: 1600 }))
     .toBe('An exceptional find — Maia at 1600 predicts only 40%.');
   expect(describeMove({ san: 'Qh5', quality: quality('Blunder', 25), rarity: rarity('Expected'), elo: 1600 }))
@@ -175,6 +179,11 @@ it('gates praise on Maia: Excellent needs absent-or-tiny, Expected/Unknown cap a
   expect(effectiveQuality({ ...critical, label: 'Top' }, expected)?.label).toBe('Best');
   expect(effectiveQuality({ ...critical, label: 'Holds' }, expected)?.label).toBe('Good');
   expect(effectiveQuality(undefined, expected)).toBeUndefined();
+  // Shifted interval [0.25, 1/3): now Rare, so tiny probs escalate to Excellent.
+  const shiftedTiny: Rarity = { label: 'Rare', r: 0.28, prob: 0.04, topProb: 0.143 };
+  expect(effectiveQuality(critical, shiftedTiny)?.label).toBe('Excellent');
+  const shiftedListed: Rarity = { label: 'Rare', r: 0.28, prob: 0.07, topProb: 0.25 };
+  expect(effectiveQuality(critical, shiftedListed)?.label).toBe('Great');
 });
 it('notes when a mistake was hard to avoid because the best move was rare', () => {
   const blunder: Quality = { label: 'Blunder', accuracy: 20, loss: 25 };
@@ -202,5 +211,18 @@ it('notes when a mistake was hard to avoid because the best move was rare', () =
   expect(describeMove({ san: 'Nf3', quality: { ...blunder, label: 'Best' }, rarity: expected, elo: 1400, bestRarity: rareBest }))
     .toBe('The natural choice — Maia at 1400 predicts 40% for this move.');
   expect(describeMove({ san: 'h3', quality: { ...blunder, label: 'Good' }, rarity: uncommon, elo: 1400, bestRarity: rareBest }))
-    .toBe('An uncommon choice that holds — Maia at 1400 predicts only 20%.');
+    .toBe('A meaningful minority that holds — Maia at 1400 predicts 20% for this move.');
+  // Shifted interval: a best move at r ~= 0.29 with prob < 5% is now Rare-tiny
+  // and forgives; the same ratio at prob >= 5% stays standard temptation.
+  const shiftedBestTiny: Rarity = { label: 'Rare', r: 0.29, prob: 0.04, topProb: 0.138 };
+  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, elo: 1400, bestRarity: shiftedBestTiny }))
+    .toBe('Hard to avoid — Maia at 1400 predicts only 4% for the best move.');
+  const shiftedBestListed: Rarity = { label: 'Rare', r: 0.29, prob: 0.06, topProb: 0.207 };
+  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, elo: 1400, bestRarity: shiftedBestListed }))
+    .toBe('An easy mistake to make — Maia at 1400 predicts 40% for this move.');
+  // f3-like Uncommon negative keeps "only": holds alone drops it because a
+  // meaningful minority that holds is neutral, while a sidestep stays unusual.
+  const f3like: Rarity = { label: 'Uncommon', r: 0.438, prob: 0.149, topProb: 0.34 };
+  expect(describeMove({ san: 'f3', quality: { ...blunder, label: 'Mistake' }, rarity: f3like, elo: 1400 }))
+    .toBe('A tempting sidestep — Maia at 1400 predicts only 14.9%.');
 });

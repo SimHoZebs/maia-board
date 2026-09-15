@@ -17,7 +17,10 @@ export type EngineGrade = { label: 'Forced' | 'Allowed mate' | 'Blunder' | 'Mist
 // Additive Maia difficulty axis, measured against the top move rather than
 // 100%: r = prob(played) / prob(top). A 13% move under a 15% top (r = 0.87)
 // is the same band as the top itself, while a 12% rank-1 in a wide opening
-// is still Expected. Unlisted (outside Maia's top 5) is Absent by
+// is still Expected. Bands are r >= 3/5 (0.6) Expected, r >= 1/3 Uncommon,
+// else Rare: Qe3-like 9.5% under a 32% top (r ~= 0.30) reads Rare against
+// the majority, while f3-like 14.9% under a 34% top (r ~= 0.44) stays
+// Uncommon. Unlisted (outside Maia's top 5) is Absent by
 // construction; missing or degraded Maia data is Unknown and renders nothing.
 export type Rarity = { label: 'Expected' | 'Uncommon' | 'Rare' | 'Absent' | 'Unknown'; r: number | null; prob: number | null; topProb: number | null };
 export function maiaRarity(maia: Pick<MoveResponse, 'top_moves' | 'degraded'> | undefined, played: string): Rarity {
@@ -27,7 +30,7 @@ export function maiaRarity(maia: Pick<MoveResponse, 'top_moves' | 'degraded'> | 
   const found = maia.top_moves.find(candidate => candidate.move === played);
   if (!found || typeof found.prob !== 'number' || !Number.isFinite(found.prob)) return { label: 'Absent', r: null, prob: null, topProb };
   const r = found.prob / topProb;
-  return { label: r >= 0.6 ? 'Expected' : r >= 0.25 ? 'Uncommon' : 'Rare', r, prob: found.prob, topProb };
+  return { label: r >= 0.6 ? 'Expected' : r >= 1 / 3 ? 'Uncommon' : 'Rare', r, prob: found.prob, topProb };
 }
 // The verdict carries only the quality × rarity synthesis. Grades, scores,
 // and best lines already live in the badges, charts, and candidate lists, so
@@ -80,7 +83,7 @@ function rarityVerdict(quality: Quality, rarity: Rarity | undefined, elo: number
   if (rarity.label === 'Uncommon') {
     if (quality.label === 'Excellent') return `An exceptional find — Maia at ${elo} predicts only ${pct}.`;
     if (praise) return `A sharp find — Maia at ${elo} predicts only ${pct}.`;
-    if (holds) return `An uncommon choice that holds — Maia at ${elo} predicts only ${pct}.`;
+    if (holds) return `A meaningful minority that holds — Maia at ${elo} predicts ${pct} for this move.`;
     return hardToAvoid(bestRarity, elo) ?? `A tempting sidestep — Maia at ${elo} predicts only ${pct}.`;
   }
   if (quality.label === 'Excellent') return `An exceptional find — Maia at ${elo} predicts only ${pct}.`;
