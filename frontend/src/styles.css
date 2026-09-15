@@ -50,6 +50,13 @@ p { line-height: 1.5; color: var(--muted); }
 .side-dot.black { background: #252626; }
 .player-side { color: var(--muted); font-size: 12px; }
 .turn-indicator { margin-left: auto; color: var(--accent); font-size: 12px; }
+.player-strip strong, .player-strip .side-dot, .player-strip .player-side, .player-strip .turn-indicator { flex: none; }
+.material-summary { display: inline-flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.captured-pieces { display: inline-flex; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; font-size: 17px; line-height: 1; letter-spacing: -1px; }
+.captured { display: inline-block; }
+.captured-black { color: #c9c9c9; text-shadow: 0 0 2px #000; }
+.captured-white { color: #eee9df; text-shadow: 0 1px 2px #000; }
+.material-lead { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .notation { border-top: 1px solid var(--line); }
 .opening-line { display: flex; align-items: center; gap: 6px; margin: 6px 0 2px; font-size: 13px; color: var(--muted); }
 .opening-line strong { font-weight: 600; color: inherit; }

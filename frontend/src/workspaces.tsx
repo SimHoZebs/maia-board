@@ -21,6 +21,17 @@ import { ErrorBoundary, PanelError } from './ErrorBoundary';
 import { destinations } from './BoardRouter';
 import { RegionRecorder } from './perfCommits';
 import { useLineOpenings } from './openings';
+import { capturedGlyph, capturedLabel, capturesFromLine, materialFromFen, materialLeadFor, type CapturedPiece } from './material';
+
+function MaterialSummary({ by, captures, lead }: { by: 'white' | 'black'; captures: CapturedPiece[]; lead: number }) {
+  if (!captures.length && lead <= 0) return null;
+  return <span className="material-summary" role="img" aria-label={capturedLabel(by, captures, lead)}>
+    {captures.length > 0 && <span aria-hidden="true" className="captured-pieces">{captures.map((piece, index) => (
+      <span key={index} className={`captured captured-${by === 'white' ? 'black' : 'white'}`}>{capturedGlyph(by, piece)}</span>
+    ))}</span>}
+    {lead > 0 && <span aria-hidden="true" className="material-lead">+{lead}</span>}
+  </span>;
+}
 
 // Bottom-bar page menu (mobile bottom navigation): a hamburger on the left
 // end of the move-navigation bar that opens the same destinations as the
@@ -177,11 +188,14 @@ export function PlayWorkspace({ state, dispatch }: Props) {
   const boardResetKey = JSON.stringify(['play', state.play.id, state.play.moves.length, state.viewedPly, orientation]);
   const [confirmResign, setConfirmResign] = useState(false);
   const replyIdentity = state.insight?.mode === 'play' ? state.insight.response : undefined;
+  const displayedPly = state.viewedPly ?? state.play.moves.length;
+  const playCaptures = capturesFromLine(START_FEN, state.play.moves, displayedPly);
+  const playDiff = materialFromFen(position.fen).diff;
   const strip = (color: 'white' | 'black') => {
     const shownGame = historic ? game : live;
     const shownOver = (historic ? (position.terminal ?? null) : (playLine?.terminal ?? null)) !== null;
     const active = !resigned && toGroundColor(shownGame.turn()) === color && !shownOver;
-    return <div className={`player-strip${active && ready ? ' active' : ''}`}><span className={`side-dot ${color}`} /><strong>{color === settings.userColor ? 'You' : `Maia · ${settings.eloMaia}`}</strong>{color !== settings.userColor && replyIdentity?.degraded && <span role="status">{replyIdentity.model_used} fallback · requested {settings.model}</span>}<span className="player-side">{sideName(color)}</span>{active && ready && <span className="turn-indicator" role="status">{historic ? 'At this position' : request ? 'Thinking…' : 'To move'}</span>}</div>;
+    return <div className={`player-strip${active && ready ? ' active' : ''}`}><span className={`side-dot ${color}`} /><strong>{color === settings.userColor ? 'You' : `Maia · ${settings.eloMaia}`}</strong><MaterialSummary by={color} captures={playCaptures[color]} lead={materialLeadFor(playDiff, color)} />{color !== settings.userColor && replyIdentity?.degraded && <span role="status">{replyIdentity.model_used} fallback · requested {settings.model}</span>}<span className="player-side">{sideName(color)}</span>{active && ready && <span className="turn-indicator" role="status">{historic ? 'At this position' : request ? 'Thinking…' : 'To move'}</span>}</div>;
   };
   const over = boardOver || resigned;
   useEffect(() => { if (over) setConfirmResign(false); }, [over]);
@@ -241,10 +255,12 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   const shapes = ready ? reviewShapes(arrowMoves, { actual: true, maia: true, stockfish: true }, state.preview, badge) : [];
   const boardResetKey = JSON.stringify(['analysis', state.play.id, state.play.moves.length, state.analysis.index, state.analysisSourceId, orientation]);
   const insightResetKey = JSON.stringify([state.analysis.initialFen, state.analysis.moves, state.analysisSourceId]);
+  const analysisCaptures = capturesFromLine(review.timeline.initialFen, review.timeline.moves, ply);
+  const analysisDiff = materialFromFen(position.fen).diff;
   const strip = (color: 'white' | 'black') => {
     const shownOver = viewedOver;
     const active = toGroundColor(game.turn()) === color && !shownOver;
-    return <div className={`player-strip${active && ready ? ' active' : ''}`}><span className={`side-dot ${color}`} /><strong>{sideName(color)}</strong><span className="player-side"></span>{active && ready && <span className="turn-indicator" role="status">To move</span>}</div>;
+    return <div className={`player-strip${active && ready ? ' active' : ''}`}><span className={`side-dot ${color}`} /><strong>{sideName(color)}</strong><MaterialSummary by={color} captures={analysisCaptures[color]} lead={materialLeadFor(analysisDiff, color)} /><span className="player-side"></span>{active && ready && <span className="turn-indicator" role="status">To move</span>}</div>;
   };
   const mobileBar = useMobileBar();
   const tools = <><IconButton id="flip-board" label="Flip board" onClick={() => dispatch({ type: 'flip' })}><RotateCw size={16} aria-hidden="true" /></IconButton>{state.analysis.branchFromPly !== null && <IconButton id="return-original" label="Return to original" onClick={() => dispatch({ type: 'original' })}><Undo2 size={16} aria-hidden="true" /></IconButton>}</>;
