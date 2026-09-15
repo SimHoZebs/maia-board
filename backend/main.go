@@ -390,11 +390,13 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 // statusRecorder captures the response status so handlers can log one
 // per-request timing line (method/path/status/duration) for analysis
-// slowdown diagnosis. Full-game reviews issue one /move + one /evaluate
-// per ply, so `docker logs` (Komodo) shows the per-ply latency curve:
-// a second-half cliff points at ply-correlated cost (history length,
-// hash pressure, thermal), while flat-but-slow lines point at the
-// search budget itself (time_ms/lines/depth).
+// slowdown diagnosis. Interactive analysis issues one /move + one /evaluate
+// per examined position; whole-game batches instead emit one review-batch
+// entry line per position from the drain loop, so `docker logs` (Komodo)
+// shows the per-ply latency curve either way: a second-half cliff points
+// at ply-correlated cost (history length, hash pressure, thermal), while
+// flat-but-slow lines point at the search budget itself
+// (time_ms/lines/depth).
 type statusRecorder struct {
 	http.ResponseWriter
 	status int

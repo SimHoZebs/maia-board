@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -38,6 +39,7 @@ type batchEntry struct {
 	maiaModel string
 	status    batchStatus
 	errMsg    string
+	started   time.Time
 }
 
 type batchProgress struct {
@@ -83,18 +85,23 @@ func (job *batchJob) snapshot() batchProgress {
 	return job.progressLocked()
 }
 
-// complete records one settled entry and notifies live subscribers. Dropped
-// notifications are safe: event ids stay sequential, so a client that sees a
-// gap reconciles with GET status + bulk lookup.
+// complete records one settled entry, notifies live subscribers, and emits
+// the per-entry timing line. Those lines are the batch equivalent of the
+// per-request move/evaluate lines: `docker logs` (Komodo) shows the
+// per-index latency curve, where a second-half cliff points at
+// ply-correlated cost and flat-but-slow lines point at the search budget.
 func (job *batchJob) complete(entry *batchEntry, errMsg string) {
+	status := batchDone
+	if errMsg != "" {
+		status = batchFailed
+	}
 	job.mu.Lock()
 	if entry.status == batchPending || entry.status == batchRunning {
+		entry.status = status
+		entry.errMsg = errMsg
 		if errMsg == "" {
-			entry.status = batchDone
 			job.done++
 		} else {
-			entry.status = batchFailed
-			entry.errMsg = errMsg
 			job.failed++
 		}
 	}
@@ -110,6 +117,8 @@ func (job *batchJob) complete(entry *batchEntry, errMsg string) {
 		}
 	}
 	job.mu.Unlock()
+	log.Printf("review-batch entry job=%s index=%d engine=%s status=%s duration_ms=%d err=%s",
+		job.id, entry.index, entry.engine, status, time.Since(entry.started).Milliseconds(), errMsg)
 }
 
 func (job *batchJob) isCancelled() bool {
@@ -234,6 +243,7 @@ func (js *ReviewJobs) reviews(w http.ResponseWriter, r *http.Request) {
 	// id + progress so it can wait, poll, or replace explicitly.
 	if progress, busy := js.activeProgress(); busy && !progress.Finished {
 		w.Header().Set("Retry-After", "5")
+		log.Printf("review-batch busy job=%s done=%d total=%d", progress.JobID, progress.Done, progress.Total)
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"code": "batch_busy", "message": "another review batch is running",
 			"job_id": progress.JobID, "progress": progress,
@@ -293,6 +303,7 @@ func (js *ReviewJobs) reviews(w http.ResponseWriter, r *http.Request) {
 	js.mu.Unlock()
 	go js.drain(job)
 	pending := len(entries) - cached
+	log.Printf("review-batch submit job=%s total=%d cached=%d pending=%d", id, len(entries), cached, pending)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"job_id": id, "total": len(entries), "cached": cached, "pending": pending,
 	})
@@ -332,6 +343,7 @@ func (js *ReviewJobs) reviewByID(w http.ResponseWriter, r *http.Request) {
 		job.mu.Lock()
 		job.cancelled = true
 		job.mu.Unlock()
+		log.Printf("review-batch cancel job=%s", id)
 		js.s.pool.cancelBatch(id)
 		if js.s.evaluator != nil {
 			js.s.evaluator.sched.CancelBatch(id)
@@ -348,6 +360,7 @@ func (js *ReviewJobs) reviewByID(w http.ResponseWriter, r *http.Request) {
 // and an explicit DELETE only drops queued tickets — a running op still
 // writes through to the cache.
 func (js *ReviewJobs) drain(job *batchJob) {
+	started := time.Now()
 	var wg sync.WaitGroup
 	for _, engine := range []string{"sf", "maia"} {
 		engine := engine
@@ -376,9 +389,10 @@ func (js *ReviewJobs) drain(job *batchJob) {
 	wg.Wait()
 	job.mu.Lock()
 	job.finished = true
+	progress := job.progressLocked()
 	job.eventID++
 	payload, _ := json.Marshal(map[string]any{
-		"id": job.eventID, "event": "progress", "progress": job.progressLocked(),
+		"id": job.eventID, "event": "progress", "progress": progress,
 	})
 	for sub := range job.subs {
 		select {
@@ -387,6 +401,8 @@ func (js *ReviewJobs) drain(job *batchJob) {
 		}
 	}
 	job.mu.Unlock()
+	log.Printf("review-batch finish job=%s done=%d failed=%d cancelled=%t duration_ms=%d",
+		job.id, progress.Done, progress.Failed, progress.Cancelled, time.Since(started).Milliseconds())
 	js.mu.Lock()
 	if js.active == job.id {
 		js.active = ""
@@ -413,6 +429,7 @@ func (job *batchJob) claim(entry *batchEntry) bool {
 		return false
 	}
 	entry.status = batchRunning
+	entry.started = time.Now()
 	return true
 }
 
