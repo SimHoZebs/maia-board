@@ -98,37 +98,13 @@ func (s *server) evaluate(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 400, err.Code, err.Message)
 		return
 	}
-	// Cache lookup runs before the admission scheduler is touched: hits
-	// must never queue behind live searches.
-	if s.evaluator == nil {
-		if cached, ok := s.cachedSF(request); ok {
-			result = cached
-			w.Header().Set("X-Eval-Cache", "hit")
-			writeJSON(w, 200, cached)
-			return
-		}
-		writeAPIError(w, 502, "engine_unavailable", "Stockfish is unavailable")
-		return
-	}
-	prio := requestPriority(r)
-	var release func()
-	var runErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		if cached, ok := s.cachedSF(request); ok {
-			result = cached
-			w.Header().Set("X-Eval-Cache", "hit")
-			writeJSON(w, 200, cached)
-			return
-		}
-		result, release, runErr = s.evaluator.run(r.Context(), r.Context(), prio, "", request)
-		if !errors.Is(runErr, ErrJoined) {
-			break
-		}
-	}
+	// /evaluate is a size-1 batch through the shared executor (lane Focus;
+	// any X-Priority header from older clients is ignored). waitCtx dequeues
+	// on disconnect; execCtx stays detached so a granted search still writes
+	// through after the client goes away.
+	execCtx := context.WithoutCancel(r.Context())
+	live, hit, runErr := s.executeSF(r.Context(), execCtx, PriorityFocus, "", request, false)
 	if runErr != nil {
-		if release != nil {
-			release()
-		}
 		err := runErr
 		var requestErr *requestError
 		switch {
@@ -144,13 +120,12 @@ func (s *server) evaluate(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	result.ActualSettings = request.Settings
-	hash, key := sfIdentity(request).coordinates()
-	s.storeCache(hash, "sf", key, result)
-	if release != nil {
-		release()
+	result = live
+	if hit {
+		w.Header().Set("X-Eval-Cache", "hit")
+	} else {
+		w.Header().Set("X-Eval-Cache", "miss")
 	}
-	w.Header().Set("X-Eval-Cache", "miss")
 	writeJSON(w, 200, result)
 }
 
@@ -175,6 +150,13 @@ func validateEvaluationRequest(r *evaluationRequest) *requestError {
 			return &requestError{"invalid_fen", "fen and initial_fen must be valid six-field FENs"}
 		}
 		*fen = normalized
+	}
+	// Inconsistent triples are rejected at validation and never filed:
+	// with an empty history the reconstruction root must equal the board.
+	// Non-empty histories need full chess replay, which only the worker
+	// performs (position_mismatch); a worker failure never writes a row.
+	if r.InitialFEN != "" && len(r.Moves) == 0 && r.InitialFEN != r.FEN {
+		return &requestError{"position_mismatch", "moves do not produce fen"}
 	}
 	return nil
 }
@@ -276,13 +258,14 @@ func (e *Evaluator) run(waitCtx, execCtx context.Context, prio Priority, batchID
 		}
 	}
 	var result evaluationResponse
-	var document any
-	if err := json.Unmarshal(output.Bytes(), &document); err != nil {
-		return fail(err)
-	}
-	if !evaluationDocument(document) || !strictDocument(document, &result) || !validEvaluationValue(result, request.Settings) {
+	// Single strict decode path (validate-on-write owns poisoning defense;
+	// read validates shape once here, then semantic ranges below). This
+	// collapses the former evaluationDocument+strictDocument double decode.
+	decoded, err := decodeStrict[evaluationResponse](output.Bytes(), evalRequired, docAllowNull)
+	if err != nil || !validEvaluationValue(decoded, request.Settings) {
 		return fail(errors.New("invalid worker response"))
 	}
+	result = decoded
 	return &result, release, nil
 }
 

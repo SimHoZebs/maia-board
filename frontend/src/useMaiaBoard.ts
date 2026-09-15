@@ -31,7 +31,13 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
       if (next.started || next.play.moves.length || next.play.result === 'resigned') repository.save(next.play, next.started);
     }
   }, [repository, sync]);
-  if (state.mode !== mode) dispatch({ type: 'mode', mode });
+  // TODO: split god State into play/analysis/ui slices. Kept whole here:
+  // slicing the reducer + persistence + sync projection risks scope creep
+  // beyond the eval refactor; the render-time nav dispatch below is the
+  // cheap correctness fix (dispatch moved into an effect).
+  useEffect(() => {
+    if (current.current.mode !== mode) dispatch({ type: 'mode', mode });
+  }, [mode, dispatch, state.mode]);
 
   useEffect(() => {
     sync.loadMore = repository.loadMore;

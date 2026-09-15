@@ -1,5 +1,5 @@
 import type { StoredGame } from './domain';
-import { readStorage, restoreGame } from './storage';
+import { restoreGame } from './storage';
 
 export type ServerGame = {
   id: string; created_at: string; updated_at: string; user_color: string;
@@ -112,8 +112,25 @@ export type OutboxOp =
   | { op: 'save'; game: StoredGame; current: boolean }
   | { op: 'delete'; id: string };
 
-export const OUTBOX_KEY = 'maia-board.outbox.v1';
-export const MIGRATED_KEY = 'maia-board.migrated-games.v1';
+// Historical one-time v1 migration (removed from live code; kept here as the
+// documented script). Pre-database browsers kept games under
+// 'maia-board.saved-games.v1' / 'maia-board.current-game.v1', pending ops
+// under 'maia-board.outbox.v1', and marker 'maia-board.migrated-games.v1'.
+// The one-time import ran oldest-first so the server's updated_at order
+// preserved recency, with the live game last carrying the current marker,
+// idempotent by preserved ids:
+//
+//   for (const game of [...saved].reverse()) {
+//     if (current && game.id === current.id) continue;
+//     if (seen.has(game.id)) continue;
+//     seen.add(game.id);
+//     ops.push({ op: 'save', game, current: false });
+//   }
+//   if (current && !seen.has(current.id)) ops.push({ op: 'save', game: current, current: true });
+//
+// Legacy outbox entries were validated with restoreOutboxOp and enqueued ahead
+// of those imports. The live repository no longer reads any of those keys;
+// v2 documents carry their own pending queue.
 
 export function restoreOutboxOp(value: unknown): OutboxOp | undefined {
   if (!value || typeof value !== 'object') return;
@@ -146,24 +163,4 @@ export function mergeSync(serverSaved: StoredGame[], serverCurrentId: string | n
     .map(id => games.get(id)!).filter(Boolean);
   if (currentId !== null && !games.has(currentId)) currentId = null;
   return { saved: ordered, currentId };
-}
-
-// One-time migration of pre-database localStorage games. Oldest first so the
-// server's updated_at order preserves recency; the live game goes last with
-// the current marker. Idempotent by preserved ids.
-export function migrationOps(saved: StoredGame[], current: StoredGame | null): OutboxOp[] {
-  const seen = new Set<string>();
-  const ops: OutboxOp[] = [];
-  for (const game of [...saved].reverse()) {
-    if (current && game.id === current.id) continue;
-    if (seen.has(game.id)) continue;
-    seen.add(game.id);
-    ops.push({ op: 'save', game, current: false });
-  }
-  if (current && !seen.has(current.id)) ops.push({ op: 'save', game: current, current: true });
-  return ops;
-}
-
-export function isMigrated(): boolean {
-  return readStorage<unknown>(MIGRATED_KEY) === true;
 }

@@ -16,7 +16,10 @@ const (
 	PriorityBatch
 )
 
-// ErrSchedulerBusy maps to 503: the lane is full or the bounded wait expired.
+// ErrSchedulerBusy maps to 503: the bounded admission wait expired while a
+// longer-than-expected operation held the single slot. Queues themselves are
+// unbounded (interactive lanes latest-wins at depth 1, batch FIFO), so this
+// signals overload, never lane-full.
 var ErrSchedulerBusy = errors.New("engine scheduler is busy")
 
 var ErrSuperseded = errors.New("superseded by newer request")
@@ -48,20 +51,26 @@ type Grant struct {
 }
 
 // Scheduler orders admission to a single-slot engine across three FIFO lanes.
+// Lane derives from the endpoint (/move→Play, /evaluate→Focus, /reviews→Batch);
+// the X-Priority header is ignored (legacy clients may still send it).
 // It owns ordering and cancellation only; execution stays with the caller
 // (Worker.predict / Evaluator.run), which keeps its own timeouts and process
 // lifecycle. The zero value is unusable; use NewScheduler.
+//
+// Depths: Play 1 latest-wins, Focus 1 latest-wins (a new arrival replaces the
+// queued waiter, which gets ErrSuperseded and never consumes the slot),
+// Batch unbounded FIFO. Dedup-by-key spans lanes; empty keys never dedup.
+// Grant order is Play>Focus>Batch, non-preemptive (a grant waits at most one op).
 type Scheduler struct {
 	mu      sync.Mutex
 	queues  [3][]*ticket
 	running *ticket
 	byKey   map[string]*ticket
 	seq     uint64
-	maxPlay int
 }
 
 func NewScheduler() *Scheduler {
-	return &Scheduler{byKey: make(map[string]*ticket), maxPlay: 8}
+	return &Scheduler{byKey: make(map[string]*ticket)}
 }
 
 // Acquire blocks until this key owns the slot, another caller completes the
@@ -74,16 +83,13 @@ func (s *Scheduler) Acquire(ctx context.Context, prio Priority, key, batchID str
 		}
 	}
 	t := s.enqueue(prio, key, batchID)
-	if t == nil {
-		return nil, false, ErrSchedulerBusy
-	}
 	select {
 	case <-t.grant:
 		return &Grant{s: s, t: t}, false, nil
 	case <-t.done:
 		// Done fires while queued only via cancellation (CancelQueued,
-		// CancelBatch, or focus single-flight): a newer request superseded
-		// this one, so it must not consume the engine.
+		// CancelBatch, or Play/Focus depth-1 single-flight): a newer request
+		// superseded this one, so it must not consume the engine.
 		return nil, false, ErrSuperseded
 	case <-ctx.Done():
 		// Grant and cancellation race: pumpLocked closes grant under s.mu,
@@ -131,18 +137,16 @@ func (s *Scheduler) join(ctx context.Context, key string) (*Grant, bool, error) 
 	}
 }
 
-// enqueue appends a ticket and returns it, or nil when the lane is full.
-// Sync focus is single-flight: a new focus replaces queued sync focus.
+// enqueue appends a ticket and returns it. Sync lanes (Play, Focus) are
+// single-flight depth-1 latest-wins: a new arrival replaces the queued waiter,
+// which gets ErrSuperseded. Batch is unbounded FIFO.
 func (s *Scheduler) enqueue(prio Priority, key, batchID string) *ticket {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if prio == PriorityFocus && batchID == "" {
+	if batchID == "" && (prio == PriorityPlay || prio == PriorityFocus) {
 		s.cancelLocked(func(t *ticket) bool {
-			return t.state == ticketQueued && t.prio == PriorityFocus && t.batchID == ""
+			return t.state == ticketQueued && t.prio == prio && t.batchID == ""
 		})
-	}
-	if prio == PriorityPlay && len(s.queues[PriorityPlay]) >= s.maxPlay {
-		return nil
 	}
 	s.seq++
 	t := &ticket{key: key, prio: prio, batchID: batchID, seq: s.seq, grant: make(chan struct{}), done: make(chan struct{})}

@@ -88,7 +88,7 @@ type MovesBranch = {
   branchUp?: boolean;
 };
 
-function BaseMovesPanel({
+function MovesPanel({
   sans,
   ply,
   onView,
@@ -226,77 +226,6 @@ function BaseMovesPanel({
   );
 }
 
-// Narrow play variant: no analysis flag, no branch line. Chrome (tools, menu,
-// hideNav) stays because mobile/desktop placement differs per viewport.
-export function PlayMovesPanel({
-  sans,
-  ply,
-  initialFen,
-  qualities,
-  badgeLoading,
-  onView,
-  tools,
-  menu,
-  hideNav,
-  branchUp,
-  bookFlags,
-}: MovesCore & Pick<MovesNavigation, "onView" | "tools" | "menu" | "hideNav"> & Pick<MovesBranch, "branchUp">) {
-  return (
-    <BaseMovesPanel
-      sans={sans}
-      ply={ply}
-      initialFen={initialFen}
-      qualities={qualities}
-      badgeLoading={badgeLoading}
-      onView={onView}
-      analysis={false}
-      original={undefined}
-      tools={tools}
-      branchUp={branchUp}
-      menu={menu}
-      hideNav={hideNav}
-      bookFlags={bookFlags}
-    />
-  );
-}
-
-// Narrow analysis variant: analysis styling is implied, branch line is
-// optional for explored variations.
-export function AnalysisMovesPanel({
-  sans,
-  ply,
-  initialFen,
-  qualities,
-  badgeLoading,
-  onView,
-  onOriginalView,
-  original,
-  tools,
-  branchUp,
-  menu,
-  hideNav,
-  bookFlags,
-}: MovesCore & MovesNavigation & MovesBranch) {
-  return (
-    <BaseMovesPanel
-      sans={sans}
-      ply={ply}
-      initialFen={initialFen}
-      qualities={qualities}
-      badgeLoading={badgeLoading}
-      onView={onView}
-      onOriginalView={onOriginalView}
-      analysis={true}
-      original={original}
-      tools={tools}
-      branchUp={branchUp}
-      menu={menu}
-      hideNav={hideNav}
-      bookFlags={bookFlags}
-    />
-  );
-}
-
 export type MovesPanelProps = MovesCore &
   MovesNavigation &
   MovesBranch & {
@@ -311,41 +240,4 @@ export type MoveNavBarProps = {
   menu?: ReactNode;
 };
 
-// Backwards-compatible flat-prop entry: existing callers pass play/analysis/
-// branch/mobile flags flat. Delegates without behavior change so DOM, class
-// names, and order stay identical.
-export function MovesPanel({
-  sans,
-  ply,
-  onView,
-  onOriginalView,
-  initialFen,
-  qualities,
-  analysis = false,
-  badgeLoading = 'reel',
-  original,
-  tools,
-  branchUp = false,
-  menu,
-  hideNav = false,
-  bookFlags = undefined,
-}: MovesPanelProps) {
-  return (
-    <BaseMovesPanel
-      sans={sans}
-      ply={ply}
-      onView={onView}
-      onOriginalView={onOriginalView}
-      initialFen={initialFen}
-      qualities={qualities}
-      analysis={analysis}
-      badgeLoading={badgeLoading}
-      original={original}
-      tools={tools}
-      branchUp={branchUp}
-      menu={menu}
-      hideNav={hideNav}
-      bookFlags={bookFlags}
-    />
-  );
-}
+export { MovesPanel };

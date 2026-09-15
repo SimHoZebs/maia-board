@@ -4,8 +4,6 @@ export { InsightPanel, MoveAnalysis } from "./InsightPanel";
 export {
   MoveNavBar,
   MovesPanel,
-  PlayMovesPanel,
-  AnalysisMovesPanel,
 } from "./MovesPanel";
 export type { MovesPanelProps, MoveNavBarProps } from "./MovesPanel";
 export { SavedGames } from "./SavedGames";

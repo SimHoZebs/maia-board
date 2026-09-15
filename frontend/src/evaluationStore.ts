@@ -1,7 +1,7 @@
 import { assertLegalUci, MaiaApiError, parseMoveResponse, type MaiaModel, type MoveResponse } from './api';
-import type { Timeline, TimelineRow } from './domain';
+import { posId, type Timeline, type TimelineRow } from './domain';
 import { outcomeEvaluation } from './outcomeEvaluation';
-import { retryBusy, withDeadline } from './evaluationTransport';
+import { fetchJsonWithBusyRetry } from './evaluationTransport';
 import type { Evaluation, Score } from './reviewMetrics';
 import { defaultStockfishSettings, stockfishPolicy, type StockfishSettings } from './stockfishSettings';
 
@@ -20,20 +20,26 @@ export type Job = { key: string; engine: Engine; node: ReviewNode; settings: Rev
 export type EvaluationResult = Evaluation & { actual_settings?: StockfishSettings; cached?: boolean };
 export type StockfishResult = EvaluationResult;
 type Result = Evaluation | MoveResponse;
-// Stable position identity: the server's history inputs, never memory IDs.
-// Repetitions share fen but differ in moves-prefix; custom starts share fen
-// but differ in initialFen. Both must miss each other and survive rebuilds.
+// One identity struct owns position + engine + settings. posId is
+// hash(initialFen, prefix); the review key adds engine + settings hash.
+// The HTTP request derives from the same prefix slice, so keys and wire
+// payloads cannot drift.
+function prefixOf(node: ReviewNode): string[] {
+  return node.timeline.moves.slice(0, node.ply);
+}
+export function settingsHash(engine: Engine, settings: ReviewSettings): string {
+  return engine === 'sf' ? stockfishPolicy(settings.stockfish) : JSON.stringify([settings.eloMaia, settings.eloUser, settings.model]);
+}
 export function stablePositionKey(node: ReviewNode): string {
-  return JSON.stringify([node.initialFen, node.timeline.moves.slice(0, node.ply)]);
+  return posId(node.initialFen, prefixOf(node));
 }
 export function reviewKey(engine: Engine, node: ReviewNode, settings: ReviewSettings): string {
-  return JSON.stringify([engine, node.fen, node.initialFen, node.timeline.moves.slice(0, node.ply),
-    engine === 'sf' ? stockfishPolicy(settings.stockfish) : [settings.eloMaia, settings.eloUser, settings.model]]);
+  return JSON.stringify([posId(node.initialFen, prefixOf(node)), engine, settingsHash(engine, settings)]);
 }
 
 // Prefix arrays exist only at the HTTP boundary.
 export function evaluationRequest(engine: Engine, node: ReviewNode, settings: ReviewSettings) {
-  return { engine, fen: node.fen, initial_fen: node.initialFen, moves: node.timeline.moves.slice(0, node.ply),
+  return { engine, fen: node.fen, initial_fen: node.initialFen, moves: prefixOf(node),
     ...(engine === 'sf' ? { ...(settings.stockfish ? { settings: settings.stockfish } : {}) }
       : { elo_maia: settings.eloMaia, elo_user: settings.eloUser, model: settings.model }) };
 }
@@ -95,22 +101,23 @@ export function parseEvaluation(body: unknown, settings?: StockfishSettings, act
 }
 
 export async function fetchEvaluation(node: ReviewNode, signal: AbortSignal, fetcher: typeof fetch = fetch, settings?: StockfishSettings): Promise<StockfishResult> {
-  return withDeadline(async transportSignal => {
-    let response: Response;
-    try {
-      response = await retryBusy(fetcher, '/evaluate', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fen: node.fen, initial_fen: node.initialFen, moves: node.timeline.moves.slice(0, node.ply), ...(settings ? { settings } : {}) }) }, transportSignal);
-    } catch (error) {
-      if (transportSignal.aborted) throw error;
-      throw new Error('Stockfish is unreachable. Check that the server is running on your LAN.');
-    }
-    let body;
-    try { body = await response.json(); }
-    catch { throw new Error('Stockfish returned unreadable data.'); }
-    if (!response.ok) throw new MaiaApiError(body?.code ?? 'unknown', body?.message ?? `Stockfish request failed (${response.status}).`, response.status);
-    const parsed = parseEvaluation(body, settings, undefined, node.fen);
-    return response.headers.get('X-Eval-Cache') === 'hit' ? { ...parsed, cached: true } : parsed;
-  }, signal);
+  let response: Response;
+  let body: unknown;
+  try {
+    ({ response, body } = await fetchJsonWithBusyRetry(fetcher, '/evaluate', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fen: node.fen, initial_fen: node.initialFen, moves: prefixOf(node), ...(settings ? { settings } : {}) }) }, signal));
+  } catch (error) {
+    if (signal.aborted) throw error;
+    throw new Error('Stockfish is unreachable. Check that the server is running on your LAN.');
+  }
+  if (body === null) throw new Error('Stockfish returned unreadable data.');
+  if (!response.ok) {
+    const record = body as { code?: unknown; message?: unknown };
+    throw new MaiaApiError((record?.code as MaiaApiError['code'] | undefined) ?? 'unknown',
+      typeof record?.message === 'string' ? record.message : `Stockfish request failed (${response.status}).`, response.status);
+  }
+  const parsed = parseEvaluation(body, settings, undefined, node.fen);
+  return response.headers.get('X-Eval-Cache') === 'hit' ? { ...parsed, cached: true } : parsed;
 }
 
 // Settled results live for the app lifetime. Workspace schedulers own requests,
@@ -149,16 +156,15 @@ export class EvaluationStore {
         if (bytes + size > 4 * 1024 * 1024) { if (!chunk.length) throw new Error('Evaluation request exceeds 4 MiB.'); break; }
         bytes += size; chunk.push(job); requests.push(request); at++;
       }
-      const body = await withDeadline(async transportSignal => {
-        const response = await this.fetcher('/evaluations/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requests }), signal: transportSignal });
-        if (!response.ok) throw new Error(`Evaluation lookup failed (${response.status}).`);
-        return response.json() as Promise<{ results?: { index: number; value: unknown; actual_settings?: unknown }[] }>;
-      }, signal, 30_000);
+      const { response, body } = await fetchJsonWithBusyRetry(this.fetcher, '/evaluations/lookup',
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requests }) }, signal, 30_000);
       signal.throwIfAborted();
-      if (!Array.isArray(body?.results)) throw new Error('Evaluation lookup returned an incomplete list.');
+      if (!response.ok) throw new Error(`Evaluation lookup failed (${response.status}).`);
+      const payload = body as { results?: { index: number; value: unknown; actual_settings?: unknown }[] } | null;
+      if (!Array.isArray(payload?.results)) throw new Error('Evaluation lookup returned an incomplete list.');
       const counts = new Map<number, number>();
-      for (const row of body.results) if (row && Number.isInteger(row.index)) counts.set(row.index, (counts.get(row.index) ?? 0) + 1);
-      for (const row of body.results) {
+      for (const row of payload.results) if (row && Number.isInteger(row.index)) counts.set(row.index, (counts.get(row.index) ?? 0) + 1);
+      for (const row of payload.results) {
         if (!row || !Number.isInteger(row.index) || counts.get(row.index) !== 1) continue;
         const job = chunk[row.index];
         if (!job) continue;

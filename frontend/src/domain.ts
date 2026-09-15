@@ -134,14 +134,12 @@ export type TimelineRow = {
   fen: string;
   turn: 'white' | 'black';
   outcome: DomainOutcome | null;
-  historyId: number;
   lastMove: [Key, Key] | undefined;
 };
 export type Timeline = { initialFen: string; moves: string[]; rows: TimelineRow[] };
 export type DomainOutcome = { kind: 'checkmate'; winner: MaiaColor } | { kind: 'draw' };
 const timelineCache = new Map<string, Timeline>();
 const TIMELINE_CACHE_LIMIT = 64;
-let nextHistoryId = 0;
 const timelineKey = (initialFen: string, moves: string[]) => JSON.stringify([initialFen, moves]);
 function touchTimeline(key: string, timeline: Timeline) {
   timelineCache.delete(key); timelineCache.set(key, timeline);
@@ -170,8 +168,8 @@ function deriveTimeline(initialFen: string, moves: string[], key: string): { tim
   const normalized = game.fen();
   // Prefix row identity is shared with retained timelines, including branches
   // and takebacks. The scan is bounded by 64 lines and allocates no prefixes.
-  // After all equivalent histories leave this window, a rebuild gets fresh
-  // local IDs and may restore its evaluations from the server again.
+  // Identity is stable content (initialFen + moves prefix), never memory IDs,
+  // so evicted lines rebuild identical rows and restore evaluations by key.
   let shared: Timeline | undefined;
   let sharedPly = -1;
   for (const candidate of timelineCache.values()) {
@@ -184,7 +182,6 @@ function deriveTimeline(initialFen: string, moves: string[], key: string): { tim
     ply: 0, uci: '', san: '', fen: game.fen(),
     turn: game.turn() === 'w' ? 'white' : 'black',
     outcome: outcome(game),
-    historyId: ++nextHistoryId,
     lastMove: undefined,
   }];
   for (const uci of moves) {
@@ -197,7 +194,6 @@ function deriveTimeline(initialFen: string, moves: string[], key: string): { tim
       fen: game.fen(),
       turn: game.turn() === 'w' ? 'white' : 'black',
       outcome: outcome(game),
-      historyId: ++nextHistoryId,
       lastMove: [applied.from, applied.to],
     });
   }
@@ -206,6 +202,30 @@ function deriveTimeline(initialFen: string, moves: string[], key: string): { tim
   Object.freeze(timeline.moves); Object.freeze(rows); Object.freeze(timeline);
   touchTimeline(key, timeline);
   return { timeline, game };
+}
+
+// Stable position identity: the server's history inputs, never memory IDs.
+// Repetitions share fen but differ in moves-prefix; custom starts share fen
+// but differ in initialFen. Both must miss each other and survive rebuilds.
+export function posId(initialFen: string, prefixMoves: readonly string[]): string {
+  return JSON.stringify([initialFen, prefixMoves]);
+}
+// Full-line scope key: hash(initialFen + moves). Abort scopes and cache keys
+// share this identity so a line change invalidates exactly its own work.
+export function lineKeyFor(initialFen: string, moves: readonly string[]): string {
+  return posId(initialFen, moves);
+}
+
+// Thin row views: O(1) reads into the once-per-line timeline, never a re-walk.
+export function getRow(timeline: Timeline, ply: number): TimelineRow {
+  const clamped = Math.max(0, Math.min(ply, timeline.rows.length - 1));
+  return timeline.rows[clamped];
+}
+const tipMemo = new WeakMap<Timeline, TimelineRow>();
+export function tip(timeline: Timeline): TimelineRow {
+  let cached = tipMemo.get(timeline);
+  if (!cached) { cached = timeline.rows[timeline.rows.length - 1]; tipMemo.set(timeline, cached); }
+  return cached;
 }
 
 // Length of the legal prefix of a possibly-untrusted move list. One plain
@@ -222,16 +242,17 @@ export function legalPrefixLength(initialFen: string, moves: string[]): number {
   return length;
 }
 
-// Compatibility projection for persistence callers. Chess facts always come
-// from the canonical timeline; only this boundary materializes SAN arrays.
+// Compatibility projection for persistence callers. A thin view over the
+// canonical timeline: no rebuild beyond the shared once-per-line build, no
+// per-row walks. Only this boundary materializes SAN arrays.
 export type LineRecord = Position & { terminal: Evaluation | null };
 export function lineRecordMissesForTests(): number { return timelineBuilds; }
 export function resetLineRecordsForTests(): void { resetTimelinesForTests(); }
 export function lineRecord(moves: string[], initialFen = START_FEN): LineRecord {
   const timeline = buildTimeline(initialFen, moves);
-  const tip = timeline.rows[moves.length];
-  return { fen: tip.fen, moves, sanMoves: timeline.rows.slice(1).map(row => row.san),
-    lastMove: tip.lastMove ? [...tip.lastMove] : undefined, terminal: outcomeEvaluation(tip.outcome) ?? null };
+  const end = tip(timeline);
+  return { fen: end.fen, moves, sanMoves: timeline.rows.slice(1).map(row => row.san),
+    lastMove: end.lastMove ? [...end.lastMove] : undefined, terminal: outcomeEvaluation(end.outcome) ?? null };
 }
 
 // Commit step: legality probe on a single parse (throws on illegal moves like

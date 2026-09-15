@@ -1,5 +1,5 @@
 import { Chess } from 'chess.js';
-import { stablePositionKey, type ReviewNode } from './evaluationStore';
+import { reviewKey, stablePositionKey, type ReviewNode, type ReviewSettings } from './evaluationStore';
 import { reviewMove, type Evaluation, type Quality } from './reviewMetrics';
 
 export type UnifiedVerdict = {
@@ -44,4 +44,20 @@ export function computeQualities(args: {
   });
   const qualities = allReused ? prev!.qualities : verdicts.map(verdict => verdict?.quality);
   return { qualities, memo: { scope, verdicts, qualities } };
+}
+
+// The one call site for both review and play. Review passes scope '' (or its
+// line scope) with all plies active; play passes `${gameId}|${userColor}` with
+// only its own side active. Hooks must call this, never computeQualities
+// directly, so grading stays single-sourced.
+export function computeLineQualities(args: {
+  scope: string; moves: string[]; nodes: ReviewNode[]; evaluations: (Evaluation | undefined)[];
+  settingsForNode: (node: ReviewNode) => ReviewSettings;
+  active?: (node: ReviewNode, index: number) => boolean;
+  pending: Set<string>; prev: UnifiedMemo | null; stats?: { reviews: number };
+}): { qualities: (Quality | undefined)[]; memo: UnifiedMemo } {
+  const { scope, moves, nodes, evaluations, settingsForNode, active, pending, prev, stats } = args;
+  return computeQualities({ scope, moves, nodes, evaluations,
+    keyFor: node => reviewKey('sf', node, settingsForNode(node)),
+    active: active ?? (() => true), pending, prev, stats });
 }

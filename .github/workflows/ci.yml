@@ -71,6 +71,11 @@ jobs:
           if-no-files-found: ignore
   stockfish:
     name: Packaged Stockfish integration
+    # Packaging coverage mapping (replaces the deleted stockfish-test
+    # container): docker build of the stockfish-build stage proves packaging;
+    # host worker/settings/HTTP tests below prove behavior against the
+    # extracted pinned binary. Demoting real-engine tests to nightly is
+    # deferred — they still run per-PR at current cost.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -83,10 +88,6 @@ jobs:
           python-version: '3.12'
       - name: Build pinned Stockfish 19
         run: docker build --target stockfish-build -f backend/Dockerfile -t maia-board-stockfish-check:engine .
-      - name: Build Stockfish test container
-        run: docker build -f backend/Dockerfile.stockfish-test -t maia-board-stockfish-check:test .
-      - name: Real Stockfish worker tests in container
-        run: docker run --rm --init maia-board-stockfish-check:test
       - name: Extract engine binary
         run: |
           container=$(docker create maia-board-stockfish-check:engine)
@@ -94,9 +95,9 @@ jobs:
           docker cp "$container:/stockfish/src/stockfish" "$RUNNER_TEMP/stockfish"
       - name: Install lightweight worker test dependencies
         run: python -m pip install python-chess==1.999 chess==1.11.2
-      - name: Real Stockfish search settings tests
+      - name: Real Stockfish worker and search settings tests
         working-directory: backend
-        run: STOCKFISH_BINARY="$RUNNER_TEMP/stockfish" python -m unittest -v test_engine_settings
+        run: STOCKFISH_BINARY="$RUNNER_TEMP/stockfish" python -m unittest -v test_stockfish_worker test_engine_settings
       - name: Real Stockfish HTTP and cancellation test
         working-directory: backend
         run: STOCKFISH_BINARY="$RUNNER_TEMP/stockfish" STOCKFISH_WORKER="$PWD/stockfish_worker.py" CGO_ENABLED=0 go test -v -count=1 -run '^TestRealStockfishHTTPAndCancellation$'

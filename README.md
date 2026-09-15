@@ -67,8 +67,10 @@ Use Node.js 22, Go as specified in [`backend/go.mod`](backend/go.mod), and Pytho
 # frontend/
 npm ci
 npm test
-npm run build                 # TypeScript check, then production bundle
-npm run test:browser          # builds its fixture bundle; no API server needed
+npm run typecheck
+npm run build:bundle
+npm run test:browser          # builds its fixture bundle, then runs it; no API server needed
+npm run test:browser:run      # runs an already-built fixture bundle (CI builds first)
 npm run test:browser:strict   # development React / StrictMode fixture
 npm run test:perf             # simulated-client profiling fixture
 ```

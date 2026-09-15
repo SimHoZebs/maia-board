@@ -65,6 +65,9 @@ func TestEvaluationHelper(t *testing.T) {
 			best = "f8c5"
 		}
 		fmt.Fprintf(os.Stdout, `{"engine":"Stockfish 19","search_policy":"sf19-n100k-ms750-mpv2-t1-h64-v1","depth":12,"terminal":null,"best_move":"%s","score":{"type":"cp","value":-92},"lines":[{"move":"g8f6","score":{"type":"cp","value":-92},"depth":12},{"move":"g8f6","score":{"type":"cp","value":-92},"depth":12}]}`, best)
+	case "slow":
+		time.Sleep(300 * time.Millisecond)
+		fmt.Print(`{"engine":"Stockfish 19","search_policy":"sf19-n100k-ms750-mpv2-t1-h64-v1","depth":0,"terminal":"draw","best_move":null,"score":{"type":"cp","value":0},"lines":[]}`)
 	default:
 		fmt.Print(`{"engine":"Stockfish 19","search_policy":"sf19-n100k-ms750-mpv2-t1-h64-v1","depth":0,"terminal":"draw","best_move":null,"score":{"type":"cp","value":0},"lines":[]}`)
 	}

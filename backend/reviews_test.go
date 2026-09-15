@@ -193,3 +193,48 @@ func TestBatchEventsStreamSnapshot(t *testing.T) {
 	}
 	_ = awaitBatch(t, s, id)
 }
+
+// Batch drain yields to interactive between entries: a Focus request arriving
+// mid-batch grants before the next batch entry (Play>Focus>Batch), so it
+// completes before the whole batch finishes.
+func TestBatchYieldsToInteractive(t *testing.T) {
+	s := batchServer(t, "slow")
+	otherFEN := strings.Replace(startFEN, "w KQkq", "b KQkq", 1)
+	body := fmt.Sprintf(`{"requests":[{"engine":"sf","fen":%q,"initial_fen":%q,"moves":[]},{"engine":"sf","fen":%q,"initial_fen":%q,"moves":[]}]}`,
+		startFEN, startFEN, otherFEN, otherFEN)
+	code, created := postBatch(t, s, body)
+	if code != 202 {
+		t.Fatalf("submit %d: %v", code, created)
+	}
+	id, _ := created["job_id"].(string)
+	// Let the first slow entry (≈300ms) own the slot.
+	time.Sleep(100 * time.Millisecond)
+	// Probe contends on the same Evaluator scheduler with a distinct,
+	// consistent position (empty moves rooting at fen).
+	thirdFEN := strings.Replace(startFEN, "0 1", "0 2", 1)
+	probe := evaluationRequest{FEN: thirdFEN, InitialFEN: thirdFEN, Moves: []string{}}
+	done := make(chan error, 1)
+	go func() {
+		bg := context.Background()
+		_, _, err := s.executeSF(bg, bg, PriorityFocus, "", probe, false)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("focus probe: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("focus probe starved by batch")
+	}
+	// Yield means the probe ran between batch entries: the batch must still
+	// be draining when the probe finishes. Without yield the batch would hold
+	// the slot across entries and finish before the probe starts.
+	if _, prog := getBatch(t, s, id); prog.Finished {
+		t.Fatal("batch finished before focus: no yield between entries")
+	}
+	progress := awaitBatch(t, s, id)
+	if progress.Done != 2 {
+		t.Fatalf("batch: %+v", progress)
+	}
+}

@@ -49,13 +49,14 @@ export function ReviewCharts({ review, ply, sans, onView, side }: { review: Revi
   const points = review.nodes.map((node, index) => {
     const evaluation = review.evaluations[index];
     const quality = index ? review.qualities[index - 1] : undefined;
-    const before = index ? review.nodes[index - 1].fen.split(' ') : null;
-    const mover = before ? (before[1] === 'w' ? 'white' : 'black') : null;
+    const beforeNode = index ? review.nodes[index - 1] : null;
+    const beforeFen = beforeNode?.fen.split(' ') ?? null;
+    const mover = beforeNode ? beforeNode.turn : null;
     const outOfScope = !!side && mover !== side;
     const value = outOfScope ? null : tab === 'evaluation' ? evaluation ? whiteWin(evaluation.score) : null : quality?.accuracy ?? null;
-    const moveNumber = before ? `${before[5]}${before[1] === 'w' ? '.' : '…'}` : '0';
+    const moveNumber = beforeFen ? `${beforeFen[5]}${beforeFen[1] === 'w' ? '.' : '…'}` : '0';
     const description = [
-      index === 0 ? 'Starting position' : `${moveNumber} ${sans[index - 1]} · ${before![1] === 'w' ? 'White' : 'Black'}`,
+      index === 0 ? 'Starting position' : `${moveNumber} ${sans[index - 1]} · ${mover === 'white' ? 'White' : 'Black'}`,
       value === null ? null : `${value.toFixed(1)}% ${tab === 'evaluation' ? 'White winning chance' : 'move accuracy'}`,
       tab === 'evaluation' && evaluation ? `${scoreText(evaluation)} · ${evaluation.terminal ? 'terminal result' : `depth ${evaluation.depth}`}` : null,
       quality && quality.label !== 'Unreviewed' ? quality.label : null,

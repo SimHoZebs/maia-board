@@ -251,7 +251,8 @@ func (w *Worker) predictLocked(parent context.Context, request EngineRequest) (E
 	}
 	decoder := json.NewDecoder(strings.NewReader(line))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&reply); err != nil || !json.Valid([]byte(line)) || (reply.Result == nil) == (reply.Error == nil) {
+	// Decode already rejects invalid JSON; no separate json.Valid re-decode.
+	if err := decoder.Decode(&reply); err != nil || (reply.Result == nil) == (reply.Error == nil) {
 		w.failLocked(ErrProtocol)
 		return EngineResult{}, ErrProtocol
 	}

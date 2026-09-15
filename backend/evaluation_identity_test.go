@@ -105,8 +105,6 @@ func TestLookupSettingsAndCompleteHistoryIsolation(t *testing.T) {
 		func(q *lookupRequest) { q.Settings = &stockfishSettings{750, 4, 8} },
 		func(q *lookupRequest) { q.Settings = nil },
 		func(q *lookupRequest) { q.Moves = []string{"g1f3", "g8f6", "f3g1", "f6g8"} },
-		func(q *lookupRequest) { q.InitialFEN = strings.Replace(startFEN, "0 1", "1 1", 1) },
-		func(q *lookupRequest) { q.FEN = strings.Replace(startFEN, "0 1", "1 1", 1) },
 	} {
 		q := base
 		mutate(&q)
@@ -120,6 +118,41 @@ func TestLookupSettingsAndCompleteHistoryIsolation(t *testing.T) {
 	base.FEN = "  " + strings.ReplaceAll(startFEN, " ", "  ") + " "
 	if len(lookupValues(t, lookup(t, s, []lookupRequest{base}))) != 1 {
 		t.Fatal("whitespace altered identity")
+	}
+}
+
+// Inconsistent triples (empty history rooting away from fen) are rejected
+// at validation and never filed: lookup/bulk paths 400, and no row appears.
+func TestInconsistentTripleRejectedNeverFiled(t *testing.T) {
+	s := &server{store: testStore(t)}
+	badInitial := strings.Replace(startFEN, "0 1", "1 1", 1)
+	// lookupRequest shape with empty moves + mismatched root.
+	for _, q := range []lookupRequest{
+		{Engine: "sf", FEN: startFEN, InitialFEN: badInitial, Moves: []string{}, Settings: &stockfishSettings{750, 3, 8}},
+		{Engine: "sf", FEN: badInitial, InitialFEN: startFEN, Moves: []string{}, Settings: &stockfishSettings{750, 3, 8}},
+	} {
+		w := lookup(t, s, []lookupRequest{q})
+		if w.Code != 400 {
+			t.Fatalf("inconsistent lookup status %d: %s", w.Code, w.Body)
+		}
+	}
+	// /evaluate with empty moves + mismatched root is 400.
+	w := httptest.NewRecorder()
+	s.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(
+		fmt.Sprintf(`{"fen":%q,"initial_fen":%q,"moves":[]}`, startFEN, badInitial))))
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "position_mismatch") {
+		t.Fatalf("evaluate inconsistent %d %s", w.Code, w.Body)
+	}
+	// validOwnedCacheValue never files empty-history mismatches even when
+	// called directly (poisoning guard on the write path).
+	r := evaluationRequest{FEN: startFEN, InitialFEN: badInitial, Moves: []string{}, Settings: &stockfishSettings{750, 2, 8}}
+	hash, key := sfIdentity(r).coordinates()
+	if validOwnedCacheValue(hash, "sf", key, sfFixture(r.Settings, 10)) {
+		t.Fatal("inconsistent triple passed write guard")
+	}
+	var rows int
+	if err := s.store.db.QueryRow(`SELECT COUNT(*) FROM evaluations_v2`).Scan(&rows); err != nil || rows != 0 {
+		t.Fatalf("inconsistent triple filed rows=%d err=%v", rows, err)
 	}
 }
 func TestMaiaLookupModelEloAndLegacyIsolation(t *testing.T) {

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultSettings, type StoredGame } from './domain';
 import {
-  deleteRemote, fetchGames, mergeSync, migrationOps,
+  deleteRemote, fetchGames, mergeSync,
   saveRemote, toStoredGame, type OutboxOp,
 } from './serverGames';
 
@@ -72,18 +72,6 @@ describe('mergeSync', () => {
   });
 });
 
-describe('migrationOps', () => {
-  it('enqueues oldest first with the live game last and current', () => {
-    const current = game('live', ['e2e4']);
-    const ops = migrationOps([game('new'), game('old'), current], current);
-    expect(ops).toEqual([
-      { op: 'save', game: game('old'), current: false },
-      { op: 'save', game: game('new'), current: false },
-      { op: 'save', game: current, current: true },
-    ]);
-  });
-  it('dedups the live game and handles empty libraries', () => {
-    expect(migrationOps([], null)).toEqual([]);
-    expect(migrationOps([], game('live'))).toEqual([{ op: 'save', game: game('live'), current: true }]);
-  });
-});
+// The v1 outbox/marker one-time import was deleted with the live migration
+// branch; its documented script lives on the OutboxOp declaration in
+// serverGames.ts.

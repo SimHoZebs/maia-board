@@ -188,40 +188,14 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 	}
 	model = validated
 
-	// Cache lookup runs before the worker pool is touched: hits must never
-	// occupy an inference slot. Only deterministic (temperature 0) requests
-	// participate: sampled moves vary per call, so they are neither served
-	// from nor filed under the shared key. Degraded rows are stand-ins, and
-	// the served model must equal the requested one.
+	// /move is a size-1 batch through the shared executor (lane Play;
+	// any X-Priority header from older clients is ignored). waitCtx dequeues
+	// on disconnect; execCtx stays detached so a granted op still validates
+	// and persists after the client goes away.
 	useCache := request.Temperature == 0
-	prio := requestPriority(r)
-	// waitCtx dequeues on disconnect; execCtx stays detached so a granted
-	// Maia op still validates and persists after the client goes away.
 	execCtx := context.WithoutCancel(r.Context())
-	var result EngineResult
-	var used string
-	var fallback bool
-	var release func()
-	var predictErr error
-	// A joined duplicate re-reads the cache row its owner stores before
-	// releasing the slot; a repeat miss re-infers instead of failing.
-	for attempt := 0; attempt < 3; attempt++ {
-		if useCache {
-			if cached, ok := s.cachedMaia(engineRequest, model); ok {
-				w.Header().Set("X-Eval-Cache", "hit")
-				writeJSON(w, http.StatusOK, cached)
-				return
-			}
-		}
-		result, release, used, fallback, predictErr = s.pool.predict(r.Context(), execCtx, prio, "", model, engineRequest)
-		if !errors.Is(predictErr, ErrJoined) {
-			break
-		}
-	}
+	response, hit, predictErr := s.executeMaia(r.Context(), execCtx, PriorityPlay, "", engineRequest, model, false)
 	if predictErr != nil {
-		if release != nil {
-			release()
-		}
 		err := predictErr
 		switch {
 		case errors.Is(err, ErrSuperseded):
@@ -240,30 +214,13 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	model, degraded = used, fallback
-	response := moveResponse{Move: result.Move, WDL: result.WDL, ModelUsed: used, Degraded: degraded}
-	for _, candidate := range result.Candidates {
-		response.TopMoves = append(response.TopMoves, topMove{Move: candidate.Move, Prob: candidate.Policy})
-	}
-	if !validMoveValue(response, validated, useCache) {
-		if release != nil {
-			release()
-		}
-		writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "invalid Maia worker response")
-		return
-	}
-	// Release only after persisting: joiners re-read this row once the owner
-	// finishes, so storing first is what makes scheduler dedup effective.
-	// Only deterministic, non-degraded answers populate the requested model's cache.
-	if !degraded && useCache {
-		hash, key := maiaIdentity(engineRequest, validated).coordinates()
-		s.storeCache(hash, "maia", key, response)
-	}
-	if release != nil {
-		release()
-	}
+	model, degraded = response.ModelUsed, response.Degraded
 	if useCache {
-		w.Header().Set("X-Eval-Cache", "miss")
+		if hit {
+			w.Header().Set("X-Eval-Cache", "hit")
+		} else {
+			w.Header().Set("X-Eval-Cache", "miss")
+		}
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -368,16 +325,6 @@ func normalizeFEN(fen string) (string, string, error) {
 
 func writeAPIError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, apiError{Code: code, Message: message})
-}
-
-// requestPriority reads the sync admission lane. Play (a live game move)
-// outranks analysis focus; batch work never uses the sync endpoints and the
-// default keeps current clients on the focus lane.
-func requestPriority(r *http.Request) Priority {
-	if strings.EqualFold(r.Header.Get("X-Priority"), "play") {
-		return PriorityPlay
-	}
-	return PriorityFocus
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

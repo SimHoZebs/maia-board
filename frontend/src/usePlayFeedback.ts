@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { buildTimeline, legalPrefixLength, START_FEN, type Timeline } from './domain';
-import { ReviewCoordinator, reviewKey, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
+import { buildTimeline, legalPrefixLength, lineKeyFor, START_FEN, type Timeline } from './domain';
+import { ReviewCoordinator, cancelScope, createLineScope, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
 import { useServerBatch } from './useServerBatch';
-import { computeQualities, type UnifiedMemo } from './qualities';
+import { computeLineQualities, type UnifiedMemo } from './qualities';
 import type { Evaluation, Quality } from './reviewMetrics';
 import type { State } from './state';
 
@@ -16,8 +16,8 @@ export function computePlayQualities(args: {
 }): { qualities: (Quality | undefined)[]; memo: PlayQualitiesMemo } {
   const { gameId, timeline, userColor, settings, lookup, pending, prev, stats } = args;
   const nodes = reviewNodes(timeline);
-  return computeQualities({ scope: `${gameId}|${userColor}`, moves: timeline.moves, nodes,
-    evaluations: nodes.map(lookup), keyFor: node => reviewKey('sf', node, settings),
+  return computeLineQualities({ scope: `${gameId}|${userColor}`, moves: [...timeline.moves], nodes,
+    evaluations: nodes.map(lookup), settingsForNode: () => settings,
     active: node => node.turn === userColor, pending, prev, stats });
 }
 
@@ -36,6 +36,9 @@ export function usePlayFeedback(state: State): PlayFeedback {
   const settings: ReviewSettings = useMemo(() => ({ eloMaia: playSettings.eloMaia, eloUser: playSettings.eloUser, model: playSettings.model, stockfish: state.stockfish }), [settingsKey, playSettings.eloMaia, playSettings.eloUser, playSettings.model]);
   const userColor = playSettings.userColor;
   const gameId = state.play.id;
+  const lineKey = useMemo(() => lineKeyFor(START_FEN, moves), [movesKey]);
+  const scope = useMemo(() => createLineScope(lineKey), [lineKey]);
+  useEffect(() => () => cancelScope(scope), [scope]);
   const nodes = useMemo(() => {
     const all = reviewNodes(timeline);
     const wanted = new Set<ReviewNode>();
@@ -44,9 +47,9 @@ export function usePlayFeedback(state: State): PlayFeedback {
     }
     return [...wanted];
   }, [timeline, userColor]);
-  useEffect(() => () => coordinator.suspend(), [coordinator, gameId, settingsKey]);
   // Cache restore runs independently of the batch: even when submit fails,
-  // settled rows still grade through the bulk lookup.
+  // settled rows still grade through the bulk lookup. Signal-abort is the
+  // only cancel path; backgrounding never aborts the batch.
   useEffect(() => {
     if (!active) return;
     const controller = new AbortController();
@@ -56,8 +59,7 @@ export function usePlayFeedback(state: State): PlayFeedback {
   // Live grades run as a server batch (sf only): each move resubmits the
   // line and the intake filter skips cached plies, so only new positions
   // compute — including ones missed while the tab was backgrounded.
-  useServerBatch({ active, submitKey: `${gameId}|${movesKey}|${settingsKey}`, auto: true,
-    nodes, settings, engines: ['sf'], coordinator });
+  useServerBatch({ active, nodes, settings, engines: ['sf'], coordinator, scope: active ? scope : null, auto: true });
   const previous = useRef<PlayQualitiesMemo | null>(null);
   const computed = useMemo(() => active ? computePlayQualities({ gameId, timeline, userColor, settings,
     lookup: node => coordinator.result('sf', node, settings), pending: coordinator.sfPendingKeys(), prev: previous.current }) : null,

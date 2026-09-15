@@ -26,7 +26,8 @@ describe('bounded canonical timeline', () => {
     const branch = buildTimeline(START_FEN, ['e2e4', 'c7c5']);
     expect(extension.rows[2]).toBe(first.rows[2]);
     expect(branch.rows[1]).toBe(first.rows[1]);
-    expect(branch.rows[2].historyId).not.toBe(first.rows[2].historyId);
+    expect(branch.rows[2]).not.toBe(first.rows[2]);
+    expect(branch.rows[2].fen).not.toBe(first.rows[2].fen);
     expect(buildTimeline(START_FEN, ['e2e4']).rows[1]).toBe(first.rows[1]);
     expect(buildTimeline(START_FEN, [...first.moves])).toBe(first);
     expect(lineRecord(first.moves).fen).toBe(first.rows[2].fen);
@@ -37,7 +38,7 @@ describe('bounded canonical timeline', () => {
     for (let clock = 1; clock <= 65; clock++) buildTimeline(START_FEN.replace('0 1', `${clock} 1`), []);
     const rebuilt = buildTimeline(START_FEN, []);
     expect(rebuilt).not.toBe(original);
-    expect(rebuilt.rows[0].historyId).not.toBe(original.rows[0].historyId);
+    expect(rebuilt.rows[0]).not.toBe(original.rows[0]);
     expect(rebuilt.rows[0].fen).toBe(original.rows[0].fen);
   });
   it.each([
@@ -62,7 +63,7 @@ describe('bounded canonical timeline', () => {
   it('never equates repeated boards or mutable caller arrays with their previous histories', () => {
     const moves = ['g1f3', 'g8f6', 'f3g1', 'f6g8'];
     const timeline = buildTimeline(START_FEN, moves);
-    expect(timeline.rows[0].historyId).not.toBe(timeline.rows[4].historyId);
+    expect(timeline.rows[0]).not.toBe(timeline.rows[4]);
     moves.push(...moves);
     const repeated = buildTimeline(START_FEN, moves);
     expect(timeline.moves).toHaveLength(4);

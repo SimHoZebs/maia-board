@@ -152,9 +152,9 @@ Use that interpreter for test discovery:
 
 The default suite uses `python-chess`, a stub Maia module, and engine mocks, without
 Torch or weights. Real Stockfish cases skip unless `STOCKFISH_BINARY` names the
-engine. CI builds the pinned engine from `Dockerfile`, runs `test_stockfish_worker`
-in `Dockerfile.stockfish-test`, and uses the extracted binary for search-settings
-tests and the Go HTTP/cancellation integration test.
+engine. CI builds the pinned engine from `Dockerfile`, extracts the binary, and
+runs `test_stockfish_worker` plus `test_engine_settings` on the host before the
+Go HTTP/cancellation integration test.
 
 The real Maia test skips unless `MAIA3_TEST_MODEL` names a locally cached model.
 Run it in an environment with the pinned Maia runtime dependencies and cached

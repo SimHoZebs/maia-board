@@ -15,8 +15,9 @@ const maiaRevision = "1e13597c42d4858b7cfd7cfdae01e297263364b2"
 const standardInitialFEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
 // Identity includes both the claimed board and the complete reconstruction.
-// Only an inference worker establishes their semantic consistency. Cache-only
-// lookup validates their shape; an inconsistent combination has its own key.
+// Inconsistent triples are rejected at validation and never filed: empty
+// histories must root at fen, and non-empty histories are replayed by the
+// worker (position_mismatch) whose failure never writes a row.
 type evaluationIdentity struct {
 	Version    int                `json:"version"`
 	Engine     string             `json:"engine"`
@@ -296,34 +297,57 @@ func validEvaluationValue(v evaluationResponse, settings *stockfishSettings) boo
 }
 
 func (s *server) cachedSF(r evaluationRequest) (*evaluationResponse, bool) {
-	// Native exact identity always wins. The legacy node-budget policy has no
-	// compatible v2 timed-policy equivalent, even at 750ms / two candidates.
-	for lines := 0; lines <= 5; lines++ {
-		candidate := r
-		if lines != 0 {
-			if r.Settings == nil || lines <= r.Settings.Lines {
-				continue
-			}
-			settings := *r.Settings
-			settings.Lines = lines
-			candidate.Settings = &settings
+	// Superset reuse: a stored 5-line search serves a 2-line request by
+	// slicing, so compatible budgets never recompute. Native exact identity
+	// always wins; larger-lines variants are tried in increasing order. The
+	// legacy node-budget policy has no compatible v2 timed-policy equivalent,
+	// even at 750ms / two candidates.
+	for _, candidate := range sfSupersetCandidates(r) {
+		if value, ok := s.lookupSFCandidate(candidate, r.Settings); ok {
+			return value, true
 		}
-		hash, key := sfIdentity(candidate).coordinates()
-		entry, ok := s.lookupCache(hash, "sf", key)
-		if !ok {
-			continue
-		}
-		value, ok := decodeStrictValue[evaluationResponse](entry.Value, evalRequired, docAllowNull)
-		if !ok || !validEvaluationValue(value, candidate.Settings) {
-			continue
-		}
-		value.ActualSettings = candidate.Settings
-		if r.Settings != nil && len(value.Lines) > r.Settings.Lines {
-			value.Lines = value.Lines[:r.Settings.Lines]
-		}
-		return &value, true
 	}
 	return nil, false
+}
+
+// sfSupersetCandidates returns the exact request first, then larger-lines
+// variants for superset slicing. Smaller-lines rows can never satisfy the
+// request, so they are skipped without a lookup.
+func sfSupersetCandidates(r evaluationRequest) []evaluationRequest {
+	out := []evaluationRequest{r}
+	for lines := 1; lines <= 5; lines++ {
+		if r.Settings == nil || lines <= r.Settings.Lines {
+			continue
+		}
+		candidate := r
+		settings := *r.Settings
+		settings.Lines = lines
+		candidate.Settings = &settings
+		out = append(out, candidate)
+	}
+	return out
+}
+
+// lookupSFCandidate reads one identity, validates shape once on the read
+// path (write path owns poisoning defense via validOwnedCacheValue), then
+// slices the stored max-lines row down to the request. Provenance stays
+// native: ActualSettings and SearchPolicy report the stored search, not the
+// smaller request.
+func (s *server) lookupSFCandidate(candidate evaluationRequest, want *stockfishSettings) (*evaluationResponse, bool) {
+	hash, key := sfIdentity(candidate).coordinates()
+	entry, ok := s.lookupCache(hash, "sf", key)
+	if !ok {
+		return nil, false
+	}
+	value, ok := decodeStrictValue[evaluationResponse](entry.Value, evalRequired, docAllowNull)
+	if !ok || !validEvaluationValue(value, candidate.Settings) {
+		return nil, false
+	}
+	value.ActualSettings = candidate.Settings
+	if want != nil && len(value.Lines) > want.Lines {
+		value.Lines = value.Lines[:want.Lines]
+	}
+	return &value, true
 }
 
 func (s *server) cachedMaia(r EngineRequest, model string) (*moveResponse, bool) {
@@ -376,41 +400,23 @@ func (s *server) evaluationLookup(w http.ResponseWriter, r *http.Request) {
 	}
 	results := []lookupResult{}
 	for index, query := range body.Requests {
+		// Lookup reuses the shared resolve read-only: same validation as
+		// live/batch paths, cache read only, never admits or stores.
 		var invalid error
-		if query.Moves == nil {
-			invalid = fmt.Errorf("moves must be an array")
-		}
 		switch query.Engine {
 		case "sf":
-			request := evaluationRequest{FEN: query.FEN, InitialFEN: query.InitialFEN, Moves: query.Moves, Settings: query.Settings}
-			if err := validateEvaluationRequest(&request); err != nil {
-				invalid = err
-			}
-			if query.EloMaia != nil || query.EloUser != nil || query.Model != "" {
-				invalid = fmt.Errorf("Stockfish request contains Maia settings")
-			}
-			if invalid == nil {
-				if value, ok := s.cachedSF(request); ok {
-					results = append(results, lookupResult{index, value, value.ActualSettings})
-				}
+			request, reqErr := resolveSFQuery(query)
+			if reqErr != nil {
+				invalid = fmt.Errorf("%s", reqErr.Message)
+			} else if value, ok := s.cachedSF(request); ok {
+				results = append(results, lookupResult{index, value, value.ActualSettings})
 			}
 		case "maia":
-			_, side, _ := normalizeFEN(query.FEN)
-			color := "white"
-			if side == "b" {
-				color = "black"
-			}
-			request, model, err := validateMoveRequest(moveRequest{FEN: query.FEN, InitialFEN: query.InitialFEN, Moves: query.Moves, EloMaia: query.EloMaia, EloUser: query.EloUser, Model: query.Model, MaiaColor: color})
-			if err != nil {
-				invalid = err
-			}
-			if query.Settings != nil {
-				invalid = fmt.Errorf("Maia request contains Stockfish settings")
-			}
-			if invalid == nil {
-				if value, ok := s.cachedMaia(request, model); ok {
-					results = append(results, lookupResult{Index: index, Value: value})
-				}
+			request, model, reqErr := resolveMaiaQuery(query)
+			if reqErr != nil {
+				invalid = fmt.Errorf("%s", reqErr.Message)
+			} else if value, ok := s.cachedMaia(request, model); ok {
+				results = append(results, lookupResult{Index: index, Value: value})
 			}
 		default:
 			invalid = fmt.Errorf("engine must be sf or maia")

@@ -22,6 +22,143 @@ const (
 	maxKeptJobs = 8
 )
 
+// Single executor: one resolve + execute path for /move, /evaluate, and
+// /reviews entries. Lookup reuses resolve read-only (no admission, no store).
+// Live callers pass strictBatch=false (forgiving: 79M→5M degraded fallback is
+// served but never cached); batch entries pass strictBatch=true (per-index
+// failure so live can retry). Both engines keep one timeout policy each
+// (Worker.startWait/moveWait, Evaluator.timeout); admission lives inside
+// predict/run. Work runs on detached contexts so disconnects never leak slots
+// and granted ops still write through. Intake cache-filtering happens at
+// batch submit (resolveBatchEntry); write-through happens inside execute.
+func resolveSFQuery(query lookupRequest) (evaluationRequest, *requestError) {
+	if query.Moves == nil {
+		return evaluationRequest{}, &requestError{"invalid_request", "moves must be an array"}
+	}
+	if query.EloMaia != nil || query.EloUser != nil || query.Model != "" {
+		return evaluationRequest{}, &requestError{"invalid_request", "Stockfish request contains Maia settings"}
+	}
+	req := evaluationRequest{FEN: query.FEN, InitialFEN: query.InitialFEN, Moves: query.Moves, Settings: query.Settings}
+	if err := validateEvaluationRequest(&req); err != nil {
+		return evaluationRequest{}, &requestError{"invalid_request", err.Message}
+	}
+	return req, nil
+}
+
+func resolveMaiaQuery(query lookupRequest) (EngineRequest, string, *requestError) {
+	if query.Moves == nil {
+		return EngineRequest{}, "", &requestError{"invalid_request", "moves must be an array"}
+	}
+	if query.Settings != nil {
+		return EngineRequest{}, "", &requestError{"invalid_request", "Maia request contains Stockfish settings"}
+	}
+	_, side, _ := normalizeFEN(query.FEN)
+	color := "white"
+	if side == "b" {
+		color = "black"
+	}
+	req, model, err := validateMoveRequest(moveRequest{FEN: query.FEN, InitialFEN: query.InitialFEN,
+		Moves: query.Moves, EloMaia: query.EloMaia, EloUser: query.EloUser, Model: query.Model, MaiaColor: color})
+	if err != nil {
+		var reqErr *requestError
+		message := "position or move history is invalid"
+		if errors.As(err, &reqErr) {
+			message = reqErr.Message
+		}
+		return EngineRequest{}, "", &requestError{"invalid_request", message}
+	}
+	return req, model, nil
+}
+
+// executeSF runs one Stockfish search with join-retry and write-through.
+// Returns hit=true when served from cache. strictBatch is kept for symmetry
+// (SF has no degraded fallback); both modes store and serve identically.
+func (s *server) executeSF(waitCtx, execCtx context.Context, prio Priority, batchID string, req evaluationRequest, strictBatch bool) (*evaluationResponse, bool, error) {
+	if s.evaluator == nil {
+		// Cache-only path (e.g. evaluator absent): hits serve, misses fail.
+		if cached, ok := s.cachedSF(req); ok {
+			return cached, true, nil
+		}
+		return nil, false, errors.New("Stockfish is unavailable")
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		if cached, ok := s.cachedSF(req); ok {
+			return cached, true, nil
+		}
+		result, release, err := s.evaluator.run(waitCtx, execCtx, prio, batchID, req)
+		if err != nil {
+			if release != nil {
+				release()
+			}
+			if errors.Is(err, ErrJoined) {
+				continue
+			}
+			return nil, false, err
+		}
+		result.ActualSettings = req.Settings
+		hash, key := sfIdentity(req).coordinates()
+		s.storeCache(hash, "sf", key, result)
+		if release != nil {
+			release()
+		}
+		return result, false, nil
+	}
+	return nil, false, errors.New("evaluation did not settle")
+}
+
+// executeMaia runs one Maia inference with join-retry and write-through.
+// Returns hit=true when served from cache. Live (strictBatch=false) serves
+// degraded 79M→5M fallback without caching; batch (strictBatch=true) fails
+// per-index so the position can be retried live.
+func (s *server) executeMaia(waitCtx, execCtx context.Context, prio Priority, batchID string, req EngineRequest, model string, strictBatch bool) (moveResponse, bool, error) {
+	useCache := req.Temperature == 0
+	for attempt := 0; attempt < 3; attempt++ {
+		if useCache {
+			if cached, ok := s.cachedMaia(req, model); ok {
+				return *cached, true, nil
+			}
+		}
+		result, release, used, degraded, err := s.pool.predict(waitCtx, execCtx, prio, batchID, model, req)
+		if err != nil {
+			if release != nil {
+				release()
+			}
+			if errors.Is(err, ErrJoined) {
+				continue
+			}
+			return moveResponse{}, false, err
+		}
+		response := moveResponse{Move: result.Move, WDL: result.WDL, ModelUsed: used, Degraded: degraded}
+		for _, candidate := range result.Candidates {
+			response.TopMoves = append(response.TopMoves, topMove{Move: candidate.Move, Prob: candidate.Policy})
+		}
+		if degraded {
+			if release != nil {
+				release()
+			}
+			if strictBatch {
+				return moveResponse{}, false, errors.New("degraded fallback is not cached; retry as live analysis")
+			}
+			return response, false, nil
+		}
+		if !validMoveValue(response, model, useCache) {
+			if release != nil {
+				release()
+			}
+			return moveResponse{}, false, errors.New("invalid Maia worker response")
+		}
+		if !degraded && useCache {
+			hash, key := maiaIdentity(req, model).coordinates()
+			s.storeCache(hash, "maia", key, response)
+		}
+		if release != nil {
+			release()
+		}
+		return response, false, nil
+	}
+	return moveResponse{}, false, errors.New("evaluation did not settle")
+}
+
 type batchStatus string
 
 const (
@@ -164,43 +301,25 @@ func (js *ReviewJobs) activeProgress() (batchProgress, bool) {
 }
 
 // resolveBatchEntry validates one batch request exactly like the sync
-// endpoints + lookup do, and reports whether its row is already cached.
+// endpoints + lookup do (via the shared resolve), and reports whether its
+// row is already cached (intake cache-filter).
 func (js *ReviewJobs) resolveBatchEntry(index int, query lookupRequest) (*batchEntry, bool, *requestError) {
 	entry := &batchEntry{index: index, engine: query.Engine, status: batchPending}
-	if query.Moves == nil {
-		return nil, false, &requestError{"invalid_request", fmt.Sprintf("requests[%d]: moves must be an array", index)}
-	}
+	prefix := fmt.Sprintf("requests[%d]: ", index)
 	switch query.Engine {
 	case "sf":
-		request := evaluationRequest{FEN: query.FEN, InitialFEN: query.InitialFEN, Moves: query.Moves, Settings: query.Settings}
-		if err := validateEvaluationRequest(&request); err != nil {
-			return nil, false, &requestError{"invalid_request", fmt.Sprintf("requests[%d]: %s", index, err.Message)}
-		}
-		if query.EloMaia != nil || query.EloUser != nil || query.Model != "" {
-			return nil, false, &requestError{"invalid_request", fmt.Sprintf("requests[%d]: Stockfish request contains Maia settings", index)}
+		request, reqErr := resolveSFQuery(query)
+		if reqErr != nil {
+			return nil, false, &requestError{"invalid_request", prefix + reqErr.Message}
 		}
 		entry.evalReq = request
 		if _, ok := js.s.cachedSF(request); ok {
 			return entry, true, nil
 		}
 	case "maia":
-		_, side, _ := normalizeFEN(query.FEN)
-		color := "white"
-		if side == "b" {
-			color = "black"
-		}
-		request, model, err := validateMoveRequest(moveRequest{FEN: query.FEN, InitialFEN: query.InitialFEN,
-			Moves: query.Moves, EloMaia: query.EloMaia, EloUser: query.EloUser, Model: query.Model, MaiaColor: color})
-		if err != nil {
-			var reqErr *requestError
-			message := "position or move history is invalid"
-			if errors.As(err, &reqErr) {
-				message = reqErr.Message
-			}
-			return nil, false, &requestError{"invalid_request", fmt.Sprintf("requests[%d]: %s", index, message)}
-		}
-		if query.Settings != nil {
-			return nil, false, &requestError{"invalid_request", fmt.Sprintf("requests[%d]: Maia request contains Stockfish settings", index)}
+		request, model, reqErr := resolveMaiaQuery(query)
+		if reqErr != nil {
+			return nil, false, &requestError{"invalid_request", prefix + reqErr.Message}
 		}
 		entry.maiaReq, entry.maiaModel = request, model
 		if _, ok := js.s.cachedMaia(request, model); ok {
@@ -359,6 +478,11 @@ func (js *ReviewJobs) reviewByID(w http.ResponseWriter, r *http.Request) {
 // contexts: a disconnected client neither stops the batch nor leaks its slot,
 // and an explicit DELETE only drops queued tickets — a running op still
 // writes through to the cache.
+//
+// Batch yield: each entry holds its engine slot only for that entry. After
+// the write-through the slot is released before the next entry is admitted,
+// so pumpLocked grants any waiting Play/Focus ticket next (Play>Focus>Batch).
+// Interactive work therefore waits at most one batch op.
 func (js *ReviewJobs) drain(job *batchJob) {
 	started := time.Now()
 	var wg sync.WaitGroup
@@ -442,99 +566,31 @@ func batchErrMessage(err error) string {
 }
 
 func (js *ReviewJobs) runSFEntry(job *batchJob, entry *batchEntry) {
-	if js.s.evaluator == nil {
-		job.complete(entry, "Stockfish is unavailable")
-		return
-	}
-	if _, ok := js.s.cachedSF(entry.evalReq); ok {
-		job.complete(entry, "")
-		return
-	}
 	bg := context.Background()
-	for attempt := 0; attempt < 2; attempt++ {
-		result, release, err := js.s.evaluator.run(bg, bg, PriorityBatch, job.id, entry.evalReq)
-		if err != nil {
-			if errors.Is(err, ErrJoined) {
-				if _, ok := js.s.cachedSF(entry.evalReq); ok {
-					job.complete(entry, "")
-					return
-				}
-				continue
-			}
-			if errors.Is(err, ErrSuperseded) || errors.Is(err, context.Canceled) {
-				job.complete(entry, "cancelled")
-				return
-			}
-			job.complete(entry, batchErrMessage(err))
+	_, _, err := js.s.executeSF(bg, bg, PriorityBatch, job.id, entry.evalReq, true)
+	if err != nil {
+		if errors.Is(err, ErrSuperseded) || errors.Is(err, context.Canceled) {
+			job.complete(entry, "cancelled")
 			return
 		}
-		result.ActualSettings = entry.evalReq.Settings
-		hash, key := sfIdentity(entry.evalReq).coordinates()
-		js.s.storeCache(hash, "sf", key, result)
-		if release != nil {
-			release()
-		}
-		job.complete(entry, "")
+		job.complete(entry, batchErrMessage(err))
 		return
 	}
-	job.complete(entry, "evaluation did not settle")
+	job.complete(entry, "")
 }
 
 func (js *ReviewJobs) runMaiaEntry(job *batchJob, entry *batchEntry) {
-	if _, ok := js.s.cachedMaia(entry.maiaReq, entry.maiaModel); ok {
-		job.complete(entry, "")
-		return
-	}
 	bg := context.Background()
-	for attempt := 0; attempt < 2; attempt++ {
-		result, release, used, degraded, err := js.s.pool.predict(bg, bg, PriorityBatch, job.id, entry.maiaModel, entry.maiaReq)
-		if err != nil {
-			// Operation errors arrive with a grant (nothing was stored);
-			// admission failures and joins carry none.
-			if release != nil {
-				release()
-			}
-			if errors.Is(err, ErrJoined) {
-				if _, ok := js.s.cachedMaia(entry.maiaReq, entry.maiaModel); ok {
-					job.complete(entry, "")
-					return
-				}
-				continue
-			}
-			if errors.Is(err, ErrSuperseded) || errors.Is(err, context.Canceled) {
-				job.complete(entry, "cancelled")
-				return
-			}
-			job.complete(entry, batchErrMessage(err))
+	_, _, err := js.s.executeMaia(bg, bg, PriorityBatch, job.id, entry.maiaReq, entry.maiaModel, true)
+	if err != nil {
+		if errors.Is(err, ErrSuperseded) || errors.Is(err, context.Canceled) {
+			job.complete(entry, "cancelled")
 			return
 		}
-		response := moveResponse{Move: result.Move, WDL: result.WDL, ModelUsed: used, Degraded: degraded}
-		for _, candidate := range result.Candidates {
-			response.TopMoves = append(response.TopMoves, topMove{Move: candidate.Move, Prob: candidate.Policy})
-		}
-		if degraded {
-			if release != nil {
-				release()
-			}
-			job.complete(entry, "degraded fallback is not cached; retry as live analysis")
-			return
-		}
-		if !validMoveValue(response, entry.maiaModel, true) {
-			if release != nil {
-				release()
-			}
-			job.complete(entry, "invalid Maia worker response")
-			return
-		}
-		hash, key := maiaIdentity(entry.maiaReq, entry.maiaModel).coordinates()
-		js.s.storeCache(hash, "maia", key, response)
-		if release != nil {
-			release()
-		}
-		job.complete(entry, "")
+		job.complete(entry, batchErrMessage(err))
 		return
 	}
-	job.complete(entry, "evaluation did not settle")
+	job.complete(entry, "")
 }
 
 // reviewEvents streams live progress as server-sent events. The opening

@@ -153,33 +153,19 @@ separately measures navigation, rendering, and mocked network timings.
 
 ## Build provenance and redistribution
 
-The separate `stockfish-build` Docker stage derives from the pinned
-`golang:1.25-bookworm` image, with GCC 12 and make, and builds the portable
-Linux `ARCH=x86-64` target. No architecture-specific AVX requirement is added.
-This packaging targets Linux x86-64.
+Engine inputs pinned by `backend/Dockerfile`:
 
-- Official source: https://github.com/official-stockfish/Stockfish
-- Release tag: `sf_19`
-- Commit: `edb0d9db6731067ec50ce619ff372b463bc4dd5d`
+- Official source: https://github.com/official-stockfish/Stockfish (`sf_19`, commit `edb0d9db6731067ec50ce619ff372b463bc4dd5d`)
 - Source archive: https://github.com/official-stockfish/Stockfish/archive/refs/tags/sf_19.tar.gz
 - Archive SHA-256: `519b653d0d1ffb96531d982ccbe5c6a19425e8388e0e3c2f70f34b424ab32d76`
-- Embedded neural evaluation network: `nn-1a298aa575a0.nnue`
-- Network SHA-256: `1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2`
-- Network source: https://tests.stockfishchess.org/api/nn/nn-1a298aa575a0.nnue
-- Network mirror: https://github.com/official-stockfish/networks/blob/master/nn-1a298aa575a0.nnue
+- Embedded network: `nn-1a298aa575a0.nnue` — SHA-256 `1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2`
+- Network URL: https://tests.stockfishchess.org/api/nn/nn-1a298aa575a0.nnue
 - Python packages: `python-chess==1.999`, `chess==1.11.2`
-- Protocol reference: https://official-stockfish.github.io/docs/stockfish-wiki/UCI-%26-Commands.html
 
-Upstream's network downloader checks the first 12 SHA-256 hex digits against
-the filename. The Docker build additionally checks the complete network hash
-before compilation. The network is embedded in `/app/stockfish`; runtime
-evaluation does not download engines or networks.
-
-Stockfish is GPL-3.0 licensed. The runtime image includes its `COPYING`, original
-source archive, and this provenance document under `/app/licenses/`. Source
-and network URLs plus pinned hashes describe the inputs needed to rebuild the
-binary with the recipe in `backend/Dockerfile`. Preserve the corresponding
-source, network access, license, and build recipe when redistributing binaries.
+Stockfish is GPL-3.0 licensed. The runtime image includes its `COPYING`,
+original source archive, and this document under `/app/licenses/`. Preserve
+the source, network access, license, and build recipe when redistributing
+binaries.
 
 ## Verification
 
@@ -201,15 +187,16 @@ admission, request cancellation, timeout, and process-group cleanup; the
 environment-gated integration test also observes the real Stockfish child
 before cancelling its request.
 
-Engine-only container verification from the repository root:
+Engine-only verification from the repository root:
 
 ```sh
 docker build --target stockfish-build -f backend/Dockerfile -t maia-board-stockfish-check:engine .
-docker build -f backend/Dockerfile.stockfish-test -t maia-board-stockfish-check:test .
-docker run --rm --init --cpus=6 --memory=8g maia-board-stockfish-check:test
+container=$(docker create maia-board-stockfish-check:engine)
+docker cp "$container:/stockfish/src/stockfish" /tmp/stockfish
+docker rm "$container"
+STOCKFISH_BINARY=/tmp/stockfish python3 -m unittest -v test_stockfish_worker test_engine_settings
 ```
 
-This test image copies `stockfish_worker.py` and `test_stockfish_worker.py` and
-runs that module against the packaged binary. CI additionally extracts the binary
-for `test_engine_settings` and the Go HTTP/cancellation integration test; those
-checks run on the CI host with Python 3.12 and the pinned chess packages.
+CI extracts the binary the same way and additionally runs
+`test_engine_settings` and the Go HTTP/cancellation integration test on the
+host with Python 3.12 and the pinned chess packages.

@@ -2,7 +2,6 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { GameRepository } from './gameRepository';
 import { defaultSettings, type StoredGame } from './domain';
 import { KEYS } from './storage';
-import { OUTBOX_KEY, MIGRATED_KEY } from './serverGames';
 
 const game = (moves: string[] = []): StoredGame => ({ id: 'a', createdAt: '2026-09-10T00:00:00Z', settings: defaultSettings, moves });
 const row = (moves: string[] = []) => ({ id: 'a', created_at: '2026-09-10T00:00:00Z', updated_at: '2026-09-10T00:00:00Z', user_color: 'white', elo_maia: 1600, elo_user: 1600, model: '79m', moves });
@@ -80,10 +79,12 @@ it('survives offline reload and retries save-delete-save in order including resi
   repo.save(game(), true); repo.delete('a'); repo.save({ ...game(['e2e4']), result: 'resigned' }, true);
   await repo.flush();
   expect(repo.snapshot().error).toBeTruthy();
+  // Per-id last-save-wins subsumes the pre-delete snapshot; the delete barrier
+  // and the resigned snapshot still transmit in order.
   const fetcher = vi.fn().mockImplementation((_url, init) => Promise.resolve(init.method === 'DELETE' ? new Response(null, { status: 204 }) : Response.json(row())));
   const reloaded = new GameRepository(fetcher);
   await reloaded.flush();
-  expect(fetcher.mock.calls.map(call => call[1].method)).toEqual(['POST', 'DELETE', 'POST']);
+  expect(fetcher.mock.calls.map(call => call[1].method)).toEqual(['DELETE', 'POST']);
   expect(reloaded.snapshot().games[0].result).toBe('resigned');
   expect(reloaded.snapshot().pending).toEqual([]);
 });
@@ -127,7 +128,7 @@ it('does not upload a newer snapshot when its durable write failed during an old
 it('preserves an acknowledged delete over a GET started while that delete was pending', async () => {
   const heldDelete = deferred<Response>(); const heldGet = deferred<Response>();
   const fetcher = vi.fn().mockReturnValueOnce(heldDelete.promise).mockReturnValueOnce(heldGet.promise);
-  localStorage.setItem(KEYS.saved, JSON.stringify([game()])); localStorage.setItem(MIGRATED_KEY, 'true');
+  localStorage.setItem(KEYS.saved, JSON.stringify([game()]));
   const repo = new GameRepository(fetcher); repo.delete('a'); const flushing = repo.flush();
   await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
   const loading = repo.refresh();
@@ -138,28 +139,18 @@ it('preserves an acknowledged delete over a GET started while that delete was pe
   expect(repo.snapshot().pending).toEqual([]);
 });
 
-it('migrates legacy pending operations even when the old migration marker is set', async () => {
-  localStorage.setItem(KEYS.saved, JSON.stringify([game()]));
-  localStorage.setItem(KEYS.current, JSON.stringify(game()));
-  localStorage.setItem(MIGRATED_KEY, 'true');
-  const pending = [{ op: 'delete', id: 'a' }, { op: 'save', game: game(['e2e4']), current: true }];
-  localStorage.setItem(OUTBOX_KEY, JSON.stringify(pending));
-  const repo = new GameRepository(vi.fn().mockRejectedValue(new Error('offline')));
-  await repo.flush();
-  const restored = new GameRepository();
-  expect(restored.snapshot().pending.map(({ version: _version, ...op }) => op)).toEqual(pending);
-  expect(restored.snapshot().games[0].moves).toEqual(['e2e4']);
-  expect(localStorage.getItem(OUTBOX_KEY)).toBe(JSON.stringify(pending));
-});
-
-it('coalesces only adjacent same-game saves and retains current-marker ordering', () => {
+// The v1 outbox/marker one-time import is documented in serverGames.ts and no
+// longer read here, so the legacy-pending migration tests were deleted with it.
+it('coalesces saves per game id with last-save-wins and retains the current marker', () => {
   const repo = new GameRepository();
   repo.save(game(), true); repo.save(game(['e2e4']), false);
   expect(repo.snapshot().pending).toHaveLength(1);
   expect(repo.snapshot().pending[0]).toMatchObject({ current: true, game: { moves: ['e2e4'] } });
   repo.save({ ...game(), id: 'b' }, true); repo.save(game(['e2e4', 'e7e5']), false);
-  expect(repo.snapshot().pending).toHaveLength(3);
-  expect(repo.snapshot().currentId).toBe('b');
+  // The newest snapshot per id is the only one transmitted; the earlier save
+  // for 'a' collapses and its current marker carries onto the replacement.
+  expect(repo.snapshot().pending).toHaveLength(2);
+  expect(repo.snapshot().currentId).toBe('a');
 });
 
 it('refuses a competing tab write while retaining exportable local play', async () => {
@@ -198,9 +189,9 @@ it('persists and restores legal histories beyond the inference budget', async ()
   expect(restored.snapshot().games[0].moves).toEqual(moves);
 });
 
-it('retains malformed legacy operations for explicit recovery across reload', async () => {
+it('retains malformed v2 records for explicit recovery across reload', async () => {
   const corrupt = { op: 'save', game: { id: 'bad', moves: ['e9'] }, current: true };
-  localStorage.setItem(OUTBOX_KEY, JSON.stringify([corrupt]));
+  localStorage.setItem('maia-board.games.v2', JSON.stringify({ schema: 2, games: [], currentId: null, pending: [corrupt], recovery: [] }));
   const repo = new GameRepository(); await repo.flush();
   const restored = new GameRepository();
   expect(restored.snapshot().recovery[0].value).toEqual(corrupt);
@@ -255,24 +246,25 @@ it('detects another tab changing the document during repository construction', a
   expect(repo.snapshot().conflict).toBe(true);
 });
 
-it('keeps legacy deletes authoritative through migration and subsequent reload', async () => {
+it('transmits a seeded delete and settles it on reload', async () => {
   localStorage.setItem(KEYS.saved, JSON.stringify([game()]));
   localStorage.setItem(KEYS.current, JSON.stringify(game()));
-  localStorage.setItem(OUTBOX_KEY, JSON.stringify([{ op: 'delete', id: 'a' }]));
   const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
-  const repo = new GameRepository(fetcher); await repo.flush();
+  const repo = new GameRepository(fetcher);
+  expect(repo.snapshot().games).toHaveLength(1);
+  repo.delete('a'); await repo.flush();
   expect(fetcher.mock.calls.map(call => call[1].method)).toEqual(['DELETE']);
   const restored = new GameRepository();
   expect(restored.snapshot().games).toEqual([]);
   expect(restored.snapshot().pending).toEqual([]);
 });
 
-it('normalizes legacy operation games before exposing or uploading them', async () => {
-  localStorage.setItem(OUTBOX_KEY, JSON.stringify([{ op: 'save', game: { id: 'a', moves: ['e2e4'] }, current: true }]));
+it('normalizes seeded games before exposing or uploading them', async () => {
+  localStorage.setItem(KEYS.saved, JSON.stringify([{ id: 'a', moves: ['e2e4'] }]));
   const fetcher = vi.fn().mockResolvedValue(Response.json(row(['e2e4'])));
   const repo = new GameRepository(fetcher);
   expect(repo.snapshot().games[0].settings).toMatchObject({ userColor: 'white', model: '79m', temperature: 0 });
-  await repo.flush();
+  repo.save(repo.snapshot().games[0], true); await repo.flush();
   expect(repo.snapshot().pending).toEqual([]);
   expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({ model: '79m', user_color: 'white' });
 });

@@ -114,20 +114,19 @@ describe('workspace scheduler', () => {
     coordinator.ensure([nodes[0]], settings, { priority: true }); await flush();
     expect(fetcher).toHaveBeenCalledTimes(4);
     expect(timelineBuildsForTests()).toBe(builds);
-    coordinator.suspend();
   });
   it('shares settled rows across workspace lifetimes, with independent failures and subscriptions', async () => {
     const fetcher = liveFetch(), store = new EvaluationStore(fetcher);
     const first = new ReviewCoordinator(fetcher, store), second = new ReviewCoordinator(fetcher, store);
     const render = vi.fn(), unsubscribe = first.subscribe(render);
     first.ensure([nodes[0]], settings, { priority: true }); await flush();
-    first.suspend(); unsubscribe(); render.mockClear();
+    unsubscribe(); render.mockClear();
     second.ensure([nodes[0]], settings, { priority: true }); await flush();
     expect(fetcher).toHaveBeenCalledTimes(2);
     second.ensure([nodes[1]], settings, { priority: true }); await flush();
     expect(render).not.toHaveBeenCalled();
     expect(first.result('sf', nodes[1], settings)).toBe(second.result('sf', nodes[1], settings));
-    second.suspend();
+
   });
   it('default workspace schedulers share the app store', () => {
     expect(new ReviewCoordinator().store).toBe(new ReviewCoordinator().store);
@@ -150,7 +149,7 @@ describe('workspace scheduler', () => {
     expect(coordinator.result('sf', nodes[2], settings)).toBeDefined();
     expect(coordinator.result('sf', nodes[3], settings)).toBeDefined();
     expect(coordinator.sfPendingKeys().size).toBe(0);
-    coordinator.suspend();
+
   });
   it('takebacks prune queued future nodes while retaining the running result', async () => {
     let release!: (response: Response) => void;
@@ -159,7 +158,7 @@ describe('workspace scheduler', () => {
     coordinator.ensure(nodes, settings, { priority: true, engines: ['sf'] }); coordinator.ensure(nodes.slice(0, 2), settings, { priority: true, engines: ['sf'] });
     release(jsonResponse(sfFixture(nodes[0].fen))); await flush();
     expect(fetcher).toHaveBeenCalledTimes(2);
-    coordinator.suspend();
+
   });
   it('foreground failures surface per key and retry reruns only missing work', async () => {
     const fetcher = liveFetch(); fetcher.mockImplementationOnce(async () => jsonResponse({ code: 'engine_unavailable', message: 'offline' }, 503));
@@ -172,7 +171,7 @@ describe('workspace scheduler', () => {
     expect(fetcher).toHaveBeenCalledTimes(count + 1);
     expect(coordinator.error('sf', nodes[0], settings)).toBeUndefined();
     expect(coordinator.result('sf', nodes[0], settings)).toBeDefined();
-    coordinator.suspend();
+
   });
   it('Retry releases an abort-ignoring hung fetch and ignores its late same-key generation', async () => {
     let releaseOld!: (response: Response) => void;
@@ -189,23 +188,25 @@ describe('workspace scheduler', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
     releaseNew(jsonResponse(sfFixture(nodes[0].fen))); await flush();
     expect(coordinator.result('sf', nodes[0], settings)).toBeDefined();
-    coordinator.suspend();
+
   });
-  it('suspension aborts browser transport and suppresses late results', async () => {
+  it('scope abort cancels foreground work and suppresses late results', async () => {
     vi.useFakeTimers();
     const fetcher = vi.fn<typeof fetch>(() => new Promise(() => {}));
     const coordinator = new ReviewCoordinator(fetcher);
-    coordinator.ensure([nodes[0]], settings, { priority: true });
-    coordinator.suspend(); await flush();
+    const scope = new AbortController();
+    coordinator.ensure([nodes[0]], settings, { priority: true, signal: scope.signal });
+    scope.abort(); await flush();
     expect(fetcher.mock.calls.every(([, init]) => init?.signal?.aborted)).toBe(true);
     expect(coordinator.sfPendingKeys().size).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
   });
-  it('suspension also aborts an in-flight bulk restoration', async () => {
+  it('aborting the restore signal rejects the prime and clears pending', async () => {
     const fetcher = vi.fn<typeof fetch>(() => new Promise(() => {}));
     const coordinator = new ReviewCoordinator(fetcher);
-    const prime = coordinator.ensure(nodes, settings, { signal: new AbortController().signal });
-    coordinator.suspend();
+    const controller = new AbortController();
+    const prime = coordinator.ensure(nodes, settings, { signal: controller.signal });
+    controller.abort();
     await expect(prime).rejects.toMatchObject({ name: 'AbortError' });
     expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
     expect(coordinator.sfPendingKeys().size).toBe(0);
@@ -218,7 +219,7 @@ describe('workspace scheduler', () => {
     expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
     expect(coordinator.result('sf', nodes[3], settings)).toBeDefined();
     expect(coordinator.result('maia', nodes[3], settings)).toBeDefined();
-    coordinator.suspend();
+
   });
   it('bounds structured busy retries while leaving unavailable errors immediately retriable', async () => {
     vi.useFakeTimers();
@@ -228,15 +229,18 @@ describe('workspace scheduler', () => {
     await vi.advanceTimersByTimeAsync(3000);
     expect(fetcher).toHaveBeenCalledTimes(3);
     expect(coordinator.error('sf', nodes[0], settings)).toBe('busy');
-    coordinator.suspend();
+
   });
-  it('resume after backgrounding replaces hung work without resetting settled rows', async () => {
+  it('a new scope replaces hung work without resetting settled rows', async () => {
     const fetcher = liveFetch(); fetcher.mockImplementationOnce(() => new Promise(() => {}));
     const coordinator = new ReviewCoordinator(fetcher);
-    coordinator.ensure([nodes[0]], settings, { priority: true, engines: ['sf'] }); coordinator.resume(10_001); await flush();
+    const previous = new AbortController();
+    coordinator.ensure([nodes[0]], settings, { priority: true, engines: ['sf'], signal: previous.signal });
+    previous.abort();
+    coordinator.ensure([nodes[0]], settings, { priority: true, engines: ['sf'] }); await flush();
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(coordinator.result('sf', nodes[0], settings)).toBeDefined();
-    coordinator.suspend();
+
   });
 });
 
@@ -250,13 +254,14 @@ describe('identity and provenance', () => {
     const repeated = reviewNodes(buildTimeline(START_FEN, ['g1f3', 'g8f6', 'f3g1', 'f6g8']));
     expect(reviewKey('sf', repeated[0], settings)).not.toBe(reviewKey('sf', repeated[4], settings));
   });
-  it('keys survive memory-ID rebuilds and separate custom starts with the same fen', async () => {
+  it('keys survive rebuilds and separate custom starts with the same fen', async () => {
     const { resetTimelinesForTests } = await import('./domain');
     const before = reviewNodes(buildTimeline(START_FEN, ['e2e4']))[1];
     const keyBefore = reviewKey('sf', before, settings);
     resetTimelinesForTests();
     const after = reviewNodes(buildTimeline(START_FEN, ['e2e4']))[1];
-    expect(after.historyId).not.toBe(before.historyId);
+    expect(after).not.toBe(before);
+    expect(after.fen).toBe(before.fen);
     expect(reviewKey('sf', after, settings)).toBe(keyBefore);
     const custom = reviewNodes(buildTimeline(after.fen, []))[0];
     expect(reviewKey('sf', custom, settings)).not.toBe(reviewKey('sf', after, settings));
@@ -292,7 +297,7 @@ describe('identity and provenance', () => {
     coordinator.ensure([nodes[0]], settings, { priority: true }); await flush();
     expect(coordinator.result('maia', nodes[0], { ...settings, eloMaia: 2000 })).toBeUndefined();
     expect(coordinator.result('maia', nodes[1], settings)).toBeUndefined();
-    coordinator.suspend();
+
   });
   it('whole-operation deadline rejects a never-resolving fetch', async () => {
     vi.useFakeTimers();

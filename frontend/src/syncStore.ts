@@ -1,6 +1,50 @@
 import { createContext, useContext, useSyncExternalStore } from 'react';
 import type { RepositorySnapshot } from './gameRepository';
 
+export type SyncDisplay = {
+  pending: number;
+  total: number | null;
+  error: string;
+  durabilityError: string;
+  hasMore: boolean;
+  loading: boolean;
+  pendingOperations: RepositorySnapshot['pending'];
+  recoveryItems: RepositorySnapshot['recovery'];
+  failedVersion: string | null;
+  conflict: boolean;
+};
+
+// Direct selector over the repository snapshot: sync indicators derive from
+// this one function instead of a hand-kept field mirror.
+export function selectSyncDisplay(repo: RepositorySnapshot | null, preference: string): SyncDisplay {
+  const pending = (repo?.pending.length ?? 0) + (repo?.recovery.length ?? 0);
+  const recoveryMsg = (repo?.recovery.length ?? 0)
+    ? `${repo!.recovery.length} stored item(s) need recovery. Export pending work before discarding them.`
+    : '';
+  const combined = [repo?.error ?? '', recoveryMsg].filter(Boolean).join(' ');
+  const error = [repo?.durabilityError ?? '', preference, combined].filter(Boolean).join(' ');
+  return {
+    pending,
+    total: repo?.total ?? null,
+    error,
+    durabilityError: repo?.durabilityError ?? '',
+    hasMore: (repo?.nextOffset ?? null) !== null,
+    loading: repo?.loading ?? false,
+    pendingOperations: repo?.pending ?? [],
+    recoveryItems: repo?.recovery ?? [],
+    failedVersion: repo?.failedVersion ?? null,
+    conflict: repo?.conflict ?? false,
+  };
+}
+
+// Single comparison key for the whole display, so the store notifies only
+// when something the indicators read actually changed.
+function displayKey(display: SyncDisplay): string {
+  return [display.pending, display.total, display.error, display.durabilityError,
+    display.hasMore, display.loading, display.pendingOperations.map(op => op.version).join(','),
+    display.recoveryItems.map(item => item.version).join(','), display.failedVersion, display.conflict].join('|');
+}
+
 // Repository status and history controls have narrow subscriptions so an
 // acknowledgement or page indicator does not re-render the board.
 export class HistorySyncStore {
@@ -18,28 +62,11 @@ export class HistorySyncStore {
     this.revision++;
     [...this.listeners].forEach(listener => listener());
   }
-  private displayOf(repo: RepositorySnapshot | null, preference: string) {
-    const pending = (repo?.pending.length ?? 0) + (repo?.recovery.length ?? 0);
-    const recoveryMsg = (repo?.recovery.length ?? 0)
-      ? `${repo!.recovery.length} stored item(s) need recovery. Export pending work before discarding them.`
-      : '';
-    const combined = [repo?.error ?? '', recoveryMsg].filter(Boolean).join(' ');
-    const error = [repo?.durabilityError ?? '', preference, combined].filter(Boolean).join(' ');
-    return {
-      pending,
-      total: repo?.total ?? null,
-      error,
-      durabilityError: repo?.durabilityError ?? '',
-      hasMore: (repo?.nextOffset ?? null) !== null,
-      loading: repo?.loading ?? false,
-      pendingOperations: repo?.pending ?? [],
-      recoveryItems: repo?.recovery ?? [],
-      failedVersion: repo?.failedVersion ?? null,
-      conflict: repo?.conflict ?? false,
-    };
+  private currentKey() {
+    return displayKey(selectSyncDisplay(this.repo, this.preferenceMessage));
   }
   private currentDisplay() {
-    return this.displayOf(this.repo, this.preferenceMessage);
+    return selectSyncDisplay(this.repo, this.preferenceMessage);
   }
   get pending() { return this.currentDisplay().pending; }
   get error() { return this.currentDisplay().error; }
@@ -52,31 +79,19 @@ export class HistorySyncStore {
   get conflict() { return this.currentDisplay().conflict; }
   get total() { return this.currentDisplay().total; }
   setSnapshot(snapshot: RepositorySnapshot) {
-    const before = this.currentDisplay();
+    const before = this.currentKey();
     this.repo = snapshot;
-    const after = this.currentDisplay();
-    const pendingVersions = (ops: readonly { version: string }[]) => ops.map(op => op.version).join(',');
-    const recoveryVersions = (items: readonly { version: string }[]) => items.map(item => item.version).join(',');
-    if (
-      before.pending === after.pending &&
-      before.total === after.total &&
-      before.error === after.error &&
-      before.durabilityError === after.durabilityError &&
-      before.hasMore === after.hasMore &&
-      before.loading === after.loading &&
-      pendingVersions(before.pendingOperations) === pendingVersions(after.pendingOperations) &&
-      recoveryVersions(before.recoveryItems) === recoveryVersions(after.recoveryItems) &&
-      before.failedVersion === after.failedVersion &&
-      before.conflict === after.conflict
-    ) return;
+    if (before === this.currentKey()) return;
     this.emit();
   }
   // Local-storage preference writes (settings/feedback/badge/stockfish) fail
   // outside the repository snapshot, so their message stays separate. The
-  // banner joins it with repo errors identically to the old 7-setter mirror.
+  // banner joins it with repo errors through the same selector.
   setPreferenceError(message: string) {
     if (message === this.preferenceMessage) return;
+    const before = this.currentKey();
     this.preferenceMessage = message;
+    if (before === this.currentKey()) return;
     this.emit();
   }
 }

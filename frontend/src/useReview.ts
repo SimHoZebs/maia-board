@@ -1,27 +1,27 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { buildTimeline, type TimelineRow } from './domain';
+import { buildTimeline, lineKeyFor, type TimelineRow } from './domain';
 import type { State } from './state';
-import { ReviewCoordinator, reviewKey, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
+import { ReviewCoordinator, createLineScope, cancelScope, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
 import { useServerBatch } from './useServerBatch';
-import { computeQualities, type UnifiedMemo, type UnifiedVerdict } from './qualities';
+import { computeLineQualities, type UnifiedMemo } from './qualities';
 import { maiaRarity, type Evaluation, type Quality } from './reviewMetrics';
 import { selectMaiaDisplay, type MaiaDisplayEntry } from './maiaDisplay';
 
 export type RecordStatus = { state: 'checking' | 'fresh' | 'none' };
+export type ReviewState = 'loading' | 'partial' | 'complete' | 'failed';
 export function isMaiaPosition(row: Pick<TimelineRow, 'turn' | 'outcome'>, userColor: 'white' | 'black', ownGame: boolean): boolean {
   return ownGame && row.outcome === null && row.turn !== userColor;
 }
-type ReviewPlyVerdict = UnifiedVerdict & { needsPending: boolean };
 export type ReviewQualitiesMemo = UnifiedMemo;
 export type ReviewQualitiesStats = { reviews: number };
+// Kept for existing tests/callers: delegates to the single shared helper so
+// computeQualities retains one call site in qualities.ts.
 export function computeReviewQualities(args: {
   line: { moves: string[] }; nodes: ReviewNode[]; evaluations: (Evaluation | undefined)[];
   settingsForNode: (node: ReviewNode) => ReviewSettings; pending: Set<string>; prev: ReviewQualitiesMemo | null; stats?: ReviewQualitiesStats;
 }): { qualities: (Quality | undefined)[]; memo: ReviewQualitiesMemo } {
   const { line, nodes, evaluations, settingsForNode, pending, prev, stats } = args;
-  return computeQualities({ scope: '', moves: line.moves, nodes, evaluations,
-    keyFor: node => reviewKey('sf', node, settingsForNode(node)),
-    active: () => true, pending, prev, stats });
+  return computeLineQualities({ scope: '', moves: line.moves, nodes, evaluations, settingsForNode, pending, prev, stats });
 }
 
 export function useReview(state: State) {
@@ -33,7 +33,12 @@ export function useReview(state: State) {
   const moves = useMemo(() => state.analysis.branchFromPly === null ? state.analysis.moves
     : [...state.analysis.moves.slice(0, state.analysis.branchFromPly), ...state.analysis.branchMoves],
   [state.analysis.moves, state.analysis.branchFromPly, state.analysis.branchMoves]);
-  const lineKey = JSON.stringify([state.analysis.initialFen, moves]);
+  const lineKey = useMemo(() => lineKeyFor(state.analysis.initialFen, moves), [state.analysis.initialFen, moves]);
+  // One abort scope per line: a line change or unmount aborts the previous
+  // foreground signal; the batch hook DELETEs its job on scope match.
+  // Backgrounding never aborts: there are no visibility/suspend listeners.
+  const scope = useMemo(() => createLineScope(lineKey), [lineKey]);
+  useEffect(() => () => cancelScope(scope), [scope]);
   const timeline = useMemo(() => buildTimeline(state.analysis.initialFen, moves), [lineKey]);
   const nodes = useMemo(() => reviewNodes(timeline), [timeline]);
   const settingsKey = JSON.stringify([state.analysisSettings.eloMaia, state.analysisSettings.model, state.stockfish]);
@@ -60,32 +65,20 @@ export function useReview(state: State) {
   const focusIsMaia = !!focusNode && !!userColor && isMaiaPosition(focusNode, userColor, ownGame);
   const tooLong = timeline.moves.length > 256;
 
-  useEffect(() => () => coordinator.suspend(), [coordinator, active, lineKey, combinedKey]);
   useEffect(() => {
-    let hiddenAt = 0;
-    const hide = () => { hiddenAt = Date.now(); };
-    const show = () => { coordinator.resume(hiddenAt ? Date.now() - hiddenAt : 0); hiddenAt = 0; };
-    const visibility = () => document.hidden ? hide() : show();
-    document.addEventListener('visibilitychange', visibility);
-    window.addEventListener('pagehide', hide);
-    for (const event of ['pageshow', 'focus', 'online']) window.addEventListener(event, show);
-    return () => {
-      document.removeEventListener('visibilitychange', visibility); window.removeEventListener('pagehide', hide);
-      for (const event of ['pageshow', 'focus', 'online']) window.removeEventListener(event, show);
-    };
-  }, [coordinator]);
-  useEffect(() => {
-    coordinator.clearForeground();
     if (!active || tooLong) return;
     // Current and previous Stockfish grade the displayed move. Maia's focus
     // grades that move; current-position Maia supplies forward candidates.
-    const timer = setTimeout(() => { coordinator.ensure(focusNode ? [focusNode, currentNode] : [currentNode], settingsForNode, { priority: true }); }, 200);
-    return () => { clearTimeout(timer); coordinator.clearForeground(); };
-  }, [coordinator, active, tooLong, nodes, currentPly, combinedKey]);
+    // Signal-abort is the only foreground cancel path: a line change aborts
+    // the scope, a ply change replaces the queue latest-wins.
+    const timer = setTimeout(() => {
+      coordinator.ensure(focusNode ? [focusNode, currentNode] : [currentNode], settingsForNode, { priority: true, signal: scope.signal });
+    }, 200);
+    return () => { clearTimeout(timer); };
+  }, [coordinator, active, tooLong, nodes, currentPly, combinedKey, scope]);
 
   const primeKey = `${lineKey}|${combinedKey}`;
-  const batch = useServerBatch({ active: active && !tooLong, submitKey: primeKey, auto: false,
-    nodes, settings: settingsForNode, coordinator });
+  const batch = useServerBatch({ active: active && !tooLong, nodes, settings: settingsForNode, coordinator, scope: active ? scope : null, auto: false });
   const [prime, setPrime] = useState<{ key: string; error?: string } | null>(null);
   const [primeAttempt, setPrimeAttempt] = useState(0);
   useEffect(() => {
@@ -120,6 +113,12 @@ export function useReview(state: State) {
   const error = currentError || (active && focusNode ? coordinator.error('sf', focusNode, focusSettings) || coordinator.error('maia', focusNode, focusSettings) : undefined)
     || (active ? coordinator.error('maia', currentNode, currentSettings) : undefined) || (prime?.key === primeKey ? prime.error : undefined)
     || batch.error;
+  const batchComplete = !!batch.progress && !batch.progress.running && batch.progress.done === batch.progress.total && !batch.progress.failed;
+  const coverageComplete = !!(coverage && coverage.covered === coverage.total);
+  const reviewState: ReviewState = error || (batch.progress && batch.progress.failed > 0) ? 'failed'
+    : batchComplete || coverageComplete ? 'complete'
+    : !prime || prime.key !== primeKey || !coverage ? 'loading'
+    : 'partial';
   return { timeline, nodes, evaluations, qualities: computed.qualities, rarities, coverage,
     current: evaluations[currentPly], focus: evaluations[focusPly], focusPly, maia, maiaCurrent,
     maiaElo: displayed.entry?.eloMaia ?? focusSettings.eloMaia, maiaModel: maia?.model_used ?? focusSettings.model,
@@ -128,7 +127,7 @@ export function useReview(state: State) {
     maiaCurrentModel: maiaCurrent?.model_used, maiaCurrentDegraded: maiaCurrent?.degraded ?? false,
     maiaCurrentPending: active && coordinator.isPending('maia', currentNode, currentSettings),
     gameElo: gameForLine?.settings.eloMaia, error, currentError,
-    progress: batch.progress, recordStatus, start: batch.start,
+    progress: batch.progress, recordStatus, reviewState, scope, lineKey, start: batch.start,
     retry: () => { coordinator.retry(); batch.retry(); if (prime?.error) setPrimeAttempt(attempt => attempt + 1); }, tooLong };
 }
 export type Review = ReturnType<typeof useReview>;

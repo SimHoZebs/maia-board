@@ -91,6 +91,8 @@ operation has a version; its acknowledgement removes only that version. Storage
 failures stop transmission and surface through the recovery interface. Rejected
 operations and malformed pending data remain available for export or explicit
 discard. Discarding a pending operation does not infer a server deletion.
+Local play during a history fetch wins: the arriving page is neither merged
+nor dropped, and the skipped range stays explicitly loadable with Load more.
 
 Where supported, browser locks serialize repository writes and sync across tabs.
 The repository also compares the stored document before overwriting it. A conflict

@@ -62,12 +62,19 @@ export function currentPosition(state: State): Position & { initialFen?: string;
   if (state.mode === 'analysis') return analysisLine(state.analysis);
   return lineRecord(state.play.moves.slice(0, state.viewedPly ?? state.play.moves.length));
 }
+// Memoized per moves reference: repeated reads in one render (maiaTurn,
+// queueRequest, transition) share one tip lookup instead of re-walking.
+const maiaTurnMemo = new WeakMap<readonly string[], { userColor: string; resigned: boolean; result: boolean }>();
 export function maiaTurn(state: State): boolean {
   if (!state.started || state.play.result === 'resigned') return false;
+  const cached = maiaTurnMemo.get(state.play.moves);
+  if (cached && cached.userColor === state.play.settings.userColor && !cached.resigned) return cached.result;
   // The tip record resolves history-aware terminality once per line (repetition
   // needs full history); side-to-move is position-only and safe to parse.
   const record = lineRecord(state.play.moves);
-  return toGroundColor(new Chess(record.fen).turn()) !== state.play.settings.userColor && record.terminal === null;
+  const result = toGroundColor(new Chess(record.fen).turn()) !== state.play.settings.userColor && record.terminal === null;
+  maiaTurnMemo.set(state.play.moves, { userColor: state.play.settings.userColor, resigned: false, result });
+  return result;
 }
 function queueRequest(state: State): State {
   const position = lineRecord(state.play.moves);

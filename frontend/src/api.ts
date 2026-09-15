@@ -1,5 +1,5 @@
 import { Chess } from 'chess.js';
-import { retryBusy, withDeadline } from './evaluationTransport';
+import { fetchJsonWithBusyRetry } from './evaluationTransport';
 export type MaiaColor = 'white' | 'black';
 export type MaiaModel = '79m' | '5m';
 
@@ -136,35 +136,38 @@ function parseErrorCode(value: unknown): ApiErrorCode {
 
 export type RequestPriority = 'play' | 'focus';
 
-export async function requestMove(payload: MoveRequest, fetchImpl: FetchLike = fetch, signal?: AbortSignal, opts?: { priority?: RequestPriority }): Promise<MoveResponse & { cached?: boolean }> {
-  return withDeadline(async transportSignal => {
-    let response: Response;
-    try {
-      response = await retryBusy(fetchImpl, '/move', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(opts?.priority ? { 'X-Priority': opts.priority } : {}) },
-        body: JSON.stringify(payload),
-      }, transportSignal);
-    } catch (error) {
-      if (transportSignal.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
-        throw new DOMException('Aborted', 'AbortError');
-      }
-      throw new MaiaApiError('server_unreachable', 'The Maia server could not be reached.');
+export async function requestMove(payload: MoveRequest, fetchImpl: FetchLike = fetch, signal?: AbortSignal, _opts?: { priority?: RequestPriority }): Promise<MoveResponse & { cached?: boolean }> {
+  // Lane is endpoint-implied (POST /move → Play): no X-Priority header.
+  // superseded/batch_busy/503 codes flow through unchanged via the shared helper.
+  let response: Response;
+  let body: unknown;
+  try {
+    ({ response, body } = await fetchJsonWithBusyRetry(fetchImpl, '/move', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }, signal));
+  } catch (error) {
+    if (signal?.aborted || (error instanceof DOMException && (error.name === 'AbortError' || error.name === 'TimeoutError' && signal?.aborted))) {
+      throw new DOMException('Aborted', 'AbortError');
     }
-    let body: unknown;
-    try {
-      body = await response.json();
-    } catch {
-      throw new MaiaApiError('unknown', 'The Maia server returned unreadable data.', response.status);
-    }
-    if (!response.ok) {
-      const code = parseErrorCode(body);
-      const message = isRecord(body) && typeof body.message === 'string' ? body.message : 'The Maia server rejected this position.';
-      throw new MaiaApiError(code, message, response.status);
-    }
-    const parsed = parseMoveResponse(body, payload);
-    return response.headers.get('X-Eval-Cache') === 'hit' ? { ...parsed, cached: true } : parsed;
-  }, signal);
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    if (error instanceof MaiaApiError) throw error;
+    throw new MaiaApiError('server_unreachable', 'The Maia server could not be reached.');
+  }
+  if (body === null || body === undefined) {
+    // fetchJson returns null only when the body was unreadable; an abort
+    // surfaces as AbortError above, so this is a genuine wire error.
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    throw new MaiaApiError('unknown', 'The Maia server returned unreadable data.', response!.status);
+  }
+  if (!response.ok) {
+    const code = parseErrorCode(body);
+    const message = isRecord(body) && typeof body.message === 'string' ? body.message : 'The Maia server rejected this position.';
+    throw new MaiaApiError(code, message, response.status);
+  }
+  const parsed = parseMoveResponse(body, payload);
+  return response.headers.get('X-Eval-Cache') === 'hit' ? { ...parsed, cached: true } : parsed;
 }
 
 export function readableApiError(error: unknown): string {

@@ -10,20 +10,11 @@ import { useLineOpenings } from "./openings";
 import { ReviewOverview } from "./ReviewOverview";
 import { SkeletonList, SkeletonText, StockfishBody } from "./StockfishBar";
 
-function isComplete(review: Review): boolean {
-  const progress = review.progress;
-  return !!progress &&
-    !progress.running &&
-    progress.done === progress.total &&
-    !progress.failed;
-}
-
 // Tab-bar action: the Analyze / Analyzed button owns the right
 // end of the tab row. While running it is replaced in place by the progress
-// status.
+// status. Driven by the single reviewState (loading|partial|complete|failed).
 function ReviewActionButton({ state, review }: { state: State; review: Review }) {
   const progress = review.progress;
-  const complete = isComplete(review) || !!(review.coverage && review.coverage.covered === review.coverage.total);
   if (progress?.running) {
     return (
       <span role="status">
@@ -32,70 +23,43 @@ function ReviewActionButton({ state, review }: { state: State; review: Review })
     );
   }
   const branch = state.analysis.branchFromPly !== null;
-  if (branch) {
-    return (
-      <Button
-        variant="primary"
-        aria-label={complete ? 'Analyzed explored line' : 'Analyze explored line'}
-        disabled={review.tooLong || complete}
-        onClick={review.start}
-      >
-        {complete ? 'Analyzed' : 'Analyze'}
-      </Button>
-    );
+  const label = branch ? 'Analyze explored line' : 'Analyze entire game';
+  const doneLabel = branch ? 'Analyzed explored line' : 'Analyzed';
+  switch (review.reviewState) {
+    case 'complete':
+      return branch ? (
+        <Button variant="primary" aria-label={doneLabel} disabled onClick={review.start}>
+          Analyzed
+        </Button>
+      ) : (
+        <Button variant="primary" disabled>
+          Analyzed
+        </Button>
+      );
+    case 'loading':
+      return (
+        <Button variant="primary" aria-label="Loading analysis" disabled>
+          Loading…
+        </Button>
+      );
+    case 'failed':
+    case 'partial':
+    default:
+      // Partial cache (including play-time saves with no analysis record yet)
+      // is usable immediately: the batch server-hits cached positions and
+      // only infers the missing ones. Failed batches retry from the same
+      // button.
+      return (
+        <Button
+          variant="primary"
+          aria-label={label}
+          disabled={review.tooLong}
+          onClick={review.start}
+        >
+          Analyze
+        </Button>
+      );
   }
-  if (complete) {
-    return (
-      <Button variant="primary" disabled>
-        Analyzed
-      </Button>
-    );
-  }
-  if (progress && progress.failed > 0) {
-    return (
-      <Button
-        variant="primary"
-        aria-label="Analyze entire game"
-        disabled={review.tooLong}
-        onClick={review.start}
-      >
-        Analyze
-      </Button>
-    );
-  }
-  // Partial cache (including play-time saves with no analysis record yet) is
-  // usable immediately: the batch server-hits cached positions and only
-  // infers the missing ones. Never gate this behind the record lookup.
-  if (review.coverage && review.coverage.covered < review.coverage.total) {
-    return (
-      <Button
-        variant="primary"
-        aria-label="Analyze entire game"
-        disabled={review.tooLong}
-        onClick={review.start}
-      >
-        Analyze
-      </Button>
-    );
-  }
-  // Full coverage returns Analyzed above, so only the priming state loads
-  // here; 'fresh' is subsumed by the coverage branch by construction.
-  if (review.recordStatus.state === "checking")
-    return (
-      <Button variant="primary" aria-label="Loading analysis" disabled>
-        Loading…
-      </Button>
-    );
-  return (
-    <Button
-      variant="primary"
-      aria-label="Analyze entire game"
-      disabled={review.tooLong}
-      onClick={review.start}
-    >
-      Analyze
-    </Button>
-  );
 }
 
 export function MoveAnalysis({

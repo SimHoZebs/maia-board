@@ -51,7 +51,7 @@ describe('requestMove', () => {
     expect((error as MaiaApiError).code).toBe('server_unreachable');
   });
 
-  it('sends the play priority lane only when requested', async () => {
+  it('never sends the priority lane header (endpoint-implied)', async () => {
     const body = JSON.stringify({
       move: 'e2e4',
       top_moves: [{ move: 'e2e4', prob: 0.6 }],
@@ -62,7 +62,7 @@ describe('requestMove', () => {
     const fetchImpl = vi.fn().mockImplementation(async () => new Response(body));
     await requestMove(payload, fetchImpl, undefined, { priority: 'play' });
     expect(fetchImpl).toHaveBeenCalledWith('/move', expect.objectContaining({
-      headers: expect.objectContaining({ 'X-Priority': 'play' }),
+      headers: expect.not.objectContaining({ 'X-Priority': expect.anything() }),
     }));
     fetchImpl.mockClear();
     await requestMove(payload, fetchImpl);

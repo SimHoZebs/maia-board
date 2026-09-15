@@ -20,6 +20,11 @@ func validOwnedCacheValue(hash, engine, key string, value any) bool {
 	if json.Unmarshal([]byte(strings.TrimPrefix(key, "v2:")), &identity) != nil || identity.Engine != engine || identity.Version != 2 {
 		return false
 	}
+	// Never file inconsistent triples: empty histories must root at fen.
+	// Non-empty histories rely on worker replay (position_mismatch never stores).
+	if len(identity.Moves) == 0 && identity.InitialFEN != identity.FEN {
+		return false
+	}
 	wantHash, wantKey := identity.coordinates()
 	if hash != wantHash || key != wantKey {
 		return false
