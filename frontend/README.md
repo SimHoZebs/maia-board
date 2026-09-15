@@ -115,9 +115,10 @@ node scripts/build-openings.mjs --check  # CI freshness check
 
 `src/openings.ts` owns EPD normalization and the deepest-match lookup. The
 generated map loads as a split chunk on first Play/Analyze mount, never in
-the main bundle. `MovesPanel.tsx` renders the header and per-move book marks
-from cursor-resolved props; the move verdict in `InsightPanel.tsx` names an
-exact book hit instead of restating engine grades.
+the main bundle. `MovesPanel.tsx` swaps the eval badge slot for a book chip
+on in-book moves; `ReviewOverview.tsx` names the viewed line first. The move
+verdict in `InsightPanel.tsx` names an exact book hit instead of restating
+engine grades.
 
 ## Browser checks
 

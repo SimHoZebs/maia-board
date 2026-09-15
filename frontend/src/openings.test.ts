@@ -96,8 +96,8 @@ describe('describeMove book clause', () => {
     })).toBe("Nf3 — King's Knight Opening (C40). Book move.");
   });
 
-  it('keeps engine wording off-book', () => {
+  it('keeps the synthesis wording off-book', () => {
     expect(describeMove({ san: 'Nf3', quality, rarity, elo: 1600 }))
-      .toBe("Best — Nf3 is the engine's top choice. Maia at 1600 predicts 40% for this move.");
+      .toBe('The natural choice — Maia at 1600 predicts 40% for this move.');
   });
 });

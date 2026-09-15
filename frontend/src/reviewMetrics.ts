@@ -21,37 +21,48 @@ export function maiaRarity(maia: Pick<MoveResponse, 'top_moves' | 'degraded'> | 
   const r = found.prob / topProb;
   return { label: r >= 0.6 ? 'Expected' : r >= 0.25 ? 'Seen' : 'Unseen', r, prob: found.prob, topProb };
 }
-function pointsText(loss: number): string {
-  const rounded = Math.round(loss * 10) / 10;
-  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}%`;
+// The verdict carries only the quality × rarity synthesis. Grades, scores,
+// and best lines already live in the badges, charts, and candidate lists, so
+// restating them here is repetition. Positive grades meet findability (a great
+// move nobody's model expects is a genuine find); negative grades meet
+// temptation (a blunder the model saw coming is an easy mistake). Wording
+// stays model-relative — Maia's predicted likelihood, never population
+// claims — and the raw probability grounds each characterization.
+function rarityVerdict(quality: Quality, rarity: Rarity | undefined, elo: number): string | null {
+  if (!rarity || rarity.label === 'Unknown') return null;
+  const positive = quality.label === 'Great' || quality.label === 'Best' || quality.label === 'Good';
+  if (rarity.label === 'Unseen' && rarity.prob == null) {
+    return positive
+      ? `A genuine find — absent from Maia's top choices at ${elo}.`
+      : `Worth a second look — absent from Maia's top choices at ${elo}.`;
+  }
+  if (rarity.prob == null) return null;
+  const pct = `${(rarity.prob * 100).toFixed(1).replace(/\.0$/, '')}%`;
+  if (rarity.label === 'Expected') {
+    return positive
+      ? `The natural choice — Maia at ${elo} predicts ${pct} for this move.`
+      : `An easy mistake to make — Maia at ${elo} predicts ${pct} for this move.`;
+  }
+  if (rarity.label === 'Seen') {
+    return positive
+      ? `A sharp find — Maia at ${elo} predicts only ${pct}.`
+      : `A tempting sidestep — Maia at ${elo} predicts only ${pct}.`;
+  }
+  return positive
+    ? `A rare find — Maia at ${elo} predicts only ${pct}.`
+    : `An unusual slip — Maia at ${elo} predicts only ${pct}.`;
 }
-// One natural-English sentence for the move just played. A named book line
-// wins outright: engine grades are noisiest exactly where theory exists, and
-// the name is available before any inference settles. Otherwise quality
-// (Stockfish) carries the verdict and rarity (Maia) colours it. Returns null
-// when there is nothing to say (unreviewed and off-book, or pre-first-move).
+// One verdict sentence for the move just played: the book name, the only
+// legal move, or the rarity synthesis — never a restated grade. Returns null
+// when there is nothing additive to say (unreviewed, off-book without Maia
+// data, or pre-first-move); the badges and charts already carry the grades.
 export type OpeningRef = { eco: string; name: string };
-export function describeMove(args: { san: string; quality: Quality | undefined; rarity: Rarity | undefined; elo: number; bestSan?: string; opening?: OpeningRef | null }): string | null {
-  const { san, quality, rarity, elo, bestSan, opening } = args;
+export function describeMove(args: { san: string; quality: Quality | undefined; rarity: Rarity | undefined; elo: number; opening?: OpeningRef | null }): string | null {
+  const { san, quality, rarity, elo, opening } = args;
   if (opening) return `${san} — ${opening.name} (${opening.eco}). Book move.`;
   if (!quality || quality.label === 'Unreviewed') return null;
   if (quality.label === 'Forced') return `${san} was the only legal move.`;
-  const prediction = rarity?.prob != null
-    ? ` Maia at ${elo} predicts ${(rarity.prob * 100).toFixed(1).replace(/\.0$/, '')}% for this move.`
-    : rarity?.label === 'Unseen' ? " This move is absent from Maia's top choices." : '';
-  if (quality.label === 'Miss') return bestSan ? `${san} missed the win — ${bestSan} kept the winning position.` : `${san} missed a win that was on the board.`;
-  if (quality.label === 'Skull') return bestSan ? `${san} allowed mate — ${bestSan} held the position.` : `${san} allowed mate.`;
-  if (quality.label === 'Great') return `Great — ${san} is the engine's top choice with a sizable gap to its next candidate.${prediction}`;
-  if (quality.label === 'Best') return `Best — ${san} is the engine's top choice.${prediction}`;
-  if (quality.label === 'Good' || quality.loss == null) {
-    // classifyLoss can only be null below; quality.loss is set for every
-    // reviewed non-forced move, so this branch is Good by elimination.
-    // Excellent does not exist yet as a Quality label (see reviewMove), so
-    // near-best non-best moves read as Good for now.
-    return `Good — ${san} keeps the engine's estimated winning chance close to its best line.${prediction}`;
-  }
-  const issue = quality.label === 'Blunder' ? 'a blunder' : quality.label === 'Mistake' ? 'a mistake' : 'an inaccuracy';
-  return `${san} was ${issue} — it gave up ${pointsText(quality.loss)} of your estimated winning chance.${prediction}`;
+  return rarityVerdict(quality, rarity, elo);
 }
 export function whiteWin(score: Score): number {
   return score.type === 'cp' ? 100 / (1 + Math.exp(-.00368208 * score.value)) : (score.winning_side ?? (score.value > 0 ? 'white' : 'black')) === 'white' ? 100 : 0;

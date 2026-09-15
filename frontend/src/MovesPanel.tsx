@@ -11,7 +11,6 @@ import {
 import { IconButton } from "./components";
 import { QualityBadge, type BadgeLoading } from "./ReviewCharts";
 import type { Quality } from "./reviewMetrics";
-import type { Opening } from "./openings";
 
 export function MoveNavBar({
   ply,
@@ -73,7 +72,6 @@ type MovesCore = {
   initialFen: string;
   qualities?: (Quality | undefined)[];
   badgeLoading?: BadgeLoading;
-  opening?: Pick<Opening, "eco" | "name" | "isExact"> | null;
   bookFlags?: boolean[];
 };
 
@@ -104,7 +102,6 @@ function BaseMovesPanel({
   branchUp = false,
   menu,
   hideNav = false,
-  opening = null,
   bookFlags = undefined,
 }: MovesCore & MovesNavigation & MovesBranch & { analysis?: boolean }) {
   const active = useRef<HTMLButtonElement>(null);
@@ -142,8 +139,9 @@ function BaseMovesPanel({
   // Every move reserves its badge box up front through the shared
   // QualityBadge: qualities fill in as evaluations settle, and mounting the
   // badge late would shift the row and push the selected move out of view.
-  // The book mark is visual-only (aria-hidden): screen readers get the same
-  // fact once from the opening header.
+  // An in-book move shows a book chip in that same box instead of a badge:
+  // the position is known theory, not an engine evaluation, so no grade is
+  // implied. Announced like settled badges; the header carries the name.
   const move = (san: string, index: number) => (
     <button
       ref={ply === index + 1 ? active : undefined}
@@ -153,8 +151,13 @@ function BaseMovesPanel({
       onClick={() => onView(index + 1)}
     >
       {number(index)} {san}{" "}
-      {bookFlags?.[index] && <BookOpen size={12} aria-hidden="true" className="book-mark" />}{" "}
-      {qualities && <QualityBadge quality={qualities[index]} reserveSpace loading={badgeLoading} />}
+      {bookFlags?.[index] ? (
+        <span className="quality quality-book" title="Book move — known opening, not engine-evaluated" aria-label="Book move">
+          <BookOpen size={13} aria-hidden="true" />
+        </span>
+      ) : (
+        qualities && <QualityBadge quality={qualities[index]} reserveSpace loading={badgeLoading} />
+      )}
     </button>
   );
   return (
@@ -162,13 +165,6 @@ function BaseMovesPanel({
       className={`notation${analysis ? " analysis-notation" : ""}`}
       aria-label="Move history"
     >
-      {opening && (
-        <p className="opening-line" role="status">
-          <BookOpen size={14} aria-hidden="true" />
-          <strong>{opening.eco} · {opening.name}</strong>
-          {!opening.isExact && <span className="opening-out"> · out of book</span>}
-        </p>
-      )}
       <div className="move-list" id="move-list" ref={list}>
         {!sans.length && <span className="empty-copy">Moves appear here</span>}
         {original ? (
@@ -243,7 +239,6 @@ export function PlayMovesPanel({
   menu,
   hideNav,
   branchUp,
-  opening,
   bookFlags,
 }: MovesCore & Pick<MovesNavigation, "onView" | "tools" | "menu" | "hideNav"> & Pick<MovesBranch, "branchUp">) {
   return (
@@ -260,7 +255,6 @@ export function PlayMovesPanel({
       branchUp={branchUp}
       menu={menu}
       hideNav={hideNav}
-      opening={opening}
       bookFlags={bookFlags}
     />
   );
@@ -281,7 +275,6 @@ export function AnalysisMovesPanel({
   branchUp,
   menu,
   hideNav,
-  opening,
   bookFlags,
 }: MovesCore & MovesNavigation & MovesBranch) {
   return (
@@ -299,7 +292,6 @@ export function AnalysisMovesPanel({
       branchUp={branchUp}
       menu={menu}
       hideNav={hideNav}
-      opening={opening}
       bookFlags={bookFlags}
     />
   );
@@ -336,7 +328,6 @@ export function MovesPanel({
   branchUp = false,
   menu,
   hideNav = false,
-  opening = null,
   bookFlags = undefined,
 }: MovesPanelProps) {
   return (
@@ -354,7 +345,6 @@ export function MovesPanel({
       branchUp={branchUp}
       menu={menu}
       hideNav={hideNav}
-      opening={opening}
       bookFlags={bookFlags}
     />
   );

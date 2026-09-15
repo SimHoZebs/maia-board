@@ -122,7 +122,6 @@ export function MoveAnalysis({
     : undefined;
   const evaluation = hasMove ? review.focus : review.current;
   const afterEvaluation = hasMove ? review.evaluations[ply] : undefined;
-  const bestUci = evaluation?.best_move ?? undefined;
   // Named book lines outrank engine grades in the verdict: theory is calmer
   // than low-depth scores in the opening, and the name needs no inference.
   const { opening: lineOpening } = useLineOpenings(review.timeline.moves, state.analysis.initialFen, ply);
@@ -133,7 +132,6 @@ export function MoveAnalysis({
         quality: review.qualities[focus],
         rarity: review.rarities?.[focus],
         elo: review.maiaElo,
-        bestSan: bestUci ? candidateSan(node.fen, bestUci) : undefined,
         opening: exactOpening,
       })
     : null;

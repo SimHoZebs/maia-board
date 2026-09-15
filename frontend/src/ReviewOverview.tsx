@@ -1,9 +1,10 @@
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, BookOpen } from "lucide-react";
 import { sideName } from "./domain";
 import { issueLabels, summarizeReview, type ReviewSide } from "./reviewSummary";
 import type { Review } from "./useReview";
 import "./review-overview.css";
 import { QualityBadge, ReviewCharts } from "./ReviewCharts";
+import { useLineOpenings } from "./openings";
 
 export function ReviewOverview({
   review,
@@ -22,6 +23,9 @@ export function ReviewOverview({
 }) {
   const summary = summarizeReview(review.nodes, review.qualities, userSide);
   const complete = summary.reviewed === summary.total;
+  // Opening identity of the viewed position: deepest named ancestor, so the
+  // family persists after the line leaves book.
+  const { opening } = useLineOpenings(review.timeline.moves, review.timeline.initialFen, ply);
   const sideLabel = (color: ReviewSide) =>
     `${sideName(color)}${userSide === color ? " · You" : ""}`;
   return (
@@ -35,6 +39,13 @@ export function ReviewOverview({
         </p>
       ) : (
         <>
+          {opening && (
+            <p className="opening-line" role="status">
+              <BookOpen size={14} aria-hidden="true" />
+              <strong>{opening.eco} · {opening.name}</strong>
+              {!opening.isExact && <span className="opening-out"> · out of book</span>}
+            </p>
+          )}
           <ReviewCharts
             review={review}
             ply={ply}
