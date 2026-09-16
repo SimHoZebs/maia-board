@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { computePlayQualities, type PlayQualitiesMemo } from './usePlayFeedback';
+import { computePlayQualities, wantedPlayPair, type PlayQualitiesMemo } from './usePlayFeedback';
 import { initialState, reducer } from './state';
 import { KEYS } from './storage';
 import { buildTimeline, START_FEN, timelineBuildsForTests } from './domain';
@@ -105,5 +105,32 @@ describe('timeline-backed move feedback', () => {
     expect(computePlayQualities({ ...base, maiaLookup: () => absent }).qualities[0]?.label).toBe('Excellent');
     // Maia expects it: Best.
     expect(computePlayQualities({ ...base, maiaLookup: () => expected }).qualities[0]?.label).toBe('Best');
+  });
+});
+
+describe('wantedPlayPair', () => {
+  const pairNodes = (moves: string[]) => reviewNodes(buildTimeline(START_FEN, moves));
+  it('selects nothing without nodes or without a move to grade', () => {
+    expect(wantedPlayPair([], 'white')).toEqual({ sfNodes: [], maiaNode: null });
+    expect(wantedPlayPair(pairNodes([]), 'white')).toEqual({ sfNodes: [], maiaNode: null });
+    expect(wantedPlayPair(pairNodes([]), 'black')).toEqual({ sfNodes: [], maiaNode: null });
+  });
+  it('grades the newest move: SF pair plus Maia for a user mover', () => {
+    const nodes = pairNodes(['e2e4']);
+    expect(wantedPlayPair(nodes, 'white')).toEqual({ sfNodes: [nodes[0], nodes[1]], maiaNode: nodes[0] });
+  });
+  it('skips the Maia fetch when the newest move is the opponent reply', () => {
+    const nodes = pairNodes(['e2e4', 'e7e5']);
+    const pair = wantedPlayPair(nodes, 'white');
+    expect(pair.sfNodes).toEqual([nodes[1], nodes[2]]);
+    expect(pair.maiaNode).toBeNull();
+  });
+  it('mirrors sides for black', () => {
+    const mover = pairNodes(['e2e4']);
+    expect(wantedPlayPair(mover, 'black').maiaNode).toBeNull();
+    const replied = pairNodes(['e2e4', 'e7e5']);
+    const pair = wantedPlayPair(replied, 'black');
+    expect(pair.sfNodes).toEqual([replied[1], replied[2]]);
+    expect(pair.maiaNode).toBe(replied[1]);
   });
 });
