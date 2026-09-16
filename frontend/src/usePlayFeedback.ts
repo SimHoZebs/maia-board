@@ -89,9 +89,22 @@ export function usePlayFeedback(state: State): PlayFeedback {
   // Live grades run as a server batch (sf + maia): each move resubmits the
   // line and the intake filter skips cached plies, so only new positions
   // compute — including ones missed while the tab was backgrounded.
-  useServerBatch({ active, nodes, settings, engines: ['sf', 'maia'], coordinator, scope: active ? scope : null, auto: true });
+  const batch = useServerBatch({ active, nodes, settings, engines: ['sf', 'maia'], coordinator, scope: active ? scope : null, auto: true });
+  const batchRunning = !!batch.progress?.running;
   const previous = useRef<PlayQualitiesMemo | null>(null);
   const sfPending = coordinator.sfPendingKeys(), maiaPending = coordinator.maiaPendingKeys();
+  // While the batch runs, its in-flight keys are pending too: restore lookups
+  // notify on/off per prime cycle, and without this union a cache miss flips
+  // the badge reel -> placeholder -> reel on every poll until evals land.
+  // Wanted endpoints are exactly the batch items, so missing + running means
+  // work is genuinely coming (the neighbor-blank guard in qualities.ts stays
+  // intact: inactive moves never enter this set).
+  if (active && batchRunning) {
+    for (const node of nodes) {
+      if (!coordinator.result('sf', node, settings)) sfPending.add(reviewKey('sf', node, settings));
+      if (!coordinator.result('maia', node, settings)) maiaPending.add(reviewKey('maia', node, settings));
+    }
+  }
   // Same effect-free memo cache as useReview: synchronous carry-forward,
   // content-keyed so a speculative cache can only cost a recompute.
   const computed = useMemo(() => {
@@ -101,7 +114,7 @@ export function usePlayFeedback(state: State): PlayFeedback {
     previous.current = result?.memo ?? null;
     return result;
   },
-  [active, gameId, timeline, userColor, settings, version, coordinator]);
+  [active, gameId, timeline, userColor, settings, version, batchRunning, coordinator]);
   // No fast-path prune effect: the play workspace never queues foreground
   // jobs (data arrives via bulk restore + the server batch, both of which
   // skip cached plies at intake), so there is no queued Maia work to cancel.

@@ -8,7 +8,12 @@ export function HistoryRecovery() {
   useSyncSnapshot(sync);
   const [discard, setDiscard] = useState<string | null>(null);
   const recoverable = sync.recoveryItems.length > 0;
-  if (!sync.error && !recoverable && !sync.pending) return null;
+  // Transient outbox work (every play move saves + flushes) must not flash
+  // this banner: it shows only when work is stuck or needs a decision.
+  // The pending count stays as context inside the stuck banner (e.g. offline
+  // with an error), never as the sole reason to mount.
+  const stuck = sync.failedVersion !== null || sync.conflict;
+  if (!sync.error && !recoverable && !stuck) return null;
   const exportWork = () => {
     const url = URL.createObjectURL(new Blob([sync.exportPending()], { type: 'application/json' }));
     const link = document.createElement('a');
