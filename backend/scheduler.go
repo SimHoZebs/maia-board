@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 )
 
 // Priority lanes for engine admission. Lower value wins; the running operation
@@ -34,14 +35,23 @@ const (
 )
 
 type ticket struct {
-	key     string
-	prio    Priority
-	batchID string
-	seq     uint64
-	grant   chan struct{} // closed when this ticket owns the slot
-	done    chan struct{} // closed on completion or cancellation
-	state   ticketState
-	joined  bool // waiters joined an existing ticket instead of queueing
+	key       string
+	prio      Priority
+	submitSeq uint64 // rotation group (§1); 0 = sync sentinel, excluded from scan
+	seq       uint64
+	grant     chan struct{} // closed when this ticket owns the slot
+	done      chan struct{} // closed on completion or cancellation
+	state     ticketState
+	joined    bool // waiters joined an existing ticket instead of queueing
+}
+
+// submitSeqCounter is the process-wide submit nonce source (§1). One
+// nextSubmitSeq call per accepted submit; tests and later intake code call it
+// to stamp a whole submit group. Starts at 1 so 0 stays the sync sentinel.
+var submitSeqCounter atomic.Uint64
+
+func nextSubmitSeq() uint64 {
+	return submitSeqCounter.Add(1)
 }
 
 // Grant owns one admission slot until Release is called.
@@ -62,11 +72,12 @@ type Grant struct {
 // Batch unbounded FIFO. Dedup-by-key spans lanes; empty keys never dedup.
 // Grant order is Play>Focus>Batch, non-preemptive (a grant waits at most one op).
 type Scheduler struct {
-	mu      sync.Mutex
-	queues  [3][]*ticket
-	running *ticket
-	byKey   map[string]*ticket
-	seq     uint64
+	mu          sync.Mutex
+	queues      [3][]*ticket
+	running     *ticket
+	byKey       map[string]*ticket
+	seq         uint64
+	batchCursor uint64 // last-served batch submitSeq, per scheduler (§1)
 }
 
 func NewScheduler() *Scheduler {
@@ -76,20 +87,21 @@ func NewScheduler() *Scheduler {
 // Acquire blocks until this key owns the slot, another caller completes the
 // same deterministic key (joined=true, caller should re-read the cache), or
 // ctx expires. An empty key disables dedup (sampled requests are unique).
-func (s *Scheduler) Acquire(ctx context.Context, prio Priority, key, batchID string) (*Grant, bool, error) {
+// submitSeq orders the batch lane (rotation groups); sync callers pass 0.
+func (s *Scheduler) Acquire(ctx context.Context, prio Priority, key string, submitSeq uint64) (*Grant, bool, error) {
 	if key != "" {
 		if grant, joined, err := s.join(ctx, key); err != nil || joined {
 			return grant, joined, err
 		}
 	}
-	t := s.enqueue(prio, key, batchID)
+	t := s.enqueue(prio, key, submitSeq)
 	select {
 	case <-t.grant:
 		return &Grant{s: s, t: t}, false, nil
 	case <-t.done:
-		// Done fires while queued only via cancellation (CancelQueued,
-		// CancelBatch, or Play/Focus depth-1 single-flight): a newer request
-		// superseded this one, so it must not consume the engine.
+		// Done fires while queued only via sync-lane single-flight
+		// replacement: a newer request superseded this one, so it must not
+		// consume the engine.
 		return nil, false, ErrSuperseded
 	case <-ctx.Done():
 		// Grant and cancellation race: pumpLocked closes grant under s.mu,
@@ -139,17 +151,18 @@ func (s *Scheduler) join(ctx context.Context, key string) (*Grant, bool, error) 
 
 // enqueue appends a ticket and returns it. Sync lanes (Play, Focus) are
 // single-flight depth-1 latest-wins: a new arrival replaces the queued waiter,
-// which gets ErrSuperseded. Batch is unbounded FIFO.
-func (s *Scheduler) enqueue(prio Priority, key, batchID string) *ticket {
+// which gets ErrSuperseded. The batch lane rotates across submitSeq groups
+// (see pumpLocked); 0 is the sync sentinel and never matches the scan.
+func (s *Scheduler) enqueue(prio Priority, key string, submitSeq uint64) *ticket {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if batchID == "" && (prio == PriorityPlay || prio == PriorityFocus) {
+	if submitSeq == 0 && (prio == PriorityPlay || prio == PriorityFocus) {
 		s.cancelLocked(func(t *ticket) bool {
-			return t.state == ticketQueued && t.prio == prio && t.batchID == ""
+			return t.state == ticketQueued && t.prio == prio && t.submitSeq == 0
 		})
 	}
 	s.seq++
-	t := &ticket{key: key, prio: prio, batchID: batchID, seq: s.seq, grant: make(chan struct{}), done: make(chan struct{})}
+	t := &ticket{key: key, prio: prio, submitSeq: submitSeq, seq: s.seq, grant: make(chan struct{}), done: make(chan struct{})}
 	s.queues[prio] = append(s.queues[prio], t)
 	if key != "" {
 		s.byKey[key] = t
@@ -174,36 +187,6 @@ func (s *Scheduler) Release(g *Grant) {
 		delete(s.byKey, g.t.key)
 	}
 	close(g.t.done)
-	s.pumpLocked()
-}
-
-// CancelQueued drops a single queued ticket (stale focus). Running work is
-// never killed: at most one op is wasted.
-func (s *Scheduler) CancelQueued(key string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	t, ok := s.byKey[key]
-	if !ok || t.state != ticketQueued {
-		return
-	}
-	s.removeLocked(t)
-	t.state = ticketCancelled
-	delete(s.byKey, key)
-	close(t.done)
-	s.pumpLocked()
-}
-
-// CancelBatch drops every queued ticket of a batch. Running batch work
-// finishes and still writes through to the cache.
-func (s *Scheduler) CancelBatch(batchID string) {
-	if batchID == "" {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.cancelLocked(func(t *ticket) bool {
-		return t.state == ticketQueued && t.batchID == batchID
-	})
 	s.pumpLocked()
 }
 
@@ -251,12 +234,17 @@ func (s *Scheduler) Idle() bool {
 }
 
 // pumpLocked grants the head of the highest-priority non-empty lane when the
-// slot is free. Callers hold s.mu.
+// slot is free. Play/Focus stay head-pick; the batch lane rotates across
+// submitSeq groups (§1): smallest submitSeq strictly greater than the cursor,
+// else smallest present (wrap); FIFO by global seq within a group. Sentinel 0
+// never matches the scan (sync tickets live in higher lanes anyway); a batch
+// grant with nonzero submitSeq advances the cursor, sync grants never touch
+// it. Drained groups vanish by absence. Callers hold s.mu.
 func (s *Scheduler) pumpLocked() {
 	if s.running != nil {
 		return
 	}
-	for prio := PriorityPlay; prio <= PriorityBatch; prio++ {
+	for prio := PriorityPlay; prio <= PriorityFocus; prio++ {
 		if len(s.queues[prio]) == 0 {
 			continue
 		}
@@ -267,4 +255,48 @@ func (s *Scheduler) pumpLocked() {
 		close(t.grant)
 		return
 	}
+	if len(s.queues[PriorityBatch]) == 0 {
+		return
+	}
+	idx := s.pickBatchLocked()
+	t := s.queues[PriorityBatch][idx]
+	s.queues[PriorityBatch] = append(s.queues[PriorityBatch][:idx], s.queues[PriorityBatch][idx+1:]...)
+	t.state = ticketRunning
+	s.running = t
+	if t.submitSeq != 0 {
+		s.batchCursor = t.submitSeq
+	}
+	close(t.grant)
+}
+
+// pickBatchLocked selects the batch queue index per the rotation rule.
+// Callers hold s.mu. Queues without stamped groups (all submitSeq 0, e.g.
+// sync overflow which cannot happen by lane) fall back to head-pick.
+func (s *Scheduler) pickBatchLocked() int {
+	q := s.queues[PriorityBatch]
+	best := -1
+	var bestGroup, bestOrd uint64
+	for i, t := range q {
+		if t.submitSeq == 0 || t.submitSeq <= s.batchCursor {
+			continue
+		}
+		if best == -1 || t.submitSeq < bestGroup || (t.submitSeq == bestGroup && t.seq < bestOrd) {
+			best, bestGroup, bestOrd = i, t.submitSeq, t.seq
+		}
+	}
+	if best != -1 {
+		return best
+	}
+	for i, t := range q {
+		if t.submitSeq == 0 {
+			continue
+		}
+		if best == -1 || t.submitSeq < bestGroup || (t.submitSeq == bestGroup && t.seq < bestOrd) {
+			best, bestGroup, bestOrd = i, t.submitSeq, t.seq
+		}
+	}
+	if best != -1 {
+		return best
+	}
+	return 0
 }
