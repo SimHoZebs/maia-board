@@ -1,93 +1,57 @@
-import { useEffect, useMemo, useSyncExternalStore } from 'react';
-import { Chess } from 'chess.js';
-import { START_FEN, buildTimeline } from './domain';
+import { useEffect, useMemo, useState } from 'react';
+import { lineKeyFor } from './domain';
 
-export type OpeningTable = Record<string, readonly [eco: string, name: string]>;
 export type Opening = { eco: string; name: string; matchedPly: number; isExact: boolean };
+export type OpeningMatch = { ply: number; eco: string; name: string };
+type LineOpenings = { matches: OpeningMatch[]; bookFlags: boolean[] };
 
-// EPD key: FEN without move counters, en-passant square only when a capture is
-// actually legal. Must stay identical to epdKey() in scripts/build-openings.mjs.
-export function epdKey(fen: string): string {
-  const normalized = new Chess(fen).fen().split(' ');
-  let ep = normalized[3];
-  if (ep !== '-') {
-    const probe = new Chess(fen);
-    if (!probe.moves({ verbose: true }).some((move) => move.isEnPassant())) ep = '-';
+// One fetch per line, shared by every workspace and panel mounted on it.
+// Entries graduate from in-flight promises to settled results; failures
+// evict so a later mount retries instead of caching the outage.
+const lineCache = new Map<string, LineOpenings | Promise<LineOpenings>>();
+
+/** Test seam: drop all cached lines. */
+export function clearLineOpeningsCache(): void {
+  lineCache.clear();
+}
+
+function isMatch(value: unknown): value is OpeningMatch {
+  if (typeof value !== 'object' || value === null) return false;
+  const match = value as Record<string, unknown>;
+  return Number.isInteger(match.ply) && typeof match.eco === 'string' && typeof match.name === 'string';
+}
+
+export async function fetchLineOpenings(
+  moves: string[],
+  initialFen: string,
+  signal?: AbortSignal,
+  fetcher: typeof fetch = fetch,
+): Promise<LineOpenings> {
+  const response = await fetcher('/openings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ moves, initial_fen: initialFen }),
+    signal,
+  });
+  if (!response.ok) throw new Error(`Opening lookup failed (${response.status}).`);
+  const body: unknown = await response.json();
+  if (typeof body !== 'object' || body === null) throw new Error('Opening lookup returned an unexpected response.');
+  const { matches, book_flags } = body as Record<string, unknown>;
+  if (!Array.isArray(matches) || !matches.every(isMatch)) throw new Error('Opening lookup returned an unexpected response.');
+  if (!Array.isArray(book_flags) || book_flags.length !== moves.length || !book_flags.every((flag): flag is boolean => typeof flag === 'boolean')) {
+    throw new Error('Opening lookup returned an unexpected response.');
   }
-  return `${normalized[0]} ${normalized[1]} ${normalized[2]} ${ep}`;
+  return { matches, bookFlags: book_flags };
 }
 
-function isStandardStart(initialFen: string): boolean {
-  try {
-    return new Chess(initialFen).fen() === START_FEN;
-  } catch {
-    return false;
-  }
-}
-
-export function exactOpeningAt(table: OpeningTable, fen: string): { eco: string; name: string } | null {
-  let key: string;
-  try {
-    key = epdKey(fen);
-  } catch {
-    return null;
-  }
-  const entry = table[key];
-  return entry ? { eco: entry[0], name: entry[1] } : null;
-}
-
-// Deepest named ancestor at or before atPly. The book is defined from the
-// standard start only; custom-start lines return null.
-export function openingForLine(table: OpeningTable, moves: string[], initialFen = START_FEN, atPly = moves.length): Opening | null {
-  if (!isStandardStart(initialFen)) return null;
-  const timeline = buildTimeline(initialFen, moves);
-  const clamped = Math.max(0, Math.min(atPly, moves.length));
-  let found: { eco: string; name: string; matchedPly: number } | null = null;
-  for (let ply = 0; ply <= clamped; ply++) {
-    const hit = exactOpeningAt(table, timeline.rows[ply].fen);
-    if (hit) found = { ...hit, matchedPly: ply };
-  }
-  return found ? { ...found, isExact: found.matchedPly === clamped } : null;
-}
-
-// Exact-hit flags per move for book icons: flags[i] names the position after
-// moves[i]. Aligned with the resolved line passed in (branch-aware callers pass
-// their resolved moves).
-export function bookFlagsForLine(table: OpeningTable, moves: string[], initialFen = START_FEN): boolean[] {
-  if (!isStandardStart(initialFen)) return moves.map(() => false);
-  const timeline = buildTimeline(initialFen, moves);
-  return moves.map((_, index) => exactOpeningAt(table, timeline.rows[index + 1].fen) !== null);
-}
-
-// Lazy book chunk: the generated map (~470 KiB source) stays out of the main
-// bundle and parses on first Play/Analyze mount. Unloaded lookups render
-// nothing; the subscription re-renders once the chunk lands.
-let table: OpeningTable | null = null;
-let tableVersion = 0;
-const tableListeners = new Set<() => void>();
-let tablePending: Promise<OpeningTable> | null = null;
-
-export function loadOpenings(): Promise<OpeningTable> {
-  if (table) return Promise.resolve(table);
-  if (!tablePending) {
-    tablePending = import('./openings.generated').then((mod) => {
-      table = mod.OPENINGS as OpeningTable;
-      tableVersion++;
-      tableListeners.forEach((listener) => listener());
-      return table;
-    }).catch((error) => {
-      tablePending = null;
-      throw error;
-    });
-  }
-  return tablePending;
-}
-
-function subscribeOpenings(listener: () => void): () => void {
-  tableListeners.add(listener);
-  return () => {
-    tableListeners.delete(listener);
-  };
+/** Deepest named ancestor at or before atPly. Empty lines name nothing. */
+export function openingAt(matches: OpeningMatch[], atPly: number): Opening | null {
+  if (atPly <= 0) return null;
+  let deepest: OpeningMatch | null = null;
+  for (const match of matches) if (match.ply <= atPly && match.ply > 0) deepest = match;
+  return deepest
+    ? { eco: deepest.eco, name: deepest.name, matchedPly: deepest.ply, isExact: deepest.ply === atPly }
+    : null;
 }
 
 export function useLineOpenings(
@@ -95,18 +59,40 @@ export function useLineOpenings(
   initialFen: string,
   atPly: number,
 ): { opening: Opening | null; bookFlags: boolean[] } {
+  const lineKey = useMemo(() => lineKeyFor(initialFen, moves), [initialFen, moves]);
+  const [line, setLine] = useState<LineOpenings | null>(() => {
+    const entry = lineCache.get(lineKey);
+    return entry && !(entry instanceof Promise) ? entry : null;
+  });
   useEffect(() => {
-    void loadOpenings().catch(() => {
-      // Offline or chunk failure: the header stays hidden, never an error.
-    });
-  }, []);
-  const version = useSyncExternalStore(subscribeOpenings, () => tableVersion);
-  return useMemo(() => {
-    const current = table;
-    if (!current) return { opening: null, bookFlags: moves.map(() => false) };
-    return {
-      opening: openingForLine(current, moves, initialFen, atPly),
-      bookFlags: bookFlagsForLine(current, moves, initialFen),
+    // A line change or unmount abandons this fetch: the lineKey guard drops
+    // late arrivals so a new line never inherits another line's book.
+    let cancelled = false;
+    const entry = lineCache.get(lineKey);
+    if (entry && !(entry instanceof Promise)) {
+      setLine(entry);
+      return;
+    }
+    const controller = new AbortController();
+    const pending = entry instanceof Promise ? entry : fetchLineOpenings(moves, initialFen, controller.signal);
+    lineCache.set(lineKey, pending);
+    void pending.then(
+      (result) => {
+        if (lineCache.get(lineKey) === pending) lineCache.set(lineKey, result);
+        if (!cancelled) setLine(result);
+      },
+      () => {
+        if (lineCache.get(lineKey) === pending) lineCache.delete(lineKey);
+        if (!cancelled) setLine(null);
+      },
+    );
+    return () => {
+      cancelled = true;
+      controller.abort();
     };
-  }, [moves, initialFen, atPly, version]);
+  }, [lineKey]);
+  return useMemo(() => {
+    if (!line) return { opening: null, bookFlags: moves.map(() => false) };
+    return { opening: openingAt(line.matches, atPly), bookFlags: line.bookFlags };
+  }, [line, moves, atPly]);
 }

@@ -21,7 +21,7 @@ npm run build:bundle
 
 `npm run build` combines the last two commands. `npm run dev` starts Vite;
 `npm run preview` serves a built bundle. Set `MAIA_API_TARGET` to an existing
-backend URL to proxy `/move`, `/evaluate`, `/evaluations`, and `/games`.
+backend URL to proxy `/move`, `/evaluate`, `/evaluations`, `/games`, and `/openings`.
 `MAIA_BUILD_DIR` overrides the build destination (default `dist`).
 
 ## State boundaries
@@ -102,25 +102,16 @@ marker, pending operations, and malformed records retained for recovery.
 
 ### Opening book
 
-Move sequences resolve to ECO names through a position-keyed lookup, so
+Move sequences resolve to ECO names through `POST /openings`, so
 transpositions converge and branches resolve through their full line. The
-source is the pinned
-[lichess-org/chess-openings](https://github.com/lichess-org/chess-openings)
-TSVs (CC0); `scripts/build-openings.mjs` replays every row with `chess.js`
-and emits the checked-in `src/openings.generated.ts` artifact. Regenerate
-after changing the pin:
-
-```sh
-node scripts/build-openings.mjs          # from frontend/
-node scripts/build-openings.mjs --check  # CI freshness check
-```
-
-`src/openings.ts` owns EPD normalization and the deepest-match lookup. The
-generated map loads as a split chunk on first Play/Analyze mount, never in
-the main bundle. `MovesPanel.tsx` swaps the eval badge slot for a book chip
-on in-book moves; `ReviewOverview.tsx` names the viewed line first. The move
-verdict in `InsightPanel.tsx` names an exact book hit instead of restating
-engine grades.
+server owns the book table and lookup; the client fetches once per loaded
+line (cached by line, aborted on navigation) and derives the viewed
+position's deepest ancestor locally. `src/openings.ts` owns that fetch plus
+the ancestor derivation. `MovesPanel.tsx` swaps the eval badge slot for a
+book chip on in-book moves; `ReviewOverview.tsx` names the viewed line
+first. The move verdict in `InsightPanel.tsx` names an exact book hit
+instead of restating engine grades. Table source, pin, and regeneration are
+documented in [backend README](../backend/README.md#game-and-engine-api).
 
 ## Browser checks
 

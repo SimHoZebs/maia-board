@@ -48,6 +48,8 @@ jobs:
         run: npm ci
       - name: Frontend unit tests
         run: npm test
+      - name: Openings table freshness
+        run: node scripts/build-openings-table.mjs --check
       - name: TypeScript check
         run: npm run typecheck
       - name: Production build

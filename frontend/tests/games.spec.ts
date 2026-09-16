@@ -24,6 +24,11 @@ async function bootGames(page: Page, seed: Record<string, unknown> = {}, offline
   }, seed);
   await page.route('http://maia.test/**', async route => {
     const url = new URL(route.request().url());
+    if (url.pathname === '/openings') {
+      const moves = route.request().postDataJSON()?.moves;
+      await route.fulfill({ json: { matches: [], book_flags: Array.isArray(moves) ? moves.map(() => false) : [] } });
+      return;
+    }
     if (store.offline && (url.pathname === '/games' || url.pathname.startsWith('/games/'))) {
       await route.abort();
       return;

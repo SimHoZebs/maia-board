@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { Key } from '@lichess-org/chessground/types';
 import type { DrawShape } from '@lichess-org/chessground/draw';
@@ -65,6 +65,7 @@ export function MobileMenu({ state, dispatch }: Props) {
           end
           onClick={(event) => {
             setOpen(false);
+            dispatch({ type: 'mode', mode: destMode });
             if (destMode === 'analysis' && state.analysisLoaded) {
               event.preventDefault();
               dispatch({ type: 'unload' });
@@ -80,20 +81,22 @@ export function MobileMenu({ state, dispatch }: Props) {
 
 // Placement-only viewport switch (no measuring): the mobile bottom bar is
 // a separate mount from the inline move navigation, with exactly one of
-// them mounted at a time so IDs stay unique.
+// them mounted at a time so IDs stay unique. An external store, not an
+// effect: the initial snapshot reads the current match, so there is no
+// mount effect plus corrective second commit.
 function useMediaQuery(query: string): boolean {
-  const current = () =>
-    typeof window !== 'undefined' && typeof window.matchMedia !== 'undefined' && window.matchMedia(query).matches;
-  const [matches, setMatches] = useState(current);
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return;
+  // Stable across renders so the store subscribes once per query: new
+  // closures every render would detach and reattach the listener for free.
+  const subscribe = useMemo(() => (notify: () => void) => {
+    if (typeof window === 'undefined' || typeof window.matchMedia === 'undefined') return () => undefined;
     const list = window.matchMedia(query);
-    setMatches(list.matches);
-    const onChange = (event: MediaQueryListEvent) => setMatches(event.matches);
-    list.addEventListener('change', onChange);
-    return () => list.removeEventListener('change', onChange);
+    list.addEventListener('change', notify);
+    return () => list.removeEventListener('change', notify);
   }, [query]);
-  return matches;
+  const snapshot = useMemo(() => () =>
+    typeof window !== 'undefined' && typeof window.matchMedia !== 'undefined' && window.matchMedia(query).matches,
+  [query]);
+  return useSyncExternalStore(subscribe, snapshot, () => false);
 }
 
 export function useMobileBar(): boolean {

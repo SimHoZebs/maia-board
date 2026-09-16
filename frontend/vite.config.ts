@@ -27,10 +27,10 @@ function profilingSwap(): Plugin {
 
 export default defineConfig(({ mode }) => {
   // `MAIA_API_TARGET=http://<lan-host>:<port> npm run dev` (or preview)
-  // proxies /move + /evaluate at the backend, so a local frontend runs
-  // against real data and cached evaluations prime faithfully.
+  // proxies game, engine, and book API calls at the backend, so a local
+  // frontend runs against real data and cached evaluations prime faithfully.
   const apiProxy: Record<string, string> = process.env.MAIA_API_TARGET
-    ? { '/move': process.env.MAIA_API_TARGET, '/evaluate': process.env.MAIA_API_TARGET, '/evaluations': process.env.MAIA_API_TARGET, '/games': process.env.MAIA_API_TARGET }
+    ? { '/move': process.env.MAIA_API_TARGET, '/evaluate': process.env.MAIA_API_TARGET, '/evaluations': process.env.MAIA_API_TARGET, '/games': process.env.MAIA_API_TARGET, '/openings': process.env.MAIA_API_TARGET }
     : {};
   return {
     build: {

@@ -15,12 +15,15 @@ async function bootHistory(page: Page, pgn: string, primeMs: number) {
   page.on('pageerror', error => errors.push(error.message));
   await page.route('http://maia.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
-    // Book chips occupy the badge slot for in-book moves, so the pending
-    // reels under test would never render on this all-book line once the
-    // lazy openings chunk lands (a load-vs-parse race). Fail the chunk
-    // outright: the hook treats that as offline and renders badges, which
-    // isolates exactly the restore-pending behavior asserted below.
-    if (path.includes('openings.generated')) { await route.abort('failed'); return; }
+    // Empty book: book chips occupy the badge slot for in-book moves, so
+    // the pending reels under test would never render on this all-book
+    // line. The fixture names nothing, which isolates exactly the
+    // restore-pending behavior asserted below.
+    if (path === '/openings') {
+      const moves = route.request().postDataJSON()?.moves;
+      await route.fulfill({ json: { matches: [], book_flags: Array.isArray(moves) ? moves.map(() => false) : [] } });
+      return;
+    }
     if (await cache.lookup(route, primeMs)) return;
     if (path === '/evaluate') {
       const payload = route.request().postDataJSON();

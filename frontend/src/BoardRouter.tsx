@@ -45,6 +45,8 @@ function DestinationNav({
 }) {
   // The Analyze tab returns to the importer: tapping it while a line is
   // loaded unloads that line instead of reopening it behind a dialog.
+  // Every tap also syncs the destination into the reducer explicitly, so
+  // the router — not a render-phase correction — owns the mode.
   return (
     <nav aria-label="Destination">
       {destinations.map(({ mode: destMode, path, label }) => (
@@ -54,6 +56,7 @@ function DestinationNav({
           to={path}
           end
           onClick={(event) => {
+            dispatch({ type: 'mode', mode: destMode });
             if (shouldUnloadAnalysis(destMode, state.analysisLoaded)) {
               event.preventDefault();
               dispatch({ type: "unload" });
@@ -190,6 +193,10 @@ export function BoardRouter() {
   useEffect(() => {
     const onPopState = () => {
       const url = new URL(window.location.href);
+      // Back/Forward moves location without an action: sync the reducer at
+      // the event, the same explicit path as tab clicks (no-op when equal).
+      const dest = destinations.find((destination) => matchPath(destination.path, url.pathname))?.mode ?? "history";
+      boardDispatch({ type: "mode", mode: dest });
       if (url.pathname !== "/analyze" || parseAnalysisSearch(url.search)) return;
       if (loadedRef.current && lastContentRef.current) {
         lastContentRef.current = "";
@@ -207,8 +214,13 @@ export function BoardRouter() {
   stateRef.current = state;
   const dispatch = useCallback(
     (action: Action) => {
+      // Mode follows the destination, and the destination moves by location
+      // (tab NavLinks, Back/Forward, and this wrapper's own navigations
+      // below) — so a mode action only syncs the reducer and never
+      // navigates itself. Navigating here would double-push behind the
+      // NavLink that already owns the click.
       if (action.type === "mode") {
-        if (action.mode !== mode) void navigate(pathFor(action.mode));
+        boardDispatch(action);
         return;
       }
       // Loading a game and changing its URL form one React event update. The reducer
@@ -268,6 +280,13 @@ export function BoardRouter() {
       </SyncContext.Provider>
     </RegionRecorder>
   );
+  // Invariant: every destination change dispatches its mode at the event
+  // (tab taps, popstate, the review/unload/saved navigations above, and the
+  // pre-mount canonicalization in main.tsx). No new <Navigate> may appear
+  // in these routes without one: location moving alone leaves the reducer
+  // behind with nothing left to correct it — and a correcting effect would
+  // flail against the eager dispatches (duplicate engine POSTs, see the
+  // mode-ownership notes).
   return (
     <Routes>
       <Route path="/dev/eval-loading" element={<Suspense fallback={null}><EvalLoadingLab /></Suspense>} />

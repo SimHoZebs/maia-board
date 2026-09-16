@@ -59,6 +59,11 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
   await page.route('http://maia.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
     if (await cache.lookup(route)) return;
+    if (path === '/openings') {
+      const moves = route.request().postDataJSON()?.moves;
+      await route.fulfill({ json: { matches: [], book_flags: Array.isArray(moves) ? moves.map(() => false) : [] } });
+      return;
+    }
     if (path === '/move') { requests.push({ route, payload: route.request().postDataJSON() }); return; }
     if (path === '/evaluate') {
       const payload = route.request().postDataJSON();

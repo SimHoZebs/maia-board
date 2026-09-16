@@ -46,6 +46,24 @@ history validation, limits, and process cleanup are documented in
 [`STOCKFISH.md`](STOCKFISH.md). Errors use `{code, message}`. `/healthz` supplies
 the server health endpoint.
 
+`POST /openings` resolves ECO opening names for a line. It accepts
+`{initial_fen, moves}` (UCI, at most 4096 plies) and returns every exact book
+hit as `{matches: [{ply, eco, name}], book_flags}` where `book_flags[i]` names
+the position after `moves[i]`. The book is defined from the standard start
+only: custom-start lines return empty matches and all-false flags, never an
+error. A missing table degrades the same way with `"degraded": true`.
+Chess truth lives in `openings_lookup.py` (python-chess); Go owns HTTP
+validation and the process boundary. The table is `openings_table.json`,
+generated from the pinned
+[lichess-org/chess-openings](https://github.com/lichess-org/chess-openings)
+TSVs (CC0). Regenerate after changing the pin (from `frontend/`, needs its
+`node_modules` for chess.js):
+
+```sh
+node scripts/build-openings-table.mjs          # rewrite backend/openings_table.json
+node scripts/build-openings-table.mjs --check  # fail when the artifact is stale
+```
+
 `GET /games?limit=200&offset=0` lists saved games with `games`, `current_id`,
 `current_game`, `total`, and `next_offset`. The default page size is 200 and the
 maximum is 500. `next_offset: null` ends pagination; `current_game` also supplies

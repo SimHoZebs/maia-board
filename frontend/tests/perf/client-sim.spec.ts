@@ -179,6 +179,11 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
     const url = new URL(route.request().url());
     const path = url.pathname;
     if (await evaluations.lookup(route, EVAL_GET_MS)) return;
+    if (path === '/openings') {
+      const moves = route.request().postDataJSON()?.moves;
+      await route.fulfill({ json: { matches: [], book_flags: Array.isArray(moves) ? moves.map(() => false) : [] } });
+      return;
+    }
     if (path === '/move' || path === '/evaluate') {
       const payload = route.request().postDataJSON();
       const engine = path === '/move' ? 'maia' : 'sf';

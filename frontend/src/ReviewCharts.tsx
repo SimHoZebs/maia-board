@@ -47,6 +47,7 @@ export function ReviewCharts({ review, ply, sans, onView, side }: { review: Revi
   // gesture scrolls the track sideways instead of the page. At either edge
   // the gesture falls through so the outer panel can still scroll vertically.
   // Trackpads already emit deltaX, so only dominant-vertical wheels convert.
+  // Mount-once: the handler reads only the stable chart node, never tab state.
   useEffect(() => {
     const el = chart.current;
     if (!el) return;
@@ -61,7 +62,7 @@ export function ReviewCharts({ review, ply, sans, onView, side }: { review: Revi
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [tab]);
+  }, []);
   // Accuracy points sit on the after-move position (point i reviews the move
   // leading into it); point 0 is the start with no move, so nothing selects.
   const selectedPly = tab === "accuracy" && ply === 0 ? -1 : ply;

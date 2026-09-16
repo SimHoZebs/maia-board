@@ -63,6 +63,7 @@ type server struct {
 	evaluator *Evaluator
 	store     *GameStore
 	reviews   *ReviewJobs
+	openings  *OpeningsLookup
 }
 
 func main() {
@@ -80,7 +81,8 @@ func main() {
 		log.Fatalf("open game database: %v", err)
 	}
 	app := &server{pool: NewEnginePool(large, small), staticDir: staticDir, store: store,
-		evaluator: NewEvaluator(python, getenv("STOCKFISH_WORKER", "/app/stockfish_worker.py"), getenv("STOCKFISH_BINARY", "/app/stockfish"))}
+		evaluator: NewEvaluator(python, getenv("STOCKFISH_WORKER", "/app/stockfish_worker.py"), getenv("STOCKFISH_BINARY", "/app/stockfish")),
+		openings:  NewOpeningsLookup(python, getenv("OPENINGS_LOOKUP", "/app/openings_lookup.py"))}
 	app.reviews = NewReviewJobs(app)
 
 	mux := http.NewServeMux()
@@ -92,6 +94,7 @@ func main() {
 	mux.HandleFunc("/evaluations", app.evaluations)
 	mux.HandleFunc("/evaluations/", app.evaluations)
 	mux.HandleFunc("/evaluations/lookup", app.evaluationLookup)
+	mux.HandleFunc("/openings", app.openingsHandler)
 	mux.HandleFunc("/reviews", app.reviews.reviews)
 	mux.HandleFunc("/reviews/", app.reviews.reviewRouter)
 	mux.HandleFunc("/", app.frontend)

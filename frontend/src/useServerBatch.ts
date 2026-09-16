@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BatchBusyError, BatchGoneError, buildBatchItems, cancelBatch, clearPersistedBatch, fetchBatchStatus, hashBatchKeys,
   readPersistedBatch, submitBatch, subscribeBatchEvents, writePersistedBatch,
-  type BatchItem, type BatchProgress } from './batchReview';
+  type BatchItem, type BatchProgress, type PersistedBatch } from './batchReview';
 import { subscribeGameDeletes } from './gameRepository';
 import type { Engine, LineScope, ReviewCoordinator, ReviewNode, SettingsInput } from './reviewCoordinator';
 
@@ -148,38 +148,48 @@ export function useServerBatch(args: {
   const retry = useCallback(() => { coordinator.retry(); start(); }, [coordinator, start]);
 
   const scopeKey = scope?.lineKey ?? null;
-  // Auto-submit on activation, line change, or settings change. Keyed on the
-  // stable scopeKey string (not the scope object identity) plus settings, so
-  // a parent re-render that rebuilds object identities cannot resubmit.
-  // start() itself reads nodes/settings/scope from refs. When the persisted
-  // entry already matches this exact content, the reattach effect below owns
-  // the mount: starting here too would POST into a 409 race with the GET and
-  // the loser could clear/cancel the job the winner just preserved.
+  // Single definition of "the persisted job owns this mount": the stored
+  // entry names this exact line and its content hash matches what this line
+  // submits now. Returns the entry plus the matching items so adopters reuse
+  // the build; submission stands down on non-null. Both effects read through
+  // here so the two can never disagree about who owns a mount.
+  const persistedItemsFor = useCallback((key: string | null): { stored: PersistedBatch; items: BatchItem[] } | null => {
+    if (!key) return null;
+    const stored = readPersistedBatch();
+    if (!stored || stored.lineKey !== key) return null;
+    const currentItems = buildBatchItems(nodesRef.current, settingsRef.current, enginesRef.current);
+    if (!currentItems.length || currentItems.length !== stored.total) return null;
+    if (hashBatchKeys(currentItems.map(item => item.key)) !== stored.keysHash) return null;
+    return { stored, items: currentItems };
+  }, []);
+  // Change submission. Play-only in practice (the analysis page passes
+  // auto: false and submits through its button): on activation, line change,
+  // or settings change, submit — unless mount reconciliation owns this
+  // scope, in which case adopting the running job is the only correct move
+  // and a POST would just 409-race the adopter's GET. Keyed on the stable
+  // scopeKey string (not scope identity) plus settings, so a parent
+  // re-render that rebuilds object identities cannot resubmit. start()
+  // itself reads nodes/settings/scope from refs.
   useEffect(() => {
     if (!(auto && active && scopeKey)) return;
-    if (!jobIdRef.current || jobIdRef.current === readPersistedBatch()?.jobId) {
-      const stored = readPersistedBatch();
-      if (stored && stored.lineKey === scopeKey) {
-        const currentItems = buildBatchItems(nodesRef.current, settingsRef.current, enginesRef.current);
-        if (currentItems.length && currentItems.length === stored.total
-          && hashBatchKeys(currentItems.map(item => item.key)) === stored.keysHash) return;
-      }
-    }
+    // Already attached to the persisted same-content job (the busy-path
+    // adoption won): nothing to do. A differing jobId means a newer
+    // submission owns the hook, so fall through and resubmit.
+    if ((!jobIdRef.current || jobIdRef.current === readPersistedBatch()?.jobId) && persistedItemsFor(scopeKey) !== null) return;
     start();
-  }, [auto, active, scopeKey, settings, start]);
+  }, [auto, active, scopeKey, settings, start, persistedItemsFor]);
 
-  // Reload reattach: the server job survives a refresh on detached contexts,
-  // but the new mount has no jobId. If the persisted entry matches this exact
-  // line + content, adopt it and subscribe instead of showing Analyze again.
+  // Mount reconciliation (both workspaces, including manual auto: false):
+  // the server job survives a refresh on detached contexts, but the new
+  // mount has no jobId. If the persisted entry matches this exact line +
+  // content, adopt it and subscribe instead of showing Analyze again.
   // Optimistic running progress avoids an Analyze flash before the status
   // fetch lands; mismatches and gone jobs fall back to Analyze.
   useEffect(() => {
     if (!active || !scopeKey || jobId) return;
-    const stored = readPersistedBatch();
-    if (!stored || stored.lineKey !== scopeKey) return;
-    const currentItems = buildBatchItems(nodesRef.current, settingsRef.current, enginesRef.current);
-    if (!currentItems.length || currentItems.length !== stored.total) return;
-    if (hashBatchKeys(currentItems.map(item => item.key)) !== stored.keysHash) return;
+    const owned = persistedItemsFor(scopeKey);
+    if (!owned) return;
+    const { stored, items: currentItems } = owned;
     itemsRef.current = currentItems;
     coordinator.replaceFailures(new Set(currentItems.map(item => item.key)), new Map());
     setError(undefined);

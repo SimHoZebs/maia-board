@@ -60,6 +60,7 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
   // of truth (thinking indicator, retry gating); firePlayRequest only owns
   // the network flight.
   const flight = useRef<PlayFlight | null>(null);
+  const lastPersisted = useRef(new Map<string, string>());
   const dispatch = useCallback((action: Action) => {
     const before = current.current;
     const next = reducer(before, action);
@@ -99,27 +100,13 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
   // TODO: split god State into play/analysis/ui slices. Kept whole here:
   // slicing the reducer + persistence + sync projection risks scope creep
   // beyond the eval refactor.
-  // Render-phase mode adjustment (no effect): the router owns the mode, so a
-  // changed destination is applied before commit instead of flashing one
-  // commit of the previous mode. Only setState runs here: the command ref
-  // below realigns with committed state in a passive effect, so an abandoned
-  // concurrent render can never leave it ahead of what actually committed.
-  // A mode action carries no play mutation, so no repository side effect runs
-  // on this path; persistence stays in dispatch.
-  if (state.mode !== mode) {
-    setState(reducer(state, { type: 'mode', mode }));
-  }
-  useEffect(() => {
-    current.current = state;
-  });
-  // Backstop for play requests produced outside dispatch: the render-phase
-  // mode adjustment above setStates a queued request without firing it.
-  // Dispatch already fired its own requests, and the same-id guard makes
-  // this a no-op for them — without this, switching into play with Maia to
-  // move shows Thinking… but never starts a flight.
-  useEffect(() => {
-    firePlayRequest(state.request, flight, dispatch);
-  }, [state.request, dispatch]);
+  // Mode arrives exclusively through dispatch: tab taps sync it in their
+  // click handlers, Back/Forward in the popstate listener, and the review /
+  // unload / saved navigations through their own actions. There is no
+  // render-phase correction, so `current` stays dispatch-owned (updated
+  // beside every setState above) and every request — including one queued
+  // by entering play with Maia to move — fires through firePlayRequest in
+  // dispatch itself. No sync or backstop effects needed.
 
   useEffect(() => {
     sync.loadMore = repository.loadMore;
@@ -150,8 +137,19 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
       [STOCKFISH_STORAGE_KEY, state.stockfish], [KEYS.analysis, state.inputs],
       [KEYS.snapshot, state.analysisLoaded ? snapshotOf(state.analysis, state.analysisSourceId ?? undefined) : null],
     ] as const) {
+      // Dirty-check: analysis object identity turns over on every move, but
+      // its serialized inputs usually do not. Skip identical payloads so a
+      // scrub through the move list does not rewrite every key per ply.
+      let serialized: string;
+      try {
+        serialized = JSON.stringify(value) ?? 'null';
+      } catch {
+        continue;
+      }
+      if (lastPersisted.current.get(key) === serialized) continue;
       const error = writeStorage(key, value);
       if (error) errorMessage = error.message;
+      else lastPersisted.current.set(key, serialized);
     }
     sync.setPreferenceError(errorMessage);
   }, [state.play.settings, state.feedback, state.badgeLoading, state.coordinatesOnSquares, state.stockfish, state.inputs, state.analysisLoaded, state.analysis, state.analysisSourceId, sync]);

@@ -3,6 +3,7 @@ import { buildTimeline, lineKeyFor, type TimelineRow } from './domain';
 import type { State } from './state';
 import { ReviewCoordinator, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
 import { useLineScope } from './useLineScope';
+import { useBulkPrime } from './useBulkPrime';
 import { useServerBatch } from './useServerBatch';
 import { computeLineQualities, type UnifiedMemo } from './qualities';
 import { effectiveQuality, maiaRarity, type EngineGrade, type Evaluation, type Quality } from './reviewMetrics';
@@ -80,15 +81,9 @@ export function useReview(state: State) {
   const batch = useServerBatch({ active: active && !tooLong, nodes, settings: settingsForNode, coordinator, scope: active ? scope : null, auto: false });
   const [prime, setPrime] = useState<{ key: string; error?: string } | null>(null);
   const [primeAttempt, setPrimeAttempt] = useState(0);
-  useEffect(() => {
-    if (!active || tooLong) return;
-    const controller = new AbortController();
-    void Promise.resolve(coordinator.ensure(nodes, settingsForNode, { signal: controller.signal })).then(
-      () => { if (!controller.signal.aborted) setPrime({ key: primeKey }); },
-      error => { if (!controller.signal.aborted) setPrime({ key: primeKey, error: error instanceof Error ? error.message : 'Evaluation lookup failed.' }); },
-    );
-    return () => controller.abort();
-  }, [coordinator, active, tooLong, primeKey, primeAttempt]);
+  useBulkPrime({ active: active && !tooLong, nodes, settings: settingsForNode, coordinator,
+    loadKey: `${primeKey}|${primeAttempt}`,
+    onSettled: (error) => setPrime({ key: primeKey, error }) });
 
   const evaluations = useMemo(() => nodes.map(node => coordinator.result('sf', node, settingsForNode(node))), [nodes, settingsForNode, version, coordinator]);
   const maiaResults = useMemo(() => nodes.map(node => coordinator.result('maia', node, settingsForNode(node))), [nodes, settingsForNode, version, coordinator]);
@@ -149,7 +144,12 @@ export function useReview(state: State) {
   const priorFocus = useRef<MaiaDisplayEntry | null>(null);
   const displayed = selectMaiaDisplay(active ? focusNode : undefined, focusSettings, active ? maiaResults[focusPly] : undefined, priorFocus.current,
     active && !!focusNode && coordinator.isPending('maia', focusNode, focusSettings));
-  useEffect(() => { priorFocus.current = displayed.entry ?? null; }, [displayed.entry]);
+  // Render-phase carry-forward (no effect): the note is fully determined by
+  // this render (fresh, same-position reuse, or nothing), so banking it here
+  // removes the one-commit lag of the effect version. Read runs first, so
+  // the fallback stays yesterday's answer; the position-ID check inside
+  // selectMaiaDisplay discards a note from an abandoned concurrent render.
+  priorFocus.current = displayed.entry ?? null;
   const maia = displayed.entry?.result;
   // Forward candidates only expose the requested key. The focus panel can
   // retain a same-position previous identity with its explicit stale label.

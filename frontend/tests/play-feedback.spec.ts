@@ -36,6 +36,10 @@ async function bootPlay(page: Page) {
   await page.route('http://n/**', async route => {
     const url = new URL(route.request().url());
     const path = url.pathname;
+    if (path === '/openings') {
+      const moves = route.request().postDataJSON()?.moves;
+      await route.fulfill({ json: { matches: [], book_flags: Array.isArray(moves) ? moves.map(() => false) : [] } }); return;
+    }
     if (path === '/evaluations/lookup') {
       const { requests } = route.request().postDataJSON();
       // Read-through emulation: compute what the batch asked for, like the
@@ -94,8 +98,8 @@ test('play feedback badges settle without an update-depth crash', async ({ page 
   // resubmitted the batch on every render. Survival is the assertion.
   await page.waitForTimeout(2000);
   await expect(page.locator('#board cg-board')).toBeVisible();
-  // 1. Nf3 e5 2. Ng1 goes off-book so the knight dance earns a real engine
-  // badge instead of a book chip.
+  // 1. Nf3 e5 2. Ng1 with an empty book, so the knight dance earns real
+  // engine badges instead of book chips: both white moves settle.
   await clickSquare(page, 6, 1);
   await clickSquare(page, 5, 3);
   await expect(page.locator('.move-cell').first()).toContainText('1. Nf3', { timeout: 15000 });
@@ -103,8 +107,8 @@ test('play feedback badges settle without an update-depth crash', async ({ page 
   await clickSquare(page, 5, 3);
   await clickSquare(page, 6, 1);
   await expect(page.locator('.move-cell').nth(2)).toContainText('2. Ng1', { timeout: 15000 });
-  // Any settled engine badge: not the loading reel, shimmer, placeholder, or
-  // book chip.
-  await expect(page.locator('.move-cell span.quality:not(.quality-slot):not(.quality-shimmer):not(.quality-placeholder):not(.quality-book)')).toBeVisible({ timeout: 20000 });
+  // Settled engine badges: not the loading reel, shimmer, placeholder, or
+  // book chip. Both white moves grade (black's reply is not ours to judge).
+  await expect(page.locator('.move-cell span.quality:not(.quality-slot):not(.quality-shimmer):not(.quality-placeholder):not(.quality-book)')).toHaveCount(2, { timeout: 20000 });
   expect(app.errors.filter(message => /185|Maximum update depth/.test(message))).toEqual([]);
 });

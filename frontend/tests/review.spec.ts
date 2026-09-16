@@ -7,7 +7,7 @@ const SEARCH_POLICY = stockfishPolicy(defaultStockfishSettings);
 import { KEYS } from '../src/storage';
 import { EvaluationFixture, evaluationIdentity } from './evaluation-fixture';
 
-async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,20,200,-700,-680], opts: { blockOpenings?: boolean } = {}) {
+async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,20,200,-700,-680]) {
   const requests: { engine: string; moves: string[]; initial_fen: string; elo_maia?: number }[] = [];
   const cache = new EvaluationFixture();
   const evaluations = cache.entries;
@@ -55,10 +55,14 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
   page.on('pageerror', error => errors.push(error.message));
   await page.route('http://maia.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
-    // Opt-out of book chips: in-book moves render a chip in the badge box
-    // instead of a quality badge, so tests asserting badges use lines (or a
-    // blocked chunk) where every move shows its verdict.
-    if (opts.blockOpenings && path.includes('openings.generated')) { await route.abort('failed'); return; }
+    // Empty book: in-book moves would render a chip in the badge box
+    // instead of a quality badge, so the fixture names nothing and every
+    // move shows its verdict.
+    if (path === '/openings') {
+      const moves = route.request().postDataJSON()?.moves;
+      await route.fulfill({ json: { matches: [], book_flags: Array.isArray(moves) ? moves.map(() => false) : [] } });
+      return;
+    }
     const method = route.request().method();
     if (await cache.lookup(route)) return;
     if (path === '/reviews' && method === 'POST') {
@@ -193,8 +197,8 @@ test('automatic review shows real overlapping SVG arrows', async ({ page }, info
 });
 test('whole game completes independently of viewing and updates the position balance', async ({ page }, info) => {
   // Book chips would occupy the badge boxes on this all-book line (see
-  // badge-loading.spec.ts): block the lazy chunk so verdicts render.
-  const app = await bootReview(page, '1. e4 e5 2. Nf3 Nc6', [20,20,200,-700,-680], { blockOpenings: true });
+  // badge-loading.spec.ts): the fixture names nothing so verdicts render.
+  const app = await bootReview(page, '1. e4 e5 2. Nf3 Nc6', [20,20,200,-700,-680]);
   await expect(page.locator('.balance-score')).toHaveText('-6.80');
   // The charts shell mounts pre-analysis (lines stay empty until verdicts
   // settle); only the hero must stay absent before the review runs.

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { buildTimeline, legalPrefixLength, lineKeyFor, START_FEN, type Timeline } from './domain';
 import { ReviewCoordinator, reviewKey, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
 import { useLineScope } from './useLineScope';
+import { useBulkPrime } from './useBulkPrime';
 import { useServerBatch } from './useServerBatch';
 import { computeLineQualities, type UnifiedMemo } from './qualities';
 import { effectiveQuality, maiaRarity, type Evaluation, type Quality } from './reviewMetrics';
@@ -80,12 +81,7 @@ export function usePlayFeedback(state: State): PlayFeedback {
   // Cache restore runs independently of the batch: even when submit fails,
   // settled rows still grade through the bulk lookup. Signal-abort is the
   // only cancel path; backgrounding never aborts the batch.
-  useEffect(() => {
-    if (!active) return;
-    const controller = new AbortController();
-    void Promise.resolve(coordinator.ensure(nodes, settings, { signal: controller.signal })).catch(() => undefined);
-    return () => controller.abort();
-  }, [coordinator, active, nodes, settings]);
+  useBulkPrime({ active, nodes, settings, coordinator, loadKey: `${lineKey}|${settingsKey}` });
   // Live grades run as a server batch (sf + maia): each move resubmits the
   // line and the intake filter skips cached plies, so only new positions
   // compute — including ones missed while the tab was backgrounded.

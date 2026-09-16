@@ -41,6 +41,8 @@ WORKDIR /app
 COPY --from=build /out/maia-board /app/maia-board
 COPY backend/maia3_worker.py /app/maia3_worker.py
 COPY backend/stockfish_worker.py /app/stockfish_worker.py
+COPY backend/openings_lookup.py /app/openings_lookup.py
+COPY backend/openings_table.json /app/openings_table.json
 COPY --from=stockfish-build /stockfish/src/stockfish /app/stockfish
 COPY --from=stockfish-build /stockfish/Copying.txt /app/licenses/stockfish-COPYING
 COPY --from=stockfish-build /stockfish/source.tar.gz /app/licenses/stockfish-sf_19-source.tar.gz
