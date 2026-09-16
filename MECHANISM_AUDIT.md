@@ -19,19 +19,19 @@ candidate resolution. Work through them one by one; fix after the tour.
 - Open: why pay for the same lookups twice plus badge flicker, instead of letting it land and merging rows?
 - Candidate: let lookups land; abort only when superseded by a newer lookup for the same content.
 
-## 3. Running foreground fetch killed when superseded
-- Where: `frontend/src/reviewCoordinator.ts:124`
-- What: aborts the running fetch when its key leaves the queue (latest-wins preempt).
-- Guess: keep results aligned with the newest request; avoid surfacing stale grades.
-- Open: server grants are non-preemptive, so the engine work runs anyway — why drop a paid-for result?
-- Candidate: let running work land if its key is still displayable, or keep abort and document the cost.
+## 3. Running foreground fetch killed when superseded — DOCUMENTED, fix proposed
+- Where: `frontend/src/reviewCoordinator.ts:124` (latest-wins preempt aborts the running fetch)
+- What: a superseded request is aborted even mid-flight.
+- Agreed: two states want opposite handling. Queued (never sent): dropping from the queue is free and correct. Running (fetch in flight, engine possibly computing): aborting saves nothing — the server slot is non-preemptive, so the work completes and caches regardless; the abort only blinds this tab to a paid-for answer.
+- Direction: stop aborting running fetches; drop only still-queued ones; keep storing everything that validates (content keys make landing always safe; takebacks may reuse it). Pending flags already follow latest-wins, so spinners stay honest. Wrinkle: the coordinator tracks one running slot per engine — widen to a small set with generation checks.
+- Not yet implemented.
 
-## 4. Play retry budget 3 x 2s, then blank forever
+## 4. Play retry budget 3 x 2s, then blank forever — DOCUMENTED, fix proposed
 - Where: `frontend/src/usePlayFeedback.ts` (foreground retry bucket)
-- What: 3 attempts, 2s backoff per line+settings; persistent failure (offline) blanks badges with no further retry.
-- Guess: numbers picked for transient blips during the Maia-reply churn window, not derived from any budget.
-- Open: what failure duration is assumed? What should offline-during-play show?
-- Candidate: document the assumed transient, or add an idle-retry/surface-state for persistent failure.
+- What: 3 attempts, 2s backoff per line+settings; persistent failure blanks badges with no further retry and no surfaced state.
+- Agreed: the numbers cover transient blips during reply churn, but one budget treats unlike failures alike.
+- Direction: three behaviors — quick bounded retries for transient errors; no retries while offline, one retry on the browser `online` event (analysis batch tracking already listens for it); a visible error, not a blank badge, for sustained server failure.
+- Not yet implemented.
 
 ## 5. Sync admission waits and engine_busy retries
 - Where: `frontend/src/evaluationTransport.ts:23` (2 retries, Retry-After clamped 100ms-5s); `backend/engine.go:42` (30s Play / 10s Focus waits)
