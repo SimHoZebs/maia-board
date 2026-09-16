@@ -95,7 +95,20 @@ export function ReviewCharts({ review, ply, sans, onView, side }: { review: Revi
     if (side !== undefined && point.mover !== side) return [];
     return [{ ...point, origIndex: index }];
   });
-  const selectedPos = kept.findIndex(point => point.origIndex === selectedPly);
+  const selectedPosExact = kept.findIndex(point => point.origIndex === selectedPly);
+  // Side-filtered tracks carry only your moves, so an opponent ply has no
+  // exact point and the highlight would vanish mid-move-pair. Group by move
+  // number instead: viewing 1… still indicates the 1 point (and viewing 1 as
+  // Black previews the upcoming 1…). Deliberately approximate — a visible
+  // indicator beats a suddenly untracked graph.
+  let selectedPos = selectedPosExact;
+  if (selectedPos === -1 && selectedPly >= 0 && selectedPly < points.length) {
+    const currentNumeric = points[selectedPly].moveNumber.replace(/[^0-9]/g, '');
+    if (currentNumeric) {
+      const fallback = kept.findIndex(point => point.moveNumber.replace(/[^0-9]/g, '') === currentNumeric);
+      if (fallback !== -1) selectedPos = fallback;
+    }
+  }
   const trackWidth = Math.max(264, kept.length * 44);
   return <section className="review-charts" aria-label="Game review">
     <div className="chart-tabs" role="tablist" aria-label="Review chart">

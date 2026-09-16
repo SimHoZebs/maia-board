@@ -231,7 +231,7 @@ for (const width of [320, 1440]) {
     await bootReview(page);
     for (const tab of ['Move analysis', 'Moves to review']) {
       await page.getByRole('tab', { name: tab, exact: true }).click();
-      const sections = await page.locator('.insight-panel > .analysis-section:visible').evaluateAll(elements => elements.map(el => {
+      const sections = await page.locator('.insight-panel > .analysis-tabs:visible, .insight-panel > .analysis-section:visible').evaluateAll(elements => elements.map(el => {
         const rect = el.getBoundingClientRect(), style = getComputedStyle(el);
         return { top: rect.top, bottom: rect.bottom, border: parseFloat(style.borderTopWidth), contentTop: el.firstElementChild!.getBoundingClientRect().top };
       }));

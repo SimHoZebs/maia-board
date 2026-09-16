@@ -275,7 +275,7 @@ export function InsightPanel({
   const ply = state.analysis.index;
   return (
     <aside className="panel insight-panel" aria-label="Game analysis">
-      <div className="analysis-tabs analysis-section">
+      <div className="analysis-tabs">
         <div
           role="tablist"
           aria-label="Game analysis views"
@@ -373,7 +373,7 @@ export function InsightPanel({
           />
         )}
       </div>
-      {children && <div className="analysis-section">{children}</div>}
+      {children && <div className="analysis-section analysis-footer-section">{children}</div>}
     </aside>
   );
 }

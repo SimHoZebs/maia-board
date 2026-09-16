@@ -116,9 +116,15 @@ legend { font-size: 14px; margin-bottom: 8px; }
 .source-options { margin: 20px 0; }
 .source-options button { flex-grow: 1; font-size: 13px; }
 .analysis-actions button { font-size: 12px; }
-.panel.insight-panel { --section-space: 12px; display: flex; flex-direction: column; gap: var(--section-space); align-self: start; margin-top: 0; padding: 6px 18px 18px; }
-.insight-panel > .analysis-section { flex: none; min-width: 0; margin: 0; }
-.insight-panel > .analysis-section ~ .analysis-section:not([hidden]) { border-top: 1px solid var(--line); padding-top: var(--section-space); }
+.panel.insight-panel { --section-space: 12px; display: flex; flex-direction: column; gap: var(--section-space); align-self: start; margin-top: 0; padding: 6px 0 0; }
+.insight-panel > .analysis-tabs { flex: none; min-width: 0; margin: 0; padding: 0 18px; }
+.insight-panel > .analysis-section { flex: none; min-width: 0; margin: 0; padding: 0 18px; }
+.insight-panel > .analysis-section.analysis-footer-section { padding-bottom: 18px; }
+.insight-panel > .analysis-tabs + .analysis-section:not([hidden]),
+.insight-panel > .analysis-tabs + div[role="tabpanel"]:not([hidden]),
+.insight-panel > .analysis-section ~ .analysis-section:not([hidden]),
+.insight-panel > .analysis-section ~ div[role="tabpanel"]:not([hidden]),
+.insight-panel > div[role="tabpanel"] ~ .analysis-section:not([hidden]) { border-top: 1px solid var(--line); padding-top: var(--section-space); }
 .analysis-controls-section { display: grid; gap: 8px; }
 .analysis-controls-section > [role="status"], .analysis-controls-section > [role="alert"] { margin: 0; font-size: 12px; }
 .analysis-generation { display: flex; align-items: flex-end; gap: 8px; overflow-x: auto; }
@@ -262,7 +268,11 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
      it: drop it from the bar to keep the bar short and mis-tap-proof. */
   .bottom-ui .notation #analysis-index { display: none; }
   .player-strip { height: 34px; font-size: 13px; }
-  .panel.insight-panel { margin-top: 0; width: 100%; padding: 6px 14px 14px; }
+  .panel.insight-panel { margin-top: 0; width: 100%; padding: 6px 0 0; }
+  .insight-panel > .analysis-tabs { padding: 0 14px; }
+  .insight-panel > .analysis-section { padding: 0 14px; }
+  .insight-panel > .analysis-section.analysis-footer-section { padding-bottom: 14px; }
+  .insight-panel > div[role="tabpanel"] { padding: 0 14px 14px; }
   .insight-panel section[aria-label="Maia analysis"] h2, .insight-panel section[aria-label="Stockfish evaluation"] h2 { font-size: 13px; }
   .win-hero strong { font-size: 18px; }
   .win-hero span { font-size: 11px; }
@@ -281,7 +291,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .feedback-setup { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 16px 0 4px; }
 .feedback-setup input { width: 16px; min-height: 16px; accent-color: var(--accent); }
 .insight-panel { max-height: calc(100dvh - 120px); overflow: hidden; }
-.insight-panel > div[role="tabpanel"] { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
+.insight-panel > div[role="tabpanel"] { flex: 0 1 auto; min-height: 0; margin: 0; padding: 0 18px 18px; overflow-y: auto; }
 .review-charts { margin-top: 20px; }
 .chart-tabs { display: flex; gap: 4px; }
 .chart-tabs button { flex: 1; font-size: 12px; }
