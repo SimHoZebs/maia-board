@@ -196,7 +196,7 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 	// and persists after the client goes away.
 	useCache := request.Temperature == 0
 	execCtx := context.WithoutCancel(r.Context())
-	response, hit, predictErr := s.executeMaia(r.Context(), execCtx, PriorityPlay, "", engineRequest, model, false)
+	response, hit, predictErr := s.executeMaia(r.Context(), execCtx, PriorityPlay, 0, engineRequest, model, false)
 	if predictErr != nil {
 		err := predictErr
 		switch {

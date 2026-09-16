@@ -121,7 +121,7 @@ func TestEvaluateHTTP(t *testing.T) {
 		})
 	}
 	e := fakeEvaluator(t, "ok")
-	hold, joined, err := e.sched.Acquire(context.Background(), PriorityBatch, "hold", "")
+	hold, joined, err := e.sched.Acquire(context.Background(), PriorityBatch, "hold", 0)
 	if err != nil || joined {
 		t.Fatalf("hold: %v %t", err, joined)
 	}
@@ -212,7 +212,7 @@ func TestEvaluationCancellationKillsGroup(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			done := make(chan error, 1)
-			go func() { _, _, err := e.run(ctx, ctx, PriorityFocus, "", evaluationRequest{FEN: startFEN}); done <- err }()
+			go func() { _, _, err := e.run(ctx, ctx, PriorityFocus, 0, evaluationRequest{FEN: startFEN}); done <- err }()
 			var pids []byte
 			deadline := time.Now().Add(2 * time.Second)
 			for time.Now().Before(deadline) {
@@ -276,7 +276,7 @@ func TestRealStockfishHTTPAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { _, _, err := e.run(ctx, ctx, PriorityFocus, "", evaluationRequest{FEN: startFEN}); done <- err }()
+	go func() { _, _, err := e.run(ctx, ctx, PriorityFocus, 0, evaluationRequest{FEN: startFEN}); done <- err }()
 	// Observe the real native engine in the wrapper's inherited group before canceling.
 	var group, enginePID int
 	deadline := time.Now().Add(2 * time.Second)

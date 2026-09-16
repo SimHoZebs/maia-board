@@ -106,7 +106,7 @@ func (s *server) evaluate(w http.ResponseWriter, r *http.Request) {
 	// on disconnect; execCtx stays detached so a granted search still writes
 	// through after the client goes away.
 	execCtx := context.WithoutCancel(r.Context())
-	live, hit, runErr := s.executeSF(r.Context(), execCtx, PriorityFocus, "", request, false)
+	live, hit, runErr := s.executeSF(r.Context(), execCtx, PriorityFocus, 0, request, false)
 	if runErr != nil {
 		err := runErr
 		requestErr, isRequestErr := errors.AsType[*requestError](err)
@@ -176,14 +176,14 @@ func (b *cappedOutput) Write(p []byte) (int, error) {
 	return b.buffer.Write(p)
 }
 
-func (e *Evaluator) run(waitCtx, execCtx context.Context, prio Priority, batchID string, request evaluationRequest) (*evaluationResponse, func(), error) {
+func (e *Evaluator) run(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, request evaluationRequest) (*evaluationResponse, func(), error) {
 	key, _ := sfIdentity(request).coordinates()
 	wait := waitCtx
 	cancel := context.CancelFunc(func() {})
 	if prio != PriorityBatch {
 		wait, cancel = context.WithTimeout(waitCtx, syncWait(prio))
 	}
-	grant, joined, err := e.sched.Acquire(wait, prio, key, batchID)
+	grant, joined, err := e.sched.Acquire(wait, prio, key, submitSeq)
 	cancel()
 	if err != nil {
 		switch {

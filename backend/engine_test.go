@@ -27,7 +27,7 @@ type fakePredictor struct {
 	status WorkerStatus
 }
 
-func (f *fakePredictor) predict(_, _ context.Context, _ Priority, _ string, _ EngineRequest) (EngineResult, func(), error) {
+func (f *fakePredictor) predict(_, _ context.Context, _ Priority, _ uint64, _ EngineRequest) (EngineResult, func(), error) {
 	f.calls++
 	return f.result, nil, f.err
 }
@@ -36,7 +36,7 @@ func (f *fakePredictor) snapshot() WorkerStatus { return f.status }
 func TestEnginePoolFallsBackPerRequest(t *testing.T) {
 	large := &fakePredictor{err: errors.New("79m failed")}
 	small := &fakePredictor{result: engineFixture("e2e4")}
-	result, _, used, degraded, err := NewEnginePool(large, small).predict(context.Background(), context.Background(), PriorityFocus, "", "79m", EngineRequest{})
+	result, _, used, degraded, err := NewEnginePool(large, small).predict(context.Background(), context.Background(), PriorityFocus, 0, "79m", EngineRequest{})
 	if err != nil || used != "5m" || !degraded || result.Move != "e2e4" || large.calls != 1 || small.calls != 1 {
 		t.Fatalf("fallback: %+v %s %t %v", result, used, degraded, err)
 	}
@@ -44,7 +44,7 @@ func TestEnginePoolFallsBackPerRequest(t *testing.T) {
 func TestEnginePoolDoesNotFallbackForRequestErrors(t *testing.T) {
 	for _, failure := range []error{ErrWorkerBusy, ErrJoined, ErrSuperseded, context.Canceled, context.DeadlineExceeded, ErrPositionMismatch, ErrInvalidPosition, ErrNoLegalMoves} {
 		large, small := &fakePredictor{err: failure}, &fakePredictor{}
-		_, _, _, _, err := NewEnginePool(large, small).predict(context.Background(), context.Background(), PriorityFocus, "", "79m", EngineRequest{})
+		_, _, _, _, err := NewEnginePool(large, small).predict(context.Background(), context.Background(), PriorityFocus, 0, "79m", EngineRequest{})
 		if !errors.Is(err, failure) || small.calls != 0 {
 			t.Fatalf("fallback on %v", failure)
 		}
@@ -168,7 +168,7 @@ func TestCanceledCallerKeepsWarmWorkerAndSlot(t *testing.T) {
 	done := make(chan error, 1)
 	r := EngineRequest{FEN: startFEN, SelfElo: 400, OppoElo: 1}
 	go func() {
-		_, release, err := w.predict(ctx, ctx, PriorityFocus, "", r)
+		_, release, err := w.predict(ctx, ctx, PriorityFocus, 0, r)
 		if release != nil {
 			release()
 		}
@@ -184,14 +184,14 @@ func TestCanceledCallerKeepsWarmWorkerAndSlot(t *testing.T) {
 	}
 	// A different position waits for the drain, then reports busy: it must
 	// not cut in front of the running operation.
-	if _, _, err := w.predict(context.Background(), context.Background(), PriorityFocus, "", EngineRequest{FEN: startFEN, OppoElo: 2}); !errors.Is(err, ErrWorkerBusy) {
+	if _, _, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0, EngineRequest{FEN: startFEN, OppoElo: 2}); !errors.Is(err, ErrWorkerBusy) {
 		t.Fatalf("second request: %v", err)
 	}
 	// The same deterministic work joins instead of inferring twice. The join
 	// waits on the owner, so it gets a generous budget here.
 	r.InitialFEN = startFEN // Equivalent explicit history root shares canonical identity.
 	syncWaitFocus = 10 * time.Second
-	if _, _, err := w.predict(context.Background(), context.Background(), PriorityFocus, "", r); !errors.Is(err, ErrJoined) {
+	if _, _, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0, r); !errors.Is(err, ErrJoined) {
 		t.Fatalf("duplicate: %v", err)
 	}
 	// The drain owns the slot until the reply lands; afterwards the warm
@@ -223,7 +223,7 @@ func TestCanceledCallerKeepsWarmWorkerAndSlot(t *testing.T) {
 // handler's release-after-store discipline (tests have nothing to store).
 func predictSync(t *testing.T, w *Worker, r EngineRequest) (EngineResult, error) {
 	t.Helper()
-	result, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, "", r)
+	result, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0, r)
 	if release != nil {
 		release()
 	}
@@ -234,7 +234,7 @@ func TestHardTimeoutKillsReapsAndReleases(t *testing.T) {
 	w.moveWait = 150 * time.Millisecond
 	done := make(chan error, 1)
 	go func() {
-		_, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, "", EngineRequest{FEN: startFEN, SelfElo: 4999})
+		_, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0, EngineRequest{FEN: startFEN, SelfElo: 4999})
 		if release != nil {
 			release()
 		}
@@ -270,7 +270,7 @@ func TestInitializationTimeoutKillsAndReaps(t *testing.T) {
 	w.startWait = 150 * time.Millisecond
 	done := make(chan error, 1)
 	go func() {
-		_, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, "", EngineRequest{FEN: startFEN})
+		_, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0, EngineRequest{FEN: startFEN})
 		if release != nil {
 			release()
 		}
@@ -315,7 +315,7 @@ func TestSampledRequestsDoNotJoin(t *testing.T) {
 	request := EngineRequest{FEN: startFEN, SelfElo: 400, Temperature: .7}
 	done := make(chan error, 1)
 	go func() {
-		_, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, "", request)
+		_, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0, request)
 		if release != nil {
 			release()
 		}
@@ -324,7 +324,7 @@ func TestSampledRequestsDoNotJoin(t *testing.T) {
 	awaitPID(t, path)
 	// The same sampled content queues behind the running op (it must never
 	// join: a join would report ErrJoined, not busy).
-	if _, _, err := w.predict(context.Background(), context.Background(), PriorityFocus, "", request); !errors.Is(err, ErrWorkerBusy) {
+	if _, _, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0, request); !errors.Is(err, ErrWorkerBusy) {
 		t.Fatalf("sampled duplicate joined: %v", err)
 	}
 	if err := <-done; err != nil {
@@ -337,7 +337,7 @@ func TestSampledRequestsDoNotJoin(t *testing.T) {
 }
 func TestWorkerAcquireReturnsBusyWithoutStartingProcess(t *testing.T) {
 	w := NewWorker("test", nil)
-	grant, joined, err := w.sched.Acquire(context.Background(), PriorityBatch, "hold", "")
+	grant, joined, err := w.sched.Acquire(context.Background(), PriorityBatch, "hold", 0)
 	if err != nil || joined {
 		t.Fatalf("hold: %v %t", err, joined)
 	}
@@ -345,7 +345,7 @@ func TestWorkerAcquireReturnsBusyWithoutStartingProcess(t *testing.T) {
 	oldWait := syncWaitFocus
 	syncWaitFocus = 50 * time.Millisecond
 	defer func() { syncWaitFocus = oldWait }()
-	if _, _, err := w.predict(context.Background(), context.Background(), PriorityFocus, "", EngineRequest{}); !errors.Is(err, ErrWorkerBusy) {
+	if _, _, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0, EngineRequest{}); !errors.Is(err, ErrWorkerBusy) {
 		t.Fatal(err)
 	}
 	if w.proc != nil {

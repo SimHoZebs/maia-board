@@ -83,7 +83,7 @@ type WorkerStatus struct {
 	LastError string      `json:"last_error,omitempty"`
 }
 type predictor interface {
-	predict(waitCtx, execCtx context.Context, prio Priority, batchID string, request EngineRequest) (EngineResult, func(), error)
+	predict(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, request EngineRequest) (EngineResult, func(), error)
 	snapshot() WorkerStatus
 }
 type workerProcess struct {
@@ -136,11 +136,12 @@ func (w *Worker) setBusy(busy bool) {
 
 // predict admits through the priority scheduler, then runs one inference.
 // waitCtx bounds queue waiting (and dequeues on disconnect); execCtx bounds
-// waiting for the operation itself. batchID tags batch-lane tickets so a
-// batch cancel finds them; sync callers pass "". The returned release must be
+// waiting for the operation itself. submitSeq orders batch-lane tickets
+// (rotation groups); sync callers pass 0, the sentinel excluded from the
+// scan. The returned release must be
 // called exactly once after the caller persists the result (nil when there is
 // nothing to persist: acquire failure, join, or caller abandonment).
-func (w *Worker) predict(waitCtx, execCtx context.Context, prio Priority, batchID string, request EngineRequest) (EngineResult, func(), error) {
+func (w *Worker) predict(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, request EngineRequest) (EngineResult, func(), error) {
 	if err := waitCtx.Err(); err != nil {
 		return EngineResult{}, nil, err
 	}
@@ -160,7 +161,7 @@ func (w *Worker) predict(waitCtx, execCtx context.Context, prio Priority, batchI
 	if prio != PriorityBatch {
 		wait, cancel = context.WithTimeout(waitCtx, syncWait(prio))
 	}
-	grant, joined, err := w.sched.Acquire(wait, prio, key, batchID)
+	grant, joined, err := w.sched.Acquire(wait, prio, key, submitSeq)
 	cancel()
 	if err != nil {
 		switch {
@@ -416,12 +417,12 @@ type EnginePool struct{ large, small predictor }
 func NewEnginePool(large, small predictor) *EnginePool {
 	return &EnginePool{large: large, small: small}
 }
-func (p *EnginePool) predict(waitCtx, execCtx context.Context, prio Priority, batchID, model string, request EngineRequest) (EngineResult, func(), string, bool, error) {
+func (p *EnginePool) predict(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, model string, request EngineRequest) (EngineResult, func(), string, bool, error) {
 	if model == "5m" {
-		result, release, err := p.small.predict(waitCtx, execCtx, prio, batchID, request)
+		result, release, err := p.small.predict(waitCtx, execCtx, prio, submitSeq, request)
 		return result, release, "5m", false, err
 	}
-	result, release, err := p.large.predict(waitCtx, execCtx, prio, batchID, request)
+	result, release, err := p.large.predict(waitCtx, execCtx, prio, submitSeq, request)
 	if err == nil {
 		return result, release, "79m", false, nil
 	}
@@ -434,7 +435,7 @@ func (p *EnginePool) predict(waitCtx, execCtx context.Context, prio Priority, ba
 	if errors.Is(err, ErrWorkerBusy) || errors.Is(err, ErrJoined) || errors.Is(err, ErrSuperseded) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrPositionMismatch) || errors.Is(err, ErrInvalidPosition) || errors.Is(err, ErrNoLegalMoves) {
 		return EngineResult{}, nil, "", false, err
 	}
-	result, release, fallbackErr := p.small.predict(waitCtx, execCtx, prio, batchID, request)
+	result, release, fallbackErr := p.small.predict(waitCtx, execCtx, prio, submitSeq, request)
 	if fallbackErr != nil {
 		if release != nil {
 			release()
@@ -444,15 +445,6 @@ func (p *EnginePool) predict(waitCtx, execCtx context.Context, prio Priority, ba
 	return result, release, "5m", true, nil
 }
 
-// cancelBatch drops queued batch-lane tickets on the concrete workers.
-// Predictor fakes in tests have no scheduler and ignore the call.
-func (p *EnginePool) cancelBatch(batchID string) {
-	for _, pr := range []predictor{p.large, p.small} {
-		if w, ok := pr.(*Worker); ok {
-			w.sched.CancelBatch(batchID)
-		}
-	}
-}
 func (p *EnginePool) health() (string, map[string]WorkerStatus, int) {
 	large, small := p.large.snapshot(), p.small.snapshot()
 	status, code := "ok", 200

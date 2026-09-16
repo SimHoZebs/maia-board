@@ -35,7 +35,7 @@ func TestWorkerResetsTemperatureForEachRequest(t *testing.T) {
 	worker := NewWorker("test", []string{os.Args[0], "-test.run=^TestTemperatureJSONHelper$"})
 	defer worker.close()
 	for _, temperature := range []float64{.7, 0} {
-		_, release, err := worker.predict(context.Background(), context.Background(), PriorityFocus, "", EngineRequest{FEN: startFEN, SelfElo: 1600, OppoElo: 1600, Temperature: temperature})
+		_, release, err := worker.predict(context.Background(), context.Background(), PriorityFocus, 0, EngineRequest{FEN: startFEN, SelfElo: 1600, OppoElo: 1600, Temperature: temperature})
 		if release != nil {
 			release()
 		}

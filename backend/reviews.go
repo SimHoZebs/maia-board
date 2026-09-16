@@ -15,11 +15,16 @@ import (
 
 const (
 	// maxBatchRequests bounds one game: 256 plies x two engines. Intake
-	// cache-filtering means the queued remainder is misses only.
+	// cache-filtering means the queued remainder is misses only. It also
+	// bounds unresolved misses per engine scheduler (§2 cap a).
 	maxBatchRequests = 512
 	// maxKeptJobs bounds in-memory history. Results stay queryable through
 	// evaluations_v2 + lookup long after their job row is evicted.
 	maxKeptJobs = 8
+	// maxUnfinishedJobs bounds admitted-but-unfinished jobs (§2 cap b).
+	// Mirrors maxKeptJobs: at most 8 unfinished + up to 8 retained finished
+	// in the worst case.
+	maxUnfinishedJobs = 8
 )
 
 // Single executor: one resolve + execute path for /move, /evaluate, and
@@ -72,7 +77,8 @@ func resolveMaiaQuery(query lookupRequest) (EngineRequest, string, *requestError
 // executeSF runs one Stockfish search with join-retry and write-through.
 // Returns hit=true when served from cache. strictBatch is kept for symmetry
 // (SF has no degraded fallback); both modes store and serve identically.
-func (s *server) executeSF(waitCtx, execCtx context.Context, prio Priority, batchID string, req evaluationRequest, strictBatch bool) (*evaluationResponse, bool, error) {
+// submitSeq orders batch-lane tickets; sync callers pass 0.
+func (s *server) executeSF(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, req evaluationRequest, strictBatch bool) (*evaluationResponse, bool, error) {
 	if s.evaluator == nil {
 		// Cache-only path (e.g. evaluator absent): hits serve, misses fail.
 		if cached, ok := s.cachedSF(req); ok {
@@ -84,7 +90,7 @@ func (s *server) executeSF(waitCtx, execCtx context.Context, prio Priority, batc
 		if cached, ok := s.cachedSF(req); ok {
 			return cached, true, nil
 		}
-		result, release, err := s.evaluator.run(waitCtx, execCtx, prio, batchID, req)
+		result, release, err := s.evaluator.run(waitCtx, execCtx, prio, submitSeq, req)
 		if err != nil {
 			if release != nil {
 				release()
@@ -108,8 +114,9 @@ func (s *server) executeSF(waitCtx, execCtx context.Context, prio Priority, batc
 // executeMaia runs one Maia inference with join-retry and write-through.
 // Returns hit=true when served from cache. Live (strictBatch=false) serves
 // degraded 79M→5M fallback without caching; batch (strictBatch=true) fails
-// per-index so the position can be retried live.
-func (s *server) executeMaia(waitCtx, execCtx context.Context, prio Priority, batchID string, req EngineRequest, model string, strictBatch bool) (moveResponse, bool, error) {
+// per-index so the position can be retried live. submitSeq orders batch-lane
+// tickets; sync callers pass 0.
+func (s *server) executeMaia(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, req EngineRequest, model string, strictBatch bool) (moveResponse, bool, error) {
 	useCache := req.Temperature == 0
 	for attempt := 0; attempt < 3; attempt++ {
 		if useCache {
@@ -117,7 +124,7 @@ func (s *server) executeMaia(waitCtx, execCtx context.Context, prio Priority, ba
 				return *cached, true, nil
 			}
 		}
-		result, release, used, degraded, err := s.pool.predict(waitCtx, execCtx, prio, batchID, model, req)
+		result, release, used, degraded, err := s.pool.predict(waitCtx, execCtx, prio, submitSeq, model, req)
 		if err != nil {
 			if release != nil {
 				release()
@@ -173,19 +180,22 @@ type batchEntry struct {
 	evalReq   evaluationRequest
 	maiaReq   EngineRequest
 	maiaModel string
+	// submitSeq is the batch-lane ordering nonce (§1): one process-wide
+	// atomic increment per accepted submit, shared by all its entries.
+	// Never exposed via API or logs. Set at intake AFTER the cap pass.
+	submitSeq uint64
 	status    batchStatus
 	errMsg    string
 	started   time.Time
 }
 
 type batchProgress struct {
-	JobID     string            `json:"job_id"`
-	Total     int               `json:"total"`
-	Done      int               `json:"done"`
-	Failed    int               `json:"failed"`
-	Cancelled bool              `json:"cancelled"`
-	Finished  bool              `json:"finished"`
-	Errors    map[string]string `json:"errors,omitempty"`
+	JobID    string            `json:"job_id"`
+	Total    int               `json:"total"`
+	Done     int               `json:"done"`
+	Failed   int               `json:"failed"`
+	Finished bool              `json:"finished"`
+	Errors   map[string]string `json:"errors,omitempty"`
 }
 
 type batchJob struct {
@@ -194,7 +204,6 @@ type batchJob struct {
 	entries   []*batchEntry
 	done      int
 	failed    int
-	cancelled bool
 	finished  bool
 	eventID   int
 	mu        sync.Mutex
@@ -203,7 +212,7 @@ type batchJob struct {
 
 func (job *batchJob) progressLocked() batchProgress {
 	progress := batchProgress{JobID: job.id, Total: len(job.entries), Done: job.done,
-		Failed: job.failed, Cancelled: job.cancelled, Finished: job.finished}
+		Failed: job.failed, Finished: job.finished}
 	for _, entry := range job.entries {
 		if entry.status == batchFailed {
 			if progress.Errors == nil {
@@ -257,22 +266,16 @@ func (job *batchJob) complete(entry *batchEntry, errMsg string) {
 		job.id, entry.index, entry.engine, status, time.Since(entry.started).Milliseconds(), errMsg)
 }
 
-func (job *batchJob) isCancelled() bool {
-	job.mu.Lock()
-	defer job.mu.Unlock()
-	return job.cancelled
-}
-
-// ReviewJobs runs at most one whole-game batch at a time over the shared
-// engine schedulers. Jobs are in-memory orchestration only: finished plies
-// persist in evaluations_v2, so eviction or restart never loses computed
-// work — the client resubmits and the intake filter skips cached rows.
+// ReviewJobs runs whole-game batches over the shared engine schedulers
+// with admission caps (§2) instead of a single-active gate. Jobs are
+// in-memory orchestration only: finished plies persist in evaluations_v2,
+// so eviction or restart never loses computed work — the client resubmits
+// and the intake filter skips cached rows.
 type ReviewJobs struct {
-	mu     sync.Mutex
-	jobs   map[string]*batchJob
-	order  []string
-	active string
-	s      *server
+	mu    sync.Mutex
+	jobs  map[string]*batchJob
+	order []string
+	s     *server
 }
 
 func NewReviewJobs(s *server) *ReviewJobs {
@@ -285,18 +288,109 @@ func (js *ReviewJobs) byID(id string) *batchJob {
 	return js.jobs[id]
 }
 
-func (js *ReviewJobs) activeProgress() (batchProgress, bool) {
+// countMisses tallies accepted-but-unresolved entries by destination
+// scheduler. Pure over the passed slice (no locks, no I/O) so cap unit tests
+// exercise it directly: pending/running entries only — cached hits settle at
+// intake (batchDone) and never count. Maia large-model misses count against
+// both large and small: fallback eligibility is failure-dependent and
+// unknowable at intake, so every large miss is conservatively assumed
+// fallback-eligible; over-counting small only ever rejects early.
+func countMisses(entries []*batchEntry) (sf, large, small int) {
+	for _, e := range entries {
+		if e == nil || (e.status != batchPending && e.status != batchRunning) {
+			continue
+		}
+		switch e.engine {
+		case "sf":
+			sf++
+		case "maia":
+			if e.maiaModel == "5m" {
+				small++
+			} else {
+				large++
+				small++
+			}
+		}
+	}
+	return sf, large, small
+}
+
+// snapshotCounts scans unfinished jobs under js.mu and returns the
+// accepted-but-unresolved tallies per scheduler plus the unfinished-job
+// count. Fast O(records): entries are only counted, never resolved here.
+func (js *ReviewJobs) snapshotCounts() (unfinished, sf, large, small int) {
 	js.mu.Lock()
 	defer js.mu.Unlock()
-	if js.active == "" {
-		return batchProgress{}, false
+	for _, job := range js.jobs {
+		job.mu.Lock()
+		if job.finished {
+			job.mu.Unlock()
+			continue
+		}
+		unfinished++
+		sfJob, largeJob, smallJob := countMisses(job.entries)
+		sf += sfJob
+		large += largeJob
+		small += smallJob
+		job.mu.Unlock()
 	}
-	job, ok := js.jobs[js.active]
-	if !ok {
-		js.active = ""
-		return batchProgress{}, false
+	return unfinished, sf, large, small
+}
+
+// overCap reports whether admitting newSF/newLarge/newSmall misses on top of
+// the existing tallies (or one more unfinished job) would pass either §2 cap.
+func overCap(unfinished, sf, large, small, newSF, newLarge, newSmall int) bool {
+	if unfinished >= maxUnfinishedJobs {
+		return true
 	}
-	return job.snapshot(), true
+	if sf+newSF > maxBatchRequests || large+newLarge > maxBatchRequests || small+newSmall > maxBatchRequests {
+		return true
+	}
+	return false
+}
+
+func writeEngineBusy(w http.ResponseWriter, unfinished, sf, large, small int) {
+	w.Header().Set("Retry-After", "5")
+	log.Printf("review-batch busy unfinished=%d sf_queue=%d large_queue=%d small_queue=%d",
+		unfinished, sf, large, small)
+	writeJSON(w, http.StatusTooManyRequests, map[string]any{
+		"code": "engine_busy", "message": "review queue depth exceeded, retry later",
+	})
+}
+
+// evictLocked removes finished jobs while order exceeds maxKeptJobs,
+// scanning for the first finished job anywhere in order (not head-only).
+// Stale order entries missing from the map are dropped too. Unfinished jobs
+// (and the just-inserted job) are never evicted; when nothing finished
+// remains the loop breaks and order temporarily exceeds the bound — the
+// unfinished-job cap (§2b) bounds that growth. Callers hold js.mu.
+func (js *ReviewJobs) evictLocked(keepID string) {
+	for len(js.order) > maxKeptJobs {
+		idx := -1
+		for i, oid := range js.order {
+			if oid == keepID {
+				continue
+			}
+			old, ok := js.jobs[oid]
+			if !ok {
+				idx = i
+				break
+			}
+			old.mu.Lock()
+			finished := old.finished
+			old.mu.Unlock()
+			if finished {
+				idx = i
+				break
+			}
+		}
+		if idx == -1 {
+			break
+		}
+		oid := js.order[idx]
+		js.order = append(js.order[:idx], js.order[idx+1:]...)
+		delete(js.jobs, oid)
+	}
 }
 
 // resolveBatchEntry validates one batch request exactly like the sync
@@ -357,74 +451,89 @@ func (js *ReviewJobs) reviews(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("requests must contain 1 to %d entries", maxBatchRequests))
 		return
 	}
-	// One batch drains at a time; a second submitter gets the running job
-	// id + progress so it can wait, poll, or replace explicitly.
-	if progress, busy := js.activeProgress(); busy && !progress.Finished {
-		w.Header().Set("Retry-After", "5")
-		log.Printf("review-batch busy job=%s done=%d total=%d", progress.JobID, progress.Done, progress.Total)
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"code": "batch_busy", "message": "another review batch is running",
-			"job_id": progress.JobID, "progress": progress,
+	// Two-phase admission (§2): snapshot counts under js.mu so a large
+	// submit never stalls status reads, release, resolve outside the lock
+	// (cache reads only, no ReviewJobs reentry, so no lock cycle), then
+	// re-acquire and re-check before insert. The re-check + insert hold one
+	// lock hold, so overshoot stays zero. Retry the whole intake at most
+	// once on a lost race (a concurrent insert landing between snapshot and
+	// re-check); a second collision is backpressure, honestly 429ed.
+	for attempt := 0; attempt < 2; attempt++ {
+		entries := make([]*batchEntry, 0, len(body.Requests))
+		cached := 0
+		sfMiss := false
+		for index, query := range body.Requests {
+			entry, hit, invalid := js.resolveBatchEntry(index, query)
+			if invalid != nil {
+				writeAPIError(w, http.StatusBadRequest, invalid.Code, invalid.Message)
+				return
+			}
+			if entry.engine == "sf" && !hit {
+				sfMiss = true
+			}
+			if hit {
+				entry.status = batchDone
+				cached++
+			}
+			entries = append(entries, entry)
+		}
+		// The sync /evaluate endpoint serves cache hits without an evaluator;
+		// batches are identical: only sf misses need live inference.
+		if sfMiss && js.s.evaluator == nil {
+			writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "Stockfish is unavailable")
+			return
+		}
+		newSF, newLarge, newSmall := countMisses(entries)
+		js.mu.Lock()
+		unfinished, sf, large, small := 0, 0, 0, 0
+		for _, job := range js.jobs {
+			job.mu.Lock()
+			if job.finished {
+				job.mu.Unlock()
+				continue
+			}
+			unfinished++
+			sfJob, largeJob, smallJob := countMisses(job.entries)
+			sf += sfJob
+			large += largeJob
+			small += smallJob
+			job.mu.Unlock()
+		}
+		if overCap(unfinished, sf, large, small, newSF, newLarge, newSmall) {
+			js.mu.Unlock()
+			if attempt == 0 {
+				continue
+			}
+			writeEngineBusy(w, unfinished, sf, large, small)
+			return
+		}
+		// Cap pass: consume one ordering nonce for the whole submit (§1).
+		// Rejected submits consume nothing.
+		seq := nextSubmitSeq()
+		for _, e := range entries {
+			e.submitSeq = seq
+		}
+		id, err := newGameID()
+		if err != nil {
+			js.mu.Unlock()
+			writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "could not start review batch")
+			return
+		}
+		job := &batchJob{id: id, createdAt: time.Now().UTC().Format(time.RFC3339Nano),
+			entries: entries, subs: make(map[chan []byte]struct{})}
+		job.done = cached
+		js.jobs[id] = job
+		js.order = append(js.order, id)
+		js.evictLocked(id)
+		js.mu.Unlock()
+		go js.drain(job)
+		pending := len(entries) - cached
+		log.Printf("review-batch submit job=%s total=%d cached=%d pending=%d", id, len(entries), cached, pending)
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"job_id": id, "total": len(entries), "cached": cached, "pending": pending,
 		})
 		return
 	}
-	entries := make([]*batchEntry, 0, len(body.Requests))
-	cached := 0
-	sfMiss := false
-	for index, query := range body.Requests {
-		entry, hit, invalid := js.resolveBatchEntry(index, query)
-		if invalid != nil {
-			writeAPIError(w, http.StatusBadRequest, invalid.Code, invalid.Message)
-			return
-		}
-		if entry.engine == "sf" && !hit {
-			sfMiss = true
-		}
-		if hit {
-			entry.status = batchDone
-			cached++
-		}
-		entries = append(entries, entry)
-	}
-	// The sync /evaluate endpoint serves cache hits without an evaluator;
-	// batches are identical: only sf misses need live inference.
-	if sfMiss && js.s.evaluator == nil {
-		writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "Stockfish is unavailable")
-		return
-	}
-	id, err := newGameID()
-	if err != nil {
-		writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "could not start review batch")
-		return
-	}
-	job := &batchJob{id: id, createdAt: time.Now().UTC().Format(time.RFC3339Nano),
-		entries: entries, subs: make(map[chan []byte]struct{})}
-	job.done = cached
-	js.mu.Lock()
-	js.jobs[id] = job
-	js.order = append(js.order, id)
-	js.active = id
-	for len(js.order) > maxKeptJobs {
-		oldest := js.order[0]
-		js.order = js.order[1:]
-		if oldest == id {
-			js.order = append(js.order, oldest)
-			break
-		}
-		if old, ok := js.jobs[oldest]; ok && old.snapshot().Finished {
-			delete(js.jobs, oldest)
-		} else if ok {
-			js.order = append(js.order, oldest)
-			break
-		}
-	}
-	js.mu.Unlock()
-	go js.drain(job)
-	pending := len(entries) - cached
-	log.Printf("review-batch submit job=%s total=%d cached=%d pending=%d", id, len(entries), cached, pending)
-	writeJSON(w, http.StatusAccepted, map[string]any{
-		"job_id": id, "total": len(entries), "cached": cached, "pending": pending,
-	})
 }
 
 // reviewRouter splits /reviews/:id from /reviews/:id/events.
@@ -444,6 +553,8 @@ func (js *ReviewJobs) reviewByID(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "not_found", "unknown review batch")
 		return
 	}
+	// No DELETE: the route falls to the 405 default (§3). Old-tab teardowns
+	// already swallow teardown failures.
 	switch r.Method {
 	case http.MethodGet:
 		job := js.byID(id)
@@ -452,31 +563,14 @@ func (js *ReviewJobs) reviewByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, job.snapshot())
-	case http.MethodDelete:
-		job := js.byID(id)
-		if job == nil {
-			writeAPIError(w, http.StatusNotFound, "not_found", "unknown review batch")
-			return
-		}
-		job.mu.Lock()
-		job.cancelled = true
-		job.mu.Unlock()
-		log.Printf("review-batch cancel job=%s", id)
-		js.s.pool.cancelBatch(id)
-		if js.s.evaluator != nil {
-			js.s.evaluator.sched.CancelBatch(id)
-		}
-		w.WriteHeader(http.StatusNoContent)
 	default:
-		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET or DELETE is required")
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET is required")
 	}
 }
 
 // drain executes one engine lane at a time per engine type (matching the
 // single-slot engines) with the two types in parallel. Work runs on detached
-// contexts: a disconnected client neither stops the batch nor leaks its slot,
-// and an explicit DELETE only drops queued tickets — a running op still
-// writes through to the cache.
+// contexts: a disconnected client neither stops the batch nor leaks its slot.
 //
 // Batch yield: each entry holds its engine slot only for that entry. After
 // the write-through the slot is released before the next entry is admitted,
@@ -495,10 +589,6 @@ func (js *ReviewJobs) drain(job *batchJob) {
 			defer wg.Done()
 			for _, entry := range job.entries {
 				if entry.engine != engine || !job.claim(entry) {
-					continue
-				}
-				if job.isCancelled() {
-					job.complete(entry, "cancelled")
 					continue
 				}
 				if engine == "sf" {
@@ -524,13 +614,8 @@ func (js *ReviewJobs) drain(job *batchJob) {
 		}
 	}
 	job.mu.Unlock()
-	log.Printf("review-batch finish job=%s done=%d failed=%d cancelled=%t duration_ms=%d",
-		job.id, progress.Done, progress.Failed, progress.Cancelled, time.Since(started).Milliseconds())
-	js.mu.Lock()
-	if js.active == job.id {
-		js.active = ""
-	}
-	js.mu.Unlock()
+	log.Printf("review-batch finish job=%s done=%d failed=%d duration_ms=%d",
+		job.id, progress.Done, progress.Failed, time.Since(started).Milliseconds())
 }
 
 func (job *batchJob) hasPending(engine string) bool {
@@ -565,12 +650,8 @@ func batchErrMessage(err error) string {
 
 func (js *ReviewJobs) runSFEntry(job *batchJob, entry *batchEntry) {
 	bg := context.Background()
-	_, _, err := js.s.executeSF(bg, bg, PriorityBatch, job.id, entry.evalReq, true)
+	_, _, err := js.s.executeSF(bg, bg, PriorityBatch, entry.submitSeq, entry.evalReq, true)
 	if err != nil {
-		if errors.Is(err, ErrSuperseded) || errors.Is(err, context.Canceled) {
-			job.complete(entry, "cancelled")
-			return
-		}
 		job.complete(entry, batchErrMessage(err))
 		return
 	}
@@ -579,12 +660,8 @@ func (js *ReviewJobs) runSFEntry(job *batchJob, entry *batchEntry) {
 
 func (js *ReviewJobs) runMaiaEntry(job *batchJob, entry *batchEntry) {
 	bg := context.Background()
-	_, _, err := js.s.executeMaia(bg, bg, PriorityBatch, job.id, entry.maiaReq, entry.maiaModel, true)
+	_, _, err := js.s.executeMaia(bg, bg, PriorityBatch, entry.submitSeq, entry.maiaReq, entry.maiaModel, true)
 	if err != nil {
-		if errors.Is(err, ErrSuperseded) || errors.Is(err, context.Canceled) {
-			job.complete(entry, "cancelled")
-			return
-		}
 		job.complete(entry, batchErrMessage(err))
 		return
 	}
