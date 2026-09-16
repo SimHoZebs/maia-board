@@ -89,10 +89,20 @@ export function useServerBatch(args: {
         try {
           submitted = await submitBatch(batchItems, fetcher);
         } catch (submitError) {
-          // Single-active background: a different line's explicit action
-          // replaces the other job once. The same content (reload, second
-          // tab, auto resubmit) attaches to the running job instead so no
-          // computed work is discarded.
+          // Single-active slot, newest visible line wins: a different line's
+          // explicit action replaces the other job once, because a forgotten
+          // tab's long batch must never hold the only slot hostage while the
+          // user watches this one stall. Finished plies survive in the server
+          // cache, so only queued tail work is discarded. The same content
+          // (reload, second tab, auto resubmit) attaches to the running job
+          // instead so no computed work is discarded.
+          // Known overreach: this branch cannot tell our own dying job (line
+          // change DELETE still in flight when the resubmit 409s against it)
+          // from a foreign tab's live job, so an Analyze click can kill
+          // another tab's analysis. The fix is an ownership distinction —
+          // cancel + resubmit only for jobs this scope submitted (plus a
+          // tombstone for our just-cancelled id), wait politely otherwise —
+          // not yet implemented.
           if (!(submitError instanceof BatchBusyError)) throw submitError;
           const persisted = readPersistedBatch();
           const sameContent = !!persisted && persisted.jobId === submitError.jobId && persisted.lineKey === submittedKey

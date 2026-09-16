@@ -101,6 +101,31 @@ describe('timeline-backed restoration', () => {
       ['/evaluations/lookup', 1024], ['/evaluations/lookup', 2],
     ]);
   });
+  it('overlapping restores merge: a stale line landing late still settles shared rows', async () => {
+    // Play lines grow by append, so an in-flight restore for line N covers a
+    // subset of line N+1. useBulkPrime no longer aborts it; both must merge.
+    const line1 = reviewNodes(buildTimeline(START_FEN, ['e2e4']));
+    const line2 = reviewNodes(buildTimeline(START_FEN, ['e2e4', 'e7e5']));
+    const gates = [vi.fn(), vi.fn()];
+    const releases = [new Promise<void>(resolve => gates[0].mockImplementation(resolve as () => void)), new Promise<void>(resolve => gates[1].mockImplementation(resolve as () => void))];
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      const requests = JSON.parse(init!.body as string).requests as { engine: string; fen: string }[];
+      const gate = requests.length <= 2 ? 0 : 1;
+      await releases[gate];
+      return jsonResponse({ results: requests.map((request, index) => ({ index, value: sfFixture(request.fen) })) });
+    });
+    const coordinator = new ReviewCoordinator(fetcher);
+    const first = coordinator.ensure(line1, settings, { signal: new AbortController().signal, engines: ['sf'] });
+    const second = coordinator.ensure(line2, settings, { signal: new AbortController().signal, engines: ['sf'] });
+    // The new line resolves first; the stale line lands after and must still
+    // settle its rows instead of being discarded.
+    gates[1]();
+    expect(await second).toEqual({ covered: 3, total: 3 });
+    gates[0]();
+    expect(await first).toEqual({ covered: 2, total: 2 });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    for (const node of line2) expect(coordinator.result('sf', node, settings)).toBeDefined();
+  });
 });
 
 describe('workspace scheduler', () => {

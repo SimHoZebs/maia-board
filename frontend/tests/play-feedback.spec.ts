@@ -9,8 +9,8 @@ import { stockfishPolicy } from '../src/stockfishSettings';
 // endpoint, single /move for the mover) plus the read-only bulk prime. The
 // whole-line server batch is out of this path: any POST /reviews during
 // these specs is a regression — fail it on contact.
-type Behavior = { evaluateFailuresRemaining: number; evaluateAlwaysFail?: boolean };
-type Hits = { reviews: string[]; evaluates: any[]; maiaEvals: any[]; playMoves: any[] };
+type Behavior = { evaluateFailuresRemaining: number; evaluateAlwaysFail?: boolean; lookup?: 'miss' | 'incremental' };
+type Hits = { reviews: string[]; evaluates: any[]; maiaEvals: any[]; playMoves: any[]; lookups: any[] };
 
 function sfEvaluation(fen: string, settings: any) {
   const policy = stockfishPolicy(settings);
@@ -29,7 +29,7 @@ function maiaEvaluation(fen: string, payload: any) {
 
 async function bootPlay(page: Page, behavior: Behavior) {
   const errors: string[] = [];
-  const hits: Hits = { reviews: [], evaluates: [], maiaEvals: [], playMoves: [] };
+  const hits: Hits = { reviews: [], evaluates: [], maiaEvals: [], playMoves: [], lookups: [] };
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(({ feedbackKey }) => {
     localStorage.setItem(feedbackKey, JSON.stringify(true));
@@ -44,8 +44,24 @@ async function bootPlay(page: Page, behavior: Behavior) {
       await route.fulfill({ json: { matches: [], book_flags: Array.isArray(moves) ? moves.map(() => false) : [] } }); return;
     }
     if (path === '/evaluations/lookup') {
-      // Empty cache: every badge must settle through foreground fetches.
-      await route.fulfill({ json: { results: [] } }); return;
+      const { requests } = route.request().postDataJSON();
+      const first = hits.lookups.length === 0;
+      hits.lookups.push(requests);
+      if ((behavior.lookup ?? 'miss') === 'miss') {
+        // Empty cache: every badge must settle through foreground fetches.
+        await route.fulfill({ json: { results: [] } }); return;
+      }
+      // Incremental fill with a delay longer than Maia's mocked reply, so
+      // the older line's lookup is still in flight when the reply lands: the
+      // first lookup answers its whole line as if it cached what it
+      // computed, later ones answer solely the new tail. Shared rows
+      // therefore arrive only via the older lookup — which must be allowed
+      // to land after the reply instead of being aborted with the change.
+      await new Promise(resolve => setTimeout(resolve, 600));
+      const tip = Math.max(...requests.map((body: any) => body.moves.length));
+      const results = requests.flatMap((body: any, index: number) =>
+        first || body.moves.length === tip ? [{ index, value: body.engine === 'sf' ? sfEvaluation(body.fen, body.settings) : maiaEvaluation(body.fen, body) }] : []);
+      await route.fulfill({ json: { results } }); return;
     }
     if (path === '/evaluate') {
       const payload = route.request().postDataJSON();
@@ -158,6 +174,19 @@ test('mid-game settings change re-grades under the new policy', async ({ page })
   await expect(page.locator('#board cg-board')).toBeVisible();
   // The pair refires under the edited settings; the mock echoes the policy.
   await expect.poll(async () => app.hits.evaluates.filter(payload => payload.settings?.depth === 18).length, { timeout: 20000 }).toBeGreaterThan(0);
+  expect(app.hits.reviews).toEqual([]);
+  expect(app.errors).toEqual([]);
+});
+
+test('superseded lookup landing still settles the rows the new line shares', async ({ page }) => {
+  // /evaluate is dead, so Stockfish rows can only arrive via lookups. The
+  // reply's lookup answers solely its tail endpoint; the shared rows arrive
+  // only if the older line's lookup is allowed to land after the reply.
+  const app = await bootPlay(page, { evaluateFailuresRemaining: 0, evaluateAlwaysFail: true, lookup: 'incremental' });
+  await startAndPlayNf3(page);
+  await expect(page.locator(settledBadges)).toHaveCount(1, { timeout: 20000 });
+  // One lookup per line, no refetch storms, no batch fallback.
+  expect(app.hits.lookups).toHaveLength(2);
   expect(app.hits.reviews).toEqual([]);
   expect(app.errors).toEqual([]);
 });
