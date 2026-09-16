@@ -41,7 +41,7 @@ const engines = ['sf', 'maia'] as const;
 export class ReviewCoordinator {
   readonly store: EvaluationStore;
   private pending: Record<Engine, Map<string, Pending>> = { sf: new Map(), maia: new Map() };
-  private running: Partial<Record<Engine, Running>> = {};
+  private running: Record<Engine, Set<Running>> = { sf: new Set(), maia: new Set() };
   private failures = new Map<string, string>();
   private restoring = new Map<string, { count: number; engine: Engine }>();
   private listeners = new Set<() => void>();
@@ -76,7 +76,8 @@ export class ReviewCoordinator {
   // Queue-only calls return void synchronously; signal calls return coverage.
   // Passing signal makes this ensure call abortable: aborting removes its
   // queued jobs and aborts its running jobs. Omitting signal queues
-  // latest-wins foreground work that the next priority ensure replaces.
+  // latest-wins foreground work; the next priority ensure replaces queued
+  // work only and lets running work land.
   ensure(
     nodes: ReviewNode[],
     settings: SettingsInput,
@@ -91,7 +92,8 @@ export class ReviewCoordinator {
         if (job) desired.push(job);
       }
       // Latest-wins within this workspace: the new set replaces queued work
-      // for the same engines. Running stale work is preempted below.
+      // for the same engines. Running work continues (non-preemptive server
+      // slot) and lands via its generation below.
       for (const engine of wanted) this.pending[engine].clear();
       for (const job of desired) {
         this.failures.delete(job.key);
@@ -101,7 +103,7 @@ export class ReviewCoordinator {
         const keys = new Set(desired.map(job => job.key));
         if (signal.aborted) {
           for (const job of desired) this.pending[job.engine].delete(job.key);
-          for (const engine of wanted) if (this.running[engine] && keys.has(this.running[engine]!.job.key)) this.abort(engine);
+          for (const engine of wanted) this.abortKeys(engine, keys);
         } else {
           // NOTE: one listener per priority ensure on the long-lived scope
           // signal; stale entries fire once on scope teardown (bounded: tens
@@ -112,17 +114,17 @@ export class ReviewCoordinator {
             for (const job of desired) {
               if (this.pending[job.engine].get(job.key)?.job === job) this.pending[job.engine].delete(job.key);
             }
-            for (const engine of wanted) if (this.running[engine] && keys.has(this.running[engine]!.job.key)) this.abort(engine);
+            for (const engine of wanted) this.abortKeys(engine, keys);
             this.notify();
           };
           signal.addEventListener('abort', onAbort, { once: true });
         }
       }
-      for (const engine of wanted) {
-        const current = this.running[engine];
-        const waiting = [...this.pending[engine].values()].some(entry => !this.finished(entry.job));
-        if (current && waiting && !this.pending[engine].get(current.job.key)) this.abort(engine);
-      }
+      // Supersede drops only still-queued work (pending cleared above). The
+      // server slot is non-preemptive: running work always completes and
+      // caches, so aborting only blinds this tab to a paid-for answer. Let
+      // running fetches continue; pump starts the newest wanted work
+      // concurrently (deduplicated by key below).
       wanted.forEach(engine => this.pump(engine));
       this.notify();
     }
@@ -161,14 +163,12 @@ export class ReviewCoordinator {
   private pendingKeys(engine: Engine): Set<string> {
     const keys = new Set([...this.restoring].filter(([, entry]) => entry.engine === engine).map(([key]) => key));
     for (const { job } of this.pending[engine].values()) if (!this.finished(job)) keys.add(job.key);
-    const running = this.running[engine];
-    if (running && !this.finished(running.job)) keys.add(running.job.key);
     return keys;
   }
   isPending(engine: Engine, node: ReviewNode, settings: ReviewSettings): boolean {
     const key = reviewKey(engine, node, settings);
     if (node.outcome || this.store.peek(engine, key) || this.failures.has(key)) return false;
-    return this.restoring.has(key) || this.pending[engine].has(key) || this.running[engine]?.job.key === key;
+    return this.restoring.has(key) || this.pending[engine].has(key);
   }
   retry() {
     for (const engine of engines) this.abort(engine);
@@ -190,31 +190,43 @@ export class ReviewCoordinator {
     if (dropped) this.notify();
   }
   private abort(engine: Engine) {
-    const running = this.running[engine];
-    delete this.running[engine];
-    running?.controller.abort();
+    const runs = [...this.running[engine]];
+    this.running[engine].clear();
+    for (const run of runs) run.controller.abort();
+  }
+  private abortKeys(engine: Engine, keys: ReadonlySet<string>) {
+    for (const run of [...this.running[engine]]) {
+      if (keys.has(run.job.key)) {
+        this.running[engine].delete(run);
+        run.controller.abort();
+      }
+    }
   }
   private pump(engine: Engine) {
-    if (this.running[engine]) return;
-    const entry = [...this.pending[engine].values()].find(entry => !this.finished(entry.job));
+    const runningKeys = new Set([...this.running[engine]].map(run => run.job.key));
+    const entry = [...this.pending[engine].values()].find(entry => !this.finished(entry.job) && !runningKeys.has(entry.job.key));
     if (!entry) return;
     const job = entry.job;
     const running: Running = { job, controller: new AbortController() };
-    this.running[engine] = running;
+    this.running[engine].add(running);
     void this.execute(job, running.controller.signal).then(result => {
-      if (this.running[engine] !== running) return;
+      // Generation check: explicitly aborted work (retry/scope abort) left
+      // the set and is dropped. Superseded-but-continuing work stays in the
+      // set and always lands — the content-keyed store makes landing safe,
+      // and takebacks may reuse the same rows.
+      if (!this.running[engine].has(running)) return;
       if (engine === 'sf') this.store.store('sf', job.key, result as Evaluation);
       else this.store.store('maia', job.key, result as MoveResponse);
     }).catch(error => {
-      if (this.running[engine] !== running || running.controller.signal.aborted) return;
+      if (!this.running[engine].has(running) || running.controller.signal.aborted) return;
       // A superseded focus request was replaced by a newer one; the newer
       // request covers the position, so this is not a failure to surface.
       if (error instanceof MaiaApiError && error.code === 'superseded') return;
       this.failures.set(job.key, error instanceof Error ? error.message : 'Analysis failed.');
     }).finally(() => {
       // A late completion belongs to its generation, even for the same key.
-      if (this.running[engine] !== running) return;
-      delete this.running[engine]; this.pump(engine); this.notify();
+      if (!this.running[engine].has(running)) return;
+      this.running[engine].delete(running); this.pump(engine); this.notify();
     });
   }
   private async execute(job: Job, signal: AbortSignal): Promise<Evaluation | MoveResponse> {

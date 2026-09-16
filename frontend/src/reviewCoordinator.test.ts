@@ -162,19 +162,46 @@ describe('workspace scheduler', () => {
     const coordinator = new ReviewCoordinator(fetcher);
     coordinator.ensure(nodes.slice(0, 2), settings, { priority: true, engines: ['sf'] });
     coordinator.ensure(nodes.slice(2), settings, { priority: true, engines: ['sf'] });
-    // Preemption aborts the held stale request and starts the latest set at once.
+    // Supersede keeps the running fetch and starts the latest set at once.
     expect(fetcher).toHaveBeenCalledTimes(2);
+    // Pending stays latest-wins: the superseded running/queued keys hide.
+    expect(coordinator.sfPendingKeys().size).toBe(2);
+    expect(coordinator.isPending('sf', nodes[0], settings)).toBe(false);
+    expect(coordinator.isPending('sf', nodes[1], settings)).toBe(false);
+    expect(coordinator.isPending('sf', nodes[2], settings)).toBe(true);
+    expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(false);
     release(jsonResponse(sfFixture(nodes[0].fen))); await flush();
     expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init!.body as string).moves.length)).toEqual([0, 2, 3]);
-    // The held stale request is aborted and its late result ignored; only
-    // the latest foreground set settles.
-    expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
-    expect(coordinator.result('sf', nodes[0], settings)).toBeUndefined();
+    // Non-preemptive slot: the late superseded result still lands (paid for);
+    // the dropped queued key never fetches.
+    expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(false);
+    expect(coordinator.result('sf', nodes[0], settings)).toBeDefined();
     expect(coordinator.result('sf', nodes[1], settings)).toBeUndefined();
     expect(coordinator.result('sf', nodes[2], settings)).toBeDefined();
     expect(coordinator.result('sf', nodes[3], settings)).toBeDefined();
     expect(coordinator.sfPendingKeys().size).toBe(0);
 
+  });
+  it('superseded running work lands late while pending stays latest-wins', async () => {
+    let releaseFirst!: (response: Response) => void;
+    const fetcher = liveFetch(); fetcher.mockImplementationOnce(() => new Promise(resolve => { releaseFirst = resolve; }));
+    const coordinator = new ReviewCoordinator(fetcher);
+    coordinator.ensure(nodes.slice(0, 2), settings, { priority: true, engines: ['sf'] });
+    coordinator.ensure(nodes.slice(2, 3), settings, { priority: true, engines: ['sf'] });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls.every(([, init]) => init?.signal?.aborted !== true)).toBe(true);
+    // Only the latest set reports pending, even though the stale fetch runs.
+    expect(coordinator.isPending('sf', nodes[0], settings)).toBe(false);
+    expect(coordinator.isPending('sf', nodes[1], settings)).toBe(false);
+    expect(coordinator.isPending('sf', nodes[2], settings)).toBe(true);
+    expect([...coordinator.sfPendingKeys()]).toHaveLength(1);
+    releaseFirst(jsonResponse(sfFixture(nodes[0].fen))); await flush();
+    // Late landing stores; dropped queued work never fetched.
+    expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init!.body as string).moves.length)).toEqual([0, 2]);
+    expect(coordinator.result('sf', nodes[0], settings)).toBeDefined();
+    expect(coordinator.result('sf', nodes[1], settings)).toBeUndefined();
+    expect(coordinator.result('sf', nodes[2], settings)).toBeDefined();
+    expect(coordinator.sfPendingKeys().size).toBe(0);
   });
   it('takebacks prune queued future nodes while retaining the running result', async () => {
     let release!: (response: Response) => void;
@@ -236,14 +263,20 @@ describe('workspace scheduler', () => {
     expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
     expect(coordinator.sfPendingKeys().size).toBe(0);
   });
-  it('foreground preempts running stale work for the latest request', async () => {
+  it('foreground lets running stale work continue while the latest request proceeds', async () => {
     const fetcher = liveFetch(); fetcher.mockImplementationOnce(() => new Promise(() => {}));
     const coordinator = new ReviewCoordinator(fetcher);
     coordinator.ensure([nodes[0]], settings, { priority: true });
     coordinator.ensure([nodes[3]], settings, { priority: true }); await flush();
-    expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    // Non-preemptive server slot: supersede never aborts running work.
+    expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(false);
     expect(coordinator.result('sf', nodes[3], settings)).toBeDefined();
     expect(coordinator.result('maia', nodes[3], settings)).toBeDefined();
+    // Pending stays latest-wins: the stale hung fetch hides from spinners.
+    expect(coordinator.isPending('sf', nodes[0], settings)).toBe(false);
+    expect(coordinator.isPending('maia', nodes[0], settings)).toBe(false);
+    expect(coordinator.sfPendingKeys().size).toBe(0);
+    expect(coordinator.maiaPendingKeys().size).toBe(0);
 
   });
   it('bounds structured busy retries while leaving unavailable errors immediately retriable', async () => {
