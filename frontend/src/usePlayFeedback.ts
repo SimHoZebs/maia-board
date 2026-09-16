@@ -8,7 +8,7 @@ import { effectiveQuality, maiaRarity, type Evaluation, type Quality } from './r
 import type { MoveResponse } from './api';
 import type { State } from './state';
 
-export type PlayFeedback = { active: boolean; qualities: (Quality | undefined)[] };
+export type PlayFeedback = { active: boolean; qualities: (Quality | undefined)[]; error?: string };
 export type PlayQualitiesMemo = UnifiedMemo;
 export type PlayQualitiesStats = { reviews: number };
 
@@ -29,6 +29,40 @@ export function wantedPlayPair(nodes: ReviewNode[], userColor: 'white' | 'black'
 
 const FOREGROUND_RETRY_MS = 2000;
 const FOREGROUND_RETRY_ATTEMPTS = 3;
+
+// Sustained-failure surface: returning the string is enough — the caller
+// (today workspaces.tsx PlayWorkspace reads only .qualities) decides display
+// later. No new UI panels are built here; {active,qualities} stays compatible
+// via the optional `error` field.
+export const PLAY_RETRY_EXHAUSTED_MESSAGE = 'Move feedback unavailable — reviews kept failing.';
+
+// Pure offline/retry helpers (wantedPlayPair precedent): DOM access stays
+// injected/guarded so vitest's node env (no window) covers them without jsdom.
+export function isOfflineValue(onLine: unknown): boolean {
+  return onLine === false;
+}
+
+export function getNavigatorOnLine(): boolean | undefined {
+  if (typeof window === 'undefined' || typeof (window as { navigator?: { onLine?: unknown } }).navigator === 'undefined') return undefined;
+  const onLine = (window as { navigator?: { onLine?: unknown } }).navigator?.onLine;
+  return typeof onLine === 'boolean' ? onLine : undefined;
+}
+
+export function isOfflineNow(readOnLine: () => unknown = getNavigatorOnLine): boolean {
+  try {
+    return isOfflineValue(readOnLine());
+  } catch {
+    return false;
+  }
+}
+
+export function hasExhaustedPlayRetries(attemptCount: number): boolean {
+  return attemptCount >= FOREGROUND_RETRY_ATTEMPTS;
+}
+
+export function playExhaustedError(hasErrors: boolean, attemptCount: number): string | undefined {
+  return hasErrors && hasExhaustedPlayRetries(attemptCount) ? PLAY_RETRY_EXHAUSTED_MESSAGE : undefined;
+}
 
 const PRAISE_PENDING: Quality = { label: 'Unreviewed', accuracy: null, loss: null };
 
@@ -138,6 +172,7 @@ export function usePlayFeedback(state: State): PlayFeedback {
     return { key: parts.sort().join('|'), sf: sfFailed, maia: maiaFailed, prime: primeFailed };
   }, [active, tooLong, pair, nodes, settings, version, coordinator, prime, primeBaseKey]);
   const attempts = useRef(new Map<string, number>());
+  const [sustainedError, setSustainedError] = useState<string | undefined>(undefined);
   // Deps key on the derived error signature, not the targets object: the key
   // is a pure function of the failed lists, so unrelated renders neither
   // clear the backoff timer nor schedule duplicates.
@@ -146,24 +181,68 @@ export function usePlayFeedback(state: State): PlayFeedback {
   // reintroduce the version-thrash timer reset the key dep removes.
   const latestRetry = useRef(retryTargets);
   latestRetry.current = retryTargets;
+  const latestSettings = useRef(settings);
+  latestSettings.current = settings;
+  const latestScope = useRef(scope);
+  latestScope.current = scope;
+  const latestBucket = useRef(`${lineKey}|${settingsKey}`);
+  latestBucket.current = `${lineKey}|${settingsKey}`;
   const { key: retryErrorKey } = retryTargets;
   useEffect(() => {
-    if (!active || !retryErrorKey || scope.signal.aborted) return;
+    if (!active || !retryErrorKey || scope.signal.aborted) {
+      if (!retryErrorKey) setSustainedError(undefined);
+      return;
+    }
     const bucket = `${lineKey}|${settingsKey}`;
     for (const key of [...attempts.current.keys()]) if (key !== bucket) attempts.current.delete(key);
-    if ((attempts.current.get(bucket) ?? 0) >= FOREGROUND_RETRY_ATTEMPTS) return;
+    if (hasExhaustedPlayRetries(attempts.current.get(bucket) ?? 0)) {
+      setSustainedError(playExhaustedError(true, attempts.current.get(bucket) ?? 0));
+      return;
+    }
+    // Offline never burns the attempt budget: skip scheduling while the
+    // browser reports offline; the `online` listener below resets the bucket
+    // and retries once. Transient errors keep the capped backoff as-is.
+    if (isOfflineNow()) return;
+    // Fresh bucket (line/settings change or online reset) drops a previous
+    // line's surfaced failure; transient retries stay silent until the cap.
+    setSustainedError(undefined);
     const timer = setTimeout(() => {
-      if (scope.signal.aborted) return;
+      if (scope.signal.aborted || isOfflineNow()) return;
       attempts.current.set(bucket, (attempts.current.get(bucket) ?? 0) + 1);
       // Re-issuing is enough: the scheduler clears failures for desired
       // jobs and skips already-settled ones at the pump.
       const { sf, maia, prime: primeFailed } = latestRetry.current;
+      if (!latestRetry.current.key) {
+        setSustainedError(undefined);
+      } else if (hasExhaustedPlayRetries(attempts.current.get(bucket) ?? 0)) {
+        setSustainedError(playExhaustedError(true, attempts.current.get(bucket) ?? 0));
+      }
       if (sf.length) coordinator.ensure(sf, settings, { priority: true, engines: ['sf'], signal: scope.signal });
       if (maia.length) coordinator.ensure(maia, settings, { priority: true, engines: ['maia'], signal: scope.signal });
       if (primeFailed) setPrimeAttempt(count => count + 1);
     }, FOREGROUND_RETRY_MS);
     return () => clearTimeout(timer);
   }, [active, retryErrorKey, lineKey, settingsKey, scope, coordinator, settings]);
+  // Browser `online` resets the current line's bucket and retries once
+  // immediately. Guarded for non-browser/test envs where window is undefined.
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+    const onOnline = () => {
+      const bucket = latestBucket.current;
+      attempts.current.delete(bucket);
+      setSustainedError(undefined);
+      const targets = latestRetry.current;
+      if (!targets.key) return;
+      const s = latestSettings.current;
+      const sc = latestScope.current;
+      if (sc.signal.aborted) return;
+      if (targets.sf.length) coordinator.ensure(targets.sf, s, { priority: true, engines: ['sf'], signal: sc.signal });
+      if (targets.maia.length) coordinator.ensure(targets.maia, s, { priority: true, engines: ['maia'], signal: sc.signal });
+      if (targets.prime) setPrimeAttempt(count => count + 1);
+    };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [coordinator]);
   const previous = useRef<PlayQualitiesMemo | null>(null);
   const sfPending = coordinator.sfPendingKeys(), maiaPending = coordinator.maiaPendingKeys();
   // Same effect-free memo cache as useReview: synchronous carry-forward,
@@ -181,5 +260,5 @@ export function usePlayFeedback(state: State): PlayFeedback {
   // there is nothing to prune or cancel beyond the line scope's own abort.
   // Badges settle on SF alone via computePlayQualities; the coordinator
   // keeps sole ownership of its queues.
-  return { active, qualities: computed?.qualities ?? [] };
+  return { active, qualities: computed?.qualities ?? [], error: sustainedError };
 }

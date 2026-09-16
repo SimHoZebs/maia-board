@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { computePlayQualities, wantedPlayPair, type PlayQualitiesMemo } from './usePlayFeedback';
+import { computePlayQualities, getNavigatorOnLine, hasExhaustedPlayRetries, isOfflineNow, isOfflineValue, PLAY_RETRY_EXHAUSTED_MESSAGE, playExhaustedError, wantedPlayPair, type PlayQualitiesMemo } from './usePlayFeedback';
 import { initialState, reducer } from './state';
 import { KEYS } from './storage';
 import { buildTimeline, START_FEN, timelineBuildsForTests } from './domain';
@@ -132,5 +132,38 @@ describe('wantedPlayPair', () => {
     const pair = wantedPlayPair(replied, 'black');
     expect(pair.sfNodes).toEqual([replied[1], replied[2]]);
     expect(pair.maiaNode).toBe(replied[1]);
+  });
+});
+
+describe('play retry offline/exhaustion helpers', () => {
+  it('treats only explicit offline as offline', () => {
+    expect(isOfflineValue(false)).toBe(true);
+    expect(isOfflineValue(true)).toBe(false);
+    expect(isOfflineValue(undefined)).toBe(false);
+    expect(isOfflineValue(null)).toBe(false);
+    expect(isOfflineValue(0)).toBe(false);
+  });
+  it('reads navigator onLine guarded (no window in vitest node env)', () => {
+    expect(getNavigatorOnLine()).toBeUndefined();
+    expect(isOfflineNow()).toBe(false);
+  });
+  it('supports injectable online reads and never throws', () => {
+    expect(isOfflineNow(() => false)).toBe(true);
+    expect(isOfflineNow(() => true)).toBe(false);
+    expect(isOfflineNow(() => undefined)).toBe(false);
+    expect(isOfflineNow(() => { throw new Error('boom'); })).toBe(false);
+  });
+  it('exhausts exactly at the capped attempt budget', () => {
+    expect(hasExhaustedPlayRetries(0)).toBe(false);
+    expect(hasExhaustedPlayRetries(2)).toBe(false);
+    expect(hasExhaustedPlayRetries(3)).toBe(true);
+    expect(hasExhaustedPlayRetries(99)).toBe(true);
+  });
+  it('surfaces an error only with failures present at the cap', () => {
+    expect(playExhaustedError(false, 3)).toBeUndefined();
+    expect(playExhaustedError(true, 2)).toBeUndefined();
+    expect(playExhaustedError(true, 0)).toBeUndefined();
+    expect(playExhaustedError(true, 3)).toBe(PLAY_RETRY_EXHAUSTED_MESSAGE);
+    expect(playExhaustedError(true, 4)).toBe(PLAY_RETRY_EXHAUSTED_MESSAGE);
   });
 });
