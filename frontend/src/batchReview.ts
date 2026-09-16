@@ -93,6 +93,38 @@ export class BatchGoneError extends Error {
   constructor() { super('Review batch not found.'); this.name = 'BatchGoneError'; }
 }
 
+// Busy-path ownership: the single-active server 409s every concurrent
+// submit, so the hook must tell its own dying job (line-change DELETE still
+// in flight) from a foreign tab's live job. Self keeps cancel + resubmit;
+// foreign waits politely and never cancels.
+export const FOREIGN_BATCH_WAIT_MS = 30_000;
+export const FOREIGN_BATCH_POLL_MS = 2_000;
+
+export type BusyJobDecision =
+  | { kind: 'already-attached' }
+  | { kind: 'attach' }
+  | { kind: 'self-resubmit' }
+  | { kind: 'foreign-wait' };
+
+export function classifyBusyJob(args: {
+  busyJobId: string;
+  submittedKey: string;
+  keysHash: string;
+  total: number;
+  ownJobId: string | null;
+  cancelledOwnIds: ReadonlySet<string>;
+  persisted: PersistedBatch | null;
+}): BusyJobDecision {
+  const { busyJobId, submittedKey, keysHash, total, ownJobId, cancelledOwnIds, persisted } = args;
+  const sameContent = !!persisted && persisted.jobId === busyJobId && persisted.lineKey === submittedKey
+    && persisted.keysHash === keysHash && persisted.total === total;
+  if (sameContent && ownJobId === busyJobId) return { kind: 'already-attached' };
+  if (sameContent) return { kind: 'attach' };
+  if (ownJobId === busyJobId) return { kind: 'self-resubmit' };
+  if (cancelledOwnIds.has(busyJobId)) return { kind: 'self-resubmit' };
+  return { kind: 'foreign-wait' };
+}
+
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 // One entry per engine per analyzable node, in a stable order the server

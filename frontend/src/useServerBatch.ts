@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BatchBusyError, BatchGoneError, buildBatchItems, cancelBatch, clearPersistedBatch, fetchBatchStatus, hashBatchKeys,
+import { BatchBusyError, BatchGoneError, buildBatchItems, cancelBatch, classifyBusyJob, clearPersistedBatch,
+  fetchBatchStatus, FOREIGN_BATCH_POLL_MS, FOREIGN_BATCH_WAIT_MS, hashBatchKeys,
   readPersistedBatch, submitBatch, subscribeBatchEvents, writePersistedBatch,
   type BatchItem, type BatchProgress, type PersistedBatch } from './batchReview';
 import { subscribeGameDeletes } from './gameRepository';
@@ -9,14 +10,18 @@ export type ServerBatchProgress = { total: number; done: number; failed: number;
 
 // Server-batch client: submit(nodes, scope) + progress UI. The scope's
 // lineKey owns the job; a scope change or unmount DELETEs the job when its
-// scope still matches, and every late SSE/poll/prime callback is ignored by
-// a single lineKey guard. Backgrounding never aborts: only scope teardown
-// cancels, while a broken stream falls back to polls silently.
+// scope still matches (recording a tombstone for the cancelled id), and every
+// late SSE/poll/prime callback is ignored by a single lineKey guard.
+// Backgrounding never aborts: only scope teardown cancels, while a broken
+// stream falls back to polls silently.
 // The submitted job id + content hash persist in localStorage so a reload
 // reattaches to the still-running server job instead of showing Analyze
 // again. A settings change or different line never reattaches (hash/lineKey
 // mismatch); resubmitting the same content attaches to the busy job instead
-// of cancelling it.
+// of cancelling it. On 409 against different content, only our own job (this
+// scope's id or a tombstoned just-cancelled id) keeps cancel + resubmit; a
+// foreign job waits politely (polls its status up to 30s, `waiting` true) and
+// never cancels.
 export function useServerBatch(args: {
   active: boolean;
   nodes: ReviewNode[];
@@ -26,12 +31,13 @@ export function useServerBatch(args: {
   scope: LineScope | null;
   auto?: boolean;
   fetcher?: typeof fetch;
-}): { progress: ServerBatchProgress | null; error: string | undefined; start: () => void; retry: () => void } {
+}): { progress: ServerBatchProgress | null; error: string | undefined; start: () => void; retry: () => void; waiting?: boolean } {
   const { active, nodes, settings, engines, coordinator, scope, auto, fetcher } = args;
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobScopeKey, setJobScopeKey] = useState<string | null>(null);
   const [progress, setProgress] = useState<ServerBatchProgress | null>(null);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [waiting, setWaiting] = useState(false);
   const itemsRef = useRef<BatchItem[]>([]);
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
@@ -50,6 +56,23 @@ export function useServerBatch(args: {
   jobIdRef.current = jobId;
   const jobScopeRef = useRef<string | null>(null);
   jobScopeRef.current = jobScopeKey;
+  // Tombstones for our just-cancelled own ids: teardown clears jobIdRef, so
+  // a resubmit that 409s against our own dying job (DELETE still in flight)
+  // would otherwise look foreign. Bounded; cleared when the new line's
+  // resubmit succeeds (a superseding line's success clears older entries too,
+  // since the abandoned resubmit never lands).
+  const tombstonesRef = useRef<Set<string>>(new Set());
+  const rememberCancelled = (id: string | null) => {
+    if (!id) return;
+    tombstonesRef.current.add(id);
+    if (tombstonesRef.current.size > 10) {
+      const oldest = tombstonesRef.current.values().next().value;
+      if (oldest !== undefined) tombstonesRef.current.delete(oldest);
+    }
+  };
+  // Generation guard so a superseded foreign wait never clears a newer
+  // wait's `waiting` flag.
+  const waitSeqRef = useRef(0);
   // Batch state is scoped to the settings it was submitted under (both call
   // sites pass memo-stable settings objects, so identity change means a real
   // settings edit). A settings change retires settled progress: its
@@ -89,32 +112,29 @@ export function useServerBatch(args: {
         try {
           submitted = await submitBatch(batchItems, fetcher);
         } catch (submitError) {
-          // Single-active slot, newest visible line wins: a different line's
-          // explicit action replaces the other job once, because a forgotten
-          // tab's long batch must never hold the only slot hostage while the
-          // user watches this one stall. Finished plies survive in the server
-          // cache, so only queued tail work is discarded. The same content
-          // (reload, second tab, auto resubmit) attaches to the running job
-          // instead so no computed work is discarded.
-          // Known overreach: this branch cannot tell our own dying job (line
-          // change DELETE still in flight when the resubmit 409s against it)
-          // from a foreign tab's live job, so an Analyze click can kill
-          // another tab's analysis. The fix is an ownership distinction —
-          // cancel + resubmit only for jobs this scope submitted (plus a
-          // tombstone for our just-cancelled id), wait politely otherwise —
-          // not yet implemented.
+          // Single-active slot: our own dying job (line-change DELETE still
+          // in flight) keeps cancel + resubmit so a self-supersede never
+          // stalls; a foreign tab's live job is never cancelled — we wait
+          // for the slot instead. Same content attaches either way.
           if (!(submitError instanceof BatchBusyError)) throw submitError;
           const persisted = readPersistedBatch();
-          const sameContent = !!persisted && persisted.jobId === submitError.jobId && persisted.lineKey === submittedKey
-            && persisted.keysHash === keysHash && persisted.total === batchItems.length;
+          const decision = classifyBusyJob({
+            busyJobId: submitError.jobId,
+            submittedKey,
+            keysHash,
+            total: batchItems.length,
+            ownJobId: jobIdRef.current,
+            cancelledOwnIds: tombstonesRef.current,
+            persisted,
+          });
           // Already attached to this same-content job (reattach won the
           // race): nothing to do. Content is checked too: new settings or a
-          // new line must still fall through to cancel + resubmit below.
-          if (sameContent && jobIdRef.current === submitError.jobId) {
+          // new line must still fall through below.
+          if (decision.kind === 'already-attached') {
             if (scopeRef.current?.lineKey !== submittedKey) return;
             return;
           }
-          if (sameContent) {
+          if (decision.kind === 'attach') {
             if (scopeRef.current?.lineKey !== submittedKey) return;
             itemsRef.current = batchItems;
             setError(undefined);
@@ -131,18 +151,65 @@ export function useServerBatch(args: {
             if (submitError.progress.finished) clearPersistedBatch(submitError.jobId);
             return;
           }
-          clearPersistedBatch(submitError.jobId);
-          await cancelBatch(submitError.jobId, fetcher);
-          submitted = await submitBatch(batchItems, fetcher);
+          if (decision.kind === 'self-resubmit') {
+            clearPersistedBatch(submitError.jobId);
+            await cancelBatch(submitError.jobId, fetcher);
+            submitted = await submitBatch(batchItems, fetcher);
+          } else {
+            // Foreign job: never cancel. Poll its status until it frees the
+            // slot (finished/cancelled/gone), then submit once. Timeout or a
+            // still-busy slot surfaces a clear error instead of killing.
+            if (scopeRef.current?.lineKey !== submittedKey) return;
+            const seq = ++waitSeqRef.current;
+            setWaiting(true);
+            try {
+              const deadline = Date.now() + FOREIGN_BATCH_WAIT_MS;
+              let slotFree = false;
+              while (Date.now() < deadline) {
+                if (scopeRef.current?.lineKey !== submittedKey) return;
+                try {
+                  const status = await fetchBatchStatus(submitError.jobId, fetcher);
+                  if (status.finished || status.cancelled) { slotFree = true; break; }
+                } catch (statusError) {
+                  if (statusError instanceof BatchGoneError) { slotFree = true; break; }
+                  // Transient status failure: keep waiting until the cap; the
+                  // follow-up submit surfaces persistent server issues.
+                }
+                if (Date.now() >= deadline) break;
+                await new Promise(resolve => setTimeout(resolve, FOREIGN_BATCH_POLL_MS));
+              }
+              if (scopeRef.current?.lineKey !== submittedKey) return;
+              if (!slotFree) {
+                setError('Another review batch is still running. Try again shortly.');
+                setProgress(current => current && { ...current, running: false });
+                return;
+              }
+              try {
+                submitted = await submitBatch(batchItems, fetcher);
+              } catch (resubmitError) {
+                if (resubmitError instanceof BatchBusyError) {
+                  if (scopeRef.current?.lineKey !== submittedKey) return;
+                  setError('Another review batch is still running. Try again shortly.');
+                  setProgress(current => current && { ...current, running: false });
+                  return;
+                }
+                throw resubmitError;
+              }
+            } finally {
+              if (waitSeqRef.current === seq) setWaiting(false);
+            }
+          }
         }
         // Stale submit: the line moved while we were submitting. Cancel the
         // orphan and drop optimism we still own so the new line never inherits
         // a running count with no job behind it.
         if (scopeRef.current?.lineKey !== submittedKey) {
+          rememberCancelled(submitted.job_id);
           void cancelBatch(submitted.job_id, fetcher).catch(() => undefined);
           if (!jobIdRef.current && !jobScopeRef.current) setProgress(null);
           return;
         }
+        tombstonesRef.current.clear();
         setError(undefined);
         setJobId(submitted.job_id);
         setJobScopeKey(submittedKey);
@@ -263,6 +330,7 @@ export function useServerBatch(args: {
       const id = jobIdRef.current;
       const jobKey = jobScopeRef.current;
       if (id && jobKey && (jobKey === scopeKey || scopeKey === null)) {
+        rememberCancelled(id);
         void cancelBatch(id, fetcher).catch(() => undefined);
         clearPersistedBatch(id);
         jobIdRef.current = null;
@@ -279,6 +347,7 @@ export function useServerBatch(args: {
   useEffect(() => {
     if (!active && (jobId || jobScopeKey)) {
       if (jobId) {
+        rememberCancelled(jobId);
         void cancelBatch(jobId, fetcher).catch(() => undefined);
         clearPersistedBatch(jobId);
       }
@@ -297,6 +366,7 @@ export function useServerBatch(args: {
     return subscribeGameDeletes(() => {
       const id = jobIdRef.current;
       if (id) {
+        rememberCancelled(id);
         void cancelBatch(id, fetcher).catch(() => undefined);
         clearPersistedBatch(id);
       }
@@ -391,5 +461,5 @@ export function useServerBatch(args: {
     };
   }, [active, jobId, jobScopeKey, coordinator, fetcher]);
 
-  return { progress, error, start, retry };
+  return { progress, error, start, retry, waiting };
 }

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildTimeline, START_FEN } from './domain';
-import { BatchBusyError, BatchGoneError, BATCH_PERSIST_KEY, buildBatchItems, cancelBatch, clearPersistedBatch,
-  fetchBatchStatus, hashBatchKeys, readPersistedBatch, submitBatch, subscribeBatchEvents, writePersistedBatch,
-  type BatchProgress } from './batchReview';
+import { BatchBusyError, BatchGoneError, BATCH_PERSIST_KEY, buildBatchItems, cancelBatch, classifyBusyJob,
+  clearPersistedBatch, fetchBatchStatus, hashBatchKeys, readPersistedBatch, submitBatch, subscribeBatchEvents,
+  writePersistedBatch, type BatchProgress } from './batchReview';
 import { jsonResponse } from './evaluationTestFixtures';
 import { reviewNodes } from './evaluationStore';
 import type { ReviewSettings } from './evaluationStore';
@@ -42,6 +42,37 @@ describe('submitBatch', () => {
     expect(error).toBeInstanceOf(BatchBusyError);
     expect((error as BatchBusyError).jobId).toBe('old');
     expect((error as BatchBusyError).progress.done).toBe(3);
+  });
+});
+
+describe('classifyBusyJob', () => {
+  const base = { submittedKey: 'lineA', keysHash: 'abc123', total: 6, busyJobId: 'job-busy' };
+  const persistedFor = () => ({ jobId: 'job-busy', lineKey: 'lineA', keysHash: 'abc123', total: 6 });
+  it('reports already-attached for same content this scope owns', () => {
+    expect(classifyBusyJob({ ...base, ownJobId: 'job-busy', cancelledOwnIds: new Set(), persisted: persistedFor() }))
+      .toEqual({ kind: 'already-attached' });
+  });
+  it('attaches for same content owned elsewhere (reload/second tab)', () => {
+    expect(classifyBusyJob({ ...base, ownJobId: null, cancelledOwnIds: new Set(), persisted: persistedFor() }))
+      .toEqual({ kind: 'attach' });
+  });
+  it('resubmits for different content against our own running job', () => {
+    expect(classifyBusyJob({ ...base, ownJobId: 'job-busy', cancelledOwnIds: new Set(), persisted: null }))
+      .toEqual({ kind: 'self-resubmit' });
+  });
+  it('resubmits when the busy id is a tombstoned just-cancelled own id', () => {
+    expect(classifyBusyJob({ ...base, ownJobId: null, cancelledOwnIds: new Set(['job-busy']), persisted: null }))
+      .toEqual({ kind: 'self-resubmit' });
+  });
+  it('waits for foreign jobs and content mismatches', () => {
+    const foreign = { ...base, ownJobId: null, cancelledOwnIds: new Set<string>(), persisted: null };
+    expect(classifyBusyJob(foreign)).toEqual({ kind: 'foreign-wait' });
+    // Same job id but a different line / hash / total is not same content.
+    expect(classifyBusyJob({ ...foreign, submittedKey: 'lineB', persisted: persistedFor() })).toEqual({ kind: 'foreign-wait' });
+    expect(classifyBusyJob({ ...foreign, persisted: { ...persistedFor(), keysHash: 'other' } })).toEqual({ kind: 'foreign-wait' });
+    expect(classifyBusyJob({ ...foreign, persisted: { ...persistedFor(), total: 4 } })).toEqual({ kind: 'foreign-wait' });
+    // An unrelated tombstone does not claim the foreign job.
+    expect(classifyBusyJob({ ...foreign, cancelledOwnIds: new Set(['job-old']) })).toEqual({ kind: 'foreign-wait' });
   });
 });
 
