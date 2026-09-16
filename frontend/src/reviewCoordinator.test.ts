@@ -343,6 +343,15 @@ describe('identity and provenance', () => {
     expect(() => parseEvaluation({ ...raw, lines: [raw.lines[0], raw.lines[0]] })).toThrow();
     expect(() => parseEvaluation({ ...raw, lines: [{ ...raw.lines[0], move: 'a1a8' }, raw.lines[1]], best_move: 'a1a8' }, defaultStockfishSettings, undefined, START_FEN)).toThrow();
   });
+  it('keeps the score when a rank-1 PV tail is illegal, but rejects malformed PV shapes', () => {
+    const raw = sfFixture(START_FEN);
+    const illegalTail = { ...raw, lines: [{ ...raw.lines[0], pv: [raw.lines[0].move, raw.lines[0].move] }] };
+    const stripped = parseEvaluation(illegalTail, defaultStockfishSettings, undefined, START_FEN);
+    expect(stripped.score).toEqual(raw.score);
+    expect(stripped.lines[0].pv).toBeUndefined();
+    expect(() => parseEvaluation({ ...raw, lines: [{ ...raw.lines[0], pv: ['e7e5'] }] }, defaultStockfishSettings, undefined, START_FEN)).toThrow();
+    expect(() => parseEvaluation({ ...raw, lines: [raw.lines[0], { ...raw.lines[1], pv: [raw.lines[1].move] }] }, defaultStockfishSettings, undefined, START_FEN)).toThrow();
+  });
   it('keeps the omitted-settings node-budget policy distinct from timed default settings', () => {
     const timed = sfFixture(START_FEN);
     expect(() => parseEvaluation(timed)).toThrow('incompatible');

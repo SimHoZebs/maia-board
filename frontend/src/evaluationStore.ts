@@ -1,5 +1,6 @@
 import { assertLegalUci, MaiaApiError, parseMoveResponse, type MaiaModel, type MoveResponse } from './api';
-import { posId, type Timeline, type TimelineRow } from './domain';
+import { Chess } from 'chess.js';
+import { applyUci, posId, type Timeline, type TimelineRow } from './domain';
 import { outcomeEvaluation } from './outcomeEvaluation';
 import { fetchJsonWithBusyRetry } from './evaluationTransport';
 import type { Evaluation, Score } from './reviewMetrics';
@@ -90,6 +91,24 @@ export function parseEvaluation(body: unknown, settings?: StockfishSettings, act
     if (!value.lines.length || value.lines.length > (provenance?.lines ?? 2) || value.best_move !== value.lines[0]?.move) throw invalid();
     if (!value.lines.every(line => line && typeof line.move === 'string' && uci.test(line.move) && isScore(line.score) && line.depth === value.depth && line.depth >= 1 && (!settings?.depth || line.depth <= settings.depth))
       || new Set(value.lines.map(line => line.move)).size !== value.lines.length) throw invalid();
+    // Optional rank-1 PV: shape-checked always; a chain-illegal tail with a
+    // known FEN strips the annotation (valid score + lines survive, the note
+    // stays silent) instead of rejecting the row. Lower ranks must omit it.
+    for (let index = 0; index < value.lines.length; index++) {
+      const line = value.lines[index] as { move: string; pv?: unknown };
+      if (index === 0) {
+        if (line.pv !== undefined) {
+          if (!Array.isArray(line.pv) || line.pv.length < 1 || line.pv.length > 5
+            || line.pv.some(move => typeof move !== 'string' || !uci.test(move)) || line.pv[0] !== line.move) throw invalid();
+          if (fen) {
+            try {
+              const game = new Chess(fen);
+              for (const pvMove of line.pv as string[]) applyUci(game, pvMove);
+            } catch { delete line.pv; }
+          }
+        }
+      } else if (line.pv !== undefined) throw invalid();
+    }
     if (value.depth < Math.min(...value.lines.map(line => line.depth)) || value.score.type !== value.lines[0].score.type
       || value.score.value !== value.lines[0].score.value || value.score.winning_side !== value.lines[0].score.winning_side) throw invalid();
     if (fen) {

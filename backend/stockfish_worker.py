@@ -114,8 +114,15 @@ def evaluate(request, binary):
                     continue
                 rank = info.get("multipv", 1)
                 if 1 <= rank <= count:
-                    iterations.setdefault(info["depth"], {})[rank] = dict(
-                        move=info["pv"][0].uci(), score=white_score(info["score"]), depth=info["depth"])
+                    pv = [move.uci() for move in info["pv"][:5]]
+                    entry = dict(
+                        move=pv[0], score=white_score(info["score"]), depth=info["depth"])
+                    # Rank-1 PV only: the verdict's 3-ply material window reads
+                    # lines[0]["pv"] rooted at the evaluated position. Lower
+                    # ranks omit it to bound payload/cache bytes.
+                    if rank == 1:
+                        entry["pv"] = pv
+                    iterations.setdefault(info["depth"], {})[rank] = entry
         search_ms = round((time.monotonic() - search_started) * 1000)
         complete = [depth for depth, lines in iterations.items() if len(lines) == count]
         if not complete:

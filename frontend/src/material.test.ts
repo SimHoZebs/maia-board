@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { capturesFromLine, capturedLabel, materialFromFen, materialLeadFor, sortCaptured } from './material';
+import { bestLineMaterialNote, capturesFromLine, capturedLabel, materialFromFen, materialLeadFor, sortCaptured } from './material';
 import { START_FEN } from './domain';
 
 describe('material', () => {
@@ -49,5 +49,38 @@ describe('material', () => {
   it('labels captures and the lead for screen readers', () => {
     expect(capturedLabel('white', ['q', 'p', 'p'], 11)).toBe('White captured 1 queen, 2 pawns, up 11 pawns');
     expect(capturedLabel('black', [], 0)).toBe('Black has captured nothing');
+  });
+});
+
+describe('bestLineMaterialNote', () => {
+  it('names a hanging pawn won in the best line', () => {
+    expect(bestLineMaterialNote('4k3/8/4p3/3P4/8/8/8/4K3 b - - 0 1', ['e6d5'], 'white'))
+      .toBe('Best line wins a pawn for Black in the next 1.');
+  });
+
+  it('names an exchange loss with net when both sides capture', () => {
+    expect(bestLineMaterialNote('4k3/8/8/8/8/4n3/8/3RK3 b - - 0 1', ['e3d1', 'e1d1'], 'white'))
+      .toBe('Best line loses a rook for a knight (net -2) in the next 2.');
+  });
+
+  it('stays silent for positional windows with no material swing', () => {
+    expect(bestLineMaterialNote(START_FEN, ['e2e4', 'e7e5'], 'white')).toBeNull();
+  });
+
+  it('phrases the swing, not the absolute lead, when already ahead', () => {
+    expect(bestLineMaterialNote('4k3/8/4p3/3P4/7Q/8/8/4K3 b - - 0 1', ['e6d5'], 'white'))
+      .toBe('Best line wins a pawn for Black in the next 1.');
+  });
+
+  it('silences promotions, illegal PVs, and missing lines', () => {
+    expect(bestLineMaterialNote('7k/P7/8/8/8/8/8/4K3 w - - 0 1', ['a7a8q'], 'white')).toBeNull();
+    expect(bestLineMaterialNote(START_FEN, ['e2e9'], 'white')).toBeNull();
+    expect(bestLineMaterialNote(START_FEN, undefined, 'white')).toBeNull();
+    expect(bestLineMaterialNote(START_FEN, [], 'white')).toBeNull();
+  });
+
+  it('bounds the claim to a 3-ply window', () => {
+    const note = bestLineMaterialNote('4k3/8/4p3/3P4/8/8/8/4K3 b - - 0 1', ['e6d5', 'e1e2', 'e8e7', 'e2e3'], 'white');
+    expect(note).toBe('Best line wins a pawn for Black in the next 3.');
   });
 });

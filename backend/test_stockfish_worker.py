@@ -91,6 +91,20 @@ class StockfishTests(unittest.TestCase):
         self.assertEqual(result["best_move"], "e2e4")
         self.assertEqual([line["move"] for line in result["lines"]], ["e2e4", "d2d4"])
 
+    def test_rank1_pv_emitted_up_to_five_and_lower_ranks_omit(self):
+        engine = MagicMock()
+        engine.id = {"name": "Stockfish 19"}
+        pv = [chess.Move.from_uci(move) for move in ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6"]]
+        engine.analysis.return_value.__enter__.return_value = [
+            dict(depth=10, multipv=1, pv=pv,
+                 score=chess.engine.PovScore(chess.engine.Cp(20), chess.WHITE)),
+            dict(depth=10, multipv=2, pv=[chess.Move.from_uci("d2d4")],
+                 score=chess.engine.PovScore(chess.engine.Cp(10), chess.WHITE))]
+        with patch("chess.engine.SimpleEngine.popen_uci", return_value=engine):
+            result = evaluate({"fen": chess.STARTING_FEN}, "/unused")
+        self.assertEqual(result["lines"][0]["pv"], ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4"])
+        self.assertNotIn("pv", result["lines"][1])
+
     def test_duplicate_pv_first_moves_repair(self):
         engine = MagicMock()
         engine.id = {"name": "Stockfish 19"}

@@ -226,3 +226,18 @@ it('notes when a mistake was hard to avoid because the best move was rare', () =
   expect(describeMove({ san: 'f3', quality: { ...blunder, label: 'Mistake' }, rarity: f3like, elo: 1400 }))
     .toBe('A tempting sidestep — Maia at 1400 predicts only 14.9%.');
 });
+it('appends the material note only for Mistake/Blunder', () => {
+  const quality = (label: Quality['label']): Quality => ({ label, accuracy: 20, loss: 15 });
+  const rarity: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
+  const note = 'Best line wins a pawn for Black in the next 1.';
+  expect(describeMove({ san: 'Qh5', quality: quality('Blunder'), rarity, elo: 1600, materialNote: note }))
+    .toBe(`An easy mistake to make — Maia at 1600 predicts 40% for this move. ${note}`);
+  expect(describeMove({ san: 'd5', quality: quality('Mistake'), rarity, elo: 1600, materialNote: note }))
+    .toContain(note);
+  expect(describeMove({ san: 'd5', quality: quality('Inaccuracy'), rarity, elo: 1600, materialNote: note }))
+    .not.toContain('Best line');
+  expect(describeMove({ san: 'fxg3', quality: quality('Allowed mate'), rarity, elo: 1600, materialNote: note }))
+    .not.toContain('Best line');
+  expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity, elo: 1600, materialNote: note }))
+    .not.toContain('Best line');
+});

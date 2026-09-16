@@ -80,3 +80,66 @@ export function capturedLabel(by: MaiaSide, pieces: readonly CapturedPiece[], le
   const taken = parts.length ? `captured ${parts.join(', ')}` : 'captured nothing';
   return lead > 0 ? `${side} ${taken}, up ${lead} pawn${lead === 1 ? '' : 's'}` : `${side} ${taken}`;
 }
+
+// Best-line material consequence over the next WINDOW plies of a Stockfish
+// rank-1 PV rooted at afterFen (the position after the played mistake).
+// Returns a bounded second-sentence note or null when there is nothing
+// material to say. Gating rules:
+// - Mover must lose at least one pawn unit (|swing| >= 1) along the window;
+//   neutral or gaining windows stay silent (positional mistakes).
+// - Any promotion in the window silences: queening adds up to +8 with no
+//   capture and would read as a false "winning" swing.
+// - Illegal PVs silence (stale/short lines), never throw in the verdict path.
+// - Wording names captured composition (not diff magnitude: diff 2 is
+//   ambiguous between R-for-N and two pawns) and bounds the claim to the
+//   simulated window ("in the next N"), so a 4th-ply recapture beyond the
+//   window cannot make the sentence false. Absolute lead is never stated;
+//   the player strip already owns that.
+export const MATERIAL_WINDOW = 3;
+const PIECE_ARTICLE: Record<CapturedPiece, string> = { p: 'a pawn', n: 'a knight', b: 'a bishop', r: 'a rook', q: 'a queen' };
+function piecesText(pieces: CapturedPiece[]): string {
+  const counts = new Map<CapturedPiece, number>();
+  for (const piece of sortCaptured(pieces)) counts.set(piece, (counts.get(piece) ?? 0) + 1);
+  const parts = [...counts.entries()].map(([piece, count]) =>
+    count === 1 ? PIECE_ARTICLE[piece] : `${count} ${PIECE_NAMES[piece]}s`);
+  if (parts.length <= 1) return parts[0] ?? '';
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+export function bestLineMaterialNote(afterFen: string, pv: readonly string[] | undefined, mover: MaiaSide): string | null {
+  if (!pv || pv.length === 0) return null;
+  const window = pv.slice(0, MATERIAL_WINDOW);
+  let game: Chess;
+  try { game = new Chess(afterFen); } catch { return null; }
+  const opp: MaiaSide = mover === 'white' ? 'black' : 'white';
+  const oppCaptures: CapturedPiece[] = [];
+  const moverCaptures: CapturedPiece[] = [];
+  let startDiff: number;
+  try { startDiff = materialFromFen(afterFen).diff; } catch { return null; }
+  let plies = 0;
+  for (const uci of window) {
+    if (typeof uci !== 'string' || uci.length === 5) return null; // promotion: material jump without capture
+    let turn: string;
+    try { turn = game.turn(); } catch { return null; }
+    let applied: { captured?: string };
+    try { applied = applyUci(game, uci); } catch { return null; }
+    plies++;
+    const captured = applied.captured?.toLowerCase();
+    if (captured && isCapturedPiece(captured)) {
+      if (turn === 'w' ? mover === 'white' : mover === 'black') moverCaptures.push(captured);
+      else oppCaptures.push(captured);
+    }
+  }
+  if (!plies) return null;
+  let swingMover: number;
+  try {
+    const swingWhite = materialFromFen(game.fen()).diff - startDiff;
+    swingMover = mover === 'white' ? swingWhite : -swingWhite;
+  } catch { return null; }
+  if (swingMover > -1) return null;
+  if (!oppCaptures.length) return null; // non-capture swing (should not happen outside promotions, already excluded)
+  const oppSide = opp === 'white' ? 'White' : 'Black';
+  const oppText = piecesText(sortCaptured(oppCaptures));
+  if (!moverCaptures.length) return `Best line wins ${oppText} for ${oppSide} in the next ${plies}.`;
+  const moverText = piecesText(sortCaptured(moverCaptures));
+  return `Best line loses ${oppText} for ${moverText} (net ${swingMover}) in the next ${plies}.`;
+}

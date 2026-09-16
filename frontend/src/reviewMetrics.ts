@@ -4,7 +4,7 @@ import type { DomainOutcome } from './domain';
 export const SEARCH_POLICY = 'sf19-n100k-ms750-mpv2-t1-h64-v1';
 export const REVIEW_METHOD = 'maia-board-review-v1';
 export type Score = { type: 'cp' | 'mate'; value: number; winning_side?: 'white' | 'black' };
-export type Evaluation = { engine: 'Stockfish 19'; search_policy: string; depth: number; terminal: null | 'white_win' | 'black_win' | 'draw'; best_move: string | null; score: Score; lines: { move: string; score: Score; depth: number }[] };
+export type Evaluation = { engine: 'Stockfish 19'; search_policy: string; depth: number; terminal: null | 'white_win' | 'black_win' | 'draw'; best_move: string | null; score: Score; lines: { move: string; score: Score; depth: number; pv?: string[] }[] };
 export type Quality = { label: 'Forced' | 'Allowed mate' | 'Blunder' | 'Mistake' | 'Inaccuracy' | 'Excellent' | 'Great' | 'Best' | 'Good' | 'Unreviewed'; accuracy: number | null; loss: number | null };
 // Engine facts (Stockfish only — no praise, no difficulty). reviewMove speaks
 // this vocabulary; the display layer translates it once via
@@ -106,13 +106,19 @@ function hardToAvoid(bestRarity: Rarity | null | undefined, elo: number): string
 // legal move, or the rarity synthesis — never a restated grade. Returns null
 // when there is nothing additive to say (unreviewed, off-book without Maia
 // data, or pre-first-move); the badges and charts already carry the grades.
+// materialNote is an additive second sentence (best-line 3-ply swing) supplied
+// by the caller; it only renders for Mistake/Blunder so Inaccuracy stays quiet
+// and Allowed-mate keeps its mate wording unmodified by pawn swings.
 export type OpeningRef = { eco: string; name: string };
-export function describeMove(args: { san: string; quality: Quality | undefined; rarity: Rarity | undefined; elo: number; opening?: OpeningRef | null; bestRarity?: Rarity | null }): string | null {
-  const { san, quality, rarity, elo, opening, bestRarity } = args;
+export function describeMove(args: { san: string; quality: Quality | undefined; rarity: Rarity | undefined; elo: number; opening?: OpeningRef | null; bestRarity?: Rarity | null; materialNote?: string | null }): string | null {
+  const { san, quality, rarity, elo, opening, bestRarity, materialNote } = args;
   if (opening) return `${san} — ${opening.name} (${opening.eco}). Book move.`;
   if (!quality || quality.label === 'Unreviewed') return null;
   if (quality.label === 'Forced') return `${san} was the only legal move.`;
-  return rarityVerdict(quality, rarity, elo, bestRarity);
+  const base = rarityVerdict(quality, rarity, elo, bestRarity);
+  if (!base) return null;
+  if (materialNote && (quality.label === 'Mistake' || quality.label === 'Blunder')) return `${base} ${materialNote}`;
+  return base;
 }
 export function whiteWin(score: Score): number {
   return score.type === 'cp' ? 100 / (1 + Math.exp(-.00368208 * score.value)) : (score.winning_side ?? (score.value > 0 ? 'white' : 'black')) === 'white' ? 100 : 0;

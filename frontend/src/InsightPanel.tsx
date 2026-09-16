@@ -6,6 +6,7 @@ import { Button, CandidateList, CandidateRow, EngineSection } from "./components
 import { Chess } from "chess.js";
 import type { Review } from "./useReview";
 import { describeMove } from "./reviewMetrics";
+import { bestLineMaterialNote } from "./material";
 import { useLineOpenings } from "./openings";
 import { ReviewIssues, ReviewSummary } from "./ReviewOverview";
 import { SkeletonList, SkeletonText, StockfishBody } from "./StockfishBar";
@@ -90,14 +91,28 @@ export function MoveAnalysis({
   // than low-depth scores in the opening, and the name needs no inference.
   const { opening: lineOpening } = useLineOpenings(review.timeline.moves, state.analysis.initialFen, ply);
   const exactOpening = lineOpening?.isExact ? { eco: lineOpening.eco, name: lineOpening.name } : null;
+  // Material consequence: after-position rank-1 PV rooted at the after-FEN.
+  // Only cp-vs-cp Mistake/Blunder render it (describeMove gates the labels;
+  // mate scores stay silent so a forced mate is never reduced to a pawn note).
+  const quality = hasMove ? review.qualities[focus] : undefined;
+  const materialNote = hasMove && played && !exactOpening
+    && (quality?.label === 'Mistake' || quality?.label === 'Blunder')
+    && evaluation?.score.type === 'cp' && afterEvaluation?.score.type === 'cp'
+    && !evaluation.terminal && !afterEvaluation.terminal
+    ? bestLineMaterialNote(
+      review.nodes[ply].fen,
+      afterEvaluation?.lines[0]?.pv,
+      review.nodes[focus].turn === 'white' ? 'white' : 'black',
+    ) : null;
   const verdict = played
       ? describeMove({
         san: review.nodes[ply].san ?? played,
-        quality: review.qualities[focus],
+        quality,
         rarity: review.rarities?.[focus],
         elo: review.maiaElo,
         opening: exactOpening,
         bestRarity: review.bestRarities?.[focus],
+        materialNote,
       })
     : null;
   // Exploring a candidate means playing it instead of x, so step back to

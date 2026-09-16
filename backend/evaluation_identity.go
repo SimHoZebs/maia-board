@@ -287,11 +287,29 @@ func validEvaluationValue(v evaluationResponse, settings *stockfishSettings) boo
 		return false
 	}
 	seen := map[string]bool{}
-	for _, line := range v.Lines {
+	for index, line := range v.Lines {
 		if !uciMovePattern.MatchString(line.Move) || seen[line.Move] || line.Depth != v.Depth || (settings != nil && settings.Depth > 0 && line.Depth > settings.Depth) || !validScore(line.Score) {
 			return false
 		}
 		seen[line.Move] = true
+		// PV is shape-only here (Go has no board replay): 1-5 UCI with
+		// PV[0]==Move. Rank-1 only by construction; lower ranks must omit
+		// it. Full legality is enforced frontend where the FEN is available.
+		// Worker + Go ship in one image so no mixed-version PV traffic occurs.
+		if index == 0 {
+			if line.PV != nil {
+				if len(line.PV) < 1 || len(line.PV) > 5 || line.PV[0] != line.Move {
+					return false
+				}
+				for _, pvMove := range line.PV {
+					if !uciMovePattern.MatchString(pvMove) {
+						return false
+					}
+				}
+			}
+		} else if line.PV != nil {
+			return false
+		}
 	}
 	return true
 }
