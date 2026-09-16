@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { Review } from './useReview';
 import { scoreText, whiteWin, type Quality } from './reviewMetrics';
 import type { ReviewSide } from './reviewSummary';
@@ -38,9 +38,6 @@ export function QualityBadge({ quality, reserveSpace, loading = 'reel' }: { qual
   return <span className={`quality quality-${qualitySlug(label)}`} title={`${label}${quality.accuracy == null ? '' : ` · ${quality.accuracy.toFixed(1)}% move accuracy`}`} aria-label={label}>{qualityGlyphs[label]}</span>;
 }
 export function ReviewCharts({ review, ply, sans, onView, side }: { review: Review; ply: number; sans: string[]; onView: (ply: number) => void; side?: ReviewSide }) {
-  const [tab, setTab] = useState<'evaluation' | 'accuracy'>('accuracy');
-  const id = useId();
-  const tabs = [{ id: 'accuracy', label: 'Move accuracy' }, { id: 'evaluation', label: 'Evaluation' }] as const;
   const selected = useRef<HTMLButtonElement>(null);
   const chart = useRef<HTMLDivElement>(null);
   // Hovered graphs claim the wheel for horizontal panning: a vertical wheel
@@ -63,12 +60,10 @@ export function ReviewCharts({ review, ply, sans, onView, side }: { review: Revi
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
-  // Accuracy points sit on the after-move position (point i reviews the move
-  // leading into it); point 0 is the start with no move, so nothing selects.
-  const selectedPly = tab === "accuracy" && ply === 0 ? -1 : ply;
+  const selectedPly = ply;
   useLayoutEffect(() => {
     if (selected.current && chart.current) chart.current.scrollLeft = selected.current.offsetLeft - chart.current.clientWidth / 2 + 22;
-  }, [ply, tab]);
+  }, [ply]);
   const points = review.nodes.map((node, index) => {
     const evaluation = review.evaluations[index];
     const quality = index ? review.qualities[index - 1] : undefined;
@@ -76,12 +71,12 @@ export function ReviewCharts({ review, ply, sans, onView, side }: { review: Revi
     const beforeFen = beforeNode?.fen.split(' ') ?? null;
     const mover = beforeNode ? beforeNode.turn : null;
     const outOfScope = !!side && mover !== side;
-    const value = outOfScope ? null : tab === 'evaluation' ? evaluation ? whiteWin(evaluation.score) : null : quality?.accuracy ?? null;
+    const value = outOfScope ? null : evaluation ? whiteWin(evaluation.score) : null;
     const moveNumber = beforeFen ? `${beforeFen[5]}${beforeFen[1] === 'w' ? '.' : '…'}` : '0';
     const description = [
       index === 0 ? 'Starting position' : `${moveNumber} ${sans[index - 1]} · ${mover === 'white' ? 'White' : 'Black'}`,
-      value === null ? null : `${value.toFixed(1)}% ${tab === 'evaluation' ? 'White winning chance' : 'move accuracy'}`,
-      tab === 'evaluation' && evaluation ? `${scoreText(evaluation)} · ${evaluation.terminal ? 'terminal result' : `depth ${evaluation.depth}`}` : null,
+      value === null ? null : `${value.toFixed(1)}% White winning chance`,
+      evaluation ? `${scoreText(evaluation)} · ${evaluation.terminal ? 'terminal result' : `depth ${evaluation.depth}`}` : null,
       quality && quality.label !== 'Unreviewed' ? quality.label : null,
     ].filter(Boolean).join(' · ');
     return { node, value, description, evaluation, quality, moveNumber, mover };
@@ -111,15 +106,7 @@ export function ReviewCharts({ review, ply, sans, onView, side }: { review: Revi
   }
   const trackWidth = Math.max(264, kept.length * 44);
   return <section className="review-charts" aria-label="Game review">
-    <div className="chart-tabs" role="tablist" aria-label="Review chart">
-      {tabs.map((item, index) => <button key={item.id} type="button" role="tab" id={`${id}-${item.id}`} aria-controls={`${id}-panel`} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} onClick={() => setTab(item.id)} onKeyDown={event => {
-        const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : null;
-        if (next === null) return;
-        event.preventDefault(); event.stopPropagation(); setTab(tabs[next].id);
-        event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next].focus();
-      }}>{item.label}</button>)}
-    </div>
-    <div className="review-chart" id={`${id}-panel`} role="tabpanel" aria-label={tab === 'evaluation' ? 'Evaluation graph' : 'Move accuracy graph'} tabIndex={0}>
+    <div className="review-chart" role="region" aria-label="Evaluation graph" tabIndex={0}>
       <div className="chart-yaxis" aria-hidden="true">{ticks.map(tick => <span key={tick} style={{ top: yFor(tick) }}>{tick}%</span>)}</div>
       <div className="chart-scroll" ref={chart}>
       <div className="chart-track" style={{ width: trackWidth }}>
@@ -128,7 +115,8 @@ export function ReviewCharts({ review, ply, sans, onView, side }: { review: Revi
           {kept.map((point, pos) => pos > 0 && point.value !== null && kept[pos - 1].value !== null ? <line key={point.origIndex} x1={(pos - 1) * 44 + 22} y1={110 - kept[pos - 1].value!} x2={pos * 44 + 22} y2={110 - point.value} className="chart-line" /> : null)}
         </svg>
         {kept.map((point, pos) => {
-          return <button key={point.origIndex} type="button" ref={pos === selectedPos ? selected : undefined} className="chart-point" disabled={tab === 'accuracy' && point.origIndex === 0} aria-label={point.description} aria-current={pos === selectedPos ? 'step' : undefined} title={point.description} onClick={() => onView(point.origIndex)} style={{ left: pos * 44 }}>{point.value !== null && <i className={tab === 'accuracy' && point.quality ? `chart-dot-${qualitySlug(point.quality.label)}` : undefined} style={{ top: 110 - point.value }} />}<span>{point.moveNumber}</span></button>;
+          const dotClass = point.quality && point.quality.label !== 'Unreviewed' ? `chart-dot-${qualitySlug(point.quality.label)}` : undefined;
+          return <button key={point.origIndex} type="button" ref={pos === selectedPos ? selected : undefined} className="chart-point" aria-label={point.description} aria-current={pos === selectedPos ? 'step' : undefined} title={point.description} onClick={() => onView(point.origIndex)} style={{ left: pos * 44 }}>{point.value !== null && <i className={dotClass} style={{ top: 110 - point.value }} />}<span>{point.moveNumber}</span></button>;
         })}
       </div>
       </div>

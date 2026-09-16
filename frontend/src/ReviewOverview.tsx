@@ -1,6 +1,6 @@
 import { ArrowUpRight, BookOpen } from "lucide-react";
 import { sideName } from "./domain";
-import { issueLabels, summarizeReview, type ReviewSide } from "./reviewSummary";
+import { countLabels, summarizeReview, type ReviewSide } from "./reviewSummary";
 import type { Review } from "./useReview";
 import "./review-overview.css";
 import { QualityBadge, ReviewCharts } from "./ReviewCharts";
@@ -33,7 +33,7 @@ export function ReviewSummary({
     >
       {!summary.total ? (
         <p className="empty-copy">
-          Play or load some moves to see an accuracy summary.
+          Play or load some moves to see a move summary.
         </p>
       ) : (
         <>
@@ -58,7 +58,7 @@ export function ReviewSummary({
               <section
                 key={side.color}
                 className={`accuracy-card${userSide === side.color ? " own-side" : ""}`}
-                aria-label={`${sideName(side.color)} accuracy`}
+                aria-label={`${sideName(side.color)} move counts`}
               >
                 <h3>
                   <span
@@ -67,27 +67,20 @@ export function ReviewSummary({
                   />
                   {sideLabel(side.color)}
                 </h3>
-                <strong className="accuracy-value">
-                  {side.accuracy === null
-                    ? "—"
-                    : `${side.accuracy.toFixed(1)}%`}
-                </strong>
-                <span className="accuracy-caption">
-                  {side.reviewed < side.total ? "Partial accuracy" : "Accuracy"}
-                </span>
-                <dl className="quality-counts">
-                  {issueLabels.map((label) => (
-                    <div key={label}>
-                      <dt>
+                <ul className="quality-counts" aria-label={`${sideName(side.color)} move counts`}>
+                  {countLabels.map((label) => {
+                    const count = side.counts[label];
+                    const plural = label === "Inaccuracy" ? "Inaccuracies" : `${label}s`;
+                    return (
+                      <li key={label} className={count === 0 ? "zero" : undefined} title={`${count} ${plural}`}>
                         <QualityBadge
                           quality={{ label, accuracy: null, loss: null }}
                         />
-                        {label === "Inaccuracy" ? "Inaccuracies" : `${label}s`}
-                      </dt>
-                      <dd>{side.issues[label]}</dd>
-                    </div>
-                  ))}
-                </dl>
+                        <span aria-label={`${count} ${plural}`}>{count}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
               </section>
             ))}
           </div>

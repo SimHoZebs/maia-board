@@ -252,11 +252,12 @@ test('move analysis summarizes the game below the engines and links mistakes fro
   await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 15' })).toBeVisible();
   await expect(page.getByRole('tabpanel', { name: 'Move analysis', exact: true })).toBeVisible();
   await expect(page.locator('.overview-partial')).toContainText('Summary covers reviewed moves only');
-  await expect(page.getByRole('region', { name: 'White accuracy', exact: true }).locator('.accuracy-value')).toHaveText('—');
+  await expect(page.getByRole('region', { name: 'White move counts', exact: true })).toBeVisible();
+  await expect(page.locator('.accuracy-value')).toHaveCount(0);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.locator('.review-coverage')).toHaveCount(0);
   await expect(page.locator('.overview-partial')).toHaveCount(0);
-  await expect(page.locator('.accuracy-caption')).toHaveText(['Accuracy', 'Accuracy']);
+  await expect(page.locator('.quality-counts li')).toHaveCount(18);
   await expect(page.locator('.accuracy-summary')).not.toContainText('You');
   await page.getByRole('tab', { name: 'Moves to review', exact: true }).click();
   await expect(page.locator('.review-issue')).toHaveCount(2);
@@ -323,21 +324,21 @@ test('moves to review distinguishes empty games, no issues, and explored lines',
   await page.locator('#analysis-controls').getByRole('button', { name: 'Starting position', exact: true }).click();
   await page.locator('#load-analysis').click();
   await page.getByRole('tab', { name: 'Move analysis', exact: true }).click();
-  await expect(page.getByText('Play or load some moves to see an accuracy summary.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Play or load some moves to see a move summary.', { exact: true })).toBeVisible();
   await expect(page.locator('.accuracy-value')).toHaveCount(0);
 });
 
-for (const width of [1440, 360]) test(`move analysis restores accuracy and evaluation graphs at ${width}px`, async ({ page }, info) => {
+for (const width of [1440, 360]) test(`move analysis restores evaluation graph at ${width}px`, async ({ page }, info) => {
   await page.setViewportSize({ width, height: 900 });
   const app = await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
-  await expect(page.getByRole('tabpanel', { name: 'Move accuracy graph', exact: true })).toBeVisible();
-  await expect(page.locator('.chart-line')).toHaveCount(3);
-  await expect(page.locator('.chart-point').first()).toBeDisabled();
+  await expect(page.getByRole('region', { name: 'Evaluation graph', exact: true })).toBeVisible();
+  await expect(page.locator('.chart-line')).toHaveCount(4);
+  await expect(page.locator('.chart-point:disabled')).toHaveCount(0);
   await expect(page.locator('.chart-dot-mistake')).toHaveCount(1);
   await expect(page.locator('.chart-dot-blunder')).toHaveCount(1);
-  await expect(page.locator('.chart-point').nth(3)).toHaveAccessibleName(/2\. Nf3 · White.*move accuracy.*Blunder/);
+  await expect(page.locator('.chart-point').nth(3)).toHaveAccessibleName(/2\. Nf3 · White.*White winning chance.*Blunder/);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath(`overview-graphs-${width}.png`), fullPage: true });
   await page.locator('.chart-point').nth(3).click();
@@ -345,12 +346,8 @@ for (const width of [1440, 360]) test(`move analysis restores accuracy and evalu
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
   await expect(page.locator('.review-charts')).toHaveCount(1);
   await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/2\. Nf3/);
-  await page.getByRole('tab', { name: 'Move accuracy', exact: true }).focus();
-  await page.keyboard.press('ArrowRight');
-  await expect(page.getByRole('tab', { name: 'Evaluation', exact: true })).toBeFocused();
-  await expect(page.getByRole('tabpanel', { name: 'Evaluation graph', exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Move accuracy', exact: true })).toHaveCount(0);
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
-  await expect(page.locator('.chart-line')).toHaveCount(4);
   await expect(page.locator('.chart-point').nth(4)).toHaveAccessibleName(/2… Nc6 · Black.*White winning chance.*-6\.80/);
   await page.locator('.chart-point').nth(4).click();
   await expect(page.getByRole('tab', { name: 'Move analysis', exact: true })).toHaveAttribute('aria-selected', 'true');
@@ -363,10 +360,7 @@ for (const width of [1440, 360]) test(`move analysis restores accuracy and evalu
 test('move analysis graphs leave unreviewed positions as gaps', async ({ page }) => {
   await bootReview(page);
   await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 15' })).toBeVisible();
-  await expect(page.locator('.chart-point i')).toHaveCount(1);
-  await expect(page.locator('.chart-line')).toHaveCount(0);
-  await expect(page.locator('.chart-point').nth(2).locator('i')).toHaveCount(0);
-  await page.getByRole('tab', { name: 'Evaluation', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Evaluation graph', exact: true })).toBeVisible();
   await expect(page.locator('.chart-point i')).toHaveCount(2);
   await expect(page.locator('.chart-line')).toHaveCount(1);
   await expect(page.locator('.chart-point').nth(2).locator('i')).toHaveCount(0);
@@ -380,15 +374,15 @@ test('move analysis shows only your moves with your decision points on the graph
   }, KEYS.snapshot);
   await page.reload();
   await expect(page.locator('.accuracy-card')).toHaveCount(1);
-  await expect(page.getByRole('region', { name: 'Black accuracy', exact: true })).toContainText('Black · You');
-  await expect(page.getByRole('region', { name: 'White accuracy', exact: true })).toHaveCount(0);
-  await expect(page.locator('.accuracy-caption')).toHaveText('Partial accuracy');
+  await expect(page.getByRole('region', { name: 'Black move counts', exact: true })).toContainText('Black · You');
+  await expect(page.getByRole('region', { name: 'White move counts', exact: true })).toHaveCount(0);
+  await expect(page.locator('.quality-counts li')).toHaveCount(9);
   await expect(page.locator('.chart-point i')).toHaveCount(1);
   await expect(page.locator('.chart-point:disabled')).toHaveCount(0);
   await expect(page.locator('.chart-line')).toHaveCount(0);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
-  await expect(page.locator('.accuracy-caption')).toHaveText('Accuracy');
+  await expect(page.locator('.quality-counts li')).toHaveCount(9);
   await page.getByRole('tab', { name: 'Moves to review', exact: true }).click();
   await expect(page.locator('.review-issue')).toHaveCount(1);
   await expect(page.locator('.issue-move small')).toHaveCount(0);
@@ -398,12 +392,11 @@ test('move analysis shows only your moves with your decision points on the graph
   await expect(page.locator('.chart-point i')).toHaveCount(2);
   await expect(page.locator('.chart-line')).toHaveCount(1);
   expect(await page.locator('.chart-point span').allTextContents()).toEqual(['1…', '2…']);
-  await page.getByRole('tab', { name: 'Evaluation', exact: true }).click();
   await expect(page.locator('.chart-point i')).toHaveCount(2);
   await expect(page.locator('.chart-line')).toHaveCount(1);
   expect(await page.locator('.chart-point span').allTextContents()).toEqual(['1…', '2…']);
   await expect(page.locator('.chart-point:disabled')).toHaveCount(0);
-  await expect(page.getByRole('region', { name: 'Black accuracy', exact: true })).toContainText('Black · You');
+  await expect(page.getByRole('region', { name: 'Black move counts', exact: true })).toContainText('Black · You');
   expect(app.errors).toEqual([]);
 });
 
@@ -545,11 +538,11 @@ test('mixed arrow sources retain their own endpoints', async ({ page }, info) =>
 test('current position balance replaces the win-rate sections', async ({ page }) => {
   await bootReview(page);
   await expect(page.locator('.balance-score')).toHaveText('-6.80');
-  // The accuracy/evaluation graphs live in Move analysis now, so the section
-  // renders before any review — connected lines appear only once reviewed
-  // positions settle (dot coverage is asserted in the gaps test below).
+  // The evaluation graph lives in Move analysis now, so the section
+  // renders before any review — the foreground pair settles one segment
+  // immediately (dot coverage is asserted in the gaps test below).
   await expect(page.locator('.win-hero')).toHaveCount(0);
-  await expect(page.locator('.chart-line')).toHaveCount(0);
+  await expect(page.locator('.chart-line')).toHaveCount(1);
   await expect(page.getByText('Unreviewed', { exact: false })).toHaveCount(0);
   await expect(page.locator('[title*="Unreviewed"], [aria-label*="Unreviewed"], .quality-unreviewed')).toHaveCount(0);
 });

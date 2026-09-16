@@ -15,6 +15,8 @@ it('averages each side independently and counts every actual move', () => {
   expect(summary.reviewed).toBe(5);
   expect(summary.sides[0]).toMatchObject({ color: 'white', total: 3, reviewed: 3, accuracy: 80, issues: { Inaccuracy: 0, Mistake: 0, Blunder: 1 } });
   expect(summary.sides[1]).toMatchObject({ color: 'black', total: 2, reviewed: 2, accuracy: 70, issues: { Inaccuracy: 0, Mistake: 1, Blunder: 0 } });
+  expect(summary.sides[0].counts).toMatchObject({ Good: 1, Blunder: 1, Forced: 1 });
+  expect(summary.sides[1].counts).toMatchObject({ Good: 1, Mistake: 1 });
 });
 
 it('counts blunders alongside inaccuracies and mistakes', () => {

@@ -7,7 +7,6 @@
 .tab-action button { flex-shrink: 0; white-space: nowrap; }
 .tab-action [role="status"] { flex-shrink: 0; white-space: nowrap; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .review-overview .review-charts { margin: 0 0 18px; }
-.review-overview .chart-tabs { margin-bottom: 8px; }
 .chart-point .chart-dot-inaccuracy { background: #7c691e; }
 .chart-point .chart-dot-mistake { background: #985920; }
 .chart-point .chart-dot-blunder { background: #a63c3c; }
@@ -20,13 +19,10 @@
 .accuracy-summary > :only-child { grid-column: 1 / -1; }
 .accuracy-card { display: flex; flex-direction: column; min-width: 0; padding: 12px 10px; border: 1px solid var(--line); border-radius: 5px; background: #202122; }
 .accuracy-card.own-side { border-color: #76865b; }
-.accuracy-card h3 { display: flex; align-items: center; gap: 7px; margin: 0 0 14px; font-size: 12px; font-weight: 600; }
-.accuracy-value { font-size: clamp(24px, 3vw, 32px); line-height: 1; font-weight: 650; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
-.accuracy-caption { margin-top: 6px; font-size: 11px; color: var(--muted); }
-.quality-counts { display: flex; flex-direction: column; gap: 7px; margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--line); font-size: 11px; }
-.quality-counts > div { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
-.quality-counts dt { display: flex; align-items: center; gap: 6px; color: var(--muted); }
-.quality-counts dd { margin: 0; font-variant-numeric: tabular-nums; }
+.accuracy-card h3 { display: flex; align-items: center; gap: 7px; margin: 0 0 10px; font-size: 12px; font-weight: 600; }
+.quality-counts { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 11px; }
+.quality-counts li { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px 3px 3px; border: 1px solid var(--line); border-radius: 20px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.quality-counts li.zero { opacity: 0.45; }
 .overview-partial { margin: 12px 0; padding: 10px 12px; border-left: 2px solid var(--accent); background: #b8c99809; font-size: 12px; }
 .overview-issues-heading { display: flex; align-items: center; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
 /* Separation from the summary above lives on the section boundary, not the

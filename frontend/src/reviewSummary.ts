@@ -3,6 +3,9 @@ import type { Quality } from './reviewMetrics';
 
 export const issueLabels = ['Inaccuracy', 'Mistake', 'Blunder', 'Allowed mate'] as const;
 type IssueLabel = typeof issueLabels[number];
+// Compact chip row order: praise first, then neutral, then errors.
+export const countLabels = ['Excellent', 'Great', 'Best', 'Good', 'Forced', 'Inaccuracy', 'Mistake', 'Blunder', 'Allowed mate'] as const;
+export type CountLabel = typeof countLabels[number];
 export type ReviewSide = 'white' | 'black';
 export type SideSummary = {
   color: ReviewSide;
@@ -10,6 +13,7 @@ export type SideSummary = {
   reviewed: number;
   accuracy: number | null;
   issues: Record<IssueLabel, number>;
+  counts: Record<CountLabel, number>;
 };
 export type ReviewIssue = {
   beforePly: number;
@@ -24,6 +28,7 @@ export function summarizeReview(nodes: readonly Pick<ReviewNode, 'turn' | 'ply' 
   const sides: SideSummary[] = (['white', 'black'] as const).map(color => ({
     color, total: 0, reviewed: 0, accuracy: null,
     issues: { Inaccuracy: 0, Mistake: 0, Blunder: 0, 'Allowed mate': 0 },
+    counts: { Excellent: 0, Great: 0, Best: 0, Good: 0, Forced: 0, Inaccuracy: 0, Mistake: 0, Blunder: 0, 'Allowed mate': 0 },
   }));
   const scores = { white: 0, black: 0 };
   const issues: ReviewIssue[] = [];
@@ -43,6 +48,8 @@ export function summarizeReview(nodes: readonly Pick<ReviewNode, 'turn' | 'ply' 
     if (!quality || quality.accuracy === null || quality.label === 'Unreviewed') continue;
     side.reviewed++;
     scores[side.color] += quality.accuracy;
+    const countLabel = countLabels.find(label => label === quality.label);
+    if (countLabel) side.counts[countLabel]++;
     const label = issueLabels.find(label => label === quality.label);
     if (label) {
       side.issues[label]++;
