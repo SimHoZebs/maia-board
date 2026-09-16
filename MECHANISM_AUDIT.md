@@ -5,12 +5,23 @@ either unneeded or needs documentation. Each item below has a plain-language
 description, a guess at why it is the way it is, the open question, and a
 candidate resolution. Work through them one by one; fix after the tour.
 
-## 1. Batch preemption kills foreign jobs — DOCUMENTED, fix proposed
+## Threat model (agreed)
+
+Trusted LAN/tailnet, single household, no auth, no internet exposure. There
+is no malicious abuser: adversarial framing (dueling tabs, garbage loops) is
+out of scope until internet exposure, when per-client fairness keys off the
+auth identity that project will introduce. The realistic "runaway" is our own
+client code looping (we have written such loops before) — and dedup already
+defangs it: same-key resubmits join instead of growing the queue. What remains
+is a tripwire cap on lane depth (no attribution needed) so a pathological
+client fails visibly with 429 instead of piling silently.
+
+## 1. Batch preemption kills foreign jobs — SUPERSEDED by cancel removal
 - Where: `frontend/src/useServerBatch.ts` (busy-path cancel + resubmit; intent comment at the submit handler)
 - What: on 409 against different content, DELETEs the running batch and submits ours.
 - Guess: newest visible line wins so a forgotten tab can't hold the only slot hostage; finished plies survive in cache.
 - Open: branch can't tell our own dying job (DELETE race on line change) from a foreign tab's live job.
-- Candidate: ownership distinction — cancel + resubmit only for own jobs (plus tombstone for just-cancelled id), wait politely otherwise.
+- Decision: remove cancel paths instead of fixing ownership. Dedup makes tickets shared, so cancel-by-key can never be owned; key-recency ordering gives the responsiveness cancel provided destructively (no batch identifiers anywhere); orphaned work drains into cache. Tombstones/waiting loops go away with the cancel calls.
 
 ## 2. Prime lookup aborted on every line change
 - Where: `frontend/src/useBulkPrime.ts:39` (abort on `loadKey` change)
