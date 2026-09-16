@@ -36,7 +36,7 @@ export async function retryBusy(fetcher: typeof fetch, input: RequestInfo | URL,
 }
 
 // Single fetch path for engine work: deadline + structured busy retry +
-// JSON read. Preserves superseded/batch_busy/503 codes for callers; only
+// JSON read. Preserves superseded/503 codes for callers; only
 // engine_busy 503s retry here. Wire format unchanged.
 export async function fetchJsonWithBusyRetry(
   fetcher: typeof fetch, input: RequestInfo | URL, init: RequestInit, signal?: AbortSignal, timeout = 150_000,

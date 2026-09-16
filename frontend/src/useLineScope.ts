@@ -3,7 +3,8 @@ import { cancelScope, createLineScope, type LineScope } from './reviewCoordinato
 
 // One abort scope per line, shared by useReview and usePlayFeedback.
 // A line change or unmount aborts the previous scope's controller
-// (foreground signal); the batch hook DELETEs its job on scope match.
+// (foreground signal). Batch jobs are never cancelled: scope change only
+// drops local optimism.
 // Backgrounding never aborts: there are no visibility/suspend listeners.
 export function useLineScope(lineKey: string): LineScope {
   const scope = useMemo(() => createLineScope(lineKey), [lineKey]);

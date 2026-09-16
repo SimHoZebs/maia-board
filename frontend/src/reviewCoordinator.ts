@@ -3,17 +3,15 @@ import { clampMaiaElo } from './BoardTools';
 import type { Evaluation } from './reviewMetrics';
 import { EvaluationStore, evaluationStore, evaluationRequest, fetchEvaluation, reviewKey, resolveSettings, stablePositionKey,
   type Engine, type EvaluationResult, type Job, type ReviewNode, type ReviewSettings, type SettingsInput } from './evaluationStore';
-import { cancelBatch } from './batchReview';
 export { EvaluationStore, fetchEvaluation, parseEvaluation, resolveSettings, reviewKey, reviewNodes, stablePositionKey,
   type Engine, type EvaluationResult, type Job, type ReviewNode, type ReviewSettings, type SettingsInput } from './evaluationStore';
 
 export function subscribeNone(): () => void { return () => undefined; }
 
-// Abort scope: one lineKey owns its foreground work and its batch job.
+// Abort scope: one lineKey owns its foreground work. Batch jobs are never
+// cancelled: scope change only drops local optimism.
 // lineKey = hash(initialFen + moves). A line change or unmount aborts the
-// previous scope's controller (foreground signal) and DELETEs its batch job
-// when the job's scope still matches. Backgrounding never aborts: only an
-// explicit scope change or unmount cancels.
+// previous scope's controller (foreground signal). Backgrounding never aborts.
 export type LineScope = { lineKey: string; controller: AbortController; signal: AbortSignal };
 export function createLineScope(lineKey: string): LineScope {
   const controller = new AbortController();
@@ -21,11 +19,6 @@ export function createLineScope(lineKey: string): LineScope {
 }
 export function cancelScope(scope: LineScope): void {
   scope.controller.abort();
-}
-// Game-delete path (owned by another agent): cancel a batch job directly.
-// Settled cache rows survive; only the running job is dropped.
-export function cancelJob(jobId: string, fetcher: typeof fetch = fetch): Promise<void> {
-  return cancelBatch(jobId, fetcher).catch(() => undefined);
 }
 
 type Pending = { job: Job };
@@ -174,20 +167,6 @@ export class ReviewCoordinator {
     for (const engine of engines) this.abort(engine);
     this.failures.clear();
     engines.forEach(engine => this.pump(engine)); this.notify();
-  }
-  // Drop queued (not running) jobs for one engine, optionally limited to a
-  // key set. Grants are non-preemptive, so running work still completes and
-  // its sentence arrives free. Queue ownership stays here: workspaces never
-  // prune from hook effects. (Play needs no call: it queues no foreground
-  // jobs — restore + server batch skip cached plies at intake.)
-  cancelQueued(engine: Engine, keys?: ReadonlySet<string>) {
-    let dropped = false;
-    for (const key of [...this.pending[engine].keys()]) {
-      if (keys && !keys.has(key)) continue;
-      this.pending[engine].delete(key);
-      dropped = true;
-    }
-    if (dropped) this.notify();
   }
   private abort(engine: Engine) {
     const runs = [...this.running[engine]];

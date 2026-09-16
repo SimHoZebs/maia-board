@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildTimeline, START_FEN } from './domain';
-import { BatchBusyError, BatchGoneError, BATCH_PERSIST_KEY, buildBatchItems, cancelBatch, classifyBusyJob,
-  clearPersistedBatch, fetchBatchStatus, hashBatchKeys, readPersistedBatch, submitBatch, subscribeBatchEvents,
+import { BatchGoneError, BATCH_PERSIST_KEY, buildBatchItems,
+  clearPersistedBatch, fetchBatchStatus, hashBatchKeys, parseBatchRetryDelayMs, readPersistedBatch, submitBatch, subscribeBatchEvents,
   writePersistedBatch, type BatchProgress } from './batchReview';
+import { MaiaApiError } from './api';
 import { jsonResponse } from './evaluationTestFixtures';
 import { reviewNodes } from './evaluationStore';
 import type { ReviewSettings } from './evaluationStore';
@@ -12,7 +13,12 @@ const settings: ReviewSettings = { eloMaia: 1600, eloUser: 1600, model: '79m', s
 const nodes = reviewNodes(buildTimeline(START_FEN, ['e2e4', 'e7e5']));
 const items = () => buildBatchItems(nodes, settings);
 const progress = (over: Partial<BatchProgress> = {}): BatchProgress =>
-  ({ job_id: 'job1', total: 6, done: 0, failed: 0, cancelled: false, finished: false, ...over });
+  ({ job_id: 'job1', total: 6, done: 0, failed: 0, finished: false, ...over });
+const response429 = (retryAfter: string | null, body: unknown = {}) => {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (retryAfter !== null) headers['Retry-After'] = retryAfter;
+  return new Response(JSON.stringify(body), { status: 429, headers });
+};
 
 describe('buildBatchItems', () => {
   it('emits sf+maia per node in stable order with matching cache keys', () => {
@@ -35,44 +41,89 @@ describe('submitBatch', () => {
     expect(body.requests).toHaveLength(6);
     expect(body.requests[0]).toMatchObject({ engine: 'sf', moves: [], initial_fen: START_FEN });
   });
-  it('surfaces a running batch as BatchBusyError with progress', async () => {
-    const running = progress({ done: 3 });
-    const fetcher = vi.fn<typeof fetch>(async () => jsonResponse({ code: 'batch_busy', job_id: 'old', progress: running }, 409));
-    const error = await submitBatch(items(), fetcher).then(() => null, error => error);
-    expect(error).toBeInstanceOf(BatchBusyError);
-    expect((error as BatchBusyError).jobId).toBe('old');
-    expect((error as BatchBusyError).progress.done).toBe(3);
+});
+
+describe('parseBatchRetryDelayMs', () => {
+  it('parses numeric headers, clamps to 1..30s, defaults to 5s', () => {
+    expect(parseBatchRetryDelayMs('5')).toBe(5_000);
+    expect(parseBatchRetryDelayMs('1')).toBe(1_000);
+    expect(parseBatchRetryDelayMs('0')).toBe(1_000);
+    expect(parseBatchRetryDelayMs('-3')).toBe(1_000);
+    expect(parseBatchRetryDelayMs('60')).toBe(30_000);
+    expect(parseBatchRetryDelayMs(null)).toBe(5_000);
+    expect(parseBatchRetryDelayMs('')).toBe(5_000);
+    expect(parseBatchRetryDelayMs('not-a-date')).toBe(5_000);
   });
 });
 
-describe('classifyBusyJob', () => {
-  const base = { submittedKey: 'lineA', keysHash: 'abc123', total: 6, busyJobId: 'job-busy' };
-  const persistedFor = () => ({ jobId: 'job-busy', lineKey: 'lineA', keysHash: 'abc123', total: 6 });
-  it('reports already-attached for same content this scope owns', () => {
-    expect(classifyBusyJob({ ...base, ownJobId: 'job-busy', cancelledOwnIds: new Set(), persisted: persistedFor() }))
-      .toEqual({ kind: 'already-attached' });
+describe('submitBatch 429 backpressure', () => {
+  it('waits per Retry-After once then resubmits once (header-first)', async () => {
+    const sleep = vi.fn(async () => undefined);
+    const fetcher = vi.fn<typeof fetch>(async (url, init) => {
+      if (fetcher.mock.calls.length === 1) return response429('2');
+      return jsonResponse({ job_id: 'job1', total: 6, cached: 0, pending: 6 }, 202);
+    });
+    const submitted = await submitBatch(items(), fetcher, sleep);
+    expect(submitted).toMatchObject({ job_id: 'job1' });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(2_000);
+    // Cancel-free: every attempt is a POST, never a DELETE.
+    for (const [, init] of fetcher.mock.calls) expect(init?.method).toBe('POST');
   });
-  it('attaches for same content owned elsewhere (reload/second tab)', () => {
-    expect(classifyBusyJob({ ...base, ownJobId: null, cancelledOwnIds: new Set(), persisted: persistedFor() }))
-      .toEqual({ kind: 'attach' });
+  it('resubmits only once then surfaces engine-busy', async () => {
+    const sleep = vi.fn(async () => undefined);
+    const fetcher = vi.fn<typeof fetch>(async () => response429('1'));
+    const error = await submitBatch(items(), fetcher, sleep).then(() => null, error => error);
+    expect(error).toBeInstanceOf(MaiaApiError);
+    expect((error as MaiaApiError).code).toBe('engine_busy');
+    expect((error as MaiaApiError).status).toBe(429);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(1_000);
+    for (const [, init] of fetcher.mock.calls) expect(init?.method).toBe('POST');
   });
-  it('resubmits for different content against our own running job', () => {
-    expect(classifyBusyJob({ ...base, ownJobId: 'job-busy', cancelledOwnIds: new Set(), persisted: null }))
-      .toEqual({ kind: 'self-resubmit' });
+  it('defaults to 5s when Retry-After is missing or unreadable', async () => {
+    for (const header of [null, 'garbage'] as const) {
+      const sleep = vi.fn(async () => undefined);
+      const fetcher = vi.fn<typeof fetch>(async () => response429(header));
+      await submitBatch(items(), fetcher, sleep).then(() => null, error => error);
+      expect(sleep).toHaveBeenCalledWith(5_000);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    }
   });
-  it('resubmits when the busy id is a tombstoned just-cancelled own id', () => {
-    expect(classifyBusyJob({ ...base, ownJobId: null, cancelledOwnIds: new Set(['job-busy']), persisted: null }))
-      .toEqual({ kind: 'self-resubmit' });
+  it('clamps extreme Retry-After values', async () => {
+    const sleep = vi.fn(async () => undefined);
+    const fetcher = vi.fn<typeof fetch>(async () => response429('120'));
+    await submitBatch(items(), fetcher, sleep).then(() => null, error => error);
+    expect(sleep).toHaveBeenCalledWith(30_000);
   });
-  it('waits for foreign jobs and content mismatches', () => {
-    const foreign = { ...base, ownJobId: null, cancelledOwnIds: new Set<string>(), persisted: null };
-    expect(classifyBusyJob(foreign)).toEqual({ kind: 'foreign-wait' });
-    // Same job id but a different line / hash / total is not same content.
-    expect(classifyBusyJob({ ...foreign, submittedKey: 'lineB', persisted: persistedFor() })).toEqual({ kind: 'foreign-wait' });
-    expect(classifyBusyJob({ ...foreign, persisted: { ...persistedFor(), keysHash: 'other' } })).toEqual({ kind: 'foreign-wait' });
-    expect(classifyBusyJob({ ...foreign, persisted: { ...persistedFor(), total: 4 } })).toEqual({ kind: 'foreign-wait' });
-    // An unrelated tombstone does not claim the foreign job.
-    expect(classifyBusyJob({ ...foreign, cancelledOwnIds: new Set(['job-old']) })).toEqual({ kind: 'foreign-wait' });
+});
+
+describe('429 skew into the old generic path', () => {
+  it('handles a 429 in generic status reads without crashing', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => response429(null, { code: 'busy', message: 'slow down' }));
+    const error = await fetchBatchStatus('job1', fetcher).then(() => null, error => error);
+    expect(error).toBeInstanceOf(MaiaApiError);
+    expect((error as MaiaApiError).message).toBe('slow down');
+    expect((error as MaiaApiError).status).toBe(429);
+  });
+});
+
+describe('cancel-free client', () => {
+  it('exposes no cancel/busy helpers and never issues DELETE', async () => {
+    const mod = (await import('./batchReview')) as Record<string, unknown>;
+    expect(mod).not.toHaveProperty('cancelBatch');
+    expect(mod).not.toHaveProperty('BatchBusyError');
+    expect(mod).not.toHaveProperty('classifyBusyJob');
+    const fetcher = vi.fn<typeof fetch>(async (url, init) => {
+      if (url === '/reviews') return jsonResponse({ job_id: 'job1', total: 6, cached: 0, pending: 6 }, 202);
+      return jsonResponse(progress({ done: 6, finished: true }));
+    });
+    await submitBatch(items(), fetcher, async () => undefined);
+    await fetchBatchStatus('job1', fetcher);
+    expect(fetcher.mock.calls.length).toBeGreaterThan(0);
+    for (const [, init] of fetcher.mock.calls) expect(init?.method).not.toBe('DELETE');
   });
 });
 
@@ -82,16 +133,6 @@ describe('fetchBatchStatus', () => {
     expect((await fetchBatchStatus('job1', fetcher)).finished).toBe(true);
     const gone = vi.fn<typeof fetch>(async () => jsonResponse({}, 404));
     await expect(fetchBatchStatus('nope', gone)).rejects.toBeInstanceOf(BatchGoneError);
-  });
-});
-
-describe('cancelBatch', () => {
-  it('deletes and treats unknown ids as already gone', async () => {
-    const fetcher = vi.fn<typeof fetch>(async () => new Response(null, { status: 204 }));
-    await cancelBatch('job1', fetcher);
-    expect(fetcher.mock.calls[0][0]).toBe('/reviews/job1');
-    const gone = vi.fn<typeof fetch>(async () => jsonResponse({}, 404));
-    await cancelBatch('nope', gone);
   });
 });
 

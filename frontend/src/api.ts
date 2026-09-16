@@ -28,7 +28,6 @@ export type MoveResponse = {
 };
 
 export type ApiErrorCode =
-  | 'batch_busy'
   | 'engine_busy'
   | 'engine_unavailable'
   | 'game_over'
@@ -125,7 +124,7 @@ export function parseMoveResponse(value: unknown, expected?: { model: MaiaModel;
 function parseErrorCode(value: unknown): ApiErrorCode {
   if (!isRecord(value) || typeof value.code !== 'string') return 'unknown';
   const known: ApiErrorCode[] = [
-    'batch_busy', 'engine_busy', 'engine_unavailable', 'game_over', 'history_too_long', 'invalid_elo',
+    'engine_busy', 'engine_unavailable', 'game_over', 'history_too_long', 'invalid_elo',
     'invalid_fen', 'invalid_initial_fen', 'invalid_json', 'invalid_maia_color',
     'invalid_model', 'invalid_move', 'invalid_position', 'invalid_request',
     'method_not_allowed', 'missing_elo', 'not_maia_turn', 'position_mismatch',
@@ -138,7 +137,7 @@ export type RequestPriority = 'play' | 'focus';
 
 export async function requestMove(payload: MoveRequest, fetchImpl: FetchLike = fetch, signal?: AbortSignal, _opts?: { priority?: RequestPriority }): Promise<MoveResponse & { cached?: boolean }> {
   // Lane is endpoint-implied (POST /move → Play): no X-Priority header.
-  // superseded/batch_busy/503 codes flow through unchanged via the shared helper.
+  // superseded/503 codes flow through unchanged via the shared helper.
   let response: Response;
   let body: unknown;
   try {
@@ -178,8 +177,6 @@ export function readableApiError(error: unknown): string {
       return 'Maia is unreachable. Check that the server is running on your LAN.';
     case 'engine_busy':
       return 'Maia is busy. Wait a moment and try again.';
-    case 'batch_busy':
-      return 'A full-game review is already running. Wait for it or cancel it first.';
     case 'superseded':
       return 'A newer request replaced this position.';
     case 'not_maia_turn':

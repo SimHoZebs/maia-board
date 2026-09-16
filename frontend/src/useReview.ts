@@ -36,8 +36,8 @@ export function useReview(state: State) {
     : [...state.analysis.moves.slice(0, state.analysis.branchFromPly), ...state.analysis.branchMoves],
   [state.analysis.moves, state.analysis.branchFromPly, state.analysis.branchMoves]);
   const lineKey = useMemo(() => lineKeyFor(state.analysis.initialFen, moves), [state.analysis.initialFen, moves]);
-  // One abort scope per line (shared hook); the batch hook DELETEs its job
-  // on scope match. Backgrounding never aborts.
+  // One abort scope per line (shared hook). Batch jobs are never cancelled:
+  // scope change only drops local optimism. Backgrounding never aborts.
   const scope = useLineScope(lineKey);
   const timeline = useMemo(() => buildTimeline(state.analysis.initialFen, moves), [lineKey]);
   const nodes = useMemo(() => reviewNodes(timeline), [timeline]);

@@ -4,15 +4,14 @@ import { evaluationRequest, resolveSettings, reviewKey, type Engine, type Review
 export type BatchItem = { request: ReturnType<typeof evaluationRequest>; key: string; engine: Engine };
 export type BatchProgress = {
   job_id: string; total: number; done: number; failed: number;
-  cancelled: boolean; finished: boolean; errors?: Record<string, string>;
+  finished: boolean; errors?: Record<string, string>;
 };
 export type BatchSubmitted = { job_id: string; total: number; cached: number; pending: number };
 
 // Persisted batch identity: lets a reloaded tab reattach to its own running
-// job instead of showing Analyze again and submitting a duplicate (which the
-// single-active server would treat as a replacement, discarding progress).
-// Single entry is enough: the server runs at most one batch at a time, so the
-// latest submit is the active job. keysHash binds the entry to the exact
+// job instead of showing Analyze again and submitting a duplicate.
+// Single entry is enough for reload reattach: the latest submit is the job
+// this tab owns. keysHash binds the entry to the exact
 // content (line + engine settings); a settings change or different line never
 // reattaches.
 export const BATCH_PERSIST_KEY = 'maia-board.review-batch.v1';
@@ -78,54 +77,34 @@ export function clearPersistedBatch(jobId?: string): void {
   }
 }
 
-export class BatchBusyError extends Error {
-  readonly jobId: string;
-  readonly progress: BatchProgress;
-  constructor(jobId: string, progress: BatchProgress) {
-    super('Another review batch is running.');
-    this.name = 'BatchBusyError';
-    this.jobId = jobId;
-    this.progress = progress;
-  }
-}
-
 export class BatchGoneError extends Error {
   constructor() { super('Review batch not found.'); this.name = 'BatchGoneError'; }
 }
 
-// Busy-path ownership: the single-active server 409s every concurrent
-// submit, so the hook must tell its own dying job (line-change DELETE still
-// in flight) from a foreign tab's live job. Self keeps cancel + resubmit;
-// foreign waits politely and never cancels.
-export const FOREIGN_BATCH_WAIT_MS = 30_000;
-export const FOREIGN_BATCH_POLL_MS = 2_000;
-
-export type BusyJobDecision =
-  | { kind: 'already-attached' }
-  | { kind: 'attach' }
-  | { kind: 'self-resubmit' }
-  | { kind: 'foreign-wait' };
-
-export function classifyBusyJob(args: {
-  busyJobId: string;
-  submittedKey: string;
-  keysHash: string;
-  total: number;
-  ownJobId: string | null;
-  cancelledOwnIds: ReadonlySet<string>;
-  persisted: PersistedBatch | null;
-}): BusyJobDecision {
-  const { busyJobId, submittedKey, keysHash, total, ownJobId, cancelledOwnIds, persisted } = args;
-  const sameContent = !!persisted && persisted.jobId === busyJobId && persisted.lineKey === submittedKey
-    && persisted.keysHash === keysHash && persisted.total === total;
-  if (sameContent && ownJobId === busyJobId) return { kind: 'already-attached' };
-  if (sameContent) return { kind: 'attach' };
-  if (ownJobId === busyJobId) return { kind: 'self-resubmit' };
-  if (cancelledOwnIds.has(busyJobId)) return { kind: 'self-resubmit' };
-  return { kind: 'foreign-wait' };
+// 429 backpressure: the server rejects over-cap submits with 429 +
+// Retry-After. Header-first parse, clamped to 1..30s, default 5s. Accepts
+// numeric seconds or an HTTP date; anything unreadable falls back.
+export function parseBatchRetryDelayMs(header: string | null): number {
+  const DEFAULT_MS = 5_000;
+  if (!header) return DEFAULT_MS;
+  const trimmed = header.trim();
+  if (!trimmed) return DEFAULT_MS;
+  const numeric = Number(trimmed);
+  let seconds: number;
+  if (Number.isFinite(numeric)) {
+    seconds = numeric;
+  } else {
+    const when = Date.parse(trimmed);
+    if (!Number.isFinite(when)) return DEFAULT_MS;
+    seconds = (when - Date.now()) / 1000;
+  }
+  if (!Number.isFinite(seconds)) return DEFAULT_MS;
+  return Math.round(Math.min(30, Math.max(1, seconds)) * 1000);
 }
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+export type SleepLike = (ms: number) => Promise<void>;
+const defaultSleep: SleepLike = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // One entry per engine per analyzable node, in a stable order the server
 // echoes back as per-index errors. Outcome nodes and over-long lines are
@@ -158,26 +137,33 @@ function parseProgress(body: unknown): BatchProgress {
   return value;
 }
 
-export async function submitBatch(items: BatchItem[], fetchImpl: FetchLike = fetch): Promise<BatchSubmitted> {
-  const response = await fetchImpl('/reviews', {
+export async function submitBatch(items: BatchItem[], fetchImpl: FetchLike = fetch, sleepImpl: SleepLike = defaultSleep): Promise<BatchSubmitted> {
+  const postOnce = () => fetchImpl('/reviews', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ requests: items.map(item => item.request) }),
   }).catch(() => { throw new MaiaApiError('server_unreachable', 'The review server could not be reached.'); });
-  if (response.status === 409) {
+  const readSuccess = async (response: Response): Promise<BatchSubmitted> => {
+    if (!response.ok) throw await readError(response, 'The review server rejected this batch.');
     const body: unknown = await response.json().catch(() => null);
     const record = body && typeof body === 'object' ? body as Record<string, unknown> : null;
-    const jobId = typeof record?.job_id === 'string' ? record.job_id : '';
-    if (!jobId || !record?.progress) throw new MaiaApiError('batch_busy', 'A full-game review is already running.');
-    return Promise.reject(new BatchBusyError(jobId, parseProgress(record.progress)));
+    if (typeof record?.job_id !== 'string' || !Number.isInteger(record?.total)) {
+      throw new MaiaApiError('unknown', 'The review server returned unreadable data.', response.status);
+    }
+    return body as BatchSubmitted;
+  };
+  const first = await postOnce();
+  // 429 backpressure sits BEFORE the generic branch: wait once per
+  // Retry-After, resubmit once, else surface engine-busy.
+  if (first.status === 429) {
+    await sleepImpl(parseBatchRetryDelayMs(first.headers?.get('Retry-After') ?? null));
+    const second = await postOnce();
+    if (second.status === 429) {
+      throw new MaiaApiError('engine_busy', 'The review servers are busy. Try again shortly.', 429);
+    }
+    return readSuccess(second);
   }
-  if (!response.ok) throw await readError(response, 'The review server rejected this batch.');
-  const body: unknown = await response.json().catch(() => null);
-  const record = body && typeof body === 'object' ? body as Record<string, unknown> : null;
-  if (typeof record?.job_id !== 'string' || !Number.isInteger(record?.total)) {
-    throw new MaiaApiError('unknown', 'The review server returned unreadable data.', response.status);
-  }
-  return body as BatchSubmitted;
+  return readSuccess(first);
 }
 
 export async function fetchBatchStatus(jobId: string, fetchImpl: FetchLike = fetch): Promise<BatchProgress> {
@@ -186,13 +172,6 @@ export async function fetchBatchStatus(jobId: string, fetchImpl: FetchLike = fet
   if (response.status === 404) throw new BatchGoneError();
   if (!response.ok) throw await readError(response, 'The review server rejected this batch.');
   return parseProgress(await response.json().catch(() => null));
-}
-
-export async function cancelBatch(jobId: string, fetchImpl: FetchLike = fetch): Promise<void> {
-  const response = await fetchImpl(`/reviews/${jobId}`, { method: 'DELETE' })
-    .catch(() => { throw new MaiaApiError('server_unreachable', 'The review server could not be reached.'); });
-  // Unknown ids are already gone, which is the desired end state.
-  if (response.status !== 404 && !response.ok) throw await readError(response, 'The review server rejected this batch.');
 }
 
 // Streams live progress until the batch finishes, the caller aborts, or the

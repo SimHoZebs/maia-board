@@ -71,17 +71,14 @@ describe('requestMove', () => {
     }));
   });
 
-  it('preserves the scheduler 409 codes without retrying them', async () => {
-    for (const [code, status] of [['superseded', 409], ['batch_busy', 409]] as const) {
-      const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code, message: code }), { status }));
-      const error = await requestMove(payload, fetchImpl).catch((value: unknown) => value);
-      expect(error).toBeInstanceOf(MaiaApiError);
-      expect((error as MaiaApiError).code).toBe(code);
-      // retryBusy only retries engine_busy: exactly one attempt here.
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
-    }
+  it('preserves the scheduler 409 code without retrying it', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 'superseded', message: 'superseded' }), { status: 409 }));
+    const error = await requestMove(payload, fetchImpl).catch((value: unknown) => value);
+    expect(error).toBeInstanceOf(MaiaApiError);
+    expect((error as MaiaApiError).code).toBe('superseded');
+    // retryBusy only retries engine_busy: exactly one attempt here.
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(readableApiError(new MaiaApiError('superseded', 'x'))).toBe('A newer request replaced this position.');
-    expect(readableApiError(new MaiaApiError('batch_busy', 'x'))).toBe('A full-game review is already running. Wait for it or cancel it first.');
   });
 
   it.each([

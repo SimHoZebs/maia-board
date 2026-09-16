@@ -77,7 +77,6 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
       const segments = path.slice('/reviews/'.length).split('/');
       const job = batches.get(segments[0]);
       if (job === undefined) { await route.fulfill({ status: 404, body: '' }); return; }
-      if (method === 'DELETE') { batches.delete(segments[0]); await route.fulfill({ status: 204, body: '' }); return; }
       fileBatch(segments[0]);
       const progress = { job_id: segments[0], total: job.total, done: job.total, failed: 0, cancelled: false, finished: true };
       if (segments[1] === 'events') {
