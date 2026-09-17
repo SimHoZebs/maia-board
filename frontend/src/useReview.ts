@@ -234,6 +234,10 @@ export function useReview(state: State) {
     : !prime || prime.key !== primeKey || !coverage ? 'loading'
     : 'partial';
   return { timeline, nodes, evaluations, qualities, rarities, bestRarities, mainlineQualities, coverage,
+    // Raw engine grades (Critical/Top/Holds intact) for the verdict's
+    // only-move fact. Badges and text read the translated `qualities`; this
+    // never reaches display directly.
+    engineGrades: computed.qualities,
     current: evaluations[currentPly], focus: evaluations[focusPly], focusPly, maia, maiaCurrent,
     maiaElo: displayed.entry?.eloMaia ?? focusSettings.eloMaia, maiaModel: maia?.model_used ?? focusSettings.model,
     maiaWantedElo: focusSettings.eloMaia, maiaWantedModel: focusSettings.model,

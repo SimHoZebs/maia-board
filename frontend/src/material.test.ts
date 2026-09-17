@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BEST_LINE_WINDOW_MAX, bestLineMaterialNote, bestLinePreview, capturesFromLine, capturedLabel, DEFAULT_BEST_LINE_WINDOW, materialFromFen, materialLeadFor, normalizeBestLineWindow, sortCaptured } from './material';
+import { BEST_LINE_WINDOW_MAX, bestLineMaterialNote, bestLinePreview, capturesFromLine, capturedLabel, DEFAULT_BEST_LINE_WINDOW, materialFromFen, materialLeadFor, normalizeBestLineWindow, playedMoveForkNote, playedMoveGainNote, sortCaptured } from './material';
 import { START_FEN } from './domain';
 
 describe('material', () => {
@@ -124,6 +124,71 @@ describe('bestLineMaterialNote', () => {
     expect(preview?.note).toBe("Nd4 forks White's bishop and queen, losing the bishop.");
     expect(preview?.ucis).toEqual(['f5d4', 'b3c3', 'd4c2']);
     expect(preview?.text).toBe('1… Nd4 2. Qc3 2… Nxc2+');
+  });
+});
+
+describe('playedMoveGainNote', () => {
+  it('names an immediate pawn win', () => {
+    expect(playedMoveGainNote(
+      'rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+      'rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2',
+      'e4d5',
+      'white',
+    )).toBe('Wins a pawn.');
+  });
+
+  it('names a queen win by composition, not magnitude', () => {
+    expect(playedMoveGainNote(
+      '4k3/8/8/3q4/8/8/8/3RK3 w - - 0 1',
+      '4k3/8/8/3R4/8/8/8/3RK3 b - - 0 1',
+      'd1d5',
+      'white',
+    )).toBe('Wins a queen.');
+  });
+
+  it('reads the gain for Black from Black-relative swing', () => {
+    expect(playedMoveGainNote(
+      '4k3/8/4p3/3P4/8/8/8/4K3 b - - 0 1',
+      '4k3/8/8/3p4/8/8/8/4K3 w - - 0 1',
+      'e6d5',
+      'black',
+    )).toBe('Wins a pawn.');
+  });
+
+  it('stays silent on quiet moves, promotions, and bad data', () => {
+    expect(playedMoveGainNote(START_FEN, START_FEN, 'e2e4', 'white')).toBeNull();
+    expect(playedMoveGainNote(
+      '8/P7/7k/8/8/8/8/7K w - - 0 1',
+      'Q6k/8/8/8/8/8/8/7K b - - 0 1',
+      'a7a8q',
+      'white',
+    )).toBeNull();
+    expect(playedMoveGainNote('bad', START_FEN, 'e2e4', 'white')).toBeNull();
+    expect(playedMoveGainNote(START_FEN, START_FEN, 'e2e9', 'white')).toBeNull();
+  });
+});
+
+describe('playedMoveForkNote', () => {
+  const forkFen = '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1';
+  it('names the fork without claiming the fall', () => {
+    expect(playedMoveForkNote(forkFen, 'f5d4', 'black'))
+      .toBe("Nd4 forks White's bishop and queen.");
+  });
+
+  it('names royal forks with the king first', () => {
+    expect(playedMoveForkNote('4k3/8/8/8/8/3n4/8/3Q3K b - - 0 1', 'd3f2', 'black'))
+      .toBe("Nf2+ forks White's king and queen.");
+  });
+
+  it('rejects captures, single victims, quiet moves, and bad data', () => {
+    expect(playedMoveForkNote(
+      'rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+      'e4d5',
+      'white',
+    )).toBeNull();
+    expect(playedMoveForkNote(START_FEN, 'e2e4', 'white')).toBeNull();
+    expect(playedMoveForkNote('8/P7/7k/8/8/8/8/7K w - - 0 1', 'a7a8q', 'white')).toBeNull();
+    expect(playedMoveForkNote('bad', 'e2e4', 'white')).toBeNull();
   });
 });
 

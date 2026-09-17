@@ -110,41 +110,72 @@ function hardToAvoid(bestRarity: Rarity | null | undefined): string | null {
   if (bestRarity.prob == null || bestRarity.prob >= EXCELLENT_MAX_PROB) return null;
   return `Hard to avoid.`;
 }
-// One verdict sentence for the move just played. Priority is terminal
-// fact first: delivering mate or ending the game outranks the book name,
-// and the book name outranks the only-legal-move fact. Templates 1-8
-// below return alone with no novelty prefix and no second sentence; only
-// the rarity-synthesis branch takes a novelty prefix and at most one
-// second sentence. Returns null when there is nothing additive to say
+// Decision list for the move verdict. Array order IS the priority: the
+// first matching rule wins, so reordering rules reorders the verdict. Each
+// rule owns its match and its wording together — add a condition by adding
+// one entry, never by editing scattered if-chains. Standalone rules render
+// alone with no novelty prefix and no second sentence; when none matches,
+// the quality × rarity synthesis below takes a novelty prefix and at most
+// one note rule. Returns null when there is nothing additive to say
 // (unreviewed, off-book without Maia data, or pre-first-move); the badges
 // and charts already carry the grades.
-// materialNote is an additive second sentence (best-line 3-ply swing)
-// supplied by the caller; it only renders for Mistake/Blunder so
-// Inaccuracy stays quiet and Allowed-mate keeps its mate wording
-// unmodified by pawn swings. pawnNote is the positional fallback when
-// the material window is silent (Blunder/Mistake/Inaccuracy only).
+// materialNote is the best-line 3-ply swing supplied by the caller
+// (Mistake/Blunder only). pawnNote is the positional fallback when the
+// material window is silent (Blunder/Mistake/Inaccuracy only). positiveNote
+// is the mirror for praise grades (Best/Great/Excellent/Good only): the
+// single strongest why, picked by theory.ts from its own ordered
+// candidates. Neither note ever rescues a quiet verdict: notes append to
+// the rarity synthesis only.
 export type OpeningRef = { eco: string; name: string };
-export function describeMove(args: { san: string; quality: Quality | undefined; rarity: Rarity | undefined; opening?: OpeningRef | null; bestRarity?: Rarity | null; materialNote?: string | null; terminal?: TerminalKind | null; matePatternName?: string | null; deadDraw?: boolean; underpromotionAvoids?: boolean; novelty?: NoveltyRef | null; pawnNote?: string | null }): string | null {
-  const { san, quality, rarity, opening, bestRarity, materialNote, terminal, matePatternName, deadDraw, underpromotionAvoids, novelty, pawnNote } = args;
-  if (terminal === 'checkmate') return matePatternName ? `${san} delivers ${matePatternName}.` : `${san} delivers checkmate.`;
-  if (terminal === 'stalemate' || terminal === 'repetition') {
-    const negative = quality?.label === 'Blunder' || quality?.label === 'Mistake' || quality?.label === 'Inaccuracy';
-    const noun = terminal === 'stalemate' ? 'stalemate' : 'a repetition draw';
-    return negative ? `${san} allows ${noun}.` : `${san} forces ${noun}.`;
-  }
-  if (terminal === 'fifty') return `${san} brings the fifty-move rule.`;
-  if (terminal === 'insufficient') return `${san} leaves insufficient mating material.`;
-  if (opening) return `${san} — ${opening.name} (${opening.eco}). Book move.`;
+export type VerdictArgs = { san: string; quality?: Quality | undefined; rarity?: Rarity | undefined; opening?: OpeningRef | null; bestRarity?: Rarity | null; materialNote?: string | null; terminal?: TerminalKind | null; matePatternName?: string | null; deadDraw?: boolean; underpromotionAvoids?: boolean; novelty?: NoveltyRef | null; pawnNote?: string | null; positiveNote?: string | null };
+export function isPraiseLabel(label: Quality['label'] | undefined): boolean {
+  return label === 'Best' || label === 'Great' || label === 'Excellent' || label === 'Good';
+}
+type StandaloneRule = { name: string; match: (facts: VerdictArgs) => boolean; render: (facts: VerdictArgs) => string };
+const STANDALONE_RULES: StandaloneRule[] = [
+  { name: 'checkmate', match: facts => facts.terminal === 'checkmate',
+    render: facts => facts.matePatternName ? `${facts.san} delivers ${facts.matePatternName}.` : `${facts.san} delivers checkmate.` },
+  { name: 'stalemate-repetition', match: facts => facts.terminal === 'stalemate' || facts.terminal === 'repetition',
+    render: facts => {
+      const negative = facts.quality?.label === 'Blunder' || facts.quality?.label === 'Mistake' || facts.quality?.label === 'Inaccuracy';
+      const noun = facts.terminal === 'stalemate' ? 'stalemate' : 'a repetition draw';
+      return negative ? `${facts.san} allows ${noun}.` : `${facts.san} forces ${noun}.`;
+    } },
+  { name: 'fifty', match: facts => facts.terminal === 'fifty',
+    render: facts => `${facts.san} brings the fifty-move rule.` },
+  { name: 'insufficient', match: facts => facts.terminal === 'insufficient',
+    render: facts => `${facts.san} leaves insufficient mating material.` },
+  { name: 'book', match: facts => !!facts.opening,
+    render: facts => `${facts.san} — ${facts.opening!.name} (${facts.opening!.eco}). Book move.` },
+  { name: 'forced', match: facts => facts.quality?.label === 'Forced',
+    render: facts => `${facts.san} was the only legal move.` },
+  { name: 'dead-draw', match: facts => !!facts.deadDraw,
+    render: facts => `${facts.san} — known theoretical draw.` },
+  { name: 'underpromotion', match: facts => !!facts.underpromotionAvoids,
+    render: facts => `${facts.san} underpromotes to avoid stalemate.` },
+];
+// Second-sentence rules for the synthesis branch. First match wins; the
+// grade sets are disjoint (negative notes vs praise notes), so order among
+// them only documents intent.
+type NoteRule = { name: string; match: (facts: VerdictArgs) => boolean; render: (facts: VerdictArgs) => string };
+const NOTE_RULES: NoteRule[] = [
+  { name: 'material', match: facts => !!facts.materialNote && (facts.quality?.label === 'Mistake' || facts.quality?.label === 'Blunder'),
+    render: facts => facts.materialNote! },
+  { name: 'pawn', match: facts => !!facts.pawnNote && (facts.quality?.label === 'Blunder' || facts.quality?.label === 'Mistake' || facts.quality?.label === 'Inaccuracy'),
+    render: facts => facts.pawnNote! },
+  { name: 'positive', match: facts => !!facts.positiveNote && isPraiseLabel(facts.quality?.label),
+    render: facts => facts.positiveNote! },
+];
+export function describeMove(args: VerdictArgs): string | null {
+  const standalone = STANDALONE_RULES.find(rule => rule.match(args));
+  if (standalone) return standalone.render(args);
+  const { quality, rarity, bestRarity, novelty } = args;
   if (!quality || quality.label === 'Unreviewed') return null;
-  if (quality.label === 'Forced') return `${san} was the only legal move.`;
-  if (deadDraw) return `${san} — known theoretical draw.`;
-  if (underpromotionAvoids) return `${san} underpromotes to avoid stalemate.`;
   const base = rarityVerdict(quality, rarity, bestRarity);
   if (!base) return null;
   const head = novelty ? `Leaves ${novelty.priorName} book. ${base}` : base;
-  if (materialNote && (quality.label === 'Mistake' || quality.label === 'Blunder')) return `${head} ${materialNote}`;
-  if (pawnNote && (quality.label === 'Blunder' || quality.label === 'Mistake' || quality.label === 'Inaccuracy')) return `${head} ${pawnNote}`;
-  return head;
+  const note = NOTE_RULES.find(rule => rule.match(args));
+  return note ? `${head} ${note.render(args)}` : head;
 }
 export function whiteWin(score: Score): number {
   return score.type === 'cp' ? 100 / (1 + Math.exp(-.00368208 * score.value)) : (score.winning_side ?? (score.value > 0 ? 'white' : 'black')) === 'white' ? 100 : 0;

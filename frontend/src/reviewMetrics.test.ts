@@ -252,6 +252,32 @@ it('appends the material note only for Mistake/Blunder', () => {
   expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity, materialNote: note }))
     .not.toContain('This line');
 });
+it('appends the positive why only for praise grades', () => {
+  const quality = (label: Quality['label']): Quality => ({ label, accuracy: 100, loss: 0 });
+  const rarityOf = (label: Rarity['label']): Rarity => ({ label, r: 1, prob: 0.4, topProb: 0.4 });
+  const rarity = rarityOf('Expected');
+  expect(describeMove({ san: 'exd5', quality: quality('Best'), rarity, positiveNote: 'Wins a pawn.' }))
+    .toBe('The natural choice. Wins a pawn.');
+  expect(describeMove({ san: 'Nd4', quality: quality('Great'), rarity: rarityOf('Rare'), positiveNote: "Nd4 forks Black's bishop and queen." }))
+    .toBe("A rare find. Nd4 forks Black's bishop and queen.");
+  expect(describeMove({
+    san: 'O-O', quality: quality('Good'), rarity: rarityOf('Uncommon'), positiveNote: 'Castles kingside.',
+  })).toBe('A meaningful minority that holds. Castles kingside.');
+  // Novelty still prefixes the synthesis the note appends to.
+  expect(describeMove({
+    san: 'exd5', quality: quality('Best'), rarity,
+    novelty: { priorName: 'Caro-Kann Defense', priorEco: 'B12' }, positiveNote: 'Wins a pawn.',
+  })).toBe('Leaves Caro-Kann Defense book. The natural choice. Wins a pawn.');
+  // Negative grades, forced moves, and terminals never take the note.
+  expect(describeMove({ san: 'exd5', quality: quality('Blunder'), rarity, positiveNote: 'Wins a pawn.' }))
+    .toBe('An easy mistake to make.');
+  expect(describeMove({ san: 'e4', quality: quality('Forced'), rarity, positiveNote: 'Wins a pawn.' }))
+    .toBe('e4 was the only legal move.');
+  expect(describeMove({ san: 'Qxf7#', quality: quality('Best'), rarity, terminal: 'checkmate', positiveNote: 'Wins a queen.' }))
+    .toBe('Qxf7# delivers checkmate.');
+  expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity, opening: { eco: 'C50', name: 'Italian Game' }, positiveNote: 'Gets out of check.' }))
+    .toBe('Nf3 — Italian Game (C50). Book move.');
+});
 it('pairs hard-to-avoid with the material consequence', () => {
   const blunder: Quality = { label: 'Blunder', accuracy: 20, loss: 25 };
   const expected: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };

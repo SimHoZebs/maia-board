@@ -112,9 +112,11 @@ export function MoveAnalysis({
     ) : null;
   const materialNote = bestLine?.note ?? null;
   // Theory facts (terminal classification, dead draws, novelties, pawn
-  // damage) derive from the timeline rows, so branches resolve through
-  // their own history. verdictInputsForPly owns every gate; describeMove
-  // owns priority and wording.
+  // damage, positive whys) derive from the timeline rows, so branches
+  // resolve through their own history. verdictInputsForPly owns fact gates;
+  // describeMove's rule tables own priority and wording. Mate-force reads the
+  // before/after score pair; the only-move fact reads the raw engine grade
+  // (Critical), which the translated display quality cannot recover.
   const verdictFacts = hasMove && played
     ? verdictInputsForPly({
       beforeFen: review.nodes[focus].fen,
@@ -132,6 +134,9 @@ export function MoveAnalysis({
       mover: review.nodes[focus].turn === 'white' ? 'white' : 'black',
       bestRarity: review.bestRarities?.[focus],
       materialNote,
+      beforeScore: evaluation?.score ?? null,
+      afterScore: afterEvaluation?.score ?? null,
+      isCritical: review.engineGrades?.[focus]?.label === 'Critical',
     })
     : null;
   const verdict = verdictFacts ? describeMove(verdictFacts) : null;

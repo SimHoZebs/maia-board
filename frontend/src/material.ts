@@ -167,17 +167,41 @@ const FORK_RANK: Record<Exclude<ForkVictim, 'k'>, number> = { b: 0, n: 1, r: 2, 
 const isForkVictim = (piece: string): piece is Exclude<ForkVictim, 'k'> =>
   piece === 'q' || piece === 'r' || piece === 'b' || piece === 'n';
 
+// Shared fork geometry: victims attacked by the piece now on `to` in the
+// post-move position. Non-pawn victims come from its legal captures in a
+// flipped-turn copy (only the turn field is swapped for the query), and the
+// king counts iff attackers(kingSq, beneficiary) contains the destination
+// square. Pawns never count. Null on illegal positions, never throws.
+function collectForkVictims(postMoveGame: Chess, to: Square, victimColor: 'w' | 'b', beneficiaryColor: 'w' | 'b'): ForkVictim[] | null {
+  try {
+    const parts = postMoveGame.fen().split(/\s+/);
+    parts[1] = beneficiaryColor;
+    const probe = new Chess(parts.join(' '));
+    const victims: ForkVictim[] = probe.moves({ square: to, verbose: true })
+      .map(move => move.captured?.toLowerCase())
+      .filter((captured): captured is Exclude<ForkVictim, 'k'> => !!captured && isForkVictim(captured));
+    const kingSquare = findKing(probe, victimColor);
+    if (kingSquare && probe.attackers(kingSquare, beneficiaryColor).includes(to)) victims.push('k');
+    return victims;
+  } catch { return null; }
+}
+// Orders victims king-first, then cheapest-first (bishops before knights on
+// the 3-point tie). Null unless at least two victims with a capturable piece
+// among them.
+function orderForkVictims(victims: ForkVictim[]): ForkVictim[] | null {
+  if (victims.length < 2) return null;
+  const rest = victims.filter((victim): victim is Exclude<ForkVictim, 'k'> => victim !== 'k')
+    .sort((a, b) => FORK_RANK[a] - FORK_RANK[b]);
+  if (rest.length === 0) return null;
+  return [...(victims.includes('k') ? ['k' as const] : []), ...rest];
+}
 // Names the tactic when PV move 1 forks two pieces and the window shows the
 // cheaper one falling: "Nd4 forks White's bishop and queen, losing the
 // bishop." Detection runs on the moved piece only (no discovered-attack
-// attribution): non-pawn victims come from its legal captures in a
-// flipped-turn copy of the post-move position (SAN replay always uses
-// afterFen; only the turn field is swapped for the query), and the king
-// counts iff attackers(kingSq, beneficiary) contains the destination square.
-// Pawns never count — a queen-and-pawn attack keeps the generic pawn note.
-// Returns null unless the window composition matches the claim exactly (opp
-// captures exactly the lost piece, mover captures nothing); illegal positions
-// and bad FENs silence, never throw.
+// attribution). Returns null unless the window composition matches the claim
+// exactly (opp captures exactly the lost piece, mover captures nothing); an
+// opening capture is never fork pressure. Illegal positions and bad FENs
+// silence, never throw.
 function tacticNote(afterFen: string, analyzed: BestLineAnalysis, mover: MaiaSide): string | null {
   if (analyzed.moverCaptures.length > 0 || analyzed.oppCaptures.length !== 1) return null;
   const firstUci = analyzed.ucis[0];
@@ -198,26 +222,68 @@ function tacticNote(afterFen: string, analyzed: BestLineAnalysis, mover: MaiaSid
   if (firstCapture) return null;
   const victimColor = mover === 'white' ? 'w' : 'b';
   const beneficiaryColor = mover === 'white' ? 'b' : 'w';
-  let victims: ForkVictim[];
-  try {
-    const parts = game.fen().split(/\s+/);
-    parts[1] = beneficiaryColor;
-    const probe = new Chess(parts.join(' '));
-    victims = probe.moves({ square: to, verbose: true })
-      .map(move => move.captured?.toLowerCase())
-      .filter((captured): captured is Exclude<ForkVictim, 'k'> => !!captured && isForkVictim(captured));
-    const kingSquare = findKing(probe, victimColor);
-    if (kingSquare && probe.attackers(kingSquare, beneficiaryColor).includes(to)) victims.push('k');
-  } catch { return null; }
-  if (victims.length < 2) return null;
-  const rest = victims.filter((victim): victim is Exclude<ForkVictim, 'k'> => victim !== 'k')
-    .sort((a, b) => FORK_RANK[a] - FORK_RANK[b]);
-  if (rest.length === 0) return null;
+  const victims = collectForkVictims(game, to, victimColor, beneficiaryColor);
+  if (!victims) return null;
+  const ordered = orderForkVictims(victims);
+  if (!ordered) return null;
+  const rest = ordered.filter((victim): victim is Exclude<ForkVictim, 'k'> => victim !== 'k');
   const lost = rest[0];
   if (analyzed.oppCaptures[0] !== lost) return null;
-  const ordered: ForkVictim[] = [...(victims.includes('k') ? ['k' as const] : []), ...rest];
   const side = mover === 'white' ? "White's" : "Black's";
   return `${san} forks ${side} ${joinVictims(ordered)}, losing the ${FORK_NOUNS[lost]}.`;
+}
+// Immediate material won by the played move itself (the mirror of the
+// best-line window, which reads the opponent's reply). Requires a capture on
+// the move plus a matching before→after swing of at least a pawn, so stale or
+// mismatched FENs stay silent. Promotions are excluded: queening adds up to
+// +8 with no capture and would read as a false win (the promotion note owns
+// that story). The caller gates on praise grades, so a blunder capture that
+// hangs a bigger piece never earns this. Never throws.
+export function playedMoveGainNote(beforeFen: string, afterFen: string, playedUci: string, mover: MaiaSide): string | null {
+  if (typeof playedUci !== 'string' || playedUci.length === 5) return null;
+  let captured: CapturedPiece | null = null;
+  try {
+    const probe = new Chess(beforeFen);
+    const piece = applyUci(probe, playedUci).captured?.toLowerCase();
+    if (!piece || !isCapturedPiece(piece)) return null;
+    captured = piece;
+  } catch { return null; }
+  let swingMover: number;
+  try {
+    const swingWhite = materialFromFen(afterFen).diff - materialFromFen(beforeFen).diff;
+    swingMover = mover === 'white' ? swingWhite : -swingWhite;
+  } catch { return null; }
+  if (swingMover < 1) return null;
+  return `Wins ${piecesText([captured])}.`;
+}
+
+// Names the tactic when the played move itself forks two pieces: "Nd4 forks
+// White's bishop and queen." Unlike tacticNote there is no "losing the …"
+// clause — the fall of a piece is a future claim the immediate board cannot
+// prove. Same tight gates (moved piece only, no pawns, no opening capture,
+// no promotions). The caller gates on praise grades. Never throws.
+export function playedMoveForkNote(beforeFen: string, playedUci: string, mover: MaiaSide): string | null {
+  if (typeof playedUci !== 'string' || playedUci.length === 5) return null;
+  let game: Chess;
+  try { game = new Chess(beforeFen); } catch { return null; }
+  let to: Square;
+  let san: string;
+  let firstCapture: boolean;
+  try {
+    const applied = applyUci(game, playedUci);
+    to = applied.to;
+    san = applied.san;
+    firstCapture = applied.captured !== undefined;
+  } catch { return null; }
+  if (firstCapture) return null;
+  const victimColor = mover === 'white' ? 'b' : 'w';
+  const beneficiaryColor = mover === 'white' ? 'w' : 'b';
+  const victims = collectForkVictims(game, to, victimColor, beneficiaryColor);
+  if (!victims) return null;
+  const ordered = orderForkVictims(victims);
+  if (!ordered) return null;
+  const side = mover === 'white' ? "Black's" : "White's";
+  return `${san} forks ${side} ${joinVictims(ordered)}.`;
 }
 function findKing(game: Chess, color: 'w' | 'b'): Square | null {
   for (const row of game.board()) for (const square of row) {

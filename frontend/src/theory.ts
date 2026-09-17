@@ -1,15 +1,15 @@
 import { Chess, type Square } from 'chess.js';
 import { applyUci, START_FEN } from './domain';
-import type { MaiaSide } from './material';
+import { playedMoveForkNote, playedMoveGainNote, type MaiaSide } from './material';
 import { openingAt, type OpeningMatch } from './openings';
 import type { DomainOutcome } from './domain';
-import type { OpeningRef, Quality, Rarity } from './reviewMetrics';
+import { isMateFor, isPraiseLabel, type OpeningRef, type Quality, type Rarity, type Score } from './reviewMetrics';
 
 // Algorithmically detectable chess theory for the move verdict. Every helper
 // is pure and never throws: invalid FENs, illegal moves, and out-of-range
 // plies yield null/false so the verdict path stays silent instead of
-// misfiring. describeMove() owns priority and wording; this module only
-// supplies facts.
+// misfiring. describeMove()'s rule tables own priority; this module supplies
+// facts plus the ordered positive-why candidates.
 
 export type TerminalKind = 'checkmate' | 'stalemate' | 'insufficient' | 'fifty' | 'repetition';
 export type NoveltyRef = { priorName: string; priorEco: string };
@@ -204,6 +204,111 @@ export function underpromotionAvoidsStalemate(beforeFen: string, playedUci: stri
   }
 }
 
+// New mating threat for the mover: the after-score mates while the before
+// score did not. Mate accelerations (already mating, shorter distance) stay
+// silent — only a fresh force counts. Null when either score is missing, so
+// unevaluated positions never claim a threat. Returns moves-to-mate.
+export function forcesMateIn(
+  beforeScore: Score | null | undefined,
+  afterScore: Score | null | undefined,
+  mover: MaiaSide,
+): number | null {
+  if (!beforeScore || !afterScore) return null;
+  const side = mover === 'white' ? 'white' : 'black';
+  if (!isMateFor(afterScore, side) || isMateFor(beforeScore, side)) return null;
+  const n = Math.abs(afterScore.value);
+  return Number.isFinite(n) && n >= 1 ? n : null;
+}
+
+const PROMOTION_NAMES: Record<string, string> = { q: 'queen', r: 'rook', b: 'bishop', n: 'knight' };
+
+// Ordinary promotion naming ("Promotes to a queen."). Stalement-avoiding
+// underpromotions are owned by underpromotionAvoidsStalemate above and never
+// reach here as a positive note. Replays on the before-position so a stale
+// UCI on an inconsistent FEN stays silent instead of misfiring.
+export function promotionNote(beforeFen: string, playedUci: string): string | null {
+  const match = /^([a-h][1-8])([a-h][1-8])([qrbn])$/.exec(playedUci);
+  if (!match) return null;
+  try {
+    const game = new Chess(beforeFen);
+    if (!applyUci(game, playedUci).promotion) return null;
+  } catch {
+    return null;
+  }
+  return `Promotes to a ${PROMOTION_NAMES[match[3]]}.`;
+}
+
+// Castling shape from SAN (suffix-tolerant: O-O+ / O-O-O# still match).
+// Replays the UCI so a stale SAN on an inconsistent FEN stays silent; the
+// king's two-square travel proves the shape independently of the label.
+export function castleNote(beforeFen: string, playedUci: string, san: string): string | null {
+  if (typeof san !== 'string') return null;
+  const queenside = san.startsWith('O-O-O');
+  if (!queenside && !san.startsWith('O-O')) return null;
+  try {
+    const game = new Chess(beforeFen);
+    const applied = applyUci(game, playedUci);
+    const travel = `${applied.from}${applied.to}`;
+    const ok = queenside
+      ? travel === 'e1c1' || travel === 'e8c8'
+      : travel === 'e1g1' || travel === 'e8g8';
+    if (!ok) return null;
+  } catch {
+    return null;
+  }
+  return queenside ? 'Castles queenside.' : 'Castles kingside.';
+}
+
+// En-passant capture, read off chess.js move flags. Always wins a pawn, but
+// the mechanism is the rarer fact, so it outranks the generic gain note.
+export function enPassantNote(beforeFen: string, playedUci: string): string | null {
+  try {
+    const game = new Chess(beforeFen);
+    const applied = applyUci(game, playedUci);
+    return applied.flags.includes('e') ? 'Takes en passant.' : null;
+  } catch {
+    return null;
+  }
+}
+
+// The mover started in check, so any legal played move escapes by definition.
+// Reads the before-position only; the after-position's turn belongs to the
+// opponent and says nothing about the mover's king.
+export function escapeNote(beforeFen: string): string | null {
+  try {
+    return new Chess(beforeFen).inCheck() ? 'Gets out of check.' : null;
+  } catch {
+    return null;
+  }
+}
+
+// Positive-why candidates for praise grades. Array order IS the priority:
+// the first non-null note wins, so reordering candidates reorders the why.
+// Each entry owns one fact; add a why by adding one entry. Fork claims only
+// the attack, never the fall — unlike the best-line fork, no window proves
+// a capture. En passant outranks the generic gain it always implies. Escape
+// trails everything: every legal move out of check escapes, so it explains
+// only when nothing sharper fires.
+type PositiveContext = Pick<
+  VerdictInputs,
+  'beforeFen' | 'afterFen' | 'playedUci' | 'san' | 'mover' | 'beforeScore' | 'afterScore' | 'isCritical'
+>;
+const POSITIVE_CANDIDATES: { name: string; note: (ctx: PositiveContext) => string | null }[] = [
+  { name: 'forces-mate',
+    note: ({ beforeScore, afterScore, mover }) => {
+      const mateIn = forcesMateIn(beforeScore, afterScore, mover);
+      return mateIn === null ? null : `Forces mate in ${mateIn}.`;
+    } },
+  { name: 'only-move', note: ({ isCritical }) => (isCritical ? 'The only move to hold.' : null) },
+  { name: 'promotion', note: ({ beforeFen, playedUci }) => promotionNote(beforeFen, playedUci) },
+  { name: 'castle', note: ({ beforeFen, playedUci, san }) => castleNote(beforeFen, playedUci, san) },
+  { name: 'fork', note: ({ beforeFen, playedUci, mover }) => playedMoveForkNote(beforeFen, playedUci, mover) },
+  { name: 'en-passant', note: ({ beforeFen, playedUci }) => enPassantNote(beforeFen, playedUci) },
+  { name: 'gain',
+    note: ({ beforeFen, afterFen, playedUci, mover }) => playedMoveGainNote(beforeFen, afterFen, playedUci, mover) },
+  { name: 'escape', note: ({ beforeFen }) => escapeNote(beforeFen) },
+];
+
 function pawnFileCounts(fen: string, color: 'w' | 'b'): number[] | null {
   let game: Chess;
   try {
@@ -264,6 +369,12 @@ export type VerdictInputs = {
   mover: MaiaSide;
   bestRarity?: Rarity | null;
   materialNote?: string | null;
+  beforeScore?: Score | null;
+  afterScore?: Score | null;
+  // Raw engine fact (reviewMove label === 'Critical'), before Maia-aware
+  // translation. The translated Quality alone cannot recover it: Critical +
+  // Expected and Top both display as Best.
+  isCritical?: boolean | null;
   // Sound-sacrifice detection is cut from v1: a single move never reduces
   // the mover's own material (moves preserve, captures/promotions gain),
   // so a before→after swing gate is vacuous. A real sacrifice detector
@@ -283,14 +394,19 @@ export type VerdictFacts = {
   underpromotionAvoids: boolean;
   novelty: NoveltyRef | null;
   pawnNote: string | null;
+  // Why a good move was good, for praise grades only. Single strongest fact
+  // wins; describeMove appends it after the rarity synthesis.
+  positiveNote: string | null;
 };
 
 // Pure wiring from timeline rows and panel state to describeMove args.
 // Encodes every gate: before/after selection, terminal-first priority
 // inputs, novelty suppression (terminal, dead draw, Forced, Allowed mate,
-// Unreviewed, unknown rarity), and the pawn-note fallback (only
-// Blunder/Mistake/Inaccuracy with no material note and no terminal).
-// bestRarity and materialNote pass through untouched.
+// Unreviewed, unknown rarity), the pawn-note fallback (only
+// Blunder/Mistake/Inaccuracy with no material note and no terminal), and the
+// positive-note why (only Best/Great/Excellent/Good with no terminal, dead
+// draw, underpromotion, or book hit). bestRarity and materialNote pass
+// through untouched.
 export function verdictInputsForPly(inputs: VerdictInputs): VerdictFacts {
   const {
     beforeFen,
@@ -308,6 +424,9 @@ export function verdictInputsForPly(inputs: VerdictInputs): VerdictFacts {
     mover,
     bestRarity,
     materialNote,
+    beforeScore,
+    afterScore,
+    isCritical,
   } = inputs;
   const terminal = classifyTerminal(afterFen, afterOutcome);
   const matePatternName = terminal === 'checkmate' ? matePattern({ beforeFen, playedUci, san, ply, afterFen }) : null;
@@ -330,6 +449,18 @@ export function verdictInputsForPly(inputs: VerdictInputs): VerdictFacts {
     !terminal && !materialNote && (label === 'Blunder' || label === 'Mistake' || label === 'Inaccuracy')
       ? pawnDamageNote(beforeFen, afterFen, mover)
       : null;
+  // Positive why: the first non-null POSITIVE_CANDIDATES entry wins (see
+  // its order comment for the ranking). Gated to praise grades with no
+  // terminal, dead draw, underpromotion, or book hit.
+  const praise = isPraiseLabel(label);
+  let positiveNote: string | null = null;
+  if (praise && terminal === null && !deadDraw && !underpromotionAvoids && !opening) {
+    const ctx: PositiveContext = { beforeFen, afterFen, playedUci, san, mover, beforeScore, afterScore, isCritical };
+    for (const candidate of POSITIVE_CANDIDATES) {
+      positiveNote = candidate.note(ctx);
+      if (positiveNote) break;
+    }
+  }
   return {
     san,
     quality,
@@ -343,5 +474,6 @@ export function verdictInputsForPly(inputs: VerdictInputs): VerdictFacts {
     underpromotionAvoids,
     novelty,
     pawnNote,
+    positiveNote,
   };
 }

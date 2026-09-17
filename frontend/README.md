@@ -112,7 +112,10 @@ book chip on in-book moves; `ReviewOverview.tsx` names the viewed line
 first. The move verdict in `InsightPanel.tsx` reports terminal facts first
 (mate with miniature names, stalemate, repetition, fifty-move), then exact
 book hits, then the quality-by-rarity synthesis with novelty and
-pawn-damage notes (`src/theory.ts`), instead of restating engine grades. Table source, pin, and regeneration are
+pawn-damage notes for mistakes (`src/theory.ts`), and the single strongest
+why for good moves — fresh mate force, only move to hold, promotion,
+castling, fork, en passant, immediate material gain, or escape from
+check — instead of restating engine grades. Table source, pin, and regeneration are
 documented in [backend README](../backend/README.md#game-and-engine-api).
 
 ## Browser checks

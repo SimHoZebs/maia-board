@@ -3,11 +3,16 @@ import { Chess } from 'chess.js';
 import { buildTimeline } from './domain';
 import { START_FEN } from './domain';
 import {
+  castleNote,
   classifyTerminal,
+  enPassantNote,
+  escapeNote,
+  forcesMateIn,
   isKnownDeadDraw,
   matePattern,
   noveltyRef,
   pawnDamageNote,
+  promotionNote,
   underpromotionAvoidsStalemate,
   verdictInputsForPly,
   type VerdictInputs,
@@ -214,6 +219,49 @@ describe('pawnDamageNote', () => {
   });
 });
 
+describe('positive shape notes', () => {
+  it('reads fresh mate forces, never accelerations or unevaluated pairs', () => {
+    const cp = { type: 'cp' as const, value: 100 };
+    expect(forcesMateIn(cp, { type: 'mate', value: 3, winning_side: 'white' }, 'white')).toBe(3);
+    expect(forcesMateIn(cp, { type: 'mate', value: -2, winning_side: 'black' }, 'black')).toBe(2);
+    // Already mating: acceleration, not a fresh force.
+    expect(forcesMateIn(
+      { type: 'mate', value: 5, winning_side: 'white' },
+      { type: 'mate', value: 1, winning_side: 'white' },
+      'white',
+    )).toBeNull();
+    // Mate for the wrong side, quiet pairs, and missing scores stay silent.
+    expect(forcesMateIn(cp, { type: 'mate', value: 1, winning_side: 'black' }, 'white')).toBeNull();
+    expect(forcesMateIn(cp, cp, 'white')).toBeNull();
+    expect(forcesMateIn(null, { type: 'mate', value: 1, winning_side: 'white' }, 'white')).toBeNull();
+    expect(forcesMateIn(cp, null, 'white')).toBeNull();
+  });
+
+  it('names promotions, castling sides, en passant, and escapes', () => {
+    const promoFen = '8/P7/7k/8/8/8/8/7K w - - 0 1';
+    const castleFen = '4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1';
+    expect(promotionNote(promoFen, 'a7a8q')).toBe('Promotes to a queen.');
+    expect(promotionNote(promoFen, 'a7a8n')).toBe('Promotes to a knight.');
+    expect(promotionNote(START_FEN, 'e2e4')).toBeNull();
+    // Stale UCI on an inconsistent board stays silent.
+    expect(promotionNote(START_FEN, 'a7a8q')).toBeNull();
+    expect(promotionNote('bad', 'a7a8q')).toBeNull();
+    expect(castleNote(castleFen, 'e1g1', 'O-O')).toBe('Castles kingside.');
+    expect(castleNote(castleFen, 'e1c1', 'O-O-O+')).toBe('Castles queenside.');
+    expect(castleNote(START_FEN, 'g1f3', 'Nf3')).toBeNull();
+    // Stale SAN on an inconsistent board stays silent.
+    expect(castleNote(START_FEN, 'e2e4', 'O-O')).toBeNull();
+    expect(castleNote(castleFen, 'e1g1', 'O-O-O')).toBeNull();
+    expect(enPassantNote('4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1', 'e5d6')).toBe('Takes en passant.');
+    expect(enPassantNote(START_FEN, 'e2e4')).toBeNull();
+    expect(enPassantNote('bad', 'e2e4')).toBeNull();
+    // Bishop on b4 checks the e1 king down the diagonal.
+    expect(escapeNote('4k3/8/8/8/1b6/8/8/4K3 w - - 0 1')).toBe('Gets out of check.');
+    expect(escapeNote(START_FEN)).toBeNull();
+    expect(escapeNote('bad')).toBeNull();
+  });
+});
+
 describe('verdictInputsForPly', () => {
   const matches: OpeningMatch[] = [{ ply: 2, eco: 'B12', name: 'Caro-Kann Defense' }];
 
@@ -286,6 +334,92 @@ describe('verdictInputsForPly', () => {
     expect(verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Mistake') })).pawnNote).toBe('Doubles a pawn.');
     expect(verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Inaccuracy') })).pawnNote).toBe('Doubles a pawn.');
     expect(verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Good') })).pawnNote).toBeNull();
+  });
+
+  it('explains praise grades with the single strongest why', () => {
+    const cp = { type: 'cp' as const, value: 100 };
+    const mate = { type: 'mate' as const, value: 3, winning_side: 'white' as const };
+    // Fresh mate force outranks the only-move fact.
+    expect(verdictInputsForPly(baseInputs({
+      quality: quality('Best'), beforeScore: cp, afterScore: mate, isCritical: true,
+    })).positiveNote).toBe('Forces mate in 3.');
+    // The only move to hold outranks an immediate win on the same move.
+    const capture = {
+      beforeFen: 'rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+      afterFen: 'rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2',
+      playedUci: 'e4d5',
+      san: 'exd5',
+    };
+    expect(verdictInputsForPly(baseInputs({
+      ...capture, quality: quality('Best'), isCritical: true,
+    })).positiveNote).toBe('The only move to hold.');
+    expect(verdictInputsForPly(baseInputs({
+      ...capture, quality: quality('Best'),
+    })).positiveNote).toBe('Wins a pawn.');
+    // En passant names the mechanism, not the generic pawn.
+    expect(verdictInputsForPly(baseInputs({
+      beforeFen: '4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1',
+      afterFen: '4k3/8/3P4/8/8/8/8/4K3 b - - 0 1',
+      playedUci: 'e5d6',
+      san: 'exd6',
+      quality: quality('Best'),
+    })).positiveNote).toBe('Takes en passant.');
+    // Shape notes: promotion, castle, fork, escape.
+    expect(verdictInputsForPly(baseInputs({
+      beforeFen: '8/P7/7k/8/8/8/8/7K w - - 0 1',
+      afterFen: 'Q6k/8/8/8/8/8/8/7K b - - 0 1',
+      playedUci: 'a7a8q',
+      san: 'a8=Q+',
+      quality: quality('Best'),
+    })).positiveNote).toBe('Promotes to a queen.');
+    expect(verdictInputsForPly(baseInputs({
+      beforeFen: '4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1',
+      afterFen: '4k3/8/8/8/8/8/8/R4RK1 b - - 1 1',
+      playedUci: 'e1g1',
+      san: 'O-O',
+      quality: quality('Best'),
+    })).positiveNote).toBe('Castles kingside.');
+    expect(verdictInputsForPly(baseInputs({
+      beforeFen: '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1',
+      afterFen: '4k3/8/8/8/3n4/1Q6/2B5/4K3 w - - 1 2',
+      playedUci: 'f5d4',
+      san: 'Nd4',
+      quality: quality('Best'),
+      mover: 'black',
+    })).positiveNote).toBe("Nd4 forks White's bishop and queen.");
+    expect(verdictInputsForPly(baseInputs({
+      beforeFen: '4k3/8/8/8/1b6/8/8/4K3 w - - 0 1',
+      afterFen: '4k3/8/8/8/1b6/8/8/3K4 b - - 1 1',
+      playedUci: 'e1d1',
+      san: 'Kd1',
+      quality: quality('Good'),
+    })).positiveNote).toBe('Gets out of check.');
+  });
+
+  it('keeps the positive why off negative grades, terminals, book, and draws', () => {
+    const capture = {
+      beforeFen: 'rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+      afterFen: 'rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2',
+      playedUci: 'e4d5',
+      san: 'exd5',
+    };
+    // A capturing blunder stays a blunder story, never a win story.
+    expect(verdictInputsForPly(baseInputs({ ...capture, quality: quality('Blunder') })).positiveNote).toBeNull();
+    // Terminal facts, book hits, and dead draws outrank any why.
+    expect(verdictInputsForPly(baseInputs({
+      ...capture,
+      quality: quality('Best'),
+      afterOutcome: { kind: 'checkmate' as const, winner: 'white' as const },
+    })).positiveNote).toBeNull();
+    expect(verdictInputsForPly(baseInputs({
+      ...capture, quality: quality('Best'), opening: { eco: 'C50', name: 'Italian Game' },
+    })).positiveNote).toBeNull();
+    expect(verdictInputsForPly(baseInputs({
+      quality: quality('Best'),
+      afterFen: 'k7/8/nn6/8/8/8/8/K7 w - - 0 1',
+    })).positiveNote).toBeNull();
+    // Quiet lines stay quiet: no praise, no why.
+    expect(verdictInputsForPly(baseInputs({ quality: quality('Unreviewed') })).positiveNote).toBeNull();
   });
 
   it('reads branch timelines without re-walking the base line', () => {
