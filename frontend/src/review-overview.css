@@ -21,7 +21,7 @@
 .accuracy-card.own-side { border-color: #76865b; }
 .accuracy-card h3 { display: flex; align-items: center; gap: 7px; margin: 0 0 10px; font-size: 12px; font-weight: 600; }
 .quality-counts { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 11px; }
-.quality-counts li { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px 3px 3px; border: 1px solid var(--line); border-radius: 20px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.quality-counts li { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px 3px 3px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .quality-counts li.zero { opacity: 0.45; }
 .overview-partial { margin: 12px 0; padding: 10px 12px; border-left: 2px solid var(--accent); background: #b8c99809; font-size: 12px; }
 .overview-issues-heading { display: flex; align-items: center; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
