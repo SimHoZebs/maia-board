@@ -11,7 +11,7 @@
 .chart-point .chart-dot-mistake { background: #985920; }
 .chart-point .chart-dot-blunder { background: #a63c3c; }
 .chart-point .chart-dot-allowed-mate { background: #7f1d1d; }
-.chart-point .chart-dot-excellent { background: #a67c00; }
+.chart-point .chart-dot-excellent { background: #38bdf8; }
 .chart-point .chart-dot-great { background: #286b89; }
 .chart-point .chart-dot-best, .chart-point .chart-dot-good { background: #496336; }
 .review-overview .review-charts { margin: 0 0 18px; }
