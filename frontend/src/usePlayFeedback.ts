@@ -82,25 +82,22 @@ export function computePlayQualities(args: {
     active: node => node.turn === userColor, pending: sfPending, prev, stats });
   // Translation map: engine facts become displayed judgments. Raw memo
   // reuse still holds underneath (proven by stats.reviews); only this
-  // translated array is fresh per call.
-  let changed = false;
+  // translated array is fresh per call. Every grade goes through
+  // effectiveQuality — returning the raw array when nothing is Critical
+  // would leak engine-only labels (Top/Holds) the badge has no glyph for,
+  // rendering as an empty gray box.
   const qualities: (Quality | undefined)[] = sf.qualities.map((grade, index) => {
     if (grade?.label !== 'Critical') return effectiveQuality(grade, undefined);
     const node = nodes[index];
     const move = timeline.moves[index];
     const maia = node ? maiaLookup(node) : undefined;
-    let next: Quality | undefined;
     if (!maia) {
-      next = node && maiaPending.has(reviewKey('maia', node, settings))
+      return node && maiaPending.has(reviewKey('maia', node, settings))
         ? { ...PRAISE_PENDING }
         : effectiveQuality(grade, { label: 'Unknown', r: null, prob: null, topProb: null });
-    } else {
-      next = effectiveQuality(grade, maiaRarity(maia, move));
     }
-    if (next !== (grade as Quality | undefined)) changed = true;
-    return next;
+    return effectiveQuality(grade, maiaRarity(maia, move));
   });
-  if (!changed) return { qualities: sf.qualities as (Quality | undefined)[], memo: sf.memo };
   return { qualities, memo: sf.memo };
 }
 

@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { computePlayQualities, getNavigatorOnLine, hasExhaustedPlayRetries, isOfflineNow, isOfflineValue, PLAY_RETRY_EXHAUSTED_MESSAGE, playExhaustedError, wantedPlayPair, type PlayQualitiesMemo } from './usePlayFeedback';
+import { computeReviewQualities, translateReviewQualities } from './useReview';
+import { qualityGlyphs } from './ReviewCharts';
 import { initialState, reducer } from './state';
 import { KEYS } from './storage';
 import { buildTimeline, START_FEN, timelineBuildsForTests } from './domain';
@@ -109,6 +111,7 @@ describe('timeline-backed move feedback', () => {
 });
 
 describe('wantedPlayPair', () => {
+
   const pairNodes = (moves: string[]) => reviewNodes(buildTimeline(START_FEN, moves));
   it('selects nothing without nodes or without a move to grade', () => {
     expect(wantedPlayPair([], 'white')).toEqual({ sfNodes: [], maiaNode: null });
@@ -165,5 +168,44 @@ describe('play retry offline/exhaustion helpers', () => {
     expect(playExhaustedError(true, 0)).toBeUndefined();
     expect(playExhaustedError(true, 3)).toBe(PLAY_RETRY_EXHAUSTED_MESSAGE);
     expect(playExhaustedError(true, 4)).toBe(PLAY_RETRY_EXHAUSTED_MESSAGE);
+  });
+});
+
+describe('settled badges only use labels the badge can render', () => {
+  const settings: ReviewSettings = { eloMaia: 1600, eloUser: 1600, model: '79m', stockfish: defaultStockfishSettings };
+  const glyphs = new Set(Object.keys(qualityGlyphs));
+  // Engine Top (best move, no drama) and Holds (not best, nothing lost):
+  // a line with no Critical anywhere must still translate both, or the
+  // badge renders its gray box with no glyph.
+  const topBefore: Evaluation = { engine: 'Stockfish 19', search_policy: 'sf19-n100k-ms750-mpv2-t1-h64-v1', terminal: null, depth: 12, best_move: 'e2e4', score: { type: 'cp', value: 50 },
+    lines: [{ move: 'e2e4', score: { type: 'cp', value: 50 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: 30 }, depth: 12 }] };
+  const topAfter: Evaluation = { ...topBefore, lines: topBefore.lines };
+  const holdsBefore: Evaluation = { engine: 'Stockfish 19', search_policy: 'sf19-n100k-ms750-mpv2-t1-h64-v1', terminal: null, depth: 12, best_move: 'e2e4', score: { type: 'cp', value: 50 },
+    lines: [{ move: 'e2e4', score: { type: 'cp', value: 50 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: 48 }, depth: 12 }] };
+  const holdsAfter: Evaluation = { ...holdsBefore, score: { type: 'cp', value: 48 }, lines: holdsBefore.lines.map(line => ({ ...line })) };
+  it('translates Top to Best and Holds to Good in play without any Critical', () => {
+    const top = computePlayQualities({ gameId: 'glyphs', timeline: buildTimeline(START_FEN, ['e2e4']), userColor: 'white', settings,
+      sfLookup: node => node.ply === 0 ? topBefore : topAfter, maiaLookup: () => undefined,
+      sfPending: new Set(), maiaPending: new Set(), prev: null });
+    expect(top.qualities[0]?.label).toBe('Best');
+    const holds = computePlayQualities({ gameId: 'glyphs', timeline: buildTimeline(START_FEN, ['d2d4']), userColor: 'white', settings,
+      sfLookup: node => node.ply === 0 ? holdsBefore : holdsAfter, maiaLookup: () => undefined,
+      sfPending: new Set(), maiaPending: new Set(), prev: null });
+    expect(holds.qualities[0]?.label).toBe('Good');
+    for (const quality of [...top.qualities, ...holds.qualities]) {
+      if (quality && quality.label !== 'Unreviewed') expect(glyphs.has(quality.label)).toBe(true);
+    }
+  });
+  it('translates engine-only labels in review as well', () => {
+    const timeline = buildTimeline(START_FEN, ['d2d4']);
+    const nodes = reviewNodes(timeline);
+    const raw = computeReviewQualities({ line: timeline, nodes,
+      evaluations: [holdsBefore, holdsAfter], settingsForNode: () => settings, pending: new Set(), prev: null });
+    expect(raw.qualities[0]?.label).toBe('Holds');
+    const qualities = translateReviewQualities({ grades: raw.qualities, nodes,
+      maiaResults: [undefined, undefined], rarities: [undefined, undefined],
+      settingsForNode: () => settings, isMaiaPending: () => false });
+    expect(qualities[0]?.label).toBe('Good');
+    if (qualities[0] && qualities[0].label !== 'Unreviewed') expect(glyphs.has(qualities[0].label)).toBe(true);
   });
 });

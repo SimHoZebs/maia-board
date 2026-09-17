@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import type { MoveResponse } from './api';
 import { buildTimeline, lineKeyFor, type TimelineRow } from './domain';
 import type { State } from './state';
 import { ReviewCoordinator, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
@@ -24,6 +25,29 @@ export function computeReviewQualities(args: {
 }): { qualities: (EngineGrade | undefined)[]; memo: ReviewQualitiesMemo } {
   const { line, nodes, evaluations, settingsForNode, pending, prev, stats } = args;
   return computeLineQualities({ scope: '', moves: line.moves, nodes, evaluations, settingsForNode, pending, prev, stats });
+}
+
+// Display translation for review badges: every engine grade goes through
+// effectiveQuality so no engine-only label (Top/Holds/Critical) ever reaches
+// QualityBadge, which has no glyph for them and would render an empty gray
+// box. Pure for tests; the hook supplies lookups from the coordinator.
+export function translateReviewQualities(args: {
+  grades: (EngineGrade | undefined)[]; nodes: ReviewNode[]; maiaResults: (MoveResponse | undefined)[];
+  rarities: (ReturnType<typeof maiaRarity> | undefined)[]; settingsForNode: (node: ReviewNode) => ReviewSettings;
+  isMaiaPending: (node: ReviewNode, settings: ReviewSettings) => boolean;
+}): (Quality | undefined)[] {
+  const { grades, nodes, maiaResults, rarities, settingsForNode, isMaiaPending } = args;
+  return grades.map((grade, ply) => {
+    if (grade?.label !== 'Critical') return effectiveQuality(grade, undefined);
+    const node = nodes[ply];
+    const maia = maiaResults[ply];
+    if (!maia) {
+      return node && isMaiaPending(node, settingsForNode(node))
+        ? { label: 'Unreviewed' as const, accuracy: null, loss: null }
+        : effectiveQuality(grade, { label: 'Unknown', r: null, prob: null, topProb: null });
+    }
+    return effectiveQuality(grade, rarities[ply]);
+  });
 }
 
 export function useReview(state: State) {
@@ -110,25 +134,9 @@ export function useReview(state: State) {
   // Best; SF-settled non-critical moves complete without Maia (fast path).
   // (The translated array is fresh per call; raw memo reuse underneath is
   // what avoids recompute.)
-  const qualities = useMemo(() => {
-    let changed = false;
-    const mapped: (Quality | undefined)[] = computed.qualities.map((grade, ply) => {
-      if (grade?.label !== 'Critical') return effectiveQuality(grade, undefined);
-      const node = nodes[ply];
-      const maia = maiaResults[ply];
-      let next: Quality | undefined;
-      if (!maia) {
-        next = node && coordinator.isPending('maia', node, settingsForNode(node))
-          ? { label: 'Unreviewed' as const, accuracy: null, loss: null }
-          : effectiveQuality(grade, { label: 'Unknown', r: null, prob: null, topProb: null });
-      } else {
-        next = effectiveQuality(grade, rarities[ply]);
-      }
-      if (next !== (grade as Quality | undefined)) changed = true;
-      return next;
-    });
-    return changed ? mapped : (computed.qualities as (Quality | undefined)[]);
-  }, [computed.qualities, rarities, maiaResults, nodes, settingsForNode, version, coordinator]);
+  const qualities = useMemo(() => translateReviewQualities({ grades: computed.qualities, nodes, maiaResults, rarities,
+    settingsForNode, isMaiaPending: (node, settings) => coordinator.isPending('maia', node, settings) }),
+  [computed.qualities, rarities, maiaResults, nodes, settingsForNode, version, coordinator]);
   const bestRarities = useMemo(() => timeline.moves.map((_move, ply) => {
     const best = evaluations[ply]?.best_move;
     const maia = maiaResults[ply];
