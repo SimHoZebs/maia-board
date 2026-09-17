@@ -25,7 +25,7 @@ export function ReviewSummary({
   // family persists after the line leaves book.
   const { opening } = useLineOpenings(review.timeline.moves, review.timeline.initialFen, ply);
   const sideLabel = (color: ReviewSide) =>
-    `${sideName(color)}${userSide === color ? " · You" : ""}`;
+    `${sideName(color)} move quality${userSide === color ? " · You" : ""}`;
   return (
     <section
       className="review-overview"
@@ -58,7 +58,7 @@ export function ReviewSummary({
               <section
                 key={side.color}
                 className={`accuracy-card${userSide === side.color ? " own-side" : ""}`}
-                aria-label={`${sideName(side.color)} move counts`}
+                aria-label={sideLabel(side.color)}
               >
                 <h3>
                   <span
