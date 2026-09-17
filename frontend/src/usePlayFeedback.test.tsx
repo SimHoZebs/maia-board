@@ -41,6 +41,16 @@ describe('feedback settings', () => {
     localStorage.setItem(KEYS.coordinatesOnSquares, JSON.stringify('squares'));
     expect(initialState().coordinatesOnSquares).toBe(true);
   });
+  it('defaults board orientation to auto and round-trips through storage', () => {
+    expect(initialState().boardOrientation).toBe('auto');
+    const fixed = reducer(initialState(), { type: 'board-orientation', orientation: 'black' });
+    expect(fixed.boardOrientation).toBe('black');
+    expect(reducer(fixed, { type: 'board-orientation', orientation: 'black' })).toBe(fixed);
+    localStorage.setItem(KEYS.boardOrientation, JSON.stringify('white'));
+    expect(initialState().boardOrientation).toBe('white');
+    localStorage.setItem(KEYS.boardOrientation, JSON.stringify('sideways'));
+    expect(initialState().boardOrientation).toBe('auto');
+  });
 });
 
 describe('timeline-backed move feedback', () => {

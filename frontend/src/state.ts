@@ -1,8 +1,8 @@
 import { Chess, type Square } from 'chess.js';
 import { type MaiaColor, type MoveRequest, type MoveResponse, readableApiError } from './api';
 import { toGroundColor } from './board-colors';
-import { analysisLength, analysisLine, applyUci, defaultSettings, extendLine, lineRecord, loadLine, newId, oppositeColor, parseSquare, retreatLine, START_FEN, uciFromMove,
-  type Analysis, type Insight, type Mode, type Position, type Settings, type StoredGame } from './domain';
+import { analysisLength, analysisLine, applyUci, defaultSettings, extendLine, lineRecord, loadLine, newId, normalizeBoardOrientation, oppositeColor, parseSquare, retreatLine, START_FEN, uciFromMove,
+  type Analysis, type BoardOrientationSetting, type Insight, type Mode, type Position, type Settings, type StoredGame } from './domain';
 import type { Evaluation } from './reviewMetrics';
 import { sameLine, type UrlLine } from './analysisUrl';
 import { KEYS, loadSettings, readStorage } from './storage';
@@ -31,7 +31,7 @@ const sameSettings = (a: Settings, b: Settings) => a.userColor === b.userColor &
   && a.eloMaia === b.eloMaia && a.eloUser === b.eloUser && (a.temperature ?? 0) === (b.temperature ?? 0);
 export type State = {
   mode: Mode; play: StoredGame; saved: StoredGame[];
-  started: boolean; setup: PlayDraft | null; viewedPly: number | null; stockfish: StockfishSettings; feedback: boolean; badgeLoading: BadgeLoading; coordinatesOnSquares: boolean;
+  started: boolean; setup: PlayDraft | null; viewedPly: number | null; stockfish: StockfishSettings; feedback: boolean; badgeLoading: BadgeLoading; coordinatesOnSquares: boolean; boardOrientation: BoardOrientationSetting;
   analysis: Analysis; analysisSettings: Draft; analysisLoaded: boolean; importing: boolean; analysisSourceId: string | null;
   inputs: { fen: string; pgn: string }; flipped: boolean; preview: string | null;
   promotion: { from: Square; to: Square } | null;
@@ -44,6 +44,7 @@ export type Action =
   | { type: 'feedback'; enabled: boolean }
   | { type: 'badge-loading'; loading: BadgeLoading }
   | { type: 'coordinates-on-squares'; enabled: boolean }
+  | { type: 'board-orientation'; orientation: BoardOrientationSetting }
   | { type: 'new'; id: string; createdAt: string; resolvedColor?: 'white' | 'black' }
   | { type: 'analysis-settings'; settings: Partial<Draft> }
   | { type: 'takeback' } | { type: 'resign' } | { type: 'flip' }
@@ -185,7 +186,7 @@ export function initialState(mode: Mode = 'play', urlLine?: UrlLine, repository 
   const state: State = { mode, play: restored ?? { id: newId(), createdAt: new Date().toISOString(), moves: [], settings },
     started: !!restored, setup: restored ? null : newPlayDraft(settings), viewedPly: null,
     saved: repository.games, analysis, analysisSettings: { eloMaia: settings.eloMaia, model: settings.model, userColor: settings.userColor }, analysisLoaded, importing: !analysisLoaded, analysisSourceId,
-    stockfish: normalizeStockfishSettings(readStorage(STOCKFISH_STORAGE_KEY)), feedback: readStorage<boolean>(KEYS.feedback) === true, badgeLoading: normalizeBadgeLoading(readStorage<unknown>(KEYS.badgeLoading)), coordinatesOnSquares: normalizeCoordinatesOnSquares(readStorage<unknown>(KEYS.coordinatesOnSquares)),
+    stockfish: normalizeStockfishSettings(readStorage(STOCKFISH_STORAGE_KEY)), feedback: readStorage<boolean>(KEYS.feedback) === true, badgeLoading: normalizeBadgeLoading(readStorage<unknown>(KEYS.badgeLoading)), coordinatesOnSquares: normalizeCoordinatesOnSquares(readStorage<unknown>(KEYS.coordinatesOnSquares)), boardOrientation: normalizeBoardOrientation(readStorage<unknown>(KEYS.boardOrientation)),
     inputs, flipped: false, preview: null, promotion: null, insight: null, error: '', request: null, revision: 0 };
   return mode === 'play' && maiaTurn(state) ? queueRequest(state) : state;
 }
@@ -196,6 +197,7 @@ export function reducer(state: State, action: Action): State {
     case 'feedback': return state.feedback === action.enabled ? state : { ...state, feedback: action.enabled };
     case 'badge-loading': return state.badgeLoading === action.loading ? state : { ...state, badgeLoading: action.loading };
     case 'coordinates-on-squares': return state.coordinatesOnSquares === action.enabled ? state : { ...state, coordinatesOnSquares: action.enabled };
+    case 'board-orientation': return state.boardOrientation === action.orientation ? state : { ...state, boardOrientation: action.orientation };
     case 'setup': return { ...state, setup: { ...(state.setup ?? newPlayDraft(state.play.settings)), ...action.draft } };
     case 'cancel-setup': return state.started ? { ...state, setup: null } : state;
     case 'new': {

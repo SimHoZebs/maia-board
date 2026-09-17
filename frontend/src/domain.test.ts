@@ -1,6 +1,6 @@
 import { Chess } from 'chess.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { applyUci, buildTimeline, lineRecord, replay, resetTimelinesForTests, START_FEN } from './domain';
+import { applyUci, buildTimeline, lineRecord, normalizeBoardOrientation, replay, resetTimelinesForTests, resolveBoardOrientation, START_FEN } from './domain';
 
 afterEach(() => vi.restoreAllMocks());
 describe('bounded canonical timeline', () => {
@@ -71,5 +71,28 @@ describe('bounded canonical timeline', () => {
     expect(new Chess(repeated.rows[8].fen).isThreefoldRepetition()).toBe(false);
     expect(() => { timeline.rows[0].fen = 'poison'; }).toThrow();
     expect(() => applyUci(new Chess(), 'e2e4junk')).toThrow();
+  });
+});
+describe('board orientation', () => {
+  it('auto resolves to the given side and fixed settings ignore it', () => {
+    expect(resolveBoardOrientation('auto', 'white', false)).toBe('white');
+    expect(resolveBoardOrientation('auto', 'black', false)).toBe('black');
+    expect(resolveBoardOrientation('white', 'black', false)).toBe('white');
+    expect(resolveBoardOrientation('black', 'white', false)).toBe('black');
+  });
+  it('flipped inverts whatever the setting resolved to', () => {
+    expect(resolveBoardOrientation('auto', 'white', true)).toBe('black');
+    expect(resolveBoardOrientation('auto', 'black', true)).toBe('white');
+    expect(resolveBoardOrientation('white', 'white', true)).toBe('black');
+    expect(resolveBoardOrientation('black', 'black', true)).toBe('white');
+  });
+  it('normalizes unknown stored values to auto', () => {
+    expect(normalizeBoardOrientation('white')).toBe('white');
+    expect(normalizeBoardOrientation('black')).toBe('black');
+    expect(normalizeBoardOrientation('auto')).toBe('auto');
+    expect(normalizeBoardOrientation('White')).toBe('auto');
+    expect(normalizeBoardOrientation('')).toBe('auto');
+    expect(normalizeBoardOrientation(null)).toBe('auto');
+    expect(normalizeBoardOrientation(undefined)).toBe('auto');
   });
 });

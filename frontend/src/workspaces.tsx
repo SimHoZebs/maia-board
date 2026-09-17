@@ -9,7 +9,7 @@ import { Button, IconButton } from './components';
 import { AnalysisActions, AnalysisControls, PlayControls, type Props } from './Controls';
 import { InsightPanel, MoveNavBar, MovesPanel, StockfishBar } from './ReadPanels';
 import { Dialog } from './Dialog';
-import { analysisLength, gameResult, lineRecord, oppositeColor, parseKey, replay, resultTextForTip, sideName, START_FEN, storedGameResult } from './domain';
+import { analysisLength, gameResult, lineRecord, oppositeColor, parseKey, replay, resolveBoardOrientation, resultTextForTip, sideName, START_FEN, storedGameResult } from './domain';
 import type { BoardPosition, BoardTransition } from './ChessBoard';
 import { toGroundColor } from './board-colors';
 import { currentPosition } from './state';
@@ -174,7 +174,7 @@ export function PlayWorkspace({ state, dispatch }: Props) {
   // the history-aware memoized record (FEN parses miss repetition draws).
   const live = playLine ? new Chess(playLine.fen) : replay(state.play.moves);
   const ready = state.started;
-  const orientation = state.flipped ? oppositeColor(settings.userColor) : settings.userColor;
+  const orientation = resolveBoardOrientation(state.boardOrientation, settings.userColor, state.flipped);
   const historic = state.viewedPly !== null;
   const userTurn = toGroundColor(live.turn()) === settings.userColor;
   const resigned = ready && state.play.result === 'resigned';
@@ -243,7 +243,9 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   const position = review.nodes[ply] ?? review.nodes[review.nodes.length - 1];
   const game = new Chess(position.fen);
   const ready = state.analysisLoaded;
-  const orientation: 'white' | 'black' = 'white';
+  // Auto means the reviewed side faces the viewer: the player's own color
+  // for reviewed games, otherwise the side to move in the starting position.
+  const orientation = resolveBoardOrientation(state.boardOrientation, state.analysis.perspective, state.flipped);
   const viewedOver = position.outcome !== null;
   const enabled = ready && !state.promotion && !viewedOver;
   // The full SAN list comes from the tip of the same timeline: identical to
@@ -272,16 +274,17 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
     return <div className={`player-strip${active && ready ? ' active' : ''}`}><span className={`side-dot ${color}`} /><strong>{sideName(color)}</strong><MaterialSummary by={color} captures={analysisCaptures[color]} lead={materialLeadFor(analysisDiff, color)} /><span className="player-side"></span>{active && ready && <span className="turn-indicator" role="status">To move</span>}</div>;
   };
   const mobileBar = useMobileBar();
+  const tools = <><IconButton id="flip-board" label="Flip board" onClick={() => dispatch({ type: 'flip' })}><RotateCw size={16} aria-hidden="true" /></IconButton></>;
   return <>
     <div className={`workspace${ready ? ' analyzing' : ''}${!ready ? ' awaiting' : ''}`}>
       <RegionRecorder id="board-stage">
-        <BoardShell state={state} dispatch={dispatch} ready={ready} toolbar={null}
+        <BoardShell state={state} dispatch={dispatch} ready={ready} toolbar={ready && mobileBar ? <div className="board-actions board-toolbar" role="toolbar" aria-label="Board actions">{tools}</div> : null}
           position={position} transition={{ line: insightResetKey, ply }} orientation={orientation} enabled={enabled} over={false} withEvaluation={ready} boardResetKey={boardResetKey} shapes={shapes}
           evalBar={ready ? <StockfishBar key={`${insightResetKey}|${review.tooLong ? 1 : 0}`} evaluation={review.current} orientation={orientation} failed={!!review.currentError} /> : null}
           renderStrip={strip}
           movesPanel={ready ? <MovesPanel sans={full.sanMoves} ply={ply} initialFen={state.analysis.initialFen} qualities={review.qualities} badgeLoading={state.badgeLoading} onView={ply => dispatch({ type: 'view', ply })} onOriginalView={ply => { dispatch({ type: 'original' }); dispatch({ type: 'view', ply }); }} onAdvance={() => dispatch({ type: 'advance' })} analysis={true}
             original={state.analysis.branchFromPly !== null ? { sans: state.analysis.sanMoves, fromPly: state.analysis.branchFromPly } : undefined}
-            branchUp={mobileBar} hideNav={mobileBar} bookFlags={analysisBookFlags} /> : null}
+            branchUp={mobileBar} hideNav={mobileBar} tools={mobileBar ? undefined : tools} bookFlags={analysisBookFlags} /> : null}
           resultOverlay={null} />
       </RegionRecorder>
       {ready && <ErrorBoundary label="insight" resetKey={insightResetKey} renderFallback={(error, retry) => <PanelError id="insight-error" title="Analysis failed to render" message={error.message || 'Unknown rendering error.'} onRetry={retry} />}><RegionRecorder id="insight-panel"><InsightPanel key={insightResetKey} state={state} dispatch={dispatch} review={review}><AnalysisActions state={state} dispatch={dispatch} /></InsightPanel></RegionRecorder></ErrorBoundary>}

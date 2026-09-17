@@ -80,6 +80,14 @@ for (const width of [360, 1440]) test(`engine settings and Play temperature at $
   await expect(page.getByRole('radio', { name: '5', exact: true })).toBeChecked();
   await expect(page.locator('#stockfish-depth')).toHaveValue('18');
   await expect(page.locator('#stockfish-time-cap')).toHaveValue('2');
+  // Board orientation defaults to auto and persists the fixed side.
+  await expect(page.getByRole('radio', { name: 'Auto', exact: true })).toBeChecked();
+  await page.locator('div[role="radiogroup"][aria-labelledby="board-orientation-label"] label', { hasText: 'Black' }).click();
+  await expect(page.getByRole('radio', { name: 'Black', exact: true })).toBeChecked();
+  await page.reload();
+  await expect(page.getByRole('radio', { name: 'Black', exact: true })).toBeChecked();
+  await page.locator('div[role="radiogroup"][aria-labelledby="board-orientation-label"] label', { hasText: 'Auto' }).click();
+  await expect(page.getByRole('radio', { name: 'Auto', exact: true })).toBeChecked();
   await page.getByRole('radio', { name: 'Stop after time' }).check();
   await expect(page.locator('#stockfish-depth')).toHaveValue('0');
   await page.getByRole('radio', { name: 'Reach depth' }).check();

@@ -1186,7 +1186,7 @@ test('analysis keeps one scrolling main row and adds height only for a branch', 
   expect(await list.evaluate(el => el.clientHeight)).toBe(height);
 });
 
-test('desktop analysis branches downward with no board tools, next rejoins original', async ({ page }) => {
+test('desktop analysis branches downward with flip tool, next rejoins original', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await boot(page);
   // Original layout: no toolbar above the board; flip shares the move row.
@@ -1203,9 +1203,9 @@ test('desktop analysis branches downward with no board tools, next rejoins origi
   const origin = (await page.locator('.branch-point > button').boundingBox())!;
   const branch = (await variation.boundingBox())!;
   expect(branch.y).toBeGreaterThanOrEqual(origin.y + origin.height);
-  // Analysis has no board tools at all: no flip, no return button. Next at
+  // Analysis has only the flip board tool: no takeback, no return button. Next at
   // the fork continues the original line, dropping the branch.
-  await expect(page.locator('.move-navigation .board-actions')).toHaveCount(0);
+  await expect(page.locator('.move-navigation .board-actions #flip-board')).toBeVisible();
   await page.locator('#analysis-prev').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 3');
   await page.locator('#analysis-next').click();

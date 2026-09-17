@@ -15,6 +15,17 @@ export type Insight = { response: MoveResponse; fen: string; mode: Mode };
 export type StoredGame = { id: string; createdAt: string; moves: string[]; settings: Settings; result?: 'resigned' };
 export const defaultSettings: Settings = { userColor: 'white', eloMaia: 1600, eloUser: 1600, model: '79m', temperature: 1 };
 export const oppositeColor = (color: MaiaColor): MaiaColor => color === 'white' ? 'black' : 'white';
+export type BoardOrientationSetting = 'auto' | MaiaColor;
+export function normalizeBoardOrientation(stored: unknown): BoardOrientationSetting {
+  return stored === 'white' || stored === 'black' ? stored : 'auto';
+}
+// Base orientation comes from the setting; 'auto' means the player's own
+// color faces them (play userColor, analysis perspective). The manual flip
+// button inverts whatever the setting resolved to.
+export function resolveBoardOrientation(setting: BoardOrientationSetting, autoColor: MaiaColor, flipped: boolean): MaiaColor {
+  const base = setting === 'auto' ? autoColor : setting;
+  return flipped ? oppositeColor(base) : base;
+}
 export const sideName = (color: MaiaColor) => color === 'white' ? 'White' : 'Black';
 export const newId = () => typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 

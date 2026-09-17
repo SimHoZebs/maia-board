@@ -186,8 +186,12 @@ test('automatic review shows real overlapping SVG arrows', async ({ page }, info
   expect(arrows.map(arrow => arrow.opacity)).toEqual(['0.45','0.45','0.45']);
   expect(arrows.every(arrow => JSON.stringify(arrow.from) === JSON.stringify(arrows[0].from) && JSON.stringify(arrow.to) === JSON.stringify(arrows[0].to))).toBe(true);
   await expect(lines(page)).toHaveCount(3);
-  // Analysis board is fixed white-side up (no flip button).
-  await expect(page.locator('#flip-board')).toHaveCount(0);
+  // Analysis board defaults to auto orientation (reviewed side at bottom, white here) with a flip button.
+  await expect(page.locator('#flip-board')).toHaveCount(1);
+  await expect(page.locator('#board .cg-wrap')).toHaveClass(/orientation-white/);
+  await page.locator('#flip-board').click();
+  await expect(page.locator('#board .cg-wrap')).toHaveClass(/orientation-black/);
+  await page.locator('#flip-board').click();
   await expect(page.locator('#board .cg-wrap')).toHaveClass(/orientation-white/);
   await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
   await page.screenshot({ path: info.outputPath('coincident-arrows.png'), fullPage: true });
@@ -590,8 +594,8 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
     expect(bar.height).toBeCloseTo(squares.height, 0);
     const white = (await page.locator('.balance-white').boundingBox())!;
     expect(white.y + white.height).toBeCloseTo(bar.y + bar.height, 0);
-    // Analysis board is fixed white-side up (no flip button).
-    await expect(page.locator('#flip-board')).toHaveCount(0);
+    // Analysis board defaults to auto orientation (reviewed side at bottom, white here) with a flip button.
+    await expect(page.locator('#flip-board')).toHaveCount(1);
     await expect(page.locator('#board .cg-wrap')).toHaveClass(/orientation-white/);
     await page.screenshot({ path: info.outputPath(`review-${viewport.width}.png`), fullPage: true });
   });

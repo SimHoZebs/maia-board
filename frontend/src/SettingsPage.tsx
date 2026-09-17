@@ -35,9 +35,28 @@ export function SettingsPage({ state, dispatch }: Props) {
     { value: 'placeholder', label: 'Original blank', hint: 'Invisible until the verdict lands' },
   ];
   const badgeIndex = Math.max(0, badgeOptions.findIndex(option => option.value === state.badgeLoading));
+  const orientationOptions = [
+    { value: 'auto' as const, label: 'Auto' },
+    { value: 'white' as const, label: 'White' },
+    { value: 'black' as const, label: 'Black' },
+  ];
   return <section className="engine-settings panel" aria-labelledby="settings-title">
     <p className="settings-eyebrow">BOARD</p>
     <h2 className="settings-subhead">Display</h2>
+    <div className="settings-control">
+      <div className="field field--row">
+        <span className="field-label" id="board-orientation-label">Board orientation</span>
+        <div role="radiogroup" aria-labelledby="board-orientation-label" className="segmented">
+          {orientationOptions.map(option => (
+            <label key={option.value}>
+              <input type="radio" name="board-orientation" value={option.value} checked={state.boardOrientation === option.value} onChange={() => dispatch({ type: 'board-orientation', orientation: option.value })} />
+              <span>{option.label}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+      <p>Auto puts your side at the bottom in play, and the reviewed side (or starting side) at the bottom in analysis. White or Black fixes that side to the bottom.</p>
+    </div>
     <div className="settings-control">
       <div className="field field--row">
         <span className="field-label" id="coordinates-style-label">Coordinates</span>
