@@ -112,6 +112,9 @@ legend { font-size: 14px; margin-bottom: 8px; }
 .side-options label { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; border: 1px solid var(--line); border-radius: 4px; flex: 1; }
 .side-options label:has(:checked) { border-color: var(--accent); }
 .side-options input { width: 16px; min-height: 16px; height: 16px; accent-color: var(--accent); }
+.side-options .side-icon { flex: none; }
+.side-icon-white { fill: #eee9df; color: #eee9df; }
+.side-icon-black { fill: #252626; color: #b9b9b5; }
 .actions, .source-options, .analysis-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .source-options { margin: 20px 0; }
 .source-options button { flex-grow: 1; font-size: 13px; }
@@ -229,6 +232,8 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .dialog .saved-game { align-items: start; }
 .dialog .saved-panel { margin: 20px 0; }
 .promotion-options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.promotion-options button { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 8px; }
+.promotion-options .promotion-icon { flex: none; }
 @media (max-width: 760px) {
   .app-shell { padding: 0 10px 20px; }
   .site-header { height: 56px; gap: 8px; justify-content: flex-start; margin-bottom: 8px; }

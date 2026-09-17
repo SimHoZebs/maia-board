@@ -1,4 +1,5 @@
 import { useState, type Dispatch } from 'react';
+import { ChessKing, Dices } from 'lucide-react';
 import { exportExplored, exportLine, newId, sideName } from './domain';
 import type { Action, State } from './state';
 import { Dialog } from './Dialog';
@@ -15,7 +16,7 @@ export function PlayControls({ state, dispatch }: Props) {
   const content = <section id="play-controls" className="setup panel">
     <h1>{state.started ? 'Start a new game?' : 'Play Maia'}</h1>
     <Rating value={state.setup.eloMaia} onChange={eloMaia => dispatch({ type: 'setup', draft: { eloMaia } })} />
-    <fieldset><legend>Your side</legend><div className="side-options">{(['white', 'black', 'random'] as const).map(color => <label key={color}><input type="radio" name="user-color" checked={state.setup!.userColor === color} onChange={() => dispatch({ type: 'setup', draft: { userColor: color } })} />{color === 'random' ? 'Random' : sideName(color)}</label>)}</div></fieldset>
+    <fieldset><legend>Your side</legend><div className="side-options">{(['white', 'black', 'random'] as const).map(color => <label key={color}><input type="radio" name="user-color" checked={state.setup!.userColor === color} onChange={() => dispatch({ type: 'setup', draft: { userColor: color } })} />{color === 'random' ? <Dices size={18} aria-hidden="true" className="side-icon" /> : <ChessKing size={18} aria-hidden="true" className={`side-icon side-icon-${color}`} />}{color === 'random' ? 'Random' : sideName(color)}</label>)}</div></fieldset>
     <details className="advanced-config"><summary>Advanced</summary>
       <label className="field" htmlFor="maia-temperature">Maia temperature <output>{(state.setup.temperature ?? 0).toFixed(1)}</output>
         <input id="maia-temperature" type="range" min="0" max="2" step="0.1" value={state.setup.temperature ?? 0} onChange={e => dispatch({ type: 'setup', draft: { temperature: e.target.valueAsNumber } })} />
