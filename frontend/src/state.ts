@@ -9,6 +9,7 @@ import { KEYS, loadSettings, readStorage } from './storage';
 import { mergeSync, type OutboxOp } from './serverGames';
 import { readGameRepository } from './gameRepository';
 import { normalizeStockfishSettings, STOCKFISH_STORAGE_KEY, type StockfishSettings } from './stockfishSettings';
+import { normalizeBestLineWindow } from './material';
 import { clampMaiaElo } from './BoardTools';
 import type { BadgeLoading } from './ReviewCharts';
 
@@ -31,7 +32,7 @@ const sameSettings = (a: Settings, b: Settings) => a.userColor === b.userColor &
   && a.eloMaia === b.eloMaia && a.eloUser === b.eloUser && (a.temperature ?? 0) === (b.temperature ?? 0);
 export type State = {
   mode: Mode; play: StoredGame; saved: StoredGame[];
-  started: boolean; setup: PlayDraft | null; viewedPly: number | null; stockfish: StockfishSettings; feedback: boolean; badgeLoading: BadgeLoading; coordinatesOnSquares: boolean; boardOrientation: BoardOrientationSetting;
+  started: boolean; setup: PlayDraft | null; viewedPly: number | null; stockfish: StockfishSettings; feedback: boolean; badgeLoading: BadgeLoading; coordinatesOnSquares: boolean; boardOrientation: BoardOrientationSetting; bestLineWindow: number;
   analysis: Analysis; analysisSettings: Draft; analysisLoaded: boolean; importing: boolean; analysisSourceId: string | null;
   inputs: { fen: string; pgn: string }; flipped: boolean; preview: string | null;
   promotion: { from: Square; to: Square } | null;
@@ -45,6 +46,7 @@ export type Action =
   | { type: 'badge-loading'; loading: BadgeLoading }
   | { type: 'coordinates-on-squares'; enabled: boolean }
   | { type: 'board-orientation'; orientation: BoardOrientationSetting }
+  | { type: 'best-line-window'; window: number }
   | { type: 'new'; id: string; createdAt: string; resolvedColor?: 'white' | 'black' }
   | { type: 'analysis-settings'; settings: Partial<Draft> }
   | { type: 'takeback' } | { type: 'resign' } | { type: 'flip' }
@@ -186,7 +188,7 @@ export function initialState(mode: Mode = 'play', urlLine?: UrlLine, repository 
   const state: State = { mode, play: restored ?? { id: newId(), createdAt: new Date().toISOString(), moves: [], settings },
     started: !!restored, setup: restored ? null : newPlayDraft(settings), viewedPly: null,
     saved: repository.games, analysis, analysisSettings: { eloMaia: settings.eloMaia, model: settings.model, userColor: settings.userColor }, analysisLoaded, importing: !analysisLoaded, analysisSourceId,
-    stockfish: normalizeStockfishSettings(readStorage(STOCKFISH_STORAGE_KEY)), feedback: readStorage<boolean>(KEYS.feedback) === true, badgeLoading: normalizeBadgeLoading(readStorage<unknown>(KEYS.badgeLoading)), coordinatesOnSquares: normalizeCoordinatesOnSquares(readStorage<unknown>(KEYS.coordinatesOnSquares)), boardOrientation: normalizeBoardOrientation(readStorage<unknown>(KEYS.boardOrientation)),
+    stockfish: normalizeStockfishSettings(readStorage(STOCKFISH_STORAGE_KEY)), feedback: readStorage<boolean>(KEYS.feedback) === true, badgeLoading: normalizeBadgeLoading(readStorage<unknown>(KEYS.badgeLoading)), coordinatesOnSquares: normalizeCoordinatesOnSquares(readStorage<unknown>(KEYS.coordinatesOnSquares)), boardOrientation: normalizeBoardOrientation(readStorage<unknown>(KEYS.boardOrientation)), bestLineWindow: normalizeBestLineWindow(readStorage<unknown>(KEYS.bestLineWindow)),
     inputs, flipped: false, preview: null, promotion: null, insight: null, error: '', request: null, revision: 0 };
   return mode === 'play' && maiaTurn(state) ? queueRequest(state) : state;
 }
@@ -198,6 +200,11 @@ export function reducer(state: State, action: Action): State {
     case 'badge-loading': return state.badgeLoading === action.loading ? state : { ...state, badgeLoading: action.loading };
     case 'coordinates-on-squares': return state.coordinatesOnSquares === action.enabled ? state : { ...state, coordinatesOnSquares: action.enabled };
     case 'board-orientation': return state.boardOrientation === action.orientation ? state : { ...state, boardOrientation: action.orientation };
+    // Display-only like badgeLoading: normalizing here keeps junk storage or
+    // dispatches on the default, and the value never enters review cache keys
+    // or engine requests, so changing it recomputes verdict text without a
+    // refetch.
+    case 'best-line-window': { const window = normalizeBestLineWindow(action.window); return state.bestLineWindow === window ? state : { ...state, bestLineWindow: window }; }
     case 'setup': return { ...state, setup: { ...(state.setup ?? newPlayDraft(state.play.settings)), ...action.draft } };
     case 'cancel-setup': return state.started ? { ...state, setup: null } : state;
     case 'new': {
@@ -248,9 +255,10 @@ export function reducer(state: State, action: Action): State {
       return commitMove(state, from, to, action.uci[4]);
     }
     case 'explore-line': {
-      // Verdict best-line button: spawn the whole PV as a branch but stay on
-      // its root ply so the user steps through it. Atomic single action (not
-      // N explore dispatches) so the branch lands in one commit.
+      // Verdict best-line button: spawn the whole PV as a branch and land on
+      // its first move so the punishment is on the board; the rest stays
+      // steppable. Atomic single action (not N explore dispatches) so the
+      // branch lands in one commit.
       if (state.mode !== 'analysis' || !state.analysisLoaded || state.promotion) return state;
       const ucis = action.ucis;
       if (!Array.isArray(ucis) || ucis.length === 0) return state;
@@ -274,10 +282,10 @@ export function reducer(state: State, action: Action): State {
       } catch { return { ...state, error: 'That line is not legal in this position.' }; }
       const origin = analysis.index;
       if (analysis.branchFromPly === null) {
-        return transition(state, { analysis: { ...analysis, branchFromPly: origin, branchMoves: canonical, index: origin } }, false);
+        return transition(state, { analysis: { ...analysis, branchFromPly: origin, branchMoves: canonical, index: origin + 1 } }, false);
       }
       const prefix = analysis.branchMoves.slice(0, Math.max(0, origin - analysis.branchFromPly));
-      return transition(state, { analysis: { ...analysis, branchMoves: [...prefix, ...canonical], index: origin } }, false);
+      return transition(state, { analysis: { ...analysis, branchMoves: [...prefix, ...canonical], index: origin + 1 } }, false);
     }
     case 'original': return transition(state, { analysis: { ...state.analysis, index: state.analysis.branchFromPly ?? state.analysis.index, branchFromPly: null, branchMoves: [] } }, false);
     case 'inputs': return { ...state, inputs: { ...state.inputs, ...action.inputs } };

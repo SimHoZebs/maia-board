@@ -165,7 +165,7 @@ describe('task lifecycles', () => {
     const replayed = reducer({ ...state, analysis: { ...state.analysis, index: 3, branchFromPly: null, branchMoves: [] } }, { type: 'explore', uci: 'g8f6' });
     expect(analysisLine(replayed.analysis).moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'g8f6']);
   });
-  it('spawns a PV branch from the verdict line and stays on its root', () => {
+  it('spawns a PV branch from the verdict line and lands on its first move', () => {
     let state = reducer(started(), { type: 'mode', mode: 'analysis' });
     state = reducer(state, { type: 'inputs', inputs: { pgn: '1. e4 e5 2. Nf3' } });
     state = reducer(state, { type: 'load' });
@@ -173,12 +173,12 @@ describe('task lifecycles', () => {
     state = reducer(state, { type: 'explore-line', ucis: ['b8c6', 'f1c4'] });
     expect(state.analysis.branchFromPly).toBe(3);
     expect(state.analysis.branchMoves).toEqual(['b8c6', 'f1c4']);
-    expect(state.analysis.index).toBe(3);
-    expect(analysisLine(state.analysis).moves.slice(0, 3)).toEqual(['e2e4', 'e7e5', 'g1f3']);
-    expect(state.preview).toBeNull();
-    // Stepping forward enters the spawned line.
-    state = reducer(state, { type: 'view', ply: 4 });
+    expect(state.analysis.index).toBe(4);
     expect(analysisLine(state.analysis).moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'b8c6']);
+    expect(state.preview).toBeNull();
+    // Stepping forward enters the rest of the spawned line.
+    state = reducer(state, { type: 'view', ply: 5 });
+    expect(analysisLine(state.analysis).moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4']);
     // Illegal and empty lines never branch.
     const illegal = reducer(state, { type: 'explore-line', ucis: ['e2e9'] });
     expect(illegal).toBe(state);
@@ -190,20 +190,20 @@ describe('task lifecycles', () => {
     state = reducer(state, { type: 'inputs', inputs: { pgn: '1. e4 e5 2. Nf3' } });
     state = reducer(state, { type: 'load' });
     state = reducer(state, { type: 'explore-line', ucis: ['b8c6', 'f1c4'] });
-    // Extend from the branch tip: prefix preserved, cursor stays on the
-    // origin (second click from inside a spawned verdict line).
+    // Extend from the branch tip: prefix preserved, cursor lands on the new
+    // first move (second click from inside a spawned verdict line).
     state = reducer(state, { type: 'view', ply: 5 });
     state = reducer(state, { type: 'explore-line', ucis: ['g8f6'] });
     expect(state.analysis.branchFromPly).toBe(3);
     expect(state.analysis.branchMoves).toEqual(['b8c6', 'f1c4', 'g8f6']);
-    expect(state.analysis.index).toBe(5);
-    expect(analysisLine(state.analysis).moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4']);
+    expect(state.analysis.index).toBe(6);
+    expect(analysisLine(state.analysis).moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4', 'g8f6']);
     // Spawn from the branch root: the old tail is replaced, not appended.
     state = reducer(state, { type: 'view', ply: 3 });
     state = reducer(state, { type: 'explore-line', ucis: ['g8f6'] });
     expect(state.analysis.branchFromPly).toBe(3);
     expect(state.analysis.branchMoves).toEqual(['g8f6']);
-    expect(state.analysis.index).toBe(3);
+    expect(state.analysis.index).toBe(4);
     // Before the fork: same guard as single-explore, branch preserved.
     state = reducer(state, { type: 'view', ply: 1 });
     const guarded = reducer(state, { type: 'explore-line', ucis: ['d7d5'] });
@@ -211,6 +211,19 @@ describe('task lifecycles', () => {
     expect(guarded.analysis.branchFromPly).toBe(3);
     expect(guarded.analysis.branchMoves).toEqual(['g8f6']);
     expect(guarded.analysis.index).toBe(1);
+  });
+  it('defaults the best-line window to 3 and normalizes the rest', () => {
+    expect(initialState().bestLineWindow).toBe(3);
+    const state = reducer(initialState(), { type: 'best-line-window', window: 5 });
+    expect(state.bestLineWindow).toBe(5);
+    expect(reducer(state, { type: 'best-line-window', window: 5 })).toBe(state);
+    expect(reducer(state, { type: 'best-line-window', window: 99 }).bestLineWindow).toBe(3);
+  });
+  it('restores the persisted best-line window', () => {
+    localStorage.setItem(KEYS.bestLineWindow, JSON.stringify(5));
+    expect(initialState().bestLineWindow).toBe(5);
+    localStorage.setItem(KEYS.bestLineWindow, JSON.stringify('wide'));
+    expect(initialState().bestLineWindow).toBe(3);
   });
   it('loads shared analysis links without resetting an identical line', () => {
     let state = reducer(initialState(), { type: 'mode', mode: 'analysis' });

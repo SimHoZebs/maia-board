@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bestLineMaterialNote, bestLinePreview, capturesFromLine, capturedLabel, materialFromFen, materialLeadFor, sortCaptured } from './material';
+import { BEST_LINE_WINDOW_MAX, bestLineMaterialNote, bestLinePreview, capturesFromLine, capturedLabel, DEFAULT_BEST_LINE_WINDOW, materialFromFen, materialLeadFor, normalizeBestLineWindow, sortCaptured } from './material';
 import { START_FEN } from './domain';
 
 describe('material', () => {
@@ -79,9 +79,34 @@ describe('bestLineMaterialNote', () => {
     expect(bestLineMaterialNote(START_FEN, [], 'white')).toBeNull();
   });
 
-  it('bounds the claim to a 3-ply window', () => {
+  it('bounds the claim to the default 3-ply window', () => {
     const note = bestLineMaterialNote('4k3/8/4p3/3P4/8/8/8/4K3 b - - 0 1', ['e6d5', 'e1e2', 'e8e7', 'e2e3'], 'white');
     expect(note).toBe('This line wins a pawn for Black.');
+  });
+
+  it('normalizes junk windows to the default', () => {
+    expect(normalizeBestLineWindow(undefined)).toBe(DEFAULT_BEST_LINE_WINDOW);
+    expect(normalizeBestLineWindow(2.5)).toBe(DEFAULT_BEST_LINE_WINDOW);
+    expect(normalizeBestLineWindow(0)).toBe(DEFAULT_BEST_LINE_WINDOW);
+    expect(normalizeBestLineWindow(99)).toBe(DEFAULT_BEST_LINE_WINDOW);
+    expect(normalizeBestLineWindow(BEST_LINE_WINDOW_MAX)).toBe(BEST_LINE_WINDOW_MAX);
+  });
+
+  it('reads only the first ply on a window of 1', () => {
+    expect(bestLineMaterialNote('4k3/8/4p3/3P4/8/8/8/4K3 b - - 0 1', ['e6d5'], 'white', 1))
+      .toBe('This line wins a pawn for Black.');
+  });
+
+  it('catches slower wins on wider windows', () => {
+    const slowFen = '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1';
+    const slowPv = ['f5d4', 'b3c3', 'e8e7', 'c3a5', 'd4c2'];
+    // The bishop falls on ply 5: the default window sees only Nd4/Qc3/Ke7.
+    expect(bestLineMaterialNote(slowFen, slowPv, 'white')).toBeNull();
+    expect(bestLineMaterialNote(slowFen, slowPv, 'white', 5))
+      .toBe("Nd4 forks White's bishop and queen, losing the bishop.");
+    const preview = bestLinePreview(slowFen, slowPv, 'white', 5);
+    expect(preview?.sans).toEqual(['Nd4', 'Qc3', 'Ke7', 'Qa5', 'Nxc2+']);
+    expect(preview?.text).toBe('1… Nd4 2. Qc3 2… Ke7 3. Qa5 3… Nxc2+');
   });
 });
 

@@ -108,6 +108,7 @@ export function MoveAnalysis({
       review.nodes[ply].fen,
       afterEvaluation?.lines[0]?.pv,
       review.nodes[focus].turn === 'white' ? 'white' : 'black',
+      state.bestLineWindow,
     ) : null;
   const materialNote = bestLine?.note ?? null;
   // Theory facts (terminal classification, dead draws, novelties, pawn

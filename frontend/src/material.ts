@@ -103,7 +103,18 @@ export function capturedLabel(by: MaiaSide, pieces: readonly CapturedPiece[], le
 //   mover captures nothing) — anything else keeps the generic composition.
 //   Absolute lead is never stated;
 //   the player strip already owns that.
-export const MATERIAL_WINDOW = 3;
+// How far down the rank-1 PV the verdict reads. The backend caps PVs at
+// five plies, so windows above five would only ever read padding. A display
+// concern only: it never enters review cache keys or engine requests, which
+// is why it lives outside StockfishSettings (changing it recomputes verdict
+// text locally, never refetches). Client-configurable; three is the default.
+export const BEST_LINE_WINDOW_MIN = 1;
+export const BEST_LINE_WINDOW_MAX = 5;
+export const DEFAULT_BEST_LINE_WINDOW = 3;
+export function normalizeBestLineWindow(value: unknown): number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= BEST_LINE_WINDOW_MIN && value <= BEST_LINE_WINDOW_MAX
+    ? value : DEFAULT_BEST_LINE_WINDOW;
+}
 const PIECE_ARTICLE: Record<CapturedPiece, string> = { p: 'a pawn', n: 'a knight', b: 'a bishop', r: 'a rook', q: 'a queen' };
 function piecesText(pieces: CapturedPiece[]): string {
   const counts = new Map<CapturedPiece, number>();
@@ -113,21 +124,21 @@ function piecesText(pieces: CapturedPiece[]): string {
   if (parts.length <= 1) return parts[0] ?? '';
   return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 }
-export function bestLineMaterialNote(afterFen: string, pv: readonly string[] | undefined, mover: MaiaSide): string | null {
-  const analyzed = analyzeBestLineWindow(afterFen, pv, mover);
+export function bestLineMaterialNote(afterFen: string, pv: readonly string[] | undefined, mover: MaiaSide, windowPlies: number = DEFAULT_BEST_LINE_WINDOW): string | null {
+  const analyzed = analyzeBestLineWindow(afterFen, pv, mover, windowPlies);
   if (!analyzed) return null;
   return noteFromAnalysis(afterFen, analyzed, mover);
 }
 
-// Clickable PV for the verdict: the same validated MATERIAL_WINDOW slice the
+// Clickable PV for the verdict: the same validated window slice the
 // note describes, rendered as numbered SAN ("11… Nxd4 12. Nxc2") so the claim
 // "This line" has an exact referent. Null whenever the note is null —
 // promotions, illegal PVs, missing lines, and non-material windows never
 // offer a branch. The caller spawns these ucis as a branch rooted at
-// afterFen (staying on the root ply so the user can step through).
+// afterFen, landing on its first move so the punishment is on the board.
 export type BestLinePreview = { ucis: string[]; sans: string[]; text: string; note: string };
-export function bestLinePreview(afterFen: string, pv: readonly string[] | undefined, mover: MaiaSide): BestLinePreview | null {
-  const analyzed = analyzeBestLineWindow(afterFen, pv, mover);
+export function bestLinePreview(afterFen: string, pv: readonly string[] | undefined, mover: MaiaSide, windowPlies: number = DEFAULT_BEST_LINE_WINDOW): BestLinePreview | null {
+  const analyzed = analyzeBestLineWindow(afterFen, pv, mover, windowPlies);
   if (!analyzed) return null;
   const sans = sansFromWindow(afterFen, analyzed.ucis);
   if (!sans) return null;
@@ -254,9 +265,9 @@ function formatSanLine(afterFen: string, sans: readonly string[]): string {
   return numbered.join(' ');
 }
 
-function analyzeBestLineWindow(afterFen: string, pv: readonly string[] | undefined, mover: MaiaSide): BestLineAnalysis | null {
+function analyzeBestLineWindow(afterFen: string, pv: readonly string[] | undefined, mover: MaiaSide, windowPlies: number = DEFAULT_BEST_LINE_WINDOW): BestLineAnalysis | null {
   if (!pv || pv.length === 0) return null;
-  const window = pv.slice(0, MATERIAL_WINDOW);
+  const window = pv.slice(0, normalizeBestLineWindow(windowPlies));
   let game: Chess;
   try { game = new Chess(afterFen); } catch { return null; }
   const opp: MaiaSide = mover === 'white' ? 'black' : 'white';

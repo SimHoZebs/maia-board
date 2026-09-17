@@ -108,6 +108,14 @@ export function SettingsPage({ state, dispatch }: Props) {
       </div>
       <p>Compare up to five alternatives. More lines share the available search time.</p>
     </div>
+    <div className="settings-control">
+      <div className="field field--row">
+        <span className="field-label" id="best-line-window-label">Best-line window</span>
+        <NumberSetting id="best-line-window" label="Best-line window plies" min={1} max={5} step={1} value={state.bestLineWindow} onChange={window => dispatch({ type: 'best-line-window', window })} />
+        <span>plies of the top line</span>
+      </div>
+      <p>How far down the best line the verdict reads for material and tactics. Longer windows catch slower wins; the line stays clickable.</p>
+    </div>
     <footer className="settings-footer"><span>Saved automatically in this browser</span><Button onClick={() => update(defaultStockfishSettings)}>Reset defaults</Button></footer>
     <p className="settings-eyebrow">EXPERIMENTAL</p>
     <h2 className="settings-subhead">Interface experiments</h2>
