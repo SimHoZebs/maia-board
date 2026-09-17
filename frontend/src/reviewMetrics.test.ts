@@ -111,58 +111,59 @@ it('bands Maia rarity by ratio to the top move, not rank or absolute prob', () =
 it('verdicts only the quality-by-rarity synthesis, never the grade', () => {
   const quality = (label: Quality['label'], loss: number | null = 0): Quality => ({ label, accuracy: 100, loss });
   const rarity = (label: Rarity['label']): Rarity => ({ label, r: 1, prob: 0.4, topProb: 0.4 });
-  expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity: rarity('Expected'), elo: 1600 }))
-    .toBe('The natural choice — Maia at 1600 predicts 40% for this move.');
-  expect(describeMove({ san: 'Nxh7+', quality: quality('Best'), rarity: rarity('Rare'), elo: 1600 }))
-    .toBe('A rare find — Maia at 1600 predicts only 40%.');
-  expect(describeMove({ san: 'Re8', quality: quality('Great'), rarity: rarity('Rare'), elo: 1400 }))
-    .toBe('A rare find — Maia at 1400 predicts only 40%.');
-  expect(describeMove({ san: 'Re8', quality: quality('Great'), rarity: rarity('Expected'), elo: 1400 }))
-    .toBe('The natural choice — Maia at 1400 predicts 40% for this move.');
-  expect(describeMove({ san: 'h3', quality: quality('Good'), rarity: rarity('Uncommon'), elo: 1600 }))
-    .toBe('A meaningful minority that holds — Maia at 1600 predicts 40% for this move.');
-  expect(describeMove({ san: 'Nxh7+', quality: quality('Excellent'), rarity: rarity('Rare'), elo: 1600 }))
-    .toBe('An exceptional find — Maia at 1600 predicts only 40%.');
-  expect(describeMove({ san: 'Qh5', quality: quality('Blunder', 25), rarity: rarity('Expected'), elo: 1600 }))
-    .toBe('An easy mistake to make — Maia at 1600 predicts 40% for this move.');
-  expect(describeMove({ san: 'd5', quality: quality('Mistake', 12), rarity: rarity('Uncommon'), elo: 1600 }))
-    .toBe('A tempting sidestep — Maia at 1600 predicts only 40%.');
-  expect(describeMove({ san: 'Kd2', quality: quality('Blunder', 40), rarity: rarity('Uncommon'), elo: 1600 }))
-    .toBe('A tempting sidestep — Maia at 1600 predicts only 40%.');
-  expect(describeMove({ san: 'fxg3', quality: quality('Allowed mate'), rarity: rarity('Expected'), elo: 1600 }))
-    .toBe('An easy mistake to make — Maia at 1600 predicts 40% for this move.');
-  expect(describeMove({ san: 'fxg3', quality: quality('Allowed mate'), rarity: rarity('Rare'), elo: 1600 }))
-    .toBe('An unusual slip — Maia at 1600 predicts only 40%.');
-  expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity: rarity('Unknown'), elo: 1600 })).toBeNull();
-  expect(describeMove({ san: 'e4', quality: quality('Forced'), rarity: rarity('Unknown'), elo: 1600 }))
+  expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity: rarity('Expected') }))
+    .toBe('The natural choice.');
+  expect(describeMove({ san: 'Nxh7+', quality: quality('Best'), rarity: rarity('Rare') }))
+    .toBe('A rare find.');
+  expect(describeMove({ san: 'Re8', quality: quality('Great'), rarity: rarity('Rare') }))
+    .toBe('A rare find.');
+  expect(describeMove({ san: 'Re8', quality: quality('Great'), rarity: rarity('Expected') }))
+    .toBe('The natural choice.');
+  expect(describeMove({ san: 'h3', quality: quality('Good'), rarity: rarity('Uncommon') }))
+    .toBe('A meaningful minority that holds.');
+  expect(describeMove({ san: 'Nxh7+', quality: quality('Excellent'), rarity: rarity('Rare') }))
+    .toBe('An exceptional find.');
+  expect(describeMove({ san: 'Qh5', quality: quality('Blunder', 25), rarity: rarity('Expected') }))
+    .toBe('An easy mistake to make.');
+  expect(describeMove({ san: 'd5', quality: quality('Mistake', 12), rarity: rarity('Uncommon') }))
+    .toBe('A tempting sidestep.');
+  expect(describeMove({ san: 'Kd2', quality: quality('Blunder', 40), rarity: rarity('Uncommon') }))
+    .toBe('A tempting sidestep.');
+  expect(describeMove({ san: 'fxg3', quality: quality('Allowed mate'), rarity: rarity('Expected') }))
+    .toBe('An easy mistake to make.');
+  expect(describeMove({ san: 'fxg3', quality: quality('Allowed mate'), rarity: rarity('Rare') }))
+    .toBe('An unusual slip.');
+  expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity: rarity('Unknown') })).toBeNull();
+  expect(describeMove({ san: 'e4', quality: quality('Forced'), rarity: rarity('Unknown') }))
     .toBe('e4 was the only legal move.');
-  expect(describeMove({ san: 'e4', quality: quality('Unreviewed'), rarity: rarity('Unknown'), elo: 1600 })).toBeNull();
-  expect(describeMove({ san: 'e4', quality: undefined, rarity: undefined, elo: 1600 })).toBeNull();
+  expect(describeMove({ san: 'e4', quality: quality('Unreviewed'), rarity: rarity('Unknown') })).toBeNull();
+  expect(describeMove({ san: 'e4', quality: undefined, rarity: undefined })).toBeNull();
 });
-it('reports actual model probability without population or brilliance claims', () => {
+it('keeps probabilities in the candidate lists, never in the verdict', () => {
   const quality: Quality = { label: 'Blunder', accuracy: 20, loss: 25 };
   const rarity = maiaRarity(maia([['e2e4', .15], ['d2d4', .13]]), 'd2d4');
-  const text = describeMove({ san: 'd4', quality, rarity, elo: 1600 });
-  expect(text).toContain('predicts 13%');
+  const text = describeMove({ san: 'd4', quality: { ...quality, label: 'Best' }, rarity });
+  expect(text).toBe('The natural choice.');
+  expect(text).not.toMatch(/Maia|predicts|%/);
   expect(text).not.toMatch(/most|nobody|population/i);
-  const absent = describeMove({ san: 'Nf3', quality: { ...quality, label: 'Great' }, rarity: maiaRarity(maia([['e2e4', .15]]), 'g1f3'), elo: 1600 });
-  expect(absent).toBe("A genuine find — absent from Maia's top choices at 1600.");
-  expect(absent).not.toMatch(/brilliant|only good|impossible|nobody/i);
-  const absentBlunder = describeMove({ san: 'h4', quality, rarity: maiaRarity(maia([['e2e4', .15]]), 'h2h4'), elo: 1600 });
-  expect(absentBlunder).toBe("Worth a second look — absent from Maia's top choices at 1600.");
-  const absentExcellent = describeMove({ san: 'Re8', quality: { ...quality, label: 'Excellent' }, rarity: maiaRarity(maia([['e2e4', .15]]), 'e8e7'), elo: 1600 });
-  expect(absentExcellent).toBe("An exceptional find — absent from Maia's top choices at 1600.");
-  const absentGood = describeMove({ san: 'h3', quality: { ...quality, label: 'Good' }, rarity: maiaRarity(maia([['e2e4', .15]]), 'h2h3'), elo: 1600 });
-  expect(absentGood).toBe("Absent from Maia's top choices at 1600, and it holds.");
-  expect(describeMove({ san: 'd4', quality, rarity: undefined, elo: 1600 })).toBeNull();
+  const absent = describeMove({ san: 'Nf3', quality: { ...quality, label: 'Great' }, rarity: maiaRarity(maia([['e2e4', .15]]), 'g1f3') });
+  expect(absent).toBe('A genuine find.');
+  expect(absent).not.toMatch(/brilliant|only good|impossible|nobody|Maia|%/i);
+  const absentBlunder = describeMove({ san: 'h4', quality, rarity: maiaRarity(maia([['e2e4', .15]]), 'h2h4') });
+  expect(absentBlunder).toBe('Worth a second look.');
+  const absentExcellent = describeMove({ san: 'Re8', quality: { ...quality, label: 'Excellent' }, rarity: maiaRarity(maia([['e2e4', .15]]), 'e8e7') });
+  expect(absentExcellent).toBe('An exceptional find.');
+  const absentGood = describeMove({ san: 'h3', quality: { ...quality, label: 'Good' }, rarity: maiaRarity(maia([['e2e4', .15]]), 'h2h3') });
+  expect(absentGood).toBe('An unlisted choice that holds.');
+  expect(describeMove({ san: 'd4', quality, rarity: undefined })).toBeNull();
 });
 it('gates praise on Maia: Excellent needs absent-or-tiny, Expected/Unknown cap at Best', () => {
   const critical: EngineGrade = { label: 'Critical', accuracy: 100, loss: 0 };
   const expected: Rarity = { label: 'Expected', r: 1, prob: 0.542, topProb: 0.542 };
   expect(effectiveQuality(critical, expected)?.label).toBe('Best');
   // Verdict text is identical either way, so only the badge changes.
-  expect(describeMove({ san: 'Rxb3+', quality: { ...critical, label: 'Best' }, rarity: expected, elo: 1400 }))
-    .toBe(describeMove({ san: 'Rxb3+', quality: { ...critical, label: 'Best' }, rarity: expected, elo: 1400 }));
+  expect(describeMove({ san: 'Rxb3+', quality: { ...critical, label: 'Best' }, rarity: expected }))
+    .toBe(describeMove({ san: 'Rxb3+', quality: { ...critical, label: 'Best' }, rarity: expected }));
   const uncommon: Rarity = { label: 'Uncommon', r: 0.4, prob: 0.2, topProb: 0.5 };
   expect(effectiveQuality(critical, uncommon)?.label).toBe('Great');
   // Rare tiny under 5%: exceptional. Rare tiny at/over 5%: great.
@@ -199,54 +200,64 @@ it('notes when a mistake was hard to avoid because the best move was rare', () =
   const expected: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
   const rareBest: Rarity = { label: 'Rare', r: 0.1, prob: 0.02, topProb: 0.2 };
   const absentBest: Rarity = { label: 'Absent', r: null, prob: null, topProb: 0.4 };
-  // Obvious mistake, elusive best move: forgivable.
-  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, elo: 1400, bestRarity: rareBest }))
-    .toBe('Hard to avoid — Maia at 1400 predicts only 2% for the best move.');
-  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, elo: 1400, bestRarity: absentBest }))
-    .toBe("Hard to avoid — the best move is absent from Maia's top choices at 1400.");
+  // Obvious mistake, elusive best move: forgivable — one short sentence, no
+  // number. The concrete consequence lives in the "This line …" second
+  // sentence plus its clickable PV.
+  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: rareBest }))
+    .toBe('Hard to avoid at your elo.');
+  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: absentBest }))
+    .toBe('Hard to avoid at your elo.');
   // Obvious mistake, obvious best move: damning as before.
-  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, elo: 1400, bestRarity: expected }))
-    .toBe('An easy mistake to make — Maia at 1400 predicts 40% for this move.');
+  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: expected }))
+    .toBe('An easy mistake to make.');
   // No best-move evidence: standard wording.
-  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, elo: 1400 }))
-    .toBe('An easy mistake to make — Maia at 1400 predicts 40% for this move.');
-  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, elo: 1400, bestRarity: { label: 'Unknown', r: null, prob: null, topProb: null } }))
-    .toBe('An easy mistake to make — Maia at 1400 predicts 40% for this move.');
+  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected }))
+    .toBe('An easy mistake to make.');
+  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: { label: 'Unknown', r: null, prob: null, topProb: null } }))
+    .toBe('An easy mistake to make.');
   // Overrides every negative temptation sentence, not just Expected.
   const uncommon: Rarity = { label: 'Uncommon', r: 0.4, prob: 0.2, topProb: 0.5 };
-  expect(describeMove({ san: 'd5', quality: { ...blunder, label: 'Mistake' }, rarity: uncommon, elo: 1400, bestRarity: rareBest }))
-    .toBe('Hard to avoid — Maia at 1400 predicts only 2% for the best move.');
+  expect(describeMove({ san: 'd5', quality: { ...blunder, label: 'Mistake' }, rarity: uncommon, bestRarity: rareBest }))
+    .toBe('Hard to avoid at your elo.');
   // Praise and holds never read the best-move axis.
-  expect(describeMove({ san: 'Nf3', quality: { ...blunder, label: 'Best' }, rarity: expected, elo: 1400, bestRarity: rareBest }))
-    .toBe('The natural choice — Maia at 1400 predicts 40% for this move.');
-  expect(describeMove({ san: 'h3', quality: { ...blunder, label: 'Good' }, rarity: uncommon, elo: 1400, bestRarity: rareBest }))
-    .toBe('A meaningful minority that holds — Maia at 1400 predicts 20% for this move.');
+  expect(describeMove({ san: 'Nf3', quality: { ...blunder, label: 'Best' }, rarity: expected, bestRarity: rareBest }))
+    .toBe('The natural choice.');
+  expect(describeMove({ san: 'h3', quality: { ...blunder, label: 'Good' }, rarity: uncommon, bestRarity: rareBest }))
+    .toBe('A meaningful minority that holds.');
   // Shifted interval: a best move at r ~= 0.29 with prob < 5% is now Rare-tiny
   // and forgives; the same ratio at prob >= 5% stays standard temptation.
   const shiftedBestTiny: Rarity = { label: 'Rare', r: 0.29, prob: 0.04, topProb: 0.138 };
-  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, elo: 1400, bestRarity: shiftedBestTiny }))
-    .toBe('Hard to avoid — Maia at 1400 predicts only 4% for the best move.');
+  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: shiftedBestTiny }))
+    .toBe('Hard to avoid at your elo.');
   const shiftedBestListed: Rarity = { label: 'Rare', r: 0.29, prob: 0.06, topProb: 0.207 };
-  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, elo: 1400, bestRarity: shiftedBestListed }))
-    .toBe('An easy mistake to make — Maia at 1400 predicts 40% for this move.');
-  // f3-like Uncommon negative keeps "only": holds alone drops it because a
-  // meaningful minority that holds is neutral, while a sidestep stays unusual.
+  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: shiftedBestListed }))
+    .toBe('An easy mistake to make.');
+  // f3-like Uncommon negative stays a sidestep with no percentage attached.
   const f3like: Rarity = { label: 'Uncommon', r: 0.438, prob: 0.149, topProb: 0.34 };
-  expect(describeMove({ san: 'f3', quality: { ...blunder, label: 'Mistake' }, rarity: f3like, elo: 1400 }))
-    .toBe('A tempting sidestep — Maia at 1400 predicts only 14.9%.');
+  expect(describeMove({ san: 'f3', quality: { ...blunder, label: 'Mistake' }, rarity: f3like }))
+    .toBe('A tempting sidestep.');
 });
 it('appends the material note only for Mistake/Blunder', () => {
   const quality = (label: Quality['label']): Quality => ({ label, accuracy: 20, loss: 15 });
   const rarity: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
-  const note = 'Best line wins a pawn for Black in the next 1.';
-  expect(describeMove({ san: 'Qh5', quality: quality('Blunder'), rarity, elo: 1600, materialNote: note }))
-    .toBe(`An easy mistake to make — Maia at 1600 predicts 40% for this move. ${note}`);
-  expect(describeMove({ san: 'd5', quality: quality('Mistake'), rarity, elo: 1600, materialNote: note }))
+  const note = 'This line wins a pawn for Black.';
+  expect(describeMove({ san: 'Qh5', quality: quality('Blunder'), rarity, materialNote: note }))
+    .toBe(`An easy mistake to make. ${note}`);
+  expect(describeMove({ san: 'd5', quality: quality('Mistake'), rarity, materialNote: note }))
     .toContain(note);
-  expect(describeMove({ san: 'd5', quality: quality('Inaccuracy'), rarity, elo: 1600, materialNote: note }))
-    .not.toContain('Best line');
-  expect(describeMove({ san: 'fxg3', quality: quality('Allowed mate'), rarity, elo: 1600, materialNote: note }))
-    .not.toContain('Best line');
-  expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity, elo: 1600, materialNote: note }))
-    .not.toContain('Best line');
+  expect(describeMove({ san: 'd5', quality: quality('Inaccuracy'), rarity, materialNote: note }))
+    .not.toContain('This line');
+  expect(describeMove({ san: 'fxg3', quality: quality('Allowed mate'), rarity, materialNote: note }))
+    .not.toContain('This line');
+  expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity, materialNote: note }))
+    .not.toContain('This line');
+});
+it('pairs hard-to-avoid with the material consequence', () => {
+  const blunder: Quality = { label: 'Blunder', accuracy: 20, loss: 25 };
+  const expected: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
+  const absentBest: Rarity = { label: 'Absent', r: null, prob: null, topProb: 0.4 };
+  expect(describeMove({
+    san: 'Qf3', quality: blunder, rarity: expected, bestRarity: absentBest,
+    materialNote: 'This line loses a knight and a pawn for a bishop.',
+  })).toBe('Hard to avoid at your elo. This line loses a knight and a pawn for a bishop.');
 });

@@ -32,14 +32,14 @@ export function maiaRarity(maia: Pick<MoveResponse, 'top_moves' | 'degraded'> | 
   const r = found.prob / topProb;
   return { label: r >= 0.6 ? 'Expected' : r >= 1 / 3 ? 'Uncommon' : 'Rare', r, prob: found.prob, topProb };
 }
-// The verdict carries only the quality × rarity synthesis. Grades, scores,
-// and best lines already live in the badges, charts, and candidate lists, so
-// restating them here is repetition. Praise (Excellent/Great) meets
-// findability (a critical move nobody's model expects is an exceptional
-// find); negative grades meet temptation (a blunder the model saw coming is
-// an easy mistake). Wording stays model-relative — Maia's predicted
-// likelihood, never population claims — and the raw probability grounds each
-// characterization.
+// The verdict carries only the quality × rarity synthesis as a short head
+// ("A sharp find.", "An easy mistake to make."). Grades, scores,
+// probabilities, and best lines already live in the badges, charts, and
+// candidate lists, so restating them here is repetition. Praise
+// (Excellent/Great) meets findability (a critical move nobody's model
+// expects is an exceptional find); negative grades meet temptation (a
+// blunder the model saw coming is an easy mistake). The candidate lists
+// below carry the Maia percentages; the verdict never repeats them.
 // Praise gating lives in effectiveQuality, not reviewMove (which stays pure
 // engine so memo/cache keys never go stale on Maia changes). It translates
 // engine facts into displayed judgments:
@@ -72,43 +72,42 @@ export function effectiveQuality(grade: EngineGrade | undefined, rarity: Rarity 
   if (!isQualityLabel(grade.label)) throw new Error(`Unknown engine grade: ${String(grade.label)}`);
   return { ...grade, label: grade.label };
 }
-function rarityVerdict(quality: Quality, rarity: Rarity | undefined, elo: number, bestRarity?: Rarity | null): string | null {
+function rarityVerdict(quality: Quality, rarity: Rarity | undefined, bestRarity?: Rarity | null): string | null {
   if (!rarity || rarity.label === 'Unknown') return null;
   const praise = quality.label === 'Excellent' || quality.label === 'Great' || quality.label === 'Best';
   const holds = quality.label === 'Good';
   if (rarity.label === 'Absent') {
-    if (quality.label === 'Excellent') return `An exceptional find — absent from Maia's top choices at ${elo}.`;
-    if (praise) return `A genuine find — absent from Maia's top choices at ${elo}.`;
-    if (holds) return `Absent from Maia's top choices at ${elo}, and it holds.`;
-    return hardToAvoid(bestRarity, elo) ?? `Worth a second look — absent from Maia's top choices at ${elo}.`;
+    if (quality.label === 'Excellent') return `An exceptional find.`;
+    if (praise) return `A genuine find.`;
+    if (holds) return `An unlisted choice that holds.`;
+    return hardToAvoid(bestRarity) ?? `Worth a second look.`;
   }
-  if (rarity.prob == null) return null;
-  const pct = `${(rarity.prob * 100).toFixed(1).replace(/\.0$/, '')}%`;
   if (rarity.label === 'Expected') {
-    if (praise || holds) return `The natural choice — Maia at ${elo} predicts ${pct} for this move.`;
-    return hardToAvoid(bestRarity, elo) ?? `An easy mistake to make — Maia at ${elo} predicts ${pct} for this move.`;
+    if (praise || holds) return `The natural choice.`;
+    return hardToAvoid(bestRarity) ?? `An easy mistake to make.`;
   }
   if (rarity.label === 'Uncommon') {
-    if (quality.label === 'Excellent') return `An exceptional find — Maia at ${elo} predicts only ${pct}.`;
-    if (praise) return `A sharp find — Maia at ${elo} predicts only ${pct}.`;
-    if (holds) return `A meaningful minority that holds — Maia at ${elo} predicts ${pct} for this move.`;
-    return hardToAvoid(bestRarity, elo) ?? `A tempting sidestep — Maia at ${elo} predicts only ${pct}.`;
+    if (quality.label === 'Excellent') return `An exceptional find.`;
+    if (praise) return `A sharp find.`;
+    if (holds) return `A meaningful minority that holds.`;
+    return hardToAvoid(bestRarity) ?? `A tempting sidestep.`;
   }
-  if (quality.label === 'Excellent') return `An exceptional find — Maia at ${elo} predicts only ${pct}.`;
-  if (praise) return `A rare find — Maia at ${elo} predicts only ${pct}.`;
-  if (holds) return `A rarely played choice that holds — Maia at ${elo} predicts only ${pct}.`;
-  return hardToAvoid(bestRarity, elo) ?? `An unusual slip — Maia at ${elo} predicts only ${pct}.`;
+  if (quality.label === 'Excellent') return `An exceptional find.`;
+  if (praise) return `A rare find.`;
+  if (holds) return `A rarely played choice that holds.`;
+  return hardToAvoid(bestRarity) ?? `An unusual slip.`;
 }
 // A mistake whose avoidance was itself a rare find: the best move sat under
-// 5% (Rare) or outside Maia's top choices (Absent) at this Elo, so the slip
-// was hard to avoid. Expected/Uncommon/Unknown best moves leave the standard
-// temptation wording alone. Verdict-only: badges still read pure loss.
-function hardToAvoid(bestRarity: Rarity | null | undefined, elo: number): string | null {
+// 5% (Rare) or outside Maia's top choices (Absent), so the slip was hard to
+// avoid. Expected/Uncommon/Unknown best moves leave the standard temptation
+// wording alone. Verdict-only: badges still read pure loss. Both Absent and
+// Rare-tiny share one short sentence; the "This line …" second sentence plus
+// its clickable PV carries the concrete consequence.
+function hardToAvoid(bestRarity: Rarity | null | undefined): string | null {
   if (!bestRarity || bestRarity.label === 'Expected' || bestRarity.label === 'Uncommon' || bestRarity.label === 'Unknown') return null;
-  if (bestRarity.label === 'Absent') return `Hard to avoid — the best move is absent from Maia's top choices at ${elo}.`;
+  if (bestRarity.label === 'Absent') return `Hard to avoid at your elo.`;
   if (bestRarity.prob == null || bestRarity.prob >= EXCELLENT_MAX_PROB) return null;
-  const pct = `${(bestRarity.prob * 100).toFixed(1).replace(/\.0$/, '')}%`;
-  return `Hard to avoid — Maia at ${elo} predicts only ${pct} for the best move.`;
+  return `Hard to avoid at your elo.`;
 }
 // One verdict sentence for the move just played: the book name, the only
 // legal move, or the rarity synthesis — never a restated grade. Returns null
@@ -118,12 +117,12 @@ function hardToAvoid(bestRarity: Rarity | null | undefined, elo: number): string
 // by the caller; it only renders for Mistake/Blunder so Inaccuracy stays quiet
 // and Allowed-mate keeps its mate wording unmodified by pawn swings.
 export type OpeningRef = { eco: string; name: string };
-export function describeMove(args: { san: string; quality: Quality | undefined; rarity: Rarity | undefined; elo: number; opening?: OpeningRef | null; bestRarity?: Rarity | null; materialNote?: string | null }): string | null {
-  const { san, quality, rarity, elo, opening, bestRarity, materialNote } = args;
+export function describeMove(args: { san: string; quality: Quality | undefined; rarity: Rarity | undefined; opening?: OpeningRef | null; bestRarity?: Rarity | null; materialNote?: string | null }): string | null {
+  const { san, quality, rarity, opening, bestRarity, materialNote } = args;
   if (opening) return `${san} — ${opening.name} (${opening.eco}). Book move.`;
   if (!quality || quality.label === 'Unreviewed') return null;
   if (quality.label === 'Forced') return `${san} was the only legal move.`;
-  const base = rarityVerdict(quality, rarity, elo, bestRarity);
+  const base = rarityVerdict(quality, rarity, bestRarity);
   if (!base) return null;
   if (materialNote && (quality.label === 'Mistake' || quality.label === 'Blunder')) return `${base} ${materialNote}`;
   return base;

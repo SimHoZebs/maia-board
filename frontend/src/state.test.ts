@@ -165,6 +165,53 @@ describe('task lifecycles', () => {
     const replayed = reducer({ ...state, analysis: { ...state.analysis, index: 3, branchFromPly: null, branchMoves: [] } }, { type: 'explore', uci: 'g8f6' });
     expect(analysisLine(replayed.analysis).moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'g8f6']);
   });
+  it('spawns a PV branch from the verdict line and stays on its root', () => {
+    let state = reducer(started(), { type: 'mode', mode: 'analysis' });
+    state = reducer(state, { type: 'inputs', inputs: { pgn: '1. e4 e5 2. Nf3' } });
+    state = reducer(state, { type: 'load' });
+    // At the tip (ply 3, Black to move): the verdict PV Nxd4-style line.
+    state = reducer(state, { type: 'explore-line', ucis: ['b8c6', 'f1c4'] });
+    expect(state.analysis.branchFromPly).toBe(3);
+    expect(state.analysis.branchMoves).toEqual(['b8c6', 'f1c4']);
+    expect(state.analysis.index).toBe(3);
+    expect(analysisLine(state.analysis).moves.slice(0, 3)).toEqual(['e2e4', 'e7e5', 'g1f3']);
+    expect(state.preview).toBeNull();
+    // Stepping forward enters the spawned line.
+    state = reducer(state, { type: 'view', ply: 4 });
+    expect(analysisLine(state.analysis).moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'b8c6']);
+    // Illegal and empty lines never branch.
+    const illegal = reducer(state, { type: 'explore-line', ucis: ['e2e9'] });
+    expect(illegal).toBe(state);
+    const empty = reducer(state, { type: 'explore-line', ucis: [] });
+    expect(empty).toBe(state);
+  });
+  it('extends a branch tip, replaces from its root, and guards pre-fork origins', () => {
+    let state = reducer(started(), { type: 'mode', mode: 'analysis' });
+    state = reducer(state, { type: 'inputs', inputs: { pgn: '1. e4 e5 2. Nf3' } });
+    state = reducer(state, { type: 'load' });
+    state = reducer(state, { type: 'explore-line', ucis: ['b8c6', 'f1c4'] });
+    // Extend from the branch tip: prefix preserved, cursor stays on the
+    // origin (second click from inside a spawned verdict line).
+    state = reducer(state, { type: 'view', ply: 5 });
+    state = reducer(state, { type: 'explore-line', ucis: ['g8f6'] });
+    expect(state.analysis.branchFromPly).toBe(3);
+    expect(state.analysis.branchMoves).toEqual(['b8c6', 'f1c4', 'g8f6']);
+    expect(state.analysis.index).toBe(5);
+    expect(analysisLine(state.analysis).moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4']);
+    // Spawn from the branch root: the old tail is replaced, not appended.
+    state = reducer(state, { type: 'view', ply: 3 });
+    state = reducer(state, { type: 'explore-line', ucis: ['g8f6'] });
+    expect(state.analysis.branchFromPly).toBe(3);
+    expect(state.analysis.branchMoves).toEqual(['g8f6']);
+    expect(state.analysis.index).toBe(3);
+    // Before the fork: same guard as single-explore, branch preserved.
+    state = reducer(state, { type: 'view', ply: 1 });
+    const guarded = reducer(state, { type: 'explore-line', ucis: ['d7d5'] });
+    expect(guarded.error).toBe('Step forward to the branching point before exploring from an earlier position.');
+    expect(guarded.analysis.branchFromPly).toBe(3);
+    expect(guarded.analysis.branchMoves).toEqual(['g8f6']);
+    expect(guarded.analysis.index).toBe(1);
+  });
   it('loads shared analysis links without resetting an identical line', () => {
     let state = reducer(initialState(), { type: 'mode', mode: 'analysis' });
     state = reducer(state, { type: 'inputs', inputs: { pgn: '1. e4 e5' } });

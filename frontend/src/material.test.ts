@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bestLineMaterialNote, capturesFromLine, capturedLabel, materialFromFen, materialLeadFor, sortCaptured } from './material';
+import { bestLineMaterialNote, bestLinePreview, capturesFromLine, capturedLabel, materialFromFen, materialLeadFor, sortCaptured } from './material';
 import { START_FEN } from './domain';
 
 describe('material', () => {
@@ -55,12 +55,12 @@ describe('material', () => {
 describe('bestLineMaterialNote', () => {
   it('names a hanging pawn won in the best line', () => {
     expect(bestLineMaterialNote('4k3/8/4p3/3P4/8/8/8/4K3 b - - 0 1', ['e6d5'], 'white'))
-      .toBe('Best line wins a pawn for Black in the next 1.');
+      .toBe('This line wins a pawn for Black.');
   });
 
-  it('names an exchange loss with net when both sides capture', () => {
+  it('names an exchange loss without net when both sides capture', () => {
     expect(bestLineMaterialNote('4k3/8/8/8/8/4n3/8/3RK3 b - - 0 1', ['e3d1', 'e1d1'], 'white'))
-      .toBe('Best line loses a rook for a knight (net -2) in the next 2.');
+      .toBe('This line loses a rook for a knight.');
   });
 
   it('stays silent for positional windows with no material swing', () => {
@@ -69,7 +69,7 @@ describe('bestLineMaterialNote', () => {
 
   it('phrases the swing, not the absolute lead, when already ahead', () => {
     expect(bestLineMaterialNote('4k3/8/4p3/3P4/7Q/8/8/4K3 b - - 0 1', ['e6d5'], 'white'))
-      .toBe('Best line wins a pawn for Black in the next 1.');
+      .toBe('This line wins a pawn for Black.');
   });
 
   it('silences promotions, illegal PVs, and missing lines', () => {
@@ -81,6 +81,30 @@ describe('bestLineMaterialNote', () => {
 
   it('bounds the claim to a 3-ply window', () => {
     const note = bestLineMaterialNote('4k3/8/4p3/3P4/8/8/8/4K3 b - - 0 1', ['e6d5', 'e1e2', 'e8e7', 'e2e3'], 'white');
-    expect(note).toBe('Best line wins a pawn for Black in the next 3.');
+    expect(note).toBe('This line wins a pawn for Black.');
+  });
+});
+
+describe('bestLinePreview', () => {
+  it('bundles the note with numbered SAN for the same window', () => {
+    const preview = bestLinePreview('4k3/8/4p3/3P4/8/8/8/4K3 b - - 0 1', ['e6d5'], 'white');
+    expect(preview?.note).toBe('This line wins a pawn for Black.');
+    expect(preview?.ucis).toEqual(['e6d5']);
+    expect(preview?.sans).toEqual(['exd5']);
+    expect(preview?.text).toBe('1… exd5');
+  });
+
+  it('numbers a multi-ply window from the after-FEN turn', () => {
+    const preview = bestLinePreview('4k3/8/8/8/8/4n3/8/3RK3 b - - 0 1', ['e3d1', 'e1d1'], 'white');
+    expect(preview?.note).toBe('This line loses a rook for a knight.');
+    expect(preview?.sans).toEqual(['Nxd1', 'Kxd1']);
+    expect(preview?.text).toBe('1… Nxd1 2. Kxd1');
+  });
+
+  it('stays silent exactly when the note does', () => {
+    expect(bestLinePreview(START_FEN, ['e2e4', 'e7e5'], 'white')).toBeNull();
+    expect(bestLinePreview('7k/P7/8/8/8/8/8/4K3 w - - 0 1', ['a7a8q'], 'white')).toBeNull();
+    expect(bestLinePreview(START_FEN, ['e2e9'], 'white')).toBeNull();
+    expect(bestLinePreview(START_FEN, undefined, 'white')).toBeNull();
   });
 });

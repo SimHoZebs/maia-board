@@ -177,6 +177,8 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 @keyframes skeleton-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 .engine-duo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
 .move-verdict { margin: 0 0 12px; font-size: 14px; line-height: 1.5; }
+.verdict-line { min-height: 0; min-width: 0; padding: 2px 6px; font-size: 13px; font-weight: 600; background: transparent; border-color: var(--line); border-radius: 4px; color: inherit; white-space: nowrap; }
+.verdict-line:hover:not(:disabled) { background: #3b3d3d; text-decoration: underline; }
 .engine-duo > section { min-width: 0; }
 .engine-duo h2 { margin: 0 0 6px; line-height: 1.35; min-height: 2lh; }
 .engine-duo .model-context { line-height: 1.4; min-height: 2lh; }

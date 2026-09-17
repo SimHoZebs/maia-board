@@ -1,7 +1,7 @@
 import { Chess, type Square } from 'chess.js';
 import { type MaiaColor, type MoveRequest, type MoveResponse, readableApiError } from './api';
 import { toGroundColor } from './board-colors';
-import { analysisLength, analysisLine, defaultSettings, extendLine, lineRecord, loadLine, newId, oppositeColor, parseSquare, retreatLine, START_FEN,
+import { analysisLength, analysisLine, applyUci, defaultSettings, extendLine, lineRecord, loadLine, newId, oppositeColor, parseSquare, retreatLine, START_FEN, uciFromMove,
   type Analysis, type Insight, type Mode, type Position, type Settings, type StoredGame } from './domain';
 import type { Evaluation } from './reviewMetrics';
 import { sameLine, type UrlLine } from './analysisUrl';
@@ -49,6 +49,7 @@ export type Action =
   | { type: 'takeback' } | { type: 'resign' } | { type: 'flip' }
   | { type: 'move'; from: Square; to: Square }
   | { type: 'explore'; uci: string }
+  | { type: 'explore-line'; ucis: string[] }
   | { type: 'preview'; uci: string | null } | { type: 'original' }
   | { type: 'promote'; piece: string | null }
   | { type: 'inputs'; inputs: Partial<State['inputs']> }
@@ -243,6 +244,38 @@ export function reducer(state: State, action: Action): State {
       const to = parseSquare(action.uci.slice(2, 4));
       if (from === undefined || to === undefined) return state;
       return commitMove(state, from, to, action.uci[4]);
+    }
+    case 'explore-line': {
+      // Verdict best-line button: spawn the whole PV as a branch but stay on
+      // its root ply so the user steps through it. Atomic single action (not
+      // N explore dispatches) so the branch lands in one commit.
+      if (state.mode !== 'analysis' || !state.analysisLoaded || state.promotion) return state;
+      const ucis = action.ucis;
+      if (!Array.isArray(ucis) || ucis.length === 0) return state;
+      if (!ucis.every(uci => typeof uci === 'string' && /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(uci))) return state;
+      const { analysis } = state;
+      if (analysis.branchFromPly !== null && analysis.index < analysis.branchFromPly) return { ...state, error: 'Step forward to the branching point before exploring from an earlier position.' };
+      let originFen: string;
+      try {
+        originFen = currentPosition(state).fen;
+        if (new Chess(originFen).isGameOver()) return state;
+      } catch { return state; }
+      // Validate the full line before committing: illegal/stale PVs surface
+      // the same message as a single illegal explore, never a partial branch.
+      const canonical: string[] = [];
+      try {
+        const game = new Chess(originFen);
+        for (const uci of ucis) {
+          const applied = applyUci(game, uci);
+          canonical.push(uciFromMove({ from: applied.from, to: applied.to, promotion: applied.promotion }));
+        }
+      } catch { return { ...state, error: 'That line is not legal in this position.' }; }
+      const origin = analysis.index;
+      if (analysis.branchFromPly === null) {
+        return transition(state, { analysis: { ...analysis, branchFromPly: origin, branchMoves: canonical, index: origin } }, false);
+      }
+      const prefix = analysis.branchMoves.slice(0, Math.max(0, origin - analysis.branchFromPly));
+      return transition(state, { analysis: { ...analysis, branchMoves: [...prefix, ...canonical], index: origin } }, false);
     }
     case 'original': return transition(state, { analysis: { ...state.analysis, index: state.analysis.branchFromPly ?? state.analysis.index, branchFromPly: null, branchMoves: [] } }, false);
     case 'inputs': return { ...state, inputs: { ...state.inputs, ...action.inputs } };

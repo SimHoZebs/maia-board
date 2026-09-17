@@ -6,7 +6,7 @@ import { Button, CandidateList, CandidateRow, EngineSection } from "./components
 import { Chess } from "chess.js";
 import type { Review } from "./useReview";
 import { describeMove } from "./reviewMetrics";
-import { bestLineMaterialNote } from "./material";
+import { bestLinePreview } from "./material";
 import { useLineOpenings } from "./openings";
 import { ReviewIssues, ReviewSummary } from "./ReviewOverview";
 import { SkeletonList, SkeletonText, StockfishBody } from "./StockfishBar";
@@ -94,27 +94,36 @@ export function MoveAnalysis({
   // Material consequence: after-position rank-1 PV rooted at the after-FEN.
   // Only cp-vs-cp Mistake/Blunder render it (describeMove gates the labels;
   // mate scores stay silent so a forced mate is never reduced to a pawn note).
+  // The preview bundles the note with its clickable SAN line so "This line"
+  // always has an exact referent; the button below spawns the same UCIs as a
+  // branch rooted at the current ply.
   const quality = hasMove ? review.qualities[focus] : undefined;
-  const materialNote = hasMove && played && !exactOpening
+  const bestLine = hasMove && played && !exactOpening
     && (quality?.label === 'Mistake' || quality?.label === 'Blunder')
     && evaluation?.score.type === 'cp' && afterEvaluation?.score.type === 'cp'
     && !evaluation.terminal && !afterEvaluation.terminal
-    ? bestLineMaterialNote(
+    ? bestLinePreview(
       review.nodes[ply].fen,
       afterEvaluation?.lines[0]?.pv,
       review.nodes[focus].turn === 'white' ? 'white' : 'black',
     ) : null;
+  const materialNote = bestLine?.note ?? null;
   const verdict = played
       ? describeMove({
         san: review.nodes[ply].san ?? played,
         quality,
         rarity: review.rarities?.[focus],
-        elo: review.maiaElo,
         opening: exactOpening,
         bestRarity: review.bestRarities?.[focus],
         materialNote,
       })
     : null;
+  const exploreBestLine = () => {
+    if (!bestLine) return;
+    // Single dispatch: explore-line goes through transition(), which already
+    // clears the preview, so no separate preview-clear commit is needed.
+    dispatch({ type: "explore-line", ucis: bestLine.ucis });
+  };
   // Exploring a candidate means playing it instead of x, so step back to
   // x's before-position first: the reducer branches from the viewed position.
   const exploreFromFocus = (uci: string) => {
@@ -153,6 +162,19 @@ export function MoveAnalysis({
       {verdict ? (
         <p className="move-verdict" role="status">
           {verdict}
+          {bestLine && (
+            <>
+              {' '}
+              <button
+                type="button"
+                className="verdict-line"
+                onClick={exploreBestLine}
+                aria-label={`Explore best line ${bestLine.text}`}
+              >
+                {bestLine.text}
+              </button>
+            </>
+          )}
         </p>
       ) : (
         verdictLoading && <SkeletonText label="Loading move verdict" />
