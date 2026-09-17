@@ -1,3 +1,5 @@
 test-results/
 # `go build ./...` drops the server binary into backend/.
 backend/backend
+# Crash dumps (e.g. frontend/core.*) are local diagnostics, never committed.
+core.*
