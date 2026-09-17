@@ -108,6 +108,23 @@ describe('bestLineMaterialNote', () => {
     expect(preview?.sans).toEqual(['Nd4', 'Qc3', 'Ke7', 'Qa5', 'Nxc2+']);
     expect(preview?.text).toBe('1… Nd4 2. Qc3 2… Ke7 3. Qa5 3… Nxc2+');
   });
+
+  it('trims trailing quiet moves after the last capture', () => {
+    const fen = '4k3/8/4p3/3P4/8/8/8/4K3 b - - 0 1';
+    const preview = bestLinePreview(fen, ['e6d5', 'e1e2', 'e8e7'], 'white');
+    expect(preview?.note).toBe('This line wins a pawn for Black.');
+    expect(preview?.ucis).toEqual(['e6d5']);
+    expect(preview?.sans).toEqual(['exd5']);
+    expect(preview?.text).toBe('1… exd5');
+  });
+
+  it('trims the fork line to the falling piece', () => {
+    const forkFen = '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1';
+    const preview = bestLinePreview(forkFen, ['f5d4', 'b3c3', 'd4c2', 'e1e2'], 'white', 4);
+    expect(preview?.note).toBe("Nd4 forks White's bishop and queen, losing the bishop.");
+    expect(preview?.ucis).toEqual(['f5d4', 'b3c3', 'd4c2']);
+    expect(preview?.text).toBe('1… Nd4 2. Qc3 2… Nxc2+');
+  });
 });
 
 describe('bestLinePreview', () => {

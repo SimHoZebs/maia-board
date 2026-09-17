@@ -130,9 +130,9 @@ export function bestLineMaterialNote(afterFen: string, pv: readonly string[] | u
   return noteFromAnalysis(afterFen, analyzed, mover);
 }
 
-// Clickable PV for the verdict: the same validated window slice the
-// note describes, rendered as numbered SAN ("11… Nxd4 12. Nxc2") so the claim
-// "This line" has an exact referent. Null whenever the note is null —
+// Clickable PV for the verdict: the validated window slice the note
+// describes, tail-trimmed to its last capture and rendered as numbered SAN
+// ("11… Nxd4 12. Nxc2") so the claim "This line" has an exact referent. Null whenever the note is null —
 // promotions, illegal PVs, missing lines, and non-material windows never
 // offer a branch. The caller spawns these ucis as a branch rooted at
 // afterFen, landing on its first move so the punishment is on the board.
@@ -275,7 +275,8 @@ function analyzeBestLineWindow(afterFen: string, pv: readonly string[] | undefin
   const moverCaptures: CapturedPiece[] = [];
   let startDiff: number;
   try { startDiff = materialFromFen(afterFen).diff; } catch { return null; }
-  for (const uci of window) {
+  let lastCapture = -1;
+  for (const [ply, uci] of window.entries()) {
     if (typeof uci !== 'string' || uci.length === 5) return null; // promotion: material jump without capture
     let turn: string;
     try { turn = game.turn(); } catch { return null; }
@@ -283,6 +284,7 @@ function analyzeBestLineWindow(afterFen: string, pv: readonly string[] | undefin
     try { applied = applyUci(game, uci); } catch { return null; }
     const captured = applied.captured?.toLowerCase();
     if (captured && isCapturedPiece(captured)) {
+      lastCapture = ply;
       if (turn === 'w' ? mover === 'white' : mover === 'black') moverCaptures.push(captured);
       else oppCaptures.push(captured);
     }
@@ -296,5 +298,9 @@ function analyzeBestLineWindow(afterFen: string, pv: readonly string[] | undefin
   if (swingMover > -1) return null;
   if (!oppCaptures.length) return null; // non-capture swing (should not happen outside promotions, already excluded)
   const oppSide = opp === 'white' ? 'White' : 'Black';
-  return { ucis: [...window], oppCaptures, moverCaptures, oppSide };
+  // Tail-trim to the last capture: trailing quiet moves add nothing to a
+  // material claim (no captures, no promotions by the gates above), so the
+  // clickable line ends where the story ends. The head is never trimmed —
+  // the branch must root at the current position to stay explorable.
+  return { ucis: window.slice(0, lastCapture + 1), oppCaptures, moverCaptures, oppSide };
 }
