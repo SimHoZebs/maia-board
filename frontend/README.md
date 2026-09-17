@@ -109,8 +109,10 @@ line (cached by line, aborted on navigation) and derives the viewed
 position's deepest ancestor locally. `src/openings.ts` owns that fetch plus
 the ancestor derivation. `MovesPanel.tsx` swaps the eval badge slot for a
 book chip on in-book moves; `ReviewOverview.tsx` names the viewed line
-first. The move verdict in `InsightPanel.tsx` names an exact book hit
-instead of restating engine grades. Table source, pin, and regeneration are
+first. The move verdict in `InsightPanel.tsx` reports terminal facts first
+(mate with miniature names, stalemate, repetition, fifty-move), then exact
+book hits, then the quality-by-rarity synthesis with novelty and
+pawn-damage notes (`src/theory.ts`), instead of restating engine grades. Table source, pin, and regeneration are
 documented in [backend README](../backend/README.md#game-and-engine-api).
 
 ## Browser checks

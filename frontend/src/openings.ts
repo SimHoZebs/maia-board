@@ -62,7 +62,7 @@ export function useLineOpenings(
   moves: string[],
   initialFen: string,
   atPly: number,
-): { opening: Opening | null; bookFlags: boolean[] } {
+): { opening: Opening | null; bookFlags: boolean[]; matches: OpeningMatch[] } {
   const lineKey = useMemo(() => lineKeyFor(initialFen, moves), [initialFen, moves]);
   const [line, setLine] = useState<LineOpenings | null>(() => {
     const entry = lineCache.get(lineKey);
@@ -96,7 +96,7 @@ export function useLineOpenings(
     };
   }, [lineKey]);
   return useMemo(() => {
-    if (!line) return { opening: null, bookFlags: moves.map(() => false) };
-    return { opening: openingAt(line.matches, atPly), bookFlags: line.bookFlags };
+    if (!line) return { opening: null, bookFlags: moves.map(() => false), matches: [] as OpeningMatch[] };
+    return { opening: openingAt(line.matches, atPly), bookFlags: line.bookFlags, matches: line.matches };
   }, [line, moves, atPly]);
 }

@@ -7,6 +7,7 @@ import { Chess } from "chess.js";
 import type { Review } from "./useReview";
 import { describeMove } from "./reviewMetrics";
 import { bestLinePreview } from "./material";
+import { verdictInputsForPly } from "./theory";
 import { useLineOpenings } from "./openings";
 import { ReviewIssues, ReviewSummary } from "./ReviewOverview";
 import { SkeletonList, SkeletonText, StockfishBody } from "./StockfishBar";
@@ -89,7 +90,8 @@ export function MoveAnalysis({
   const afterEvaluation = hasMove ? review.evaluations[ply] : undefined;
   // Named book lines outrank engine grades in the verdict: theory is calmer
   // than low-depth scores in the opening, and the name needs no inference.
-  const { opening: lineOpening } = useLineOpenings(review.timeline.moves, state.analysis.initialFen, ply);
+  // Terminal facts (mate, stalemate, repetition) outrank even the book name.
+  const { opening: lineOpening, bookFlags: lineBookFlags, matches: lineMatches } = useLineOpenings(review.timeline.moves, state.analysis.initialFen, ply);
   const exactOpening = lineOpening?.isExact ? { eco: lineOpening.eco, name: lineOpening.name } : null;
   // Material consequence: after-position rank-1 PV rooted at the after-FEN.
   // Only cp-vs-cp Mistake/Blunder render it (describeMove gates the labels;
@@ -108,16 +110,30 @@ export function MoveAnalysis({
       review.nodes[focus].turn === 'white' ? 'white' : 'black',
     ) : null;
   const materialNote = bestLine?.note ?? null;
-  const verdict = played
-      ? describeMove({
-        san: review.nodes[ply].san ?? played,
-        quality,
-        rarity: review.rarities?.[focus],
-        opening: exactOpening,
-        bestRarity: review.bestRarities?.[focus],
-        materialNote,
-      })
+  // Theory facts (terminal classification, dead draws, novelties, pawn
+  // damage) derive from the timeline rows, so branches resolve through
+  // their own history. verdictInputsForPly owns every gate; describeMove
+  // owns priority and wording.
+  const verdictFacts = hasMove && played
+    ? verdictInputsForPly({
+      beforeFen: review.nodes[focus].fen,
+      afterFen: review.nodes[ply].fen,
+      afterOutcome: review.nodes[ply].outcome,
+      san: review.nodes[ply].san ?? played,
+      playedUci: played,
+      ply,
+      quality,
+      rarity: review.rarities?.[focus],
+      opening: exactOpening,
+      openingMatches: lineMatches,
+      bookFlags: lineBookFlags,
+      initialFen: state.analysis.initialFen,
+      mover: review.nodes[focus].turn === 'white' ? 'white' : 'black',
+      bestRarity: review.bestRarities?.[focus],
+      materialNote,
+    })
     : null;
+  const verdict = verdictFacts ? describeMove(verdictFacts) : null;
   const exploreBestLine = () => {
     if (!bestLine) return;
     // Single dispatch: explore-line goes through transition(), which already

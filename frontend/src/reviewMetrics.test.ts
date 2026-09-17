@@ -261,3 +261,58 @@ it('pairs hard-to-avoid with the material consequence', () => {
     materialNote: 'This line loses a knight and a pawn for a bishop.',
   })).toBe('Hard to avoid at your elo. This line loses a knight and a pawn for a bishop.');
 });
+it('ranks terminal facts above book names, grades, and theory notes', () => {
+  const quality = (label: Quality['label']): Quality => ({ label, accuracy: 20, loss: 15 });
+  const rarity: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
+  const book = { eco: 'C50', name: 'Italian Game' };
+  // A mating move that collides with a book hit still reports the mate.
+  expect(describeMove({ san: 'Qxf7#', quality: quality('Best'), rarity, opening: book, terminal: 'checkmate', matePatternName: "Scholar's mate" }))
+    .toBe("Qxf7# delivers Scholar's mate.");
+  expect(describeMove({ san: 'Qxf7#', quality: quality('Best'), rarity, opening: book, terminal: 'checkmate' }))
+    .toBe('Qxf7# delivers checkmate.');
+  expect(describeMove({ san: 'Kf6', quality: quality('Blunder'), rarity, terminal: 'stalemate', pawnNote: 'Doubles a pawn.' }))
+    .toBe('Kf6 allows stalemate.');
+  expect(describeMove({ san: 'Rf3+', quality: quality('Good'), rarity, terminal: 'repetition' }))
+    .toBe('Rf3+ forces a repetition draw.');
+  expect(describeMove({ san: 'g5', quality: quality('Best'), rarity, terminal: 'fifty' })).toBe('g5 brings the fifty-move rule.');
+  expect(describeMove({ san: 'Bxc6', quality: quality('Best'), rarity, terminal: 'insufficient' }))
+    .toBe('Bxc6 leaves insufficient mating material.');
+});
+it('reports known draws and pointed underpromotions above the synthesis', () => {
+  const quality = (label: Quality['label']): Quality => ({ label, accuracy: 20, loss: 15 });
+  const rarity: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
+  expect(describeMove({ san: 'Nb3', quality: quality('Forced'), rarity, deadDraw: true }))
+    .toBe('Nb3 was the only legal move.');
+  expect(describeMove({ san: 'Nb3', quality: quality('Blunder'), rarity, deadDraw: true }))
+    .toBe('Nb3 — known theoretical draw.');
+  expect(describeMove({ san: 'a8=N+', quality: quality('Good'), rarity, underpromotionAvoids: true }))
+    .toBe('a8=N+ underpromotes to avoid stalemate.');
+});
+it('prefixes novelty only on the rarity synthesis, never on overrides or quiet verdicts', () => {
+  const quality = (label: Quality['label']): Quality => ({ label, accuracy: 20, loss: 15 });
+  const rarity: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
+  const novelty = { priorName: 'Caro-Kann Defense', priorEco: 'B12' };
+  expect(describeMove({ san: 'd5', quality: quality('Mistake'), rarity, novelty }))
+    .toBe('Leaves Caro-Kann Defense book. An easy mistake to make.');
+  // Overrides carry no prefix; quiet verdicts stay quiet.
+  expect(describeMove({ san: 'Qxf7#', quality: quality('Best'), rarity, novelty, terminal: 'checkmate' }))
+    .toBe('Qxf7# delivers checkmate.');
+  expect(describeMove({ san: 'e4', quality: quality('Forced'), rarity, novelty }))
+    .toBe('e4 was the only legal move.');
+  expect(describeMove({ san: 'd5', quality: quality('Mistake'), rarity: { label: 'Unknown', r: null, prob: null, topProb: null }, novelty }))
+    .toBeNull();
+});
+it('falls back to the pawn note when the material window is silent', () => {
+  const quality = (label: Quality['label']): Quality => ({ label, accuracy: 20, loss: 15 });
+  const rarity: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
+  expect(describeMove({ san: 'dxe5', quality: quality('Inaccuracy'), rarity, pawnNote: 'Doubles a pawn.' }))
+    .toBe('An easy mistake to make. Doubles a pawn.');
+  // The concrete best line outranks the positional observation.
+  expect(describeMove({ san: 'Qh5', quality: quality('Blunder'), rarity, materialNote: 'This line wins a pawn for Black.', pawnNote: 'Doubles a pawn.' }))
+    .toBe('An easy mistake to make. This line wins a pawn for Black.');
+  // Praise and allowed mates never take positional notes.
+  expect(describeMove({ san: 'Nf3', quality: quality('Good'), rarity, pawnNote: 'Doubles a pawn.' }))
+    .toBe('The natural choice.');
+  expect(describeMove({ san: 'fxg3', quality: quality('Allowed mate'), rarity, pawnNote: 'Doubles a pawn.' }))
+    .toBe('An easy mistake to make.');
+});

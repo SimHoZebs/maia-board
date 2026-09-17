@@ -1,6 +1,7 @@
 import type { Chess } from 'chess.js';
 import type { MoveResponse } from './api';
 import type { DomainOutcome } from './domain';
+import type { NoveltyRef, TerminalKind } from './theory';
 export const SEARCH_POLICY = 'sf19-n100k-ms750-mpv2-t1-h64-v1';
 export const REVIEW_METHOD = 'maia-board-review-v1';
 export type Score = { type: 'cp' | 'mate'; value: number; winning_side?: 'white' | 'black' };
@@ -109,23 +110,41 @@ function hardToAvoid(bestRarity: Rarity | null | undefined): string | null {
   if (bestRarity.prob == null || bestRarity.prob >= EXCELLENT_MAX_PROB) return null;
   return `Hard to avoid at your elo.`;
 }
-// One verdict sentence for the move just played: the book name, the only
-// legal move, or the rarity synthesis — never a restated grade. Returns null
-// when there is nothing additive to say (unreviewed, off-book without Maia
-// data, or pre-first-move); the badges and charts already carry the grades.
-// materialNote is an additive second sentence (best-line 3-ply swing) supplied
-// by the caller; it only renders for Mistake/Blunder so Inaccuracy stays quiet
-// and Allowed-mate keeps its mate wording unmodified by pawn swings.
+// One verdict sentence for the move just played. Priority is terminal
+// fact first: delivering mate or ending the game outranks the book name,
+// and the book name outranks the only-legal-move fact. Templates 1-8
+// below return alone with no novelty prefix and no second sentence; only
+// the rarity-synthesis branch takes a novelty prefix and at most one
+// second sentence. Returns null when there is nothing additive to say
+// (unreviewed, off-book without Maia data, or pre-first-move); the badges
+// and charts already carry the grades.
+// materialNote is an additive second sentence (best-line 3-ply swing)
+// supplied by the caller; it only renders for Mistake/Blunder so
+// Inaccuracy stays quiet and Allowed-mate keeps its mate wording
+// unmodified by pawn swings. pawnNote is the positional fallback when
+// the material window is silent (Blunder/Mistake/Inaccuracy only).
 export type OpeningRef = { eco: string; name: string };
-export function describeMove(args: { san: string; quality: Quality | undefined; rarity: Rarity | undefined; opening?: OpeningRef | null; bestRarity?: Rarity | null; materialNote?: string | null }): string | null {
-  const { san, quality, rarity, opening, bestRarity, materialNote } = args;
+export function describeMove(args: { san: string; quality: Quality | undefined; rarity: Rarity | undefined; opening?: OpeningRef | null; bestRarity?: Rarity | null; materialNote?: string | null; terminal?: TerminalKind | null; matePatternName?: string | null; deadDraw?: boolean; underpromotionAvoids?: boolean; novelty?: NoveltyRef | null; pawnNote?: string | null }): string | null {
+  const { san, quality, rarity, opening, bestRarity, materialNote, terminal, matePatternName, deadDraw, underpromotionAvoids, novelty, pawnNote } = args;
+  if (terminal === 'checkmate') return matePatternName ? `${san} delivers ${matePatternName}.` : `${san} delivers checkmate.`;
+  if (terminal === 'stalemate' || terminal === 'repetition') {
+    const negative = quality?.label === 'Blunder' || quality?.label === 'Mistake' || quality?.label === 'Inaccuracy';
+    const noun = terminal === 'stalemate' ? 'stalemate' : 'a repetition draw';
+    return negative ? `${san} allows ${noun}.` : `${san} forces ${noun}.`;
+  }
+  if (terminal === 'fifty') return `${san} brings the fifty-move rule.`;
+  if (terminal === 'insufficient') return `${san} leaves insufficient mating material.`;
   if (opening) return `${san} — ${opening.name} (${opening.eco}). Book move.`;
   if (!quality || quality.label === 'Unreviewed') return null;
   if (quality.label === 'Forced') return `${san} was the only legal move.`;
+  if (deadDraw) return `${san} — known theoretical draw.`;
+  if (underpromotionAvoids) return `${san} underpromotes to avoid stalemate.`;
   const base = rarityVerdict(quality, rarity, bestRarity);
   if (!base) return null;
-  if (materialNote && (quality.label === 'Mistake' || quality.label === 'Blunder')) return `${base} ${materialNote}`;
-  return base;
+  const head = novelty ? `Leaves ${novelty.priorName} book. ${base}` : base;
+  if (materialNote && (quality.label === 'Mistake' || quality.label === 'Blunder')) return `${head} ${materialNote}`;
+  if (pawnNote && (quality.label === 'Blunder' || quality.label === 'Mistake' || quality.label === 'Inaccuracy')) return `${head} ${pawnNote}`;
+  return head;
 }
 export function whiteWin(score: Score): number {
   return score.type === 'cp' ? 100 / (1 + Math.exp(-.00368208 * score.value)) : (score.winning_side ?? (score.value > 0 ? 'white' : 'black')) === 'white' ? 100 : 0;
