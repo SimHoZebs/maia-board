@@ -108,3 +108,48 @@ describe('bestLinePreview', () => {
     expect(bestLinePreview(START_FEN, undefined, 'white')).toBeNull();
   });
 });
+
+describe('bestLineForkNote', () => {
+  const forkFen = '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1';
+  const forkPv = ['f5d4', 'b3c3', 'd4c2'];
+  it('names the fork and the falling piece', () => {
+    expect(bestLineMaterialNote(forkFen, forkPv, 'white'))
+      .toBe("Nd4 forks White's bishop and queen, losing the bishop.");
+  });
+
+  it('keeps the preview line agreeing with the fork note', () => {
+    const preview = bestLinePreview(forkFen, forkPv, 'white');
+    expect(preview?.note).toBe("Nd4 forks White's bishop and queen, losing the bishop.");
+    expect(preview?.ucis).toEqual(forkPv);
+    expect(preview?.sans).toEqual(['Nd4', 'Qc3', 'Nxc2+']);
+    expect(preview?.text).toBe('1… Nd4 2. Qc3 2… Nxc2+');
+  });
+
+  it('names royal forks with the king first', () => {
+    const royalFen = '4k3/8/8/8/8/3n4/8/3Q3K b - - 0 1';
+    const royalPv = ['d3f2', 'h1h2', 'f2d1'];
+    expect(bestLineMaterialNote(royalFen, royalPv, 'white'))
+      .toBe("Nf2+ forks White's king and queen, losing the queen.");
+    const preview = bestLinePreview(royalFen, royalPv, 'white');
+    expect(preview?.sans).toEqual(['Nf2+', 'Kh2', 'Nxd1']);
+    expect(preview?.text).toBe('1… Nf2+ 2. Kh2 2… Nxd1');
+    expect(preview?.note).toBe("Nf2+ forks White's king and queen, losing the queen.");
+  });
+
+  it('falls back to generic when the forked piece does not fall', () => {
+    // Nd4 attacks bishop and queen, but White evacuates the bishop and the
+    // knight takes the queen instead: the composition no longer matches the
+    // fork claim. (Pawn-only and capture-first-move fallbacks ride on the
+    // hanging-pawn and exchange cases above.)
+    expect(bestLineMaterialNote(forkFen, ['f5d4', 'c2b1', 'd4b3'], 'white'))
+      .toBe('This line wins a queen for Black.');
+  });
+
+  it('falls back to generic when the first move captures the forked type', () => {
+    // Nxd5 takes a bishop outright, then attacks queen and bishop: the
+    // bishop counted as "lost" was taken on the fork move itself, not won
+    // through fork pressure, so the generic composition holds.
+    expect(bestLineMaterialNote('4k3/8/8/3B4/5n2/2Q1B3/8/4K3 b - - 0 1', ['f4d5', 'c3b3', 'e8e7'], 'white'))
+      .toBe('This line wins a bishop for Black.');
+  });
+});

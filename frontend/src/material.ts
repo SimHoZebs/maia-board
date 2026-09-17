@@ -1,4 +1,4 @@
-import { Chess } from 'chess.js';
+import { Chess, type Square } from 'chess.js';
 import { applyUci } from './domain';
 
 export type CapturedPiece = 'p' | 'n' | 'b' | 'r' | 'q';
@@ -94,7 +94,14 @@ export function capturedLabel(by: MaiaSide, pieces: readonly CapturedPiece[], le
 //   ambiguous between R-for-N and two pawns). The claim is bounded by
 //   reference: "This line" always renders alongside its clickable PV, so the
 //   window needs no "in the next N" suffix and no net figure — the SAN line
-//   shows exactly which moves are claimed. Absolute lead is never stated;
+//   shows exactly which moves are claimed.
+// - When the punishing reply forks two pieces and the window shows the
+//   cheaper one falling, the note names the tactic instead ("Nd4 forks
+//   White's bishop and queen, losing the bishop."). Exclusivity: the fork
+//   sentence claims exactly one unanswered capture, so it fires only when
+//   the window composition matches (opp captures exactly the forked piece,
+//   mover captures nothing) — anything else keeps the generic composition.
+//   Absolute lead is never stated;
 //   the player strip already owns that.
 export const MATERIAL_WINDOW = 3;
 const PIECE_ARTICLE: Record<CapturedPiece, string> = { p: 'a pawn', n: 'a knight', b: 'a bishop', r: 'a rook', q: 'a queen' };
@@ -109,7 +116,7 @@ function piecesText(pieces: CapturedPiece[]): string {
 export function bestLineMaterialNote(afterFen: string, pv: readonly string[] | undefined, mover: MaiaSide): string | null {
   const analyzed = analyzeBestLineWindow(afterFen, pv, mover);
   if (!analyzed) return null;
-  return noteFromAnalysis(analyzed);
+  return noteFromAnalysis(afterFen, analyzed, mover);
 }
 
 // Clickable PV for the verdict: the same validated MATERIAL_WINDOW slice the
@@ -124,15 +131,94 @@ export function bestLinePreview(afterFen: string, pv: readonly string[] | undefi
   if (!analyzed) return null;
   const sans = sansFromWindow(afterFen, analyzed.ucis);
   if (!sans) return null;
-  return { ucis: analyzed.ucis, sans, text: formatSanLine(afterFen, sans), note: noteFromAnalysis(analyzed) };
+  return { ucis: analyzed.ucis, sans, text: formatSanLine(afterFen, sans), note: noteFromAnalysis(afterFen, analyzed, mover) };
 }
 
 type BestLineAnalysis = { ucis: string[]; oppCaptures: CapturedPiece[]; moverCaptures: CapturedPiece[]; oppSide: string };
-function noteFromAnalysis(analyzed: BestLineAnalysis): string {
+function noteFromAnalysis(afterFen: string, analyzed: BestLineAnalysis, mover: MaiaSide): string {
+  return tacticNote(afterFen, analyzed, mover) ?? genericNote(analyzed);
+}
+function genericNote(analyzed: BestLineAnalysis): string {
   const oppText = piecesText(sortCaptured(analyzed.oppCaptures));
   if (!analyzed.moverCaptures.length) return `This line wins ${oppText} for ${analyzed.oppSide}.`;
   const moverText = piecesText(sortCaptured(analyzed.moverCaptures));
   return `This line loses ${oppText} for ${moverText}.`;
+}
+
+// Fork nouns live here, not in PIECE_NAMES: victims include the king (which
+// is never a capture), and the verdict lists bare nouns ("bishop and queen").
+type ForkVictim = 'k' | 'q' | 'r' | 'b' | 'n';
+const FORK_NOUNS: Record<ForkVictim, string> = { k: 'king', q: 'queen', r: 'rook', b: 'bishop', n: 'knight' };
+const FORK_PLURALS: Record<Exclude<ForkVictim, 'k'>, string> = { q: 'queens', r: 'rooks', b: 'bishops', n: 'knights' };
+// Ascending value; bishops before knights on the 3-point tie (mirrors
+// SORT_ORDER).
+const FORK_RANK: Record<Exclude<ForkVictim, 'k'>, number> = { b: 0, n: 1, r: 2, q: 3 };
+const isForkVictim = (piece: string): piece is Exclude<ForkVictim, 'k'> =>
+  piece === 'q' || piece === 'r' || piece === 'b' || piece === 'n';
+
+// Names the tactic when PV move 1 forks two pieces and the window shows the
+// cheaper one falling: "Nd4 forks White's bishop and queen, losing the
+// bishop." Detection runs on the moved piece only (no discovered-attack
+// attribution): non-pawn victims come from its legal captures in a
+// flipped-turn copy of the post-move position (SAN replay always uses
+// afterFen; only the turn field is swapped for the query), and the king
+// counts iff attackers(kingSq, beneficiary) contains the destination square.
+// Pawns never count — a queen-and-pawn attack keeps the generic pawn note.
+// Returns null unless the window composition matches the claim exactly (opp
+// captures exactly the lost piece, mover captures nothing); illegal positions
+// and bad FENs silence, never throw.
+function tacticNote(afterFen: string, analyzed: BestLineAnalysis, mover: MaiaSide): string | null {
+  if (analyzed.moverCaptures.length > 0 || analyzed.oppCaptures.length !== 1) return null;
+  const firstUci = analyzed.ucis[0];
+  if (typeof firstUci !== 'string' || firstUci.length === 5) return null;
+  let game: Chess;
+  try { game = new Chess(afterFen); } catch { return null; }
+  let to: Square;
+  let san: string;
+  let firstCapture: boolean;
+  try {
+    const applied = applyUci(game, firstUci);
+    to = applied.to;
+    san = applied.san;
+    // An opening capture is never fork pressure: a piece taken on the fork
+    // move itself must not be counted as "lost to the fork".
+    firstCapture = applied.captured !== undefined;
+  } catch { return null; }
+  if (firstCapture) return null;
+  const victimColor = mover === 'white' ? 'w' : 'b';
+  const beneficiaryColor = mover === 'white' ? 'b' : 'w';
+  let victims: ForkVictim[];
+  try {
+    const parts = game.fen().split(/\s+/);
+    parts[1] = beneficiaryColor;
+    const probe = new Chess(parts.join(' '));
+    victims = probe.moves({ square: to, verbose: true })
+      .map(move => move.captured?.toLowerCase())
+      .filter((captured): captured is Exclude<ForkVictim, 'k'> => !!captured && isForkVictim(captured));
+    const kingSquare = findKing(probe, victimColor);
+    if (kingSquare && probe.attackers(kingSquare, beneficiaryColor).includes(to)) victims.push('k');
+  } catch { return null; }
+  if (victims.length < 2) return null;
+  const rest = victims.filter((victim): victim is Exclude<ForkVictim, 'k'> => victim !== 'k')
+    .sort((a, b) => FORK_RANK[a] - FORK_RANK[b]);
+  if (rest.length === 0) return null;
+  const lost = rest[0];
+  if (analyzed.oppCaptures[0] !== lost) return null;
+  const ordered: ForkVictim[] = [...(victims.includes('k') ? ['k' as const] : []), ...rest];
+  const side = mover === 'white' ? "White's" : "Black's";
+  return `${san} forks ${side} ${joinVictims(ordered)}, losing the ${FORK_NOUNS[lost]}.`;
+}
+function findKing(game: Chess, color: 'w' | 'b'): Square | null {
+  for (const row of game.board()) for (const square of row) {
+    if (square && square.type === 'k' && square.color === color) return square.square;
+  }
+  return null;
+}
+function joinVictims(victims: ForkVictim[]): string {
+  if (victims.length === 2 && victims[0] === victims[1] && victims[0] !== 'k') return `both ${FORK_PLURALS[victims[0]]}`;
+  const nouns = victims.map(victim => FORK_NOUNS[victim]);
+  if (nouns.length <= 1) return nouns[0] ?? '';
+  return `${nouns.slice(0, -1).join(', ')} and ${nouns[nouns.length - 1]}`;
 }
 
 function sansFromWindow(afterFen: string, window: readonly string[]): string[] | null {
