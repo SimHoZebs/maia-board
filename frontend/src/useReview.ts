@@ -168,7 +168,7 @@ export function useReview(state: State) {
   // rarity of the move they had to find, not the one they played. UCI-level
   // only (no SAN plumbing — the engine candidate list already names it), so
   // verdicts stay text-only and badges untouched. Missing best_move or Maia
-  // yields undefined, which reads as standard temptation wording.
+  // yields undefined, which reads as standard wording.
   // Badges show the Maia-aware judgment translated from engine facts
   // (Critical/Top/Holds → Excellent/Great/Best/Good). Praise needs hard-find
   // evidence; Expected/Unknown cap at Best. Engine-critical praise with Maia

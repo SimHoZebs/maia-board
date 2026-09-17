@@ -38,7 +38,7 @@ export function maiaRarity(maia: Pick<MoveResponse, 'top_moves' | 'degraded'> | 
 // probabilities, and best lines already live in the badges, charts, and
 // candidate lists, so restating them here is repetition. Praise
 // (Excellent/Great) meets findability (a critical move nobody's model
-// expects is an exceptional find); negative grades meet temptation (a
+// expects is an exceptional find); negative grades meet popularity (a
 // blunder the model saw coming is an easy mistake). The candidate lists
 // below carry the Maia percentages; the verdict never repeats them.
 // Praise gating lives in effectiveQuality, not reviewMove (which stays pure
@@ -91,7 +91,7 @@ function rarityVerdict(quality: Quality, rarity: Rarity | undefined, bestRarity?
     if (quality.label === 'Excellent') return `An exceptional find.`;
     if (praise) return `A sharp find.`;
     if (holds) return `A meaningful minority that holds.`;
-    return hardToAvoid(bestRarity) ?? `A tempting sidestep.`;
+    return hardToAvoid(bestRarity) ?? `A popular sidestep.`;
   }
   if (quality.label === 'Excellent') return `An exceptional find.`;
   if (praise) return `A rare find.`;
@@ -100,15 +100,15 @@ function rarityVerdict(quality: Quality, rarity: Rarity | undefined, bestRarity?
 }
 // A mistake whose avoidance was itself a rare find: the best move sat under
 // 5% (Rare) or outside Maia's top choices (Absent), so the slip was hard to
-// avoid. Expected/Uncommon/Unknown best moves leave the standard temptation
+// avoid. Expected/Uncommon/Unknown best moves leave the standard
 // wording alone. Verdict-only: badges still read pure loss. Both Absent and
 // Rare-tiny share one short sentence; the "This line …" second sentence plus
 // its clickable PV carries the concrete consequence.
 function hardToAvoid(bestRarity: Rarity | null | undefined): string | null {
   if (!bestRarity || bestRarity.label === 'Expected' || bestRarity.label === 'Uncommon' || bestRarity.label === 'Unknown') return null;
-  if (bestRarity.label === 'Absent') return `Hard to avoid at your elo.`;
+  if (bestRarity.label === 'Absent') return `Hard to avoid.`;
   if (bestRarity.prob == null || bestRarity.prob >= EXCELLENT_MAX_PROB) return null;
-  return `Hard to avoid at your elo.`;
+  return `Hard to avoid.`;
 }
 // One verdict sentence for the move just played. Priority is terminal
 // fact first: delivering mate or ending the game outranks the book name,

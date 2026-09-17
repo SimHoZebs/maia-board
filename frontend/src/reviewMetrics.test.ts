@@ -126,9 +126,9 @@ it('verdicts only the quality-by-rarity synthesis, never the grade', () => {
   expect(describeMove({ san: 'Qh5', quality: quality('Blunder', 25), rarity: rarity('Expected') }))
     .toBe('An easy mistake to make.');
   expect(describeMove({ san: 'd5', quality: quality('Mistake', 12), rarity: rarity('Uncommon') }))
-    .toBe('A tempting sidestep.');
+    .toBe('A popular sidestep.');
   expect(describeMove({ san: 'Kd2', quality: quality('Blunder', 40), rarity: rarity('Uncommon') }))
-    .toBe('A tempting sidestep.');
+    .toBe('A popular sidestep.');
   expect(describeMove({ san: 'fxg3', quality: quality('Allowed mate'), rarity: rarity('Expected') }))
     .toBe('An easy mistake to make.');
   expect(describeMove({ san: 'fxg3', quality: quality('Allowed mate'), rarity: rarity('Rare') }))
@@ -204,9 +204,9 @@ it('notes when a mistake was hard to avoid because the best move was rare', () =
   // number. The concrete consequence lives in the "This line …" second
   // sentence plus its clickable PV.
   expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: rareBest }))
-    .toBe('Hard to avoid at your elo.');
+    .toBe('Hard to avoid.');
   expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: absentBest }))
-    .toBe('Hard to avoid at your elo.');
+    .toBe('Hard to avoid.');
   // Obvious mistake, obvious best move: damning as before.
   expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: expected }))
     .toBe('An easy mistake to make.');
@@ -215,27 +215,27 @@ it('notes when a mistake was hard to avoid because the best move was rare', () =
     .toBe('An easy mistake to make.');
   expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: { label: 'Unknown', r: null, prob: null, topProb: null } }))
     .toBe('An easy mistake to make.');
-  // Overrides every negative temptation sentence, not just Expected.
+  // Overrides every negative standard sentence, not just Expected.
   const uncommon: Rarity = { label: 'Uncommon', r: 0.4, prob: 0.2, topProb: 0.5 };
   expect(describeMove({ san: 'd5', quality: { ...blunder, label: 'Mistake' }, rarity: uncommon, bestRarity: rareBest }))
-    .toBe('Hard to avoid at your elo.');
+    .toBe('Hard to avoid.');
   // Praise and holds never read the best-move axis.
   expect(describeMove({ san: 'Nf3', quality: { ...blunder, label: 'Best' }, rarity: expected, bestRarity: rareBest }))
     .toBe('The natural choice.');
   expect(describeMove({ san: 'h3', quality: { ...blunder, label: 'Good' }, rarity: uncommon, bestRarity: rareBest }))
     .toBe('A meaningful minority that holds.');
   // Shifted interval: a best move at r ~= 0.29 with prob < 5% is now Rare-tiny
-  // and forgives; the same ratio at prob >= 5% stays standard temptation.
+  // and forgives; the same ratio at prob >= 5% stays standard wording.
   const shiftedBestTiny: Rarity = { label: 'Rare', r: 0.29, prob: 0.04, topProb: 0.138 };
   expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: shiftedBestTiny }))
-    .toBe('Hard to avoid at your elo.');
+    .toBe('Hard to avoid.');
   const shiftedBestListed: Rarity = { label: 'Rare', r: 0.29, prob: 0.06, topProb: 0.207 };
   expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: shiftedBestListed }))
     .toBe('An easy mistake to make.');
   // f3-like Uncommon negative stays a sidestep with no percentage attached.
   const f3like: Rarity = { label: 'Uncommon', r: 0.438, prob: 0.149, topProb: 0.34 };
   expect(describeMove({ san: 'f3', quality: { ...blunder, label: 'Mistake' }, rarity: f3like }))
-    .toBe('A tempting sidestep.');
+    .toBe('A popular sidestep.');
 });
 it('appends the material note only for Mistake/Blunder', () => {
   const quality = (label: Quality['label']): Quality => ({ label, accuracy: 20, loss: 15 });
@@ -259,7 +259,7 @@ it('pairs hard-to-avoid with the material consequence', () => {
   expect(describeMove({
     san: 'Qf3', quality: blunder, rarity: expected, bestRarity: absentBest,
     materialNote: 'This line loses a knight and a pawn for a bishop.',
-  })).toBe('Hard to avoid at your elo. This line loses a knight and a pawn for a bishop.');
+  })).toBe('Hard to avoid. This line loses a knight and a pawn for a bishop.');
 });
 it('ranks terminal facts above book names, grades, and theory notes', () => {
   const quality = (label: Quality['label']): Quality => ({ label, accuracy: 20, loss: 15 });
