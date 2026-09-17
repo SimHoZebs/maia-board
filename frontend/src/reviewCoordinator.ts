@@ -1,9 +1,9 @@
 import { MaiaApiError, requestMove, type MoveResponse } from './api';
 import { clampMaiaElo } from './BoardTools';
 import type { Evaluation } from './reviewMetrics';
-import { EvaluationStore, evaluationStore, evaluationRequest, fetchEvaluation, reviewKey, resolveSettings, stablePositionKey,
+import { EvaluationStore, evaluationStore, evaluationRequest, fastReviewSettings, fetchEvaluation, reviewKey, resolveSettings, stablePositionKey,
   type Engine, type EvaluationResult, type Job, type ReviewNode, type ReviewSettings, type SettingsInput } from './evaluationStore';
-export { EvaluationStore, fetchEvaluation, parseEvaluation, resolveSettings, reviewKey, reviewNodes, stablePositionKey,
+export { EvaluationStore, buildPrimeJobs, fastReviewSettings, fastStockfishSettings, fetchEvaluation, parseEvaluation, primeWithPriority, reorderJobsForPriority, resolveSettings, reviewKey, reviewNodes, stablePositionKey,
   type Engine, type EvaluationResult, type Job, type ReviewNode, type ReviewSettings, type SettingsInput } from './evaluationStore';
 
 export function subscribeNone(): () => void { return () => undefined; }
@@ -66,9 +66,15 @@ export class ReviewCoordinator {
     for (const [key, message] of errors) this.failures.set(key, message);
     this.notify();
   }
-  private job(engine: Engine, node: ReviewNode, settings: ReviewSettings): Job | null {
+  // Provisional first-paint read for the display layer: full MPV2 when
+  // present, else the fast MPV1 row. Score/verdict render from fast;
+  // coverage and the candidate-list completeness check use exact result().
+  provisionalSfResult(node: ReviewNode, settings: ReviewSettings): EvaluationResult | undefined {
+    return this.store.provisionalSfResult(node, settings);
+  }
+  private job(engine: Engine, node: ReviewNode, settings: ReviewSettings, fast = false): Job | null {
     if (node.outcome || node.ply > 256) return null;
-    return { engine, node, settings, key: reviewKey(engine, node, settings) };
+    return { engine, node, settings, key: reviewKey(engine, node, settings), ...(fast ? { fast: true as const } : {}) };
   }
   private finished(job: Job) { return !!this.store.peek(job.engine, job.key) || this.failures.has(job.key); }
   // Queue-only calls return void synchronously; signal calls return coverage.
@@ -79,15 +85,44 @@ export class ReviewCoordinator {
   ensure(
     nodes: ReviewNode[],
     settings: SettingsInput,
-    opts: { priority?: boolean; engines?: Engine[]; signal?: AbortSignal } = {},
+    opts: { priority?: boolean; engines?: Engine[]; signal?: AbortSignal; priorityPlies?: readonly number[]; fastFirst?: boolean } = {},
   ): Promise<{ total: number; covered: number }> | void {
-    const { priority = false, engines: enginesOpt, signal } = opts;
+    const { priority = false, engines: enginesOpt, signal, priorityPlies, fastFirst = false } = opts;
     const wanted = enginesOpt ?? [...engines];
     if (priority) {
       const desired: Job[] = [];
-      for (const node of nodes) for (const engine of wanted) {
-        const job = this.job(engine, node, resolveSettings(settings, node));
-        if (job) desired.push(job);
+      // Fast-then-refine (foreground focus/current only, never bulk prime):
+      // queue fast MPV1 jobs ahead of the full MPV2 jobs on the sf lane so
+      // rank-1 lands first (~250ms) and the full list refines after (~750ms).
+      // Maia lanes queue once as before. Skip fast when full already settles
+      // (no extra fetch) or when fast already settles (queue full only).
+      const useFast = fastFirst && wanted.includes('sf');
+      if (useFast) {
+        const fastJobs: Job[] = [];
+        const fullJobs: Job[] = [];
+        for (const node of nodes) {
+          const fullSettings = resolveSettings(settings, node);
+          const full = this.job('sf', node, fullSettings);
+          if (!full) continue;
+          if (this.store.peek('sf', full.key)) continue;
+          const fastSettings = fastReviewSettings(fullSettings);
+          if (fastSettings) {
+            const fast = this.job('sf', node, fastSettings, true);
+            if (fast && fast.key !== full.key && !this.store.peek('sf', fast.key)) fastJobs.push(fast);
+          }
+          fullJobs.push(full);
+        }
+        desired.push(...fastJobs, ...fullJobs);
+        for (const node of nodes) for (const engine of wanted) {
+          if (engine === 'sf') continue;
+          const job = this.job(engine, node, resolveSettings(settings, node));
+          if (job) desired.push(job);
+        }
+      } else {
+        for (const node of nodes) for (const engine of wanted) {
+          const job = this.job(engine, node, resolveSettings(settings, node));
+          if (job) desired.push(job);
+        }
       }
       // Latest-wins within this workspace: the new set replaces queued work
       // for the same engines. Running work continues (non-preemptive server
@@ -126,21 +161,58 @@ export class ReviewCoordinator {
       wanted.forEach(engine => this.pump(engine));
       this.notify();
     }
-    if (signal && !priority) return this.restore(nodes, settings, signal, wanted);
+    if (signal && !priority) return this.restore(nodes, settings, signal, wanted, priorityPlies);
     if (signal && priority) {
       // Priority + signal callers that also need coverage use the restore
       // path through the same signal; foreground abort stays signal-driven.
       // Fire-and-forget is the common case, so only return coverage when the
       // caller asked for a non-priority restore. Priority callers that need
       // coverage call ensure twice (once priority, once with signal only).
+      // A focus-first restore can still be requested alongside foreground
+      // work by passing priorityPlies: queue the live pair above, then
+      // restore settled rows focus-first below. The second phase dedupes via
+      // the store cache check, so no duplicate fetch storm.
+      if (priorityPlies?.length) return this.restore(nodes, settings, signal, wanted, priorityPlies);
     }
   }
-  private async restore(nodes: ReviewNode[], settings: SettingsInput, signal: AbortSignal, wanted: Engine[]) {
+  // Focus-first restore entry point: prime the focus/current plies alone so
+  // the visible pair settles without waiting for full-line chunks, then prime
+  // the full line in the background. Sequential awaits + the store's cache
+  // check mean the second phase skips already-settled focus rows (no duplicate
+  // storm); chunk limits (1024 req / 4 MiB) still apply per prime call.
+  primeWithPriority(
+    nodes: ReviewNode[],
+    settings: SettingsInput,
+    signal: AbortSignal,
+    priorityPlies: readonly number[],
+    wanted: Engine[] = [...engines],
+  ): Promise<{ total: number; covered: number }> {
+    return this.restore(nodes, settings, signal, wanted, priorityPlies);
+  }
+  private async restore(nodes: ReviewNode[], settings: SettingsInput, signal: AbortSignal, wanted: Engine[], priorityPlies?: readonly number[]) {
     const keys = new Map(nodes.filter(node => !node.outcome).flatMap(node => wanted.map(engine => [reviewKey(engine, node, resolveSettings(settings, node)), engine] as const)));
     for (const [key, engine] of keys) this.restoring.set(key, { count: (this.restoring.get(key)?.count ?? 0) + 1, engine });
     this.notify();
     try {
-      await this.store.prime(nodes, settings, [...wanted], signal);
+      if (priorityPlies?.length) {
+        // Two-phase focus-first: a small priority-only lookup settles the
+        // visible pair fast; the full-line prime that follows reuses those
+        // rows from the store cache (existing cache check dedupes, so the
+        // second POST carries misses only). Both phases honor the store's
+        // 1024-request / 4 MiB chunking, so throttling is unchanged.
+        const prioritySet = new Set(priorityPlies);
+        const focusNodes = nodes.filter(node => prioritySet.has(node.ply));
+        if (focusNodes.length && focusNodes.length < nodes.length) {
+          await this.store.prime(focusNodes, settings, [...wanted], signal);
+          signal.throwIfAborted();
+        }
+        // Reordered full-line prime: any still-missing priority jobs (focus
+        // == full line, or a race that settled nothing) still lead the first
+        // chunk. Parse/cache logic is identical — only job order differs.
+        await this.store.prime(nodes, settings, [...wanted], signal, priorityPlies);
+      } else {
+        await this.store.prime(nodes, settings, [...wanted], signal);
+      }
       return this.store.primeCoverage(nodes, settings, [...wanted]);
     } finally {
       for (const [key, engine] of keys) {
@@ -215,6 +287,14 @@ export class ReviewCoordinator {
       // A superseded focus request was replaced by a newer one; the newer
       // request covers the position, so this is not a failure to surface.
       if (error instanceof MaiaApiError && error.code === 'superseded') return;
+      // Fast failure never blocks the full refine and never surfaces: drop
+      // the fast queue entry so the lane advances to the full job next.
+      // error() reads only the full key, so nothing surfaces. Without the
+      // delete, finished() stays false and the lane would retry fast forever.
+      if (job.fast) {
+        this.pending[engine].delete(job.key);
+        return;
+      }
       this.failures.set(job.key, error instanceof Error ? error.message : 'Analysis failed.');
     }).finally(() => {
       // A late completion belongs to its generation, even for the same key.

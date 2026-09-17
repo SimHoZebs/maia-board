@@ -13,7 +13,7 @@ import { stockfishPolicy } from '../src/stockfishSettings';
 // 3) and the clean row at ply 5 (shown at the tip).
 const MOVES = ['e2e4', 'e7e5', 'f2f3', 'b8c6', 'f1b5', 'g8f6'];
 const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-const POLICY = 'sf19-ms750-mpv4-d0-t1-h64-v2';
+const POLICY = 'sf19-ms750-mpv4-d0-t4-h128-v3';
 const line = (move: string, value: number) => ({ move, score: { type: 'cp', value }, depth: 12 });
 const sfRow = (lines: { move: string; score: { type: string; value: number }; depth: number }[]) => ({
   engine: 'Stockfish 19', search_policy: POLICY, depth: 12, terminal: null,

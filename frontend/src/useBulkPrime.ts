@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { ReviewCoordinator, type ReviewNode, type SettingsInput } from './reviewCoordinator';
+import { ReviewCoordinator, type Engine, type ReviewNode, type SettingsInput } from './reviewCoordinator';
 
 // Upper bound on overlapping restores. Steady state holds 0-1; a newer line
 // starts its own lookup while the previous is still landing. Past the cap
@@ -23,6 +23,15 @@ export function useBulkPrime(args: {
   coordinator: ReviewCoordinator;
   loadKey: string;
   onSettled?: (error: string | undefined) => void;
+  // Focus-first restore: ReviewNode .ply values (e.g. focus/current) to settle
+  // before the rest of the line. When provided, the coordinator runs the
+  // priority prime first (small fast lookup) then the background full-line
+  // prime; the store's existing cache check dedupes the second phase so no
+  // duplicate fetch storm occurs. Omitted (current callers) keeps the single
+  // full-line restore. Rides a ref like nodes/settings so an inline literal
+  // cannot resubmit every render.
+  priorityPlies?: readonly number[];
+  engines?: Engine[];
 }): void {
   const { active, coordinator, loadKey } = args;
   const nodesRef = useRef(args.nodes);
@@ -31,6 +40,10 @@ export function useBulkPrime(args: {
   settingsRef.current = args.settings;
   const settledRef = useRef(args.onSettled);
   settledRef.current = args.onSettled;
+  const priorityRef = useRef(args.priorityPlies);
+  priorityRef.current = args.priorityPlies;
+  const enginesRef = useRef(args.engines);
+  enginesRef.current = args.engines;
   const flights = useRef(new Map<string, AbortController>());
   const loadKeyRef = useRef(loadKey);
   loadKeyRef.current = loadKey;
@@ -61,9 +74,16 @@ export function useBulkPrime(args: {
     const controller = new AbortController();
     flights.current.set(loadKey, controller);
     const forget = () => { flights.current.delete(loadKey); };
-    void Promise.resolve(
-      coordinator.ensure(nodesRef.current, settingsRef.current, { signal: controller.signal }),
-    ).then(
+    // Focus-first when the caller names plies: primeWithPriority settles the
+    // visible pair in its own small lookup, then the background full-line
+    // prime reuses those rows from cache (dedupe, no storm). Chunk limits and
+    // the MAX_CONCURRENT_RESTORES cap below still apply per prime call.
+    const priority = priorityRef.current;
+    const wanted = enginesRef.current;
+    const task = priority?.length
+      ? coordinator.primeWithPriority(nodesRef.current, settingsRef.current, controller.signal, priority, wanted)
+      : coordinator.ensure(nodesRef.current, settingsRef.current, { signal: controller.signal, ...(wanted ? { engines: wanted } : {}) });
+    void Promise.resolve(task).then(
       () => {
         forget();
         // Stale flights merged their rows into the shared store on the way

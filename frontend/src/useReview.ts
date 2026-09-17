@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import type { MoveResponse } from './api';
 import { buildTimeline, lineKeyFor, type StoredGame, type TimelineRow } from './domain';
 import type { State } from './state';
-import { ReviewCoordinator, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
+import { ReviewCoordinator, resolveSettings, reviewKey, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
 import { useLineScope } from './useLineScope';
 import { useBulkPrime } from './useBulkPrime';
 import { useServerBatch } from './useServerBatch';
@@ -115,21 +115,43 @@ export function useReview(state: State) {
     // grades that move; current-position Maia supplies forward candidates.
     // Signal-abort is the only foreground cancel path: a line change aborts
     // the scope, a ply change replaces the queue latest-wins.
+    // Cached-instant bypass: when both SF sides are already settled
+    // (cache hit or terminal outcome), ensure synchronously so navigation
+    // renders without the debounce. Only debounce on SF cache miss.
+    const targets = focusNode ? [focusNode, currentNode] : [currentNode];
+    const sfCached = targets.every(node => {
+      if (!node) return true;
+      if (node.outcome) return true;
+      return !!coordinator.store.peek('sf', reviewKey('sf', node, resolveSettings(settingsForNode, node)));
+    });
+    if (sfCached) {
+      coordinator.ensure(focusNode ? [focusNode, currentNode] : [currentNode], settingsForNode, { priority: true, signal: scope.signal, fastFirst: true });
+      return;
+    }
     const timer = setTimeout(() => {
-      coordinator.ensure(focusNode ? [focusNode, currentNode] : [currentNode], settingsForNode, { priority: true, signal: scope.signal });
+      coordinator.ensure(focusNode ? [focusNode, currentNode] : [currentNode], settingsForNode, { priority: true, signal: scope.signal, fastFirst: true });
     }, 200);
     return () => { clearTimeout(timer); };
   }, [coordinator, active, tooLong, nodes, currentPly, combinedKey, scope]);
 
   const primeKey = `${lineKey}|${combinedKey}`;
-  const batch = useServerBatch({ active: active && !tooLong, nodes, settings: settingsForNode, coordinator, scope: active ? scope : null, auto: false });
+  // Focus-first restore: visible pair settles in the first lookup chunk.
+  const priorityPlies = focusNode ? [focusPly, currentPly] : [currentPly];
+  const batch = useServerBatch({ active: active && !tooLong, nodes, settings: settingsForNode, coordinator, scope: active ? scope : null, auto: false, priorityPlies });
   const [prime, setPrime] = useState<{ key: string; error?: string } | null>(null);
   const [primeAttempt, setPrimeAttempt] = useState(0);
   useBulkPrime({ active: active && !tooLong, nodes, settings: settingsForNode, coordinator,
-    loadKey: `${primeKey}|${primeAttempt}`,
+    loadKey: `${primeKey}|${primeAttempt}`, priorityPlies,
     onSettled: (error) => setPrime({ key: primeKey, error }) });
 
-  const evaluations = useMemo(() => nodes.map(node => coordinator.result('sf', node, settingsForNode(node))), [nodes, settingsForNode, version, coordinator]);
+  // Display evaluations accept the fast MPV1 row provisionally: bar +
+  // verdict need only rank-1, so they render from fast while the full MPV2
+  // refines in the background. The candidate list shows the single fast line
+  // until full lands. Coverage below stays exact-full (completeness, not
+  // readiness) so a fast-only pair never marks the line complete.
+  // Known transient: a 1-line provisional can understate Critical (gap needs
+  // before.lines[1]) and converge to Critical/Excellent/Great on full refine.
+  const evaluations = useMemo(() => nodes.map(node => coordinator.provisionalSfResult(node, settingsForNode(node))), [nodes, settingsForNode, version, coordinator]);
   const maiaResults = useMemo(() => nodes.map(node => coordinator.result('maia', node, settingsForNode(node))), [nodes, settingsForNode, version, coordinator]);
   const previous = useRef<ReviewQualitiesMemo | null>(null);
   // Memo cache without an effect: the ref carries the last computed memo into
@@ -162,19 +184,6 @@ export function useReview(state: State) {
     const maia = maiaResults[ply];
     return best && maia ? maiaRarity(maia, best) : undefined;
   }), [timeline, evaluations, maiaResults]);
-  // Coverage is completeness (badges + sentences), not badge readiness:
-  // badges fast-path on SF alone, but progress stays partial until Maia
-  // lands for every non-outcome node.
-  const coverage = useMemo(() => active && prime?.key === primeKey ? { total: nodes.length,
-    covered: nodes.filter((node, ply) => evaluations[ply] && (node.outcome || maiaResults[ply])).length } : null,
-  [active, prime, primeKey, nodes, evaluations, maiaResults]);
-  const recordStatus: RecordStatus = { state: !active || tooLong ? 'none' : prime?.key !== primeKey ? 'checking' : coverage?.covered === coverage?.total ? 'fresh' : 'none' };
-  const priorFocus = useRef<MaiaDisplayEntry | null>(null);
-  const displayed = selectMaiaDisplay(active ? focusNode : undefined, focusSettings, active ? maiaResults[focusPly] : undefined, priorFocus.current,
-    active && !!focusNode && coordinator.isPending('maia', focusNode, focusSettings));
-  // Render-phase carry-forward (no effect): the note is fully determined by
-  // this render (fresh, same-position reuse, or nothing), so banking it here
-  // removes the one-commit lag of the effect version. Read runs first, so
   // Mainline display qualities for the original-line continuation rendered
   // under an explored branch. MovesPanel draws that continuation from the
   // mainline while review.qualities aligns with the branch timeline, so
@@ -185,7 +194,7 @@ export function useReview(state: State) {
     if (state.analysis.branchFromPly === null) return undefined;
     const mainTimeline = buildTimeline(state.analysis.initialFen, state.analysis.moves);
     const mainNodes = reviewNodes(mainTimeline);
-    const mainSf = mainNodes.map(node => coordinator.result('sf', node, mainlineSettingsForNode(node)));
+    const mainSf = mainNodes.map(node => coordinator.provisionalSfResult(node, mainlineSettingsForNode(node)));
     const mainMaiaResults = mainNodes.map(node => coordinator.result('maia', node, mainlineSettingsForNode(node)));
     const mainRarities = mainTimeline.moves.map((move, ply) => maiaRarity(mainMaiaResults[ply], move));
     const mainGrades = computeReviewQualities({ line: mainTimeline, nodes: mainNodes, evaluations: mainSf,
@@ -193,6 +202,20 @@ export function useReview(state: State) {
     return translateReviewQualities({ grades: mainGrades.qualities, nodes: mainNodes, maiaResults: mainMaiaResults,
       rarities: mainRarities, settingsForNode: mainlineSettingsForNode, isMaiaPending: (node, settings) => coordinator.isPending('maia', node, settings) });
   }, [state.analysis.branchFromPly, state.analysis.moves, state.analysis.initialFen, mainlineSettingsForNode, version, coordinator]);
+  // Coverage is completeness (badges + sentences), not badge readiness:
+  // badges fast-path on SF alone, but progress stays partial until Maia
+  // lands for every non-outcome node. Exact full SF only — fast provisional
+  // rows never count toward completeness.
+  const coverage = useMemo(() => active && prime?.key === primeKey ? { total: nodes.length,
+    covered: nodes.filter((node, ply) => coordinator.result('sf', node, settingsForNode(node)) && (node.outcome || maiaResults[ply])).length } : null,
+  [active, prime, primeKey, nodes, settingsForNode, maiaResults, version, coordinator]);
+  const recordStatus: RecordStatus = { state: !active || tooLong ? 'none' : prime?.key !== primeKey ? 'checking' : coverage?.covered === coverage?.total ? 'fresh' : 'none' };
+  const priorFocus = useRef<MaiaDisplayEntry | null>(null);
+  const displayed = selectMaiaDisplay(active ? focusNode : undefined, focusSettings, active ? maiaResults[focusPly] : undefined, priorFocus.current,
+    active && !!focusNode && coordinator.isPending('maia', focusNode, focusSettings));
+  // Render-phase carry-forward (no effect): the note is fully determined by
+  // this render (fresh, same-position reuse, or nothing), so banking it here
+  // removes the one-commit lag of the effect version. Read runs first, so
   // the fallback stays yesterday's answer; the position-ID check inside
   // selectMaiaDisplay discards a note from an abandoned concurrent render.
   priorFocus.current = displayed.entry ?? null;

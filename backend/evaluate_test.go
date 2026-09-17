@@ -64,12 +64,12 @@ func TestEvaluationHelper(t *testing.T) {
 		if mode == "wrongbest" {
 			best = "f8c5"
 		}
-		fmt.Fprintf(os.Stdout, `{"engine":"Stockfish 19","search_policy":"sf19-n100k-ms750-mpv2-t1-h64-v1","depth":12,"terminal":null,"best_move":"%s","score":{"type":"cp","value":-92},"lines":[{"move":"g8f6","score":{"type":"cp","value":-92},"depth":12},{"move":"g8f6","score":{"type":"cp","value":-92},"depth":12}]}`, best)
+		fmt.Fprintf(os.Stdout, `{"engine":"Stockfish 19","search_policy":"sf19-n100k-ms750-mpv2-t4-h128-v3","depth":12,"terminal":null,"best_move":"%s","score":{"type":"cp","value":-92},"lines":[{"move":"g8f6","score":{"type":"cp","value":-92},"depth":12},{"move":"g8f6","score":{"type":"cp","value":-92},"depth":12}]}`, best)
 	case "slow":
 		time.Sleep(300 * time.Millisecond)
-		fmt.Print(`{"engine":"Stockfish 19","search_policy":"sf19-n100k-ms750-mpv2-t1-h64-v1","depth":0,"terminal":"draw","best_move":null,"score":{"type":"cp","value":0},"lines":[]}`)
+		fmt.Print(`{"engine":"Stockfish 19","search_policy":"sf19-n100k-ms750-mpv2-t4-h128-v3","depth":0,"terminal":"draw","best_move":null,"score":{"type":"cp","value":0},"lines":[]}`)
 	default:
-		fmt.Print(`{"engine":"Stockfish 19","search_policy":"sf19-n100k-ms750-mpv2-t1-h64-v1","depth":0,"terminal":"draw","best_move":null,"score":{"type":"cp","value":0},"lines":[]}`)
+		fmt.Print(`{"engine":"Stockfish 19","search_policy":"sf19-n100k-ms750-mpv2-t4-h128-v3","depth":0,"terminal":"draw","best_move":null,"score":{"type":"cp","value":0},"lines":[]}`)
 	}
 	os.Exit(0)
 }
@@ -77,7 +77,7 @@ func TestEvaluationHelper(t *testing.T) {
 func fakeEvaluator(t *testing.T, mode string) *Evaluator {
 	t.Helper()
 	t.Setenv("SF_TEST_HELPER", mode)
-	return &Evaluator{command: []string{os.Args[0], "-test.run=TestEvaluationHelper"}, sched: NewScheduler(), timeout: time.Second}
+	return &Evaluator{command: []string{os.Args[0], "-test.run=TestEvaluationHelper"}, sched: NewScheduler(), batchSched: NewScheduler(), timeout: time.Second}
 }
 
 func TestEvaluateHTTP(t *testing.T) {
@@ -270,7 +270,7 @@ func TestRealStockfishHTTPAndCancellation(t *testing.T) {
 	w = httptest.NewRecorder()
 	(&server{evaluator: e}).evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(`{"fen":"`+startFEN+`","moves":[],"settings":{"time_ms":2000,"lines":5,"depth":8}}`)))
 	var configured evaluationResponse
-	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &configured) != nil || configured.SearchPolicy != "sf19-ms2000-mpv5-d8-t1-h64-v2" || len(configured.Lines) != 5 || configured.Depth > 8 {
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &configured) != nil || configured.SearchPolicy != "sf19-ms2000-mpv5-d8-t4-h128-v3" || len(configured.Lines) != 5 || configured.Depth > 8 {
 		t.Fatalf("configured real evaluation: %d %s", w.Code, w.Body)
 	}
 	ctx, cancel := context.WithCancel(context.Background())

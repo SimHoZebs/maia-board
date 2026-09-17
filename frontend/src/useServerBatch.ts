@@ -26,6 +26,12 @@ export function useServerBatch(args: {
   scope: LineScope | null;
   auto?: boolean;
   fetcher?: typeof fetch;
+  // Focus-first reconciliation: ReviewNode .ply values to settle before the
+  // rest of the line when reconciling batch progress via the lookup path.
+  // Forwarded to the coordinator's priority prime; the existing 2s throttle
+  // below and the store's cache check still apply (no duplicate storm).
+  // Rides a ref so an inline literal cannot resubmit.
+  priorityPlies?: readonly number[];
 }): { progress: ServerBatchProgress | null; error: string | undefined; start: () => void; retry: () => void } {
   const { active, nodes, settings, engines, coordinator, scope, auto, fetcher } = args;
   const [jobId, setJobId] = useState<string | null>(null);
@@ -46,6 +52,8 @@ export function useServerBatch(args: {
   // That is React error #185 the moment auto && active (play + feedback on).
   const enginesRef = useRef(engines);
   enginesRef.current = engines;
+  const priorityRef = useRef(args.priorityPlies);
+  priorityRef.current = args.priorityPlies;
   const jobIdRef = useRef<string | null>(null);
   jobIdRef.current = jobId;
   const jobScopeRef = useRef<string | null>(null);
@@ -256,7 +264,15 @@ export function useServerBatch(args: {
     const primeNow = async () => {
       if (stopped || stale()) return;
       lastPrime = Date.now();
-      try { await coordinator.ensure(nodesRef.current, settingsRef.current, { signal: primeController.signal }); } catch { /* superseded prime */ }
+      // Focus-first reconciliation when the caller names plies: the visible
+      // pair settles in its own small lookup, then the background full-line
+      // prime reuses those rows from cache. Throttling (2s coalescing above)
+      // and dedupe (store cache check) are unchanged.
+      const priority = priorityRef.current;
+      try {
+        if (priority?.length) await coordinator.primeWithPriority(nodesRef.current, settingsRef.current, primeController.signal, priority);
+        else await coordinator.ensure(nodesRef.current, settingsRef.current, { signal: primeController.signal });
+      } catch { /* superseded prime */ }
     };
     const prime = () => {
       if (stopped || stale()) return;

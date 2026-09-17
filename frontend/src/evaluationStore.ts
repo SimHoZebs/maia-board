@@ -19,7 +19,26 @@ export type ReviewSettings = { eloMaia: number; eloUser: number; model: MaiaMode
 export type Engine = 'sf' | 'maia';
 export type SettingsInput = ReviewSettings | ((node: ReviewNode) => ReviewSettings);
 export const resolveSettings = (input: SettingsInput, node: ReviewNode): ReviewSettings => typeof input === 'function' ? input(node) : input;
-export type Job = { key: string; engine: Engine; node: ReviewNode; settings: ReviewSettings };
+export type Job = { key: string; engine: Engine; node: ReviewNode; settings: ReviewSettings; fast?: boolean };
+
+// Fast-then-refine derivation for Stockfish first paint. The bar + verdict
+// need only rank-1, so focus/current nodes fetch MPV1 at min(250, requested)
+// ms first, then refine to the full requested MPV2+ budget in the background.
+// Same depth as requested; lines=1. Distinct settingsHash keys (time/lines
+// differ), so fast and full cache separately — the display layer falls back
+// to fast when full is missing. Returns undefined when there is no useful
+// fast path: legacy omission (no stockfish) or an already-minimal 250ms
+// budget where a second fetch would only add latency.
+export function fastStockfishSettings(settings?: StockfishSettings): StockfishSettings | undefined {
+  if (!settings) return undefined;
+  if (settings.time_ms <= 250) return undefined;
+  return { time_ms: Math.min(250, settings.time_ms), lines: 1, depth: settings.depth };
+}
+export function fastReviewSettings(settings: ReviewSettings): ReviewSettings | undefined {
+  const fast = fastStockfishSettings(settings.stockfish);
+  if (!fast) return undefined;
+  return { ...settings, stockfish: fast };
+}
 export type EvaluationResult = Evaluation & { actual_settings?: StockfishSettings; cached?: boolean };
 export type StockfishResult = EvaluationResult;
 // Mirrors api.ts: unknown wire codes normalize to 'unknown' (the message is
@@ -53,10 +72,33 @@ export function reviewKey(engine: Engine, node: ReviewNode, settings: ReviewSett
 }
 
 // Prefix arrays exist only at the HTTP boundary.
+//
+// Every request also carries pos_hash, the stable content identity (posId
+// over initialFen + moves prefix — the same value as stablePositionKey).
+// fen/moves/initial_fen are still sent; the backend allowlists pos_hash and
+// ignores it for identity, so a future backend can resolve by hash alone,
+// dropping the O(n^2) prefix bytes on long games.
 export function evaluationRequest(engine: Engine, node: ReviewNode, settings: ReviewSettings) {
-  return { engine, fen: node.fen, initial_fen: node.initialFen, moves: prefixOf(node),
+  return { engine, fen: node.fen, initial_fen: node.initialFen, moves: prefixOf(node), pos_hash: stablePositionKey(node),
     ...(engine === 'sf' ? { ...(settings.stockfish ? { settings: settings.stockfish } : {}) }
       : { elo_maia: clampMaiaElo(settings.eloMaia), elo_user: clampMaiaElo(settings.eloUser), model: settings.model }) };
+}
+
+// Focus-first ordering for bulk restore. Jobs for the given plies (ReviewNode
+// .ply values, e.g. focus/current) lead the array so they land in the first
+// /evaluations/lookup chunk. Pure reorder — no filtering, no new fetches, no
+// chunk-limit change; callers still dedupe via the existing cache check.
+export function reorderJobsForPriority(jobs: Job[], priorityPlies: readonly number[]): Job[] {
+  if (!priorityPlies.length) return jobs;
+  const wanted = new Set(priorityPlies);
+  const head: Job[] = [];
+  const tail: Job[] = [];
+  for (const job of jobs) (wanted.has(job.node.ply) ? head : tail).push(job);
+  return [...head, ...tail];
+}
+export function buildPrimeJobs(nodes: ReviewNode[], settings: SettingsInput, engines: Engine[], priorityPlies?: readonly number[]): Job[] {
+  const jobs = nodes.flatMap(node => node.outcome ? [] : engines.map(engine => ({ engine, node, settings: resolveSettings(settings, node), key: reviewKey(engine, node, resolveSettings(settings, node)) })));
+  return priorityPlies?.length ? reorderJobsForPriority(jobs, priorityPlies) : jobs;
 }
 const uci = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
 function isScore(value: unknown): value is Score {
@@ -94,7 +136,7 @@ function actualPolicy(value: Evaluation, requested: StockfishSettings | undefine
   const want = requested;
   // Live responses may carry the wrapper field directly. A policy can also
   // identify its settings, but it must agree with any supplied provenance.
-  const match = /^sf19-ms(\d+)-mpv(\d+)-d(\d+)-t1-h64-v2$/.exec(value.search_policy);
+  const match = /^sf19-ms(\d+)-mpv(\d+)-d(\d+)-t4-h128-v3$/.exec(value.search_policy);
   const policy = match ? { time_ms: Number(match[1]), lines: Number(match[2]), depth: Number(match[3]) } : undefined;
   // Present-but-malformed provenance previously failed the integer checks
   // below; reject it here instead so no fallback can mask it.
@@ -157,9 +199,12 @@ export function parseEvaluation(body: unknown, settings?: StockfishSettings, act
 export async function fetchEvaluation(node: ReviewNode, signal: AbortSignal, fetcher: typeof fetch = fetch, settings?: StockfishSettings): Promise<StockfishResult> {
   let response: Response;
   let body: unknown;
+  // pos_hash rides along (backend allowlists it, ignored for identity) so
+  // /evaluate and /evaluations/lookup share the same position identity.
+  const sfWire = { fen: node.fen, initial_fen: node.initialFen, moves: prefixOf(node), pos_hash: stablePositionKey(node) };
   try {
     ({ response, body } = await fetchJsonWithBusyRetry(fetcher, '/evaluate', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fen: node.fen, initial_fen: node.initialFen, moves: prefixOf(node), ...(settings ? { settings } : {}) }) }, signal));
+      body: JSON.stringify(settings ? { ...sfWire, settings } : sfWire) }, signal));
   } catch (error) {
     if (signal.aborted) throw error;
     throw new Error('Stockfish is unreachable. Check that the server is running on your LAN.');
@@ -206,8 +251,20 @@ export class EvaluationStore {
   }
   peek(_engine: Engine, key: string) { return this.cache.get(key); }
   store<E extends Engine>(_engine: E, key: string, value: E extends 'sf' ? Evaluation : MoveResponse) { this.retain(key, value); this.notify(); }
-  private async restore(jobs: Job[], signal: AbortSignal): Promise<void> {
-    const pending = [...new Map(jobs.filter(job => !this.cache.has(job.key)).map(job => [job.key, job])).values()];
+  // Provisional first-paint read: full MPV2 when present, else the fast MPV1
+  // row when only it has landed. Score/verdict need only rank-1, so they
+  // render from fast; the candidate list shows the single fast line until the
+  // full refine lands (no separate skeleton — 1 line provisionally is the
+  // refine signal). Outcomes never use fast (synthetic, no fetch).
+  provisionalSfResult(node: ReviewNode, settings: ReviewSettings): EvaluationResult | undefined {
+    const full = this.result('sf', node, settings);
+    if (full || node.outcome) return full;
+    const fast = fastReviewSettings(settings);
+    return fast ? this.result('sf', node, fast) : undefined;
+  }
+  private async restore(jobs: Job[], signal: AbortSignal, priorityPlies?: readonly number[]): Promise<void> {
+    const ordered = priorityPlies?.length ? reorderJobsForPriority(jobs, priorityPlies) : jobs;
+    const pending = [...new Map(ordered.filter(job => !this.cache.has(job.key)).map(job => [job.key, job])).values()];
     // The byte bound includes the surrounding JSON and commas. Encode only
     // the current chunk so long histories do not retain all prefix arrays.
     for (let at = 0; at < pending.length;) {
@@ -242,9 +299,16 @@ export class EvaluationStore {
       this.notify();
     }
   }
-  async prime(nodes: ReviewNode[], settings: SettingsInput, engines: Engine[], signal: AbortSignal) {
+  async prime(nodes: ReviewNode[], settings: SettingsInput, engines: Engine[], signal: AbortSignal, priorityPlies?: readonly number[]) {
     const jobs = nodes.flatMap(node => node.outcome ? [] : engines.map(engine => ({ engine, node, settings: resolveSettings(settings, node), key: reviewKey(engine, node, resolveSettings(settings, node)) })));
-    await this.restore(jobs, signal);
+    await this.restore(jobs, signal, priorityPlies);
+  }
+  // Focus-first prime: priorityPlies (ReviewNode .ply values, e.g.
+  // focus/current) go in the first lookup chunk; the remainder follows in
+  // line order within the same chunk limits. Identical parse/cache path to
+  // prime() — only the job order differs.
+  async primeWithPriority(nodes: ReviewNode[], settings: SettingsInput, engines: Engine[], signal: AbortSignal, priorityPlies: readonly number[]) {
+    await this.prime(nodes, settings, engines, signal, priorityPlies);
   }
   primeCoverage(nodes: ReviewNode[], settings: SettingsInput, engines: Engine[]): { total: number; covered: number } {
     const both = engines.includes('sf') && engines.includes('maia');
@@ -254,3 +318,12 @@ export class EvaluationStore {
   }
 }
 export const evaluationStore = new EvaluationStore();
+
+// Standalone focus-first helper matching the requested
+// primeWithPriority(nodes, settings, engines, signal, priorityPlies) shape.
+// Operates on the shared app store; workspaces with an isolated store use the
+// EvaluationStore.primeWithPriority method directly. Exported for callers
+// that hold nodes but not the store instance.
+export async function primeWithPriority(nodes: ReviewNode[], settings: SettingsInput, engines: Engine[], signal: AbortSignal, priorityPlies: readonly number[]): Promise<void> {
+  await evaluationStore.primeWithPriority(nodes, settings, engines, signal, priorityPlies);
+}

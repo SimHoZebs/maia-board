@@ -7,7 +7,7 @@ import time
 import chess
 import chess.engine
 
-SEARCH_POLICY = "sf19-n100k-ms750-mpv2-t1-h64-v1"
+SEARCH_POLICY = "sf19-n100k-ms750-mpv2-t4-h128-v3"
 
 
 class InvalidRequest(Exception):
@@ -73,7 +73,7 @@ def evaluate(request, binary):
         time_ms, multipv, depth = settings.get("time_ms"), settings.get("lines"), settings.get("depth", 0)
         if not all(type(value) is int for value in (time_ms, multipv, depth)) or not (250 <= time_ms <= 30000 and 1 <= multipv <= 5 and 0 <= depth <= 40):
             raise InvalidRequest("invalid_request")
-        policy = f"sf19-ms{time_ms}-mpv{multipv}-d{depth}-t1-h64-v2"
+        policy = f"sf19-ms{time_ms}-mpv{multipv}-d{depth}-t4-h128-v3"
         limit = chess.engine.Limit(time=time_ms / 1000, depth=depth or None)
     result = dict(engine="Stockfish 19", search_policy=policy, depth=0,
                   terminal=None, best_move=None, score={"type": "cp", "value": 0}, lines=[])
@@ -99,7 +99,10 @@ def evaluate(request, binary):
     try:
         if engine.id.get("name") != "Stockfish 19":
             raise RuntimeError("unexpected engine version")
-        engine.configure({"Threads": 1, "Hash": 64})
+        # Fixed Threads=4 / Hash=128 for speed (policy v3). Fixed rather than
+        # min(cpu,4) so cache identity stays deterministic across hosts; the Go
+        # side splits interactive vs batch into two slots (max 2 x 4 threads).
+        engine.configure({"Threads": 4, "Hash": 128})
         spawn_ms = round((time.monotonic() - spawn_started) * 1000)
         count = min(multipv, board.legal_moves.count())
         iterations = {}

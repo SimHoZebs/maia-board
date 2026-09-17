@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Chess } from 'chess.js';
 import { buildTimeline, START_FEN, timelineBuildsForTests } from './domain';
-import { EvaluationStore, ReviewCoordinator, reviewKey, reviewNodes, parseEvaluation, type ReviewSettings } from './reviewCoordinator';
+import { EvaluationStore, ReviewCoordinator, fastReviewSettings, fastStockfishSettings, reviewKey, reviewNodes, parseEvaluation, type ReviewSettings } from './reviewCoordinator';
 import { defaultStockfishSettings, stockfishPolicy } from './stockfishSettings';
 import { jsonResponse, maiaFixture, sfFixture } from './evaluationTestFixtures';
 import { hangingResponse, requestBodyText } from './testUtils';
@@ -376,5 +376,55 @@ describe('identity and provenance', () => {
     vi.useFakeTimers();
     const rejected = expect(withDeadline(() => new Promise(() => {}), undefined, 20)).rejects.toMatchObject({ name: 'TimeoutError' });
     await vi.advanceTimersByTimeAsync(21); await rejected;
+  });
+});
+
+describe('fast-then-refine', () => {
+  it('derives a 250ms MPV1 fast setting with the same depth, and no fast path when already minimal', () => {
+    expect(fastStockfishSettings(defaultStockfishSettings)).toEqual({ time_ms: 250, lines: 1, depth: 0 });
+    expect(fastStockfishSettings({ time_ms: 1000, lines: 3, depth: 12 })).toEqual({ time_ms: 250, lines: 1, depth: 12 });
+    expect(fastStockfishSettings({ time_ms: 250, lines: 1, depth: 0 })).toBeUndefined();
+    expect(fastStockfishSettings({ time_ms: 250, lines: 2, depth: 0 })).toBeUndefined();
+    expect(fastStockfishSettings(undefined)).toBeUndefined();
+    expect(fastReviewSettings(settings)?.stockfish).toEqual({ time_ms: 250, lines: 1, depth: 0 });
+  });
+  it('uses the fast MPV1 row provisionally until the full MPV2 refines', async () => {
+    let releaseFull!: (response: Response) => void;
+    const fullGate = new Promise<Response>(resolve => { releaseFull = resolve; });
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      const body = JSON.parse(requestBodyText(init));
+      if (body.settings?.lines === 1) return jsonResponse(sfFixture(body.fen, body.settings));
+      return fullGate;
+    });
+    const coordinator = new ReviewCoordinator(fetcher);
+    const target = nodes[0];
+    coordinator.ensure([target], settings, { priority: true, engines: ['sf'], fastFirst: true });
+    await flush();
+    // Fast MPV1 lands first; the full MPV2 fetch starts next on the same lane.
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(requestBodyText(fetcher.mock.calls[0][1])).settings).toMatchObject({ time_ms: 250, lines: 1 });
+    expect(JSON.parse(requestBodyText(fetcher.mock.calls[1][1])).settings).toMatchObject({ time_ms: 750, lines: 2 });
+    expect(coordinator.result('sf', target, settings)).toBeUndefined();
+    expect(coordinator.provisionalSfResult(target, settings)?.lines).toHaveLength(1);
+    expect(coordinator.error('sf', target, settings)).toBeUndefined();
+    releaseFull(jsonResponse(sfFixture(target.fen, defaultStockfishSettings)));
+    await flush();
+    expect(coordinator.result('sf', target, settings)?.lines).toHaveLength(2);
+    expect(coordinator.provisionalSfResult(target, settings)?.lines).toHaveLength(2);
+  });
+  it('fast failure never blocks the full refine and never surfaces', async () => {
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      const body = JSON.parse(requestBodyText(init));
+      if (body.settings?.lines === 1) return jsonResponse({ code: 'engine_unavailable', message: 'offline' }, 503);
+      return jsonResponse(sfFixture(body.fen, body.settings));
+    });
+    const coordinator = new ReviewCoordinator(fetcher);
+    const target = nodes[0];
+    coordinator.ensure([target], settings, { priority: true, engines: ['sf'], fastFirst: true });
+    await flush();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(coordinator.result('sf', target, settings)?.lines).toHaveLength(2);
+    expect(coordinator.error('sf', target, settings)).toBeUndefined();
+    expect(coordinator.provisionalSfResult(target, settings)?.lines).toHaveLength(2);
   });
 });

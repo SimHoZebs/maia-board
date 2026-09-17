@@ -2,7 +2,7 @@ import type { Chess } from 'chess.js';
 import type { MoveResponse } from './api';
 import type { DomainOutcome } from './domain';
 import type { NoveltyRef, TerminalKind } from './theory';
-export const SEARCH_POLICY = 'sf19-n100k-ms750-mpv2-t1-h64-v1';
+export const SEARCH_POLICY = 'sf19-n100k-ms750-mpv2-t4-h128-v3';
 export const REVIEW_METHOD = 'maia-board-review-v1';
 export type Score = { type: 'cp' | 'mate'; value: number; winning_side?: 'white' | 'black' };
 export type Evaluation = { engine: 'Stockfish 19'; search_policy: string; depth: number; terminal: null | 'white_win' | 'black_win' | 'draw'; best_move: string | null; score: Score; lines: { move: string; score: Score; depth: number; pv?: string[] }[] };

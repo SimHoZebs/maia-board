@@ -64,11 +64,11 @@ func TestEngineSettingsValidation(t *testing.T) {
 		}
 	}
 	settings := &stockfishSettings{750, 2, 0}
-	if settings.policy() != "sf19-ms750-mpv2-d0-t1-h64-v2" {
+	if settings.policy() != "sf19-ms750-mpv2-d0-t4-h128-v3" {
 		t.Fatal(settings.policy())
 	}
 	settings = &stockfishSettings{30000, 5, 40}
-	if settings.validate() != nil || settings.policy() != "sf19-ms30000-mpv5-d40-t1-h64-v2" {
+	if settings.validate() != nil || settings.policy() != "sf19-ms30000-mpv5-d40-t4-h128-v3" {
 		t.Fatal(settings.policy())
 	}
 	if (*stockfishSettings)(nil).policy() != SearchPolicy {

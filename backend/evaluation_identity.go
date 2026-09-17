@@ -386,6 +386,7 @@ type lookupRequest struct {
 	FEN        string             `json:"fen"`
 	InitialFEN string             `json:"initial_fen"`
 	Moves      []string           `json:"moves"`
+	PosHash    string             `json:"pos_hash,omitempty"`
 	Settings   *stockfishSettings `json:"settings,omitempty"`
 	EloMaia    *int               `json:"elo_maia,omitempty"`
 	EloUser    *int               `json:"elo_user,omitempty"`

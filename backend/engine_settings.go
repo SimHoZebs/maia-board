@@ -55,5 +55,5 @@ func (s *stockfishSettings) policy() string {
 	if s == nil {
 		return SearchPolicy
 	}
-	return fmt.Sprintf("sf19-ms%d-mpv%d-d%d-t1-h64-v2", s.TimeMS, s.Lines, s.Depth)
+	return fmt.Sprintf("sf19-ms%d-mpv%d-d%d-t4-h128-v3", s.TimeMS, s.Lines, s.Depth)
 }

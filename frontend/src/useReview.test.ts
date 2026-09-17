@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { buildTimeline, defaultSettings, START_FEN } from './domain';
-import { reviewNodes, type ReviewSettings } from './evaluationStore';
+import { EvaluationStore, fastReviewSettings, reviewKey, reviewNodes, type ReviewSettings } from './evaluationStore';
+import { defaultStockfishSettings } from './stockfishSettings';
 import { computeReviewQualities, gameIdentityFor, isMaiaPosition } from './useReview';
 import { sfFixture } from './evaluationTestFixtures';
 
@@ -23,7 +24,7 @@ it('a different board or played move invalidates a verdict even when evaluation 
 });
 it('pins Maia settings only on its own-game mainline positions with moves available', () => {
   expect(isMaiaPosition({ turn: 'black', outcome: null }, 'white', true)).toBe(true);
-  expect(isMaiaPosition({ turn: 'white', outcome: null }, 'white', true)).toBe(false);
+  expect(isMaiaPosition({ turn: 'white', outcome: null }, 'white', false)).toBe(false);
   expect(isMaiaPosition({ turn: 'black', outcome: { kind: 'draw' } }, 'white', true)).toBe(false);
   expect(isMaiaPosition({ turn: 'black', outcome: null }, 'white', false)).toBe(false);
 });
@@ -36,4 +37,16 @@ it('resolves the same game identity for branched views and mainline passes', () 
   expect(gameIdentityFor('live', [saved], live)).toBe(live);
   expect(gameIdentityFor('missing', [saved], live)).toBeNull();
   expect(gameIdentityFor(null, [saved], live)).toBe(live);
+});
+it('display layer accepts the fast MPV1 row provisionally until the full MPV2 lands', () => {
+  const fullSettings: ReviewSettings = { eloMaia: 1600, eloUser: 1600, model: '79m', stockfish: defaultStockfishSettings };
+  const fastSettings = fastReviewSettings(fullSettings)!;
+  const node = reviewNodes(buildTimeline(START_FEN, ['e2e4']))[0];
+  const store = new EvaluationStore();
+  expect(store.provisionalSfResult(node, fullSettings)).toBeUndefined();
+  store.store('sf', reviewKey('sf', node, fastSettings), sfFixture(node.fen, fastSettings.stockfish));
+  expect(store.result('sf', node, fullSettings)).toBeUndefined();
+  expect(store.provisionalSfResult(node, fullSettings)?.lines).toHaveLength(1);
+  store.store('sf', reviewKey('sf', node, fullSettings), sfFixture(node.fen, defaultStockfishSettings));
+  expect(store.provisionalSfResult(node, fullSettings)?.lines).toHaveLength(2);
 });

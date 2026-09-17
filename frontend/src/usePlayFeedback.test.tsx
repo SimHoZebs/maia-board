@@ -187,10 +187,10 @@ describe('settled badges only use labels the badge can render', () => {
   // Engine Top (best move, no drama) and Holds (not best, nothing lost):
   // a line with no Critical anywhere must still translate both, or the
   // badge renders its gray box with no glyph.
-  const topBefore: Evaluation = { engine: 'Stockfish 19', search_policy: 'sf19-n100k-ms750-mpv2-t1-h64-v1', terminal: null, depth: 12, best_move: 'e2e4', score: { type: 'cp', value: 50 },
+  const topBefore: Evaluation = { engine: 'Stockfish 19', search_policy: 'sf19-n100k-ms750-mpv2-t4-h128-v3', terminal: null, depth: 12, best_move: 'e2e4', score: { type: 'cp', value: 50 },
     lines: [{ move: 'e2e4', score: { type: 'cp', value: 50 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: 30 }, depth: 12 }] };
   const topAfter: Evaluation = { ...topBefore, lines: topBefore.lines };
-  const holdsBefore: Evaluation = { engine: 'Stockfish 19', search_policy: 'sf19-n100k-ms750-mpv2-t1-h64-v1', terminal: null, depth: 12, best_move: 'e2e4', score: { type: 'cp', value: 50 },
+  const holdsBefore: Evaluation = { engine: 'Stockfish 19', search_policy: 'sf19-n100k-ms750-mpv2-t4-h128-v3', terminal: null, depth: 12, best_move: 'e2e4', score: { type: 'cp', value: 50 },
     lines: [{ move: 'e2e4', score: { type: 'cp', value: 50 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: 48 }, depth: 12 }] };
   const holdsAfter: Evaluation = { ...holdsBefore, score: { type: 'cp', value: 48 }, lines: holdsBefore.lines.map(line => ({ ...line })) };
   it('translates Top to Best and Holds to Good in play without any Critical', () => {

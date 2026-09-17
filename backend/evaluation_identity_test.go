@@ -233,7 +233,7 @@ func TestCorruptV2ValuesMissThenRecomputeAndOverwrite(t *testing.T) {
 		strings.Replace(string(encoded), `"terminal":null,`, ``, 1),
 		strings.Replace(string(encoded), `"depth":8`, `"depth":999`, 1),
 		strings.Replace(string(encoded), `"d2d4"`, `"e2e4"`, 1),
-		strings.Replace(string(encoded), SearchPolicy, "sf19-ms750-mpv2-d0-t1-h64-v2", 1),
+		strings.Replace(string(encoded), SearchPolicy, "sf19-ms750-mpv2-d0-t4-h128-v3", 1),
 	} {
 		if _, err := s.store.cachePut(hash, "sf", key, corrupt); err != nil {
 			t.Fatal(err)

@@ -8,5 +8,5 @@ export function normalizeStockfishSettings(value?: Partial<StockfishSettings> | 
   return { time_ms: integer(value?.time_ms, 250, 30000, 750), lines: integer(value?.lines, 1, 5, 2), depth: integer(value?.depth, 0, 40, 0) };
 }
 export function stockfishPolicy(settings?: StockfishSettings): string {
-  return settings ? `sf19-ms${settings.time_ms}-mpv${settings.lines}-d${settings.depth}-t1-h64-v2` : SEARCH_POLICY;
+  return settings ? `sf19-ms${settings.time_ms}-mpv${settings.lines}-d${settings.depth}-t4-h128-v3` : SEARCH_POLICY;
 }

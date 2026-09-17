@@ -13,12 +13,13 @@ import (
 	"time"
 )
 
-const SearchPolicy = "sf19-n100k-ms750-mpv2-t1-h64-v1"
+const SearchPolicy = "sf19-n100k-ms750-mpv2-t4-h128-v3"
 
 type evaluationRequest struct {
 	FEN        string             `json:"fen"`
 	Moves      []string           `json:"moves"`
 	InitialFEN string             `json:"initial_fen,omitempty"`
+	PosHash    string             `json:"pos_hash,omitempty"`
 	Settings   *stockfishSettings `json:"settings,omitempty"`
 	// Accepted for older clients; cache identity is derived by the server.
 	CacheHash string `json:"cache_hash,omitempty"`
@@ -51,17 +52,68 @@ type evaluationResponse struct {
 	ActualSettings *stockfishSettings `json:"actual_settings,omitempty"`
 }
 
-// Evaluator owns the priority scheduler and trusted process configuration.
-// Each search still spawns one isolated process; the scheduler only orders
-// admission to protect the CPU from fork/exec + search overlap.
+// Evaluator owns the priority schedulers and trusted process configuration.
+// Each search still spawns one isolated process (`python helper --binary
+// stockfish`); the schedulers only order admission to protect the CPU from
+// fork/exec + search overlap.
+//
+// Per-request overhead breakdown (see stockfish_timing spawn_ms vs search_ms):
+// python interpreter startup + python-chess import (~50-100ms) + UCI spawn +
+// Threads=4/Hash=128 search. A process-level python-chess import warmup is not
+// possible with fork-per-request isolation, and a persistent worker pool was
+// deliberately not adopted: one owned engine per request keeps cancellation
+// (SIGKILL of the process group), version checks, and crash isolation trivial.
+// The speed win here comes from Threads 4 / Hash 128 (policy v3) plus
+// concurrency below, not from reusing processes.
+//
+// GOMAXPROCS-aware concurrency: two admission slots instead of one. The
+// interactive scheduler serves Play>Focus>Batch for sync traffic (/evaluate
+// uses Focus); the batch scheduler serves Batch reviews. Focus therefore never
+// queues behind a Batch entry's in-flight ~750ms search. Worst case is 2
+// concurrent searches x 4 Stockfish threads = 8 busy threads, sized for
+// typical 4-8 CPU hosts. Dedup-by-key is per-scheduler: a Focus duplicate of
+// an in-flight Batch position recomputes instead of joining; correctness is
+// unaffected (last write wins, cache identity is deterministic).
 type Evaluator struct {
 	command []string
-	sched   *Scheduler
-	timeout time.Duration
+	// sched is the interactive slot (Play>Focus>Batch ordering).
+	sched *Scheduler
+	// batchSched is the batch slot (Batch reviews). Nil in some tests;
+	// schedulerFor falls back to whichever scheduler exists.
+	batchSched *Scheduler
+	timeout    time.Duration
 }
 
 func NewEvaluator(python, helper, binary string) *Evaluator {
-	return &Evaluator{command: []string{python, helper, "--binary", binary}, sched: NewScheduler(), timeout: 8 * time.Second}
+	return &Evaluator{command: []string{python, helper, "--binary", binary}, sched: NewScheduler(), batchSched: NewScheduler(), timeout: 8 * time.Second}
+}
+
+// schedulerFor picks the admission slot by priority: Batch reviews use the
+// batch slot, everything else (Play/Focus sync) uses the interactive slot so
+// Focus never waits for a Batch search. Test-constructed Evaluators with a nil
+// slot fall back to the existing one.
+func (e *Evaluator) schedulerFor(prio Priority) *Scheduler {
+	if prio == PriorityBatch {
+		if e.batchSched != nil {
+			return e.batchSched
+		}
+		return e.sched
+	}
+	if e.sched != nil {
+		return e.sched
+	}
+	return e.batchSched
+}
+
+// Idle reports whether both admission slots are empty.
+func (e *Evaluator) Idle() bool {
+	if e.sched != nil && !e.sched.Idle() {
+		return false
+	}
+	if e.batchSched != nil && !e.batchSched.Idle() {
+		return false
+	}
+	return true
 }
 
 func (s *server) evaluate(w http.ResponseWriter, r *http.Request) {
@@ -183,7 +235,8 @@ func (e *Evaluator) run(waitCtx, execCtx context.Context, prio Priority, submitS
 	if prio != PriorityBatch {
 		wait, cancel = context.WithTimeout(waitCtx, syncWait(prio))
 	}
-	grant, joined, err := e.sched.Acquire(wait, prio, key, submitSeq)
+	sched := e.schedulerFor(prio)
+	grant, joined, err := sched.Acquire(wait, prio, key, submitSeq)
 	cancel()
 	if err != nil {
 		switch {
@@ -200,7 +253,7 @@ func (e *Evaluator) run(waitCtx, execCtx context.Context, prio Priority, submitS
 	if joined {
 		return nil, nil, ErrJoined
 	}
-	release := func() { e.sched.Release(grant) }
+	release := func() { sched.Release(grant) }
 	fail := func(err error) (*evaluationResponse, func(), error) {
 		release()
 		return nil, nil, err

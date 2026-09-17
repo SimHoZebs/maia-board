@@ -44,8 +44,8 @@ class SearchSettingsTests(unittest.TestCase):
                     self.assertEqual(limit.time, settings["time_ms"] / 1000)
                     self.assertEqual(limit.depth, settings["depth"] or None)
                     self.assertIsNone(limit.nodes)
-                    expected = ("sf19-ms750-mpv2-d0-t1-h64-v2" if count == 2
-                                else "sf19-ms30000-mpv5-d40-t1-h64-v2")
+                    expected = ("sf19-ms750-mpv2-d0-t4-h128-v3" if count == 2
+                                else "sf19-ms30000-mpv5-d40-t4-h128-v3")
                 else:
                     self.assertEqual(limit.time, .75)
                     self.assertEqual(limit.nodes, 100000)

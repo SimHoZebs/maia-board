@@ -168,11 +168,11 @@ export function MoveAnalysis({
   const maiaLoading = !response && !hasError && !terminalPosition && !tooLong;
   const sfLoading = !evaluation && !hasError && !tooLong;
   // The verdict needs both sides of the move; the foreground lane fetches
-  // both, prime/batch backfill the rest. Gating on the batch lane keeps the
-  // skeleton honest while a batch that will supply the missing side runs.
-  const batchRunning = !!review.progress?.running;
+  // both, prime/batch backfill the rest. Render as soon as the pair is
+  // present regardless of batch progress (progress surfaces separately via
+  // ReviewActionButton); skeleton only while a side is missing.
   const verdictLoading =
-    hasMove && !!played && !verdict && !hasError && !tooLong && (!evaluation || !afterEvaluation || batchRunning);
+    hasMove && !!played && !verdict && !hasError && !tooLong && (!evaluation || !afterEvaluation);
   return (
     <>
       {!hasMove && <p className="move-verdict" role="status">Current position — explore a candidate or step forward to review a move.</p>}

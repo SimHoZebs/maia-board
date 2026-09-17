@@ -37,7 +37,7 @@ Optional `settings` configures the search:
 `depth` is an integer from 0 to 40, defaulting to 0. Time and lines are required
 when supplying settings. Depth 0 has no depth target. An explicit search uses time and optional
 depth limits, with no node-count limit; the first reached limit stops the search.
-Its policy identifier is `sf19-ms{time_ms}-mpv{lines}-d{depth}-t1-h64-v2`.
+Its policy identifier is `sf19-ms{time_ms}-mpv{lines}-d{depth}-t4-h128-v3`.
 Omitting settings retains the legacy policy shown below.
 
 The frontend Settings page saves Stockfish preferences in this browser, initially
@@ -56,7 +56,7 @@ differently. The [backend README](README.md#storage-and-cache) describes bulk lo
 ```json
 {
   "engine": "Stockfish 19",
-  "search_policy": "sf19-n100k-ms750-mpv2-t1-h64-v1",
+  "search_policy": "sf19-n100k-ms750-mpv2-t4-h128-v3",
   "depth": 15,
   "terminal": null,
   "best_move": "e2e4",
@@ -97,21 +97,23 @@ iteration is available, it returns an engine error.
 
 ## Resource and failure behavior
 
-The legacy policy uses one thread, 64 MiB hash, two principal variations
+The legacy policy uses four threads, 128 MiB hash, two principal variations
 (`MultiPV=2`, meaning two candidate lines), and
 `Limit(nodes=100000, time=0.75)`. The node budget is capped by a 750 ms search
 clock. Engine startup, position validation, and shutdown add time beyond the
 search clock. Search depth is an observation, never a target or guarantee.
 The wall-clock limit can cause results to vary under host load.
 
-One admission slot covers helper launch through process cleanup. Concurrent
-evaluations receive `503 engine_busy` with `Retry-After: 1`; there is no queue
+Two admission slots cover helper launch through process cleanup: one for
+interactive Focus work, one for Batch reviews, so Focus never queues behind a
+Batch entry's in-flight ~750ms search. Concurrent evaluations on the same slot
+receive `503 engine_busy` with `Retry-After: 1`; there is no queue
 or public batch endpoint. The whole operation has an eight-second timeout tied
 to HTTP request cancellation. Go starts a separate process group; python-chess
 starts Stockfish with `setpgrp=False` so both inherit that group. Normal cleanup
 uses UCI `quit` and closes the engine. Cancellation sends `SIGKILL` to the whole
 group. Explicit settings add the requested search time to the eight-second
-operation timeout. The single admission slot stays occupied during that search;
+operation timeout. Each admission slot stays occupied during that search;
 whole-game reviews apply the budget separately to each position.
 Pipe waits are capped at one second. Cleanup also kills survivors after
 a wrapper crash and reaps adopted group members when the server is PID 1.

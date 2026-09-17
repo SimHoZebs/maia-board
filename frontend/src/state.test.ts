@@ -691,7 +691,7 @@ describe('canonical timeline', () => {
 describe('review qualities incremental', () => {
   const settings = { eloMaia: 1600, eloUser: 1600, model: '79m' as const };
   const evaluation = (move: string, value: number): Evaluation => ({
-    engine: 'Stockfish 19', search_policy: 'sf19-n100k-ms750-mpv2-t1-h64-v1', depth: 12, terminal: null, best_move: move,
+    engine: 'Stockfish 19', search_policy: 'sf19-n100k-ms750-mpv2-t4-h128-v3', depth: 12, terminal: null, best_move: move,
     score: { type: 'cp', value },
     lines: [{ move, score: { type: 'cp', value }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: value - 20 }, depth: 12 }],
   });
