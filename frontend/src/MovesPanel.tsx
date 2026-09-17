@@ -87,7 +87,7 @@ type MovesNavigation = {
 };
 
 type MovesBranch = {
-  original?: { sans: string[]; fromPly: number };
+  original?: { sans: string[]; fromPly: number; qualities?: (Quality | undefined)[]; bookFlags?: boolean[] };
   branchUp?: boolean;
 };
 
@@ -206,7 +206,14 @@ function MovesPanel({
                   (onOriginalView ?? onView)(original.fromPly + offset + 1)
                 }
               >
-                {number(original.fromPly + offset)} {san}
+                {number(original.fromPly + offset)} {san}{" "}
+                {original.bookFlags?.[original.fromPly + offset] ? (
+                  <span className="quality quality-book" title="Book move — known opening, not engine-evaluated" aria-label="Book move">
+                    <BookOpen size={13} aria-hidden="true" />
+                  </span>
+                ) : (
+                  original.qualities && <QualityBadge quality={original.qualities[original.fromPly + offset]} reserveSpace loading={badgeLoading} />
+                )}
               </button>
             ))}
           </div>

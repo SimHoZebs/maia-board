@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { MoveResponse } from './api';
-import { buildTimeline, lineKeyFor, type TimelineRow } from './domain';
+import { buildTimeline, lineKeyFor, type StoredGame, type TimelineRow } from './domain';
 import type { State } from './state';
 import { ReviewCoordinator, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
 import { useLineScope } from './useLineScope';
@@ -14,6 +14,15 @@ export type RecordStatus = { state: 'checking' | 'fresh' | 'none' };
 export type ReviewState = 'loading' | 'partial' | 'complete' | 'failed';
 export function isMaiaPosition(row: Pick<TimelineRow, 'turn' | 'outcome'>, userColor: 'white' | 'black', ownGame: boolean): boolean {
   return ownGame && row.outcome === null && row.turn !== userColor;
+}
+// Saved-game identity for a line: the reviewed game when ids match, else the
+// live game when sourceless. Shared by the branched view (gated on the view)
+// and the mainline continuation pass (gated on the line) so the two cannot
+// resolve the same line to different games.
+export function gameIdentityFor(sourceId: string | null, saved: StoredGame[], play: StoredGame): StoredGame | null {
+  return sourceId
+    ? saved.find(game => game.id === sourceId) ?? (play.id === sourceId ? play : null)
+    : play;
 }
 export type ReviewQualitiesMemo = UnifiedMemo;
 export type ReviewQualitiesStats = { reviews: number };
@@ -69,9 +78,7 @@ export function useReview(state: State) {
   const settings: ReviewSettings = useMemo(() => ({ eloMaia: state.analysisSettings.eloMaia, eloUser: state.analysisSettings.eloMaia, model: state.analysisSettings.model, stockfish: state.stockfish }), [settingsKey]);
   const mainLine = state.analysis.branchFromPly === null;
   const ownGame = state.analysis.ownGame && mainLine;
-  const gameForLine = ownGame ? (state.analysisSourceId
-    ? state.saved.find(game => game.id === state.analysisSourceId) ?? (state.play.id === state.analysisSourceId ? state.play : null)
-    : state.play) : null;
+  const gameForLine = ownGame ? gameIdentityFor(state.analysisSourceId, state.saved, state.play) : null;
   const pinnedKey = gameForLine ? JSON.stringify([gameForLine.settings.eloMaia, gameForLine.settings.eloUser, gameForLine.settings.model, gameForLine.settings.userColor]) : '';
   const userColor = gameForLine?.settings.userColor;
   // On own-game mainlines, Maia positions retain the saved game identity.
@@ -80,6 +87,19 @@ export function useReview(state: State) {
     const pinned = gameForLine ? { eloMaia: gameForLine.settings.eloMaia, eloUser: gameForLine.settings.eloUser, model: gameForLine.settings.model, stockfish: state.stockfish } : null;
     return (node: ReviewNode): ReviewSettings => pinned && userColor && isMaiaPosition(node, userColor, ownGame) ? pinned : settings;
   }, [settings, pinnedKey, userColor, ownGame]);
+  // Mainline game identity for the continuation pass, gated on the line
+  // instead of the view: ownGame flips false inside a branch, which would
+  // unpin saved-game Maia settings and cap Critical continuation badges at
+  // Best instead of the Maia-aware badge the mainline showed. Keep the
+  // resolver below in sync with settingsForNode above.
+  const mainGameForLine = state.analysis.ownGame ? gameIdentityFor(state.analysisSourceId, state.saved, state.play) : null;
+  const mainPinnedKey = mainGameForLine ? JSON.stringify([mainGameForLine.settings.eloMaia, mainGameForLine.settings.eloUser, mainGameForLine.settings.model, mainGameForLine.settings.userColor]) : '';
+  const mainUserColor = mainGameForLine?.settings.userColor;
+  const mainlineSettingsForNode = useMemo(() => {
+    const pinned = mainGameForLine ? { eloMaia: mainGameForLine.settings.eloMaia, eloUser: mainGameForLine.settings.eloUser, model: mainGameForLine.settings.model, stockfish: state.stockfish } : null;
+    const mainOwnGame = state.analysis.ownGame;
+    return (node: ReviewNode): ReviewSettings => pinned && mainUserColor && isMaiaPosition(node, mainUserColor, mainOwnGame) ? pinned : settings;
+  }, [settings, mainPinnedKey, mainUserColor, state.analysis.ownGame]);
   const combinedKey = `${settingsKey}|${pinnedKey}|${ownGame}`;
   const currentPly = Math.max(0, Math.min(state.analysis.index, nodes.length - 1));
   const focusPly = currentPly - 1;
@@ -155,6 +175,24 @@ export function useReview(state: State) {
   // Render-phase carry-forward (no effect): the note is fully determined by
   // this render (fresh, same-position reuse, or nothing), so banking it here
   // removes the one-commit lag of the effect version. Read runs first, so
+  // Mainline display qualities for the original-line continuation rendered
+  // under an explored branch. MovesPanel draws that continuation from the
+  // mainline while review.qualities aligns with the branch timeline, so
+  // without this the badges those moves showed on the mainline vanish on
+  // branching. Position-keyed coordinator results make it a cache-read-only
+  // second pass (no fetches, no memo retention); skipped on mainlines.
+  const mainlineQualities = useMemo(() => {
+    if (state.analysis.branchFromPly === null) return undefined;
+    const mainTimeline = buildTimeline(state.analysis.initialFen, state.analysis.moves);
+    const mainNodes = reviewNodes(mainTimeline);
+    const mainSf = mainNodes.map(node => coordinator.result('sf', node, mainlineSettingsForNode(node)));
+    const mainMaiaResults = mainNodes.map(node => coordinator.result('maia', node, mainlineSettingsForNode(node)));
+    const mainRarities = mainTimeline.moves.map((move, ply) => maiaRarity(mainMaiaResults[ply], move));
+    const mainGrades = computeReviewQualities({ line: mainTimeline, nodes: mainNodes, evaluations: mainSf,
+      settingsForNode: mainlineSettingsForNode, pending: coordinator.sfPendingKeys(), prev: null });
+    return translateReviewQualities({ grades: mainGrades.qualities, nodes: mainNodes, maiaResults: mainMaiaResults,
+      rarities: mainRarities, settingsForNode: mainlineSettingsForNode, isMaiaPending: (node, settings) => coordinator.isPending('maia', node, settings) });
+  }, [state.analysis.branchFromPly, state.analysis.moves, state.analysis.initialFen, mainlineSettingsForNode, version, coordinator]);
   // the fallback stays yesterday's answer; the position-ID check inside
   // selectMaiaDisplay discards a note from an abandoned concurrent render.
   priorFocus.current = displayed.entry ?? null;
@@ -172,7 +210,7 @@ export function useReview(state: State) {
     : batchComplete || coverageComplete ? 'complete'
     : !prime || prime.key !== primeKey || !coverage ? 'loading'
     : 'partial';
-  return { timeline, nodes, evaluations, qualities, rarities, bestRarities, coverage,
+  return { timeline, nodes, evaluations, qualities, rarities, bestRarities, mainlineQualities, coverage,
     current: evaluations[currentPly], focus: evaluations[focusPly], focusPly, maia, maiaCurrent,
     maiaElo: displayed.entry?.eloMaia ?? focusSettings.eloMaia, maiaModel: maia?.model_used ?? focusSettings.model,
     maiaWantedElo: focusSettings.eloMaia, maiaWantedModel: focusSettings.model,

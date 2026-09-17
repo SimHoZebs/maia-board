@@ -630,6 +630,25 @@ test('touch move selection updates the position balance', async ({ browser }) =>
   await expect(page.locator('#board svg.cg-shapes line')).toHaveCount(3);
   await context.close();
 });
+test('explored branches keep the original line badges', async ({ page }) => {
+  const app = await bootReview(page, '1. e4 e5 2. Nf3 Nc6', [20,20,200,-700,-680]);
+  await page.getByRole('button', { name: 'Analyze entire game' }).click();
+  await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
+  // Mainline badges settled: two Best, one Mistake, one Blunder.
+  await expect(page.locator('.move-cell .quality-best')).toHaveCount(2);
+  // Branch from the root via the second Stockfish candidate.
+  await page.locator('#analysis-first').click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 5');
+  const candidates = page.locator('section[aria-label="Stockfish evaluation"] .candidate-reading');
+  await expect(candidates).toHaveCount(2);
+  await candidates.nth(1).click();
+  await expect(page.locator('.original-move')).toHaveCount(4);
+  // The continuation keeps every badge it showed on the mainline.
+  await expect(page.locator('.original-move .quality-best')).toHaveCount(2);
+  await expect(page.locator('.original-move .quality-mistake')).toHaveCount(1);
+  await expect(page.locator('.original-move .quality-blunder')).toHaveCount(1);
+  expect(app.errors).toEqual([]);
+});
 for (const bit of [0, 1]) test(`random side resolves once with crypto bit ${bit}`, async ({ page }) => {
   await page.addInitScript(bit => { let calls = 0; crypto.getRandomValues = ((array: Uint32Array) => { calls++; array[0] = bit; (window as any).randomSideCalls = calls; return array; }) as typeof crypto.getRandomValues; }, bit);
   await bootReview(page); await page.locator('#mode-play').click();

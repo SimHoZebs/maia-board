@@ -252,6 +252,10 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   // replaying the whole line, but free after the once-per-line build.
   const full = { sanMoves: review.timeline.rows.slice(1).map(row => row.san) };
   const { bookFlags: analysisBookFlags } = useLineOpenings(review.timeline.moves, state.analysis.initialFen, ply);
+  // Book flags for the original-line continuation under a branch. Same-line
+  // cache hit when unbranched (identical content key); the mainline entry is
+  // already cached after analyzing the game, so branching adds no fetch.
+  const { bookFlags: mainlineBookFlags } = useLineOpenings(state.analysis.moves, state.analysis.initialFen, ply);
   // Forward estimates for the next move: the board shows the position after
   // x, so the arrows project y. White draws the played continuation (the
   // board's tile highlight only covers x); red/blue are Maia/Stockfish top
@@ -282,7 +286,7 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
           evalBar={ready ? <StockfishBar key={`${insightResetKey}|${review.tooLong ? 1 : 0}`} evaluation={review.current} orientation={orientation} failed={!!review.currentError} /> : null}
           renderStrip={strip}
           movesPanel={ready ? <MovesPanel sans={full.sanMoves} ply={ply} initialFen={state.analysis.initialFen} qualities={review.qualities} badgeLoading={state.badgeLoading} onView={ply => dispatch({ type: 'view', ply })} onOriginalView={ply => { dispatch({ type: 'original' }); dispatch({ type: 'view', ply }); }} onAdvance={() => dispatch({ type: 'advance' })} analysis={true}
-            original={state.analysis.branchFromPly !== null ? { sans: state.analysis.sanMoves, fromPly: state.analysis.branchFromPly } : undefined}
+            original={state.analysis.branchFromPly !== null ? { sans: state.analysis.sanMoves, fromPly: state.analysis.branchFromPly, qualities: review.mainlineQualities, bookFlags: mainlineBookFlags } : undefined}
             branchUp={mobileBar} hideNav={mobileBar} bookFlags={analysisBookFlags} /> : null}
           resultOverlay={null} />
       </RegionRecorder>

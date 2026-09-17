@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
-import { buildTimeline, START_FEN } from './domain';
+import { buildTimeline, defaultSettings, START_FEN } from './domain';
 import { reviewNodes, type ReviewSettings } from './evaluationStore';
-import { computeReviewQualities, isMaiaPosition } from './useReview';
+import { computeReviewQualities, gameIdentityFor, isMaiaPosition } from './useReview';
 import { sfFixture } from './evaluationTestFixtures';
 
 const settings: ReviewSettings = { eloMaia: 1600, eloUser: 1600, model: '79m' };
@@ -26,4 +26,14 @@ it('pins Maia settings only on its own-game mainline positions with moves availa
   expect(isMaiaPosition({ turn: 'white', outcome: null }, 'white', true)).toBe(false);
   expect(isMaiaPosition({ turn: 'black', outcome: { kind: 'draw' } }, 'white', true)).toBe(false);
   expect(isMaiaPosition({ turn: 'black', outcome: null }, 'white', false)).toBe(false);
+});
+it('resolves the same game identity for branched views and mainline passes', () => {
+  // The continuation pass gates on the line's own-game flag while the view
+  // gates on the branch; both must resolve one shared lookup.
+  const saved = { id: 'saved', createdAt: '2026-09-10', moves: ['e2e4'], settings: defaultSettings };
+  const live = { id: 'live', createdAt: '2026-09-10', moves: [], settings: defaultSettings };
+  expect(gameIdentityFor('saved', [saved], live)).toBe(saved);
+  expect(gameIdentityFor('live', [saved], live)).toBe(live);
+  expect(gameIdentityFor('missing', [saved], live)).toBeNull();
+  expect(gameIdentityFor(null, [saved], live)).toBe(live);
 });
