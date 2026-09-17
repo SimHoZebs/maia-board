@@ -664,3 +664,42 @@ for (const bit of [0, 1]) test(`random side resolves once with crypto bit ${bit}
     return typeof settings?.userColor === 'string' ? settings.userColor : null;
   }, KEYS.settings)).toBe(bit ? 'black' : 'white');
 });
+test('custom arrow colors and widths repaint shafts and heads', async ({ page }) => {
+  const app = await bootReview(page); await atStart(page);
+  const strokes = () => lines(page).evaluateAll(elements => elements.map(el => ({ color: el.getAttribute('stroke'), width: el.getAttribute('stroke-width') })));
+  await expect.poll(async () => (await strokes()).length).toBe(3);
+  expect(await strokes()).toEqual([
+    { color: '#ffffff', width: '0.1875' },
+    { color: '#ef4444', width: '0.125' },
+    { color: '#3b82f6', width: '0.0625' },
+  ]);
+  // Seed custom arrows (width 64 = full square => stroke-width 1) and reload:
+  // the board remounts with fresh marker defs, so shafts and heads agree.
+  await page.evaluate(key => {
+    localStorage.setItem(key, JSON.stringify({
+      actual: { color: '#00ff00', width: 64 },
+      maia: { color: '#ff00ff', width: 32 },
+      stockfish: { color: '#0000ff', width: 16 },
+      candidate: { color: '#d6b85c', width: 2 },
+    }));
+  }, KEYS.arrows);
+  await page.reload();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 5');
+  await expect.poll(async () => (await strokes()).length).toBe(3);
+  expect(await strokes()).toEqual([
+    { color: '#00ff00', width: '1' },
+    { color: '#ff00ff', width: '0.5' },
+    { color: '#0000ff', width: '0.25' },
+  ]);
+  const heads = await page.locator('#board svg.cg-shapes defs marker path').evaluateAll(elements => elements.map(el => el.getAttribute('fill')));
+  expect(heads).toEqual(expect.arrayContaining(['#00ff00', '#ff00ff', '#0000ff']));
+  // Settings controls reflect and persist the seeded values.
+  await page.locator('#mode-settings').click();
+  await expect(page.locator('#arrow-maia-color')).toHaveValue('#ff00ff');
+  await expect(page.locator('#arrow-actual-width')).toHaveValue('64');
+  await page.locator('#arrow-stockfish-width-number').fill('20');
+  await expect.poll(() => page.evaluate(key => JSON.parse(localStorage.getItem(key)!).stockfish.width, KEYS.arrows)).toBe(20);
+  await page.reload();
+  await expect(page.locator('#arrow-stockfish-width-number')).toHaveValue('20');
+  expect(app.errors).toEqual([]);
+});

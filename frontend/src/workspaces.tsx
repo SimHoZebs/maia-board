@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { DrawShape } from '@lichess-org/chessground/draw';
+import type { DrawBrushes, DrawShape } from '@lichess-org/chessground/draw';
 import { Menu, RotateCw, Plus, Undo2, Flag } from 'lucide-react';
 import { NavLink } from 'react-router';
 import { Chess } from 'chess.js';
@@ -15,7 +15,8 @@ import { toGroundColor } from './board-colors';
 import { currentPosition } from './state';
 import { usePlayFeedback } from './usePlayFeedback';
 import { useReview } from './useReview';
-import { reviewShapes, type SquareBadge } from './reviewArrows';
+import { reviewBrushes, reviewShapes, type SquareBadge } from './reviewArrows';
+import { buildReviewBrushes } from './arrowSettings';
 import { ErrorBoundary, PanelError } from './ErrorBoundary';
 import { destinations } from './BoardRouter';
 import { RegionRecorder } from './perfCommits';
@@ -132,7 +133,7 @@ export function MobileBarPortal({ state, dispatch }: Props) {
 // modes. Only the computed inputs differ, so each workspace builds those and
 // slots in its own panels. The review/play-feedback hooks live in the
 // workspace that uses them, so an inactive mode has no coordinator at all.
-function BoardShell({ state, dispatch, ready, toolbar, position, transition, orientation, enabled, over, withEvaluation, boardResetKey, shapes, evalBar, renderStrip, movesPanel, resultOverlay }: Props & {
+function BoardShell({ state, dispatch, ready, toolbar, position, transition, orientation, enabled, over, withEvaluation, boardResetKey, shapes, brushes, evalBar, renderStrip, movesPanel, resultOverlay }: Props & {
   ready: boolean;
   toolbar: ReactNode;
   position: BoardPosition;
@@ -143,16 +144,22 @@ function BoardShell({ state, dispatch, ready, toolbar, position, transition, ori
   withEvaluation: boolean;
   boardResetKey: string;
   shapes: DrawShape[];
+  brushes?: DrawBrushes;
   evalBar: ReactNode;
   renderStrip: (color: 'white' | 'black') => ReactNode;
   movesPanel: ReactNode;
   resultOverlay: ReactNode;
 }) {
   const { request, error, revision } = state;
+  // Arrowhead markers are append-only defs keyed by brush name: a brushes
+  // change remounts the board for fresh heads (shafts alone would repaint via
+  // the shapes hash). Settings live on their own page so the board is usually
+  // remounted by navigation anyway; the key makes it exact.
+  const brushesKey = brushes ? JSON.stringify([brushes.actual, brushes.maia, brushes.stockfish, brushes.candidate]) : 'default';
   return <section className={`board-stage${over ? ' game-over' : ''}`} aria-label="Chess workspace">
     {toolbar}
     {renderStrip(oppositeColor(orientation))}
-    <div className={`board-frame${withEvaluation ? ' with-evaluation' : ''}`}><ErrorBoundary label="board" resetKey={boardResetKey} renderFallback={(error, retry) => <PanelError id="board-error" title="Board failed to render" message={error.message || 'Unknown rendering error.'} onRetry={retry} />}><ChessBoard key={state.coordinatesOnSquares ? 'squares' : 'outside'} position={position} transition={transition} orientation={orientation} enabled={enabled} thinking={!!request} interactionVersion={revision} coordinatesOnSquares={state.coordinatesOnSquares} shapes={shapes} onMove={(from, to) => dispatch({ type: 'move', from, to })} />{evalBar}</ErrorBoundary></div>
+    <div className={`board-frame${withEvaluation ? ' with-evaluation' : ''}`}><ErrorBoundary label="board" resetKey={boardResetKey} renderFallback={(error, retry) => <PanelError id="board-error" title="Board failed to render" message={error.message || 'Unknown rendering error.'} onRetry={retry} />}><ChessBoard key={`${state.coordinatesOnSquares ? 'squares' : 'outside'}|${brushesKey}`} position={position} transition={transition} orientation={orientation} enabled={enabled} thinking={!!request} interactionVersion={revision} coordinatesOnSquares={state.coordinatesOnSquares} shapes={shapes} brushes={brushes ?? reviewBrushes} onMove={(from, to) => dispatch({ type: 'move', from, to })} />{evalBar}</ErrorBoundary></div>
     {renderStrip(orientation)}
     {movesPanel}
     {resultOverlay}
@@ -267,7 +274,8 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   const badgeGlyph: SquareBadge['glyph'] = playedQuality?.label === 'Allowed mate' ? '💀' : playedQuality?.label === 'Blunder' ? '??' : '?';
   const badge = playedQuality && (playedQuality.label === 'Allowed mate' || playedQuality.label === 'Blunder' || playedQuality.label === 'Mistake') && playedUci && badgeSquare !== undefined
     ? { square: badgeSquare, glyph: badgeGlyph } : null;
-  const shapes = ready ? reviewShapes(arrowMoves, { actual: true, maia: true, stockfish: true }, state.preview, badge) : [];
+  const shapes = ready ? reviewShapes(arrowMoves, { actual: true, maia: true, stockfish: true }, state.preview, badge, state.arrows) : [];
+  const brushes = useMemo(() => buildReviewBrushes(state.arrows), [state.arrows]);
   const boardResetKey = JSON.stringify(['analysis', state.play.id, state.play.moves.length, state.analysis.index, state.analysisSourceId, orientation]);
   const insightResetKey = JSON.stringify([state.analysis.initialFen, state.analysis.moves, state.analysisSourceId]);
   const analysisCaptures = capturesFromLine(review.timeline.initialFen, review.timeline.moves, ply);
@@ -282,7 +290,7 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
     <div className={`workspace${ready ? ' analyzing' : ''}${!ready ? ' awaiting' : ''}`}>
       <RegionRecorder id="board-stage">
         <BoardShell state={state} dispatch={dispatch} ready={ready} toolbar={null}
-          position={position} transition={{ line: insightResetKey, ply }} orientation={orientation} enabled={enabled} over={false} withEvaluation={ready} boardResetKey={boardResetKey} shapes={shapes}
+          position={position} transition={{ line: insightResetKey, ply }} orientation={orientation} enabled={enabled} over={false} withEvaluation={ready} boardResetKey={boardResetKey} shapes={shapes} brushes={brushes}
           evalBar={ready ? <StockfishBar key={`${insightResetKey}|${review.tooLong ? 1 : 0}`} evaluation={review.current} orientation={orientation} failed={!!review.currentError} /> : null}
           renderStrip={strip}
           movesPanel={ready ? <MovesPanel sans={full.sanMoves} ply={ply} initialFen={state.analysis.initialFen} qualities={review.qualities} badgeLoading={state.badgeLoading} onView={ply => dispatch({ type: 'view', ply })} onOriginalView={ply => { dispatch({ type: 'original' }); dispatch({ type: 'view', ply }); }} onAdvance={() => dispatch({ type: 'advance' })} analysis={true}

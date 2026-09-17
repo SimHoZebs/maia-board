@@ -9,6 +9,7 @@ import { KEYS, loadSettings, readStorage } from './storage';
 import { mergeSync, type OutboxOp } from './serverGames';
 import { readGameRepository } from './gameRepository';
 import { normalizeStockfishSettings, STOCKFISH_STORAGE_KEY, type StockfishSettings } from './stockfishSettings';
+import { defaultArrowSettings, normalizeArrowSettings, sameArrowSettings, type ArrowSettings, type ArrowSettingsKey, type ArrowStyle } from './arrowSettings';
 import { normalizeBestLineWindow } from './material';
 import { clampMaiaElo } from './BoardTools';
 import type { BadgeLoading } from './ReviewCharts';
@@ -32,7 +33,7 @@ const sameSettings = (a: Settings, b: Settings) => a.userColor === b.userColor &
   && a.eloMaia === b.eloMaia && a.eloUser === b.eloUser && (a.temperature ?? 0) === (b.temperature ?? 0);
 export type State = {
   mode: Mode; play: StoredGame; saved: StoredGame[];
-  started: boolean; setup: PlayDraft | null; viewedPly: number | null; stockfish: StockfishSettings; feedback: boolean; badgeLoading: BadgeLoading; coordinatesOnSquares: boolean; boardOrientation: BoardOrientationSetting; bestLineWindow: number;
+  started: boolean; setup: PlayDraft | null; viewedPly: number | null; stockfish: StockfishSettings; feedback: boolean; badgeLoading: BadgeLoading; coordinatesOnSquares: boolean; boardOrientation: BoardOrientationSetting; bestLineWindow: number; arrows: ArrowSettings;
   analysis: Analysis; analysisSettings: Draft; analysisLoaded: boolean; importing: boolean; analysisSourceId: string | null;
   inputs: { fen: string; pgn: string }; flipped: boolean; preview: string | null;
   promotion: { from: Square; to: Square } | null;
@@ -47,6 +48,8 @@ export type Action =
   | { type: 'coordinates-on-squares'; enabled: boolean }
   | { type: 'board-orientation'; orientation: BoardOrientationSetting }
   | { type: 'best-line-window'; window: number }
+  | { type: 'arrow-settings'; source: ArrowSettingsKey; style: Partial<ArrowStyle> }
+  | { type: 'arrow-settings-reset' }
   | { type: 'new'; id: string; createdAt: string; resolvedColor?: 'white' | 'black' }
   | { type: 'analysis-settings'; settings: Partial<Draft> }
   | { type: 'takeback' } | { type: 'resign' } | { type: 'flip' }
@@ -188,7 +191,7 @@ export function initialState(mode: Mode = 'play', urlLine?: UrlLine, repository 
   const state: State = { mode, play: restored ?? { id: newId(), createdAt: new Date().toISOString(), moves: [], settings },
     started: !!restored, setup: restored ? null : newPlayDraft(settings), viewedPly: null,
     saved: repository.games, analysis, analysisSettings: { eloMaia: settings.eloMaia, model: settings.model, userColor: settings.userColor }, analysisLoaded, importing: !analysisLoaded, analysisSourceId,
-    stockfish: normalizeStockfishSettings(readStorage(STOCKFISH_STORAGE_KEY)), feedback: readStorage<boolean>(KEYS.feedback) === true, badgeLoading: normalizeBadgeLoading(readStorage<unknown>(KEYS.badgeLoading)), coordinatesOnSquares: normalizeCoordinatesOnSquares(readStorage<unknown>(KEYS.coordinatesOnSquares)), boardOrientation: normalizeBoardOrientation(readStorage<unknown>(KEYS.boardOrientation)), bestLineWindow: normalizeBestLineWindow(readStorage<unknown>(KEYS.bestLineWindow)),
+    stockfish: normalizeStockfishSettings(readStorage(STOCKFISH_STORAGE_KEY)), feedback: readStorage<boolean>(KEYS.feedback) === true, badgeLoading: normalizeBadgeLoading(readStorage<unknown>(KEYS.badgeLoading)), coordinatesOnSquares: normalizeCoordinatesOnSquares(readStorage<unknown>(KEYS.coordinatesOnSquares)), boardOrientation: normalizeBoardOrientation(readStorage<unknown>(KEYS.boardOrientation)), bestLineWindow: normalizeBestLineWindow(readStorage<unknown>(KEYS.bestLineWindow)), arrows: normalizeArrowSettings(readStorage<unknown>(KEYS.arrows)),
     inputs, flipped: false, preview: null, promotion: null, insight: null, error: '', request: null, revision: 0 };
   return mode === 'play' && maiaTurn(state) ? queueRequest(state) : state;
 }
@@ -205,6 +208,12 @@ export function reducer(state: State, action: Action): State {
     // or engine requests, so changing it recomputes verdict text without a
     // refetch.
     case 'best-line-window': { const window = normalizeBestLineWindow(action.window); return state.bestLineWindow === window ? state : { ...state, bestLineWindow: window }; }
+    case 'arrow-settings': {
+      const current = state.arrows[action.source];
+      const merged = normalizeArrowSettings({ ...state.arrows, [action.source]: { ...current, ...action.style } });
+      return sameArrowSettings(merged, state.arrows) ? state : { ...state, arrows: merged };
+    }
+    case 'arrow-settings-reset': return sameArrowSettings(state.arrows, defaultArrowSettings) ? state : { ...state, arrows: defaultArrowSettings };
     case 'setup': return { ...state, setup: { ...(state.setup ?? newPlayDraft(state.play.settings)), ...action.draft } };
     case 'cancel-setup': return state.started ? { ...state, setup: null } : state;
     case 'new': {

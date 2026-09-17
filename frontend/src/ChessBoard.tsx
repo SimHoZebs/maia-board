@@ -5,14 +5,14 @@ import type { Api } from '@lichess-org/chessground/api';
 import type { Color, Key } from '@lichess-org/chessground/types';
 import { legalDests, parseKey, parseSquare } from './domain';
 import { toGroundColor } from './board-colors';
-import type { DrawShape } from '@lichess-org/chessground/draw';
+import type { DrawBrushes, DrawShape } from '@lichess-org/chessground/draw';
 import { candidatePreviewShape, reviewBrushes } from './reviewArrows';
 
 export type BoardPosition = { fen: string; lastMove?: readonly string[] | null };
 export type BoardTransition = { line: string; ply: number };
-type Props = { position: BoardPosition; transition: BoardTransition; orientation: Color; enabled: boolean; thinking: boolean; interactionVersion: number; coordinatesOnSquares: boolean; preview?: string | null; shapes?: DrawShape[]; onMove: (from: Square, to: Square) => void };
+type Props = { position: BoardPosition; transition: BoardTransition; orientation: Color; enabled: boolean; thinking: boolean; interactionVersion: number; coordinatesOnSquares: boolean; preview?: string | null; shapes?: DrawShape[]; brushes?: DrawBrushes; onMove: (from: Square, to: Square) => void };
 
-export function ChessBoard({ position, transition, orientation, enabled, thinking, interactionVersion, coordinatesOnSquares, preview, shapes, onMove }: Props) {
+export function ChessBoard({ position, transition, orientation, enabled, thinking, interactionVersion, coordinatesOnSquares, preview, shapes, brushes = reviewBrushes, onMove }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const api = useRef<Api | null>(null);
   const callback = useRef(onMove);
@@ -41,7 +41,7 @@ export function ChessBoard({ position, transition, orientation, enabled, thinkin
       selectable: { enabled: true },
       premovable: { enabled: false },
       movable: { free: false, rookCastle: false },
-      drawable: { brushes: reviewBrushes },
+      drawable: { brushes },
     });
     api.current = ground;
     // Chessground memoizes its bounding rect until scroll/resize. Any layout
@@ -101,6 +101,13 @@ export function ChessBoard({ position, transition, orientation, enabled, thinkin
   useLayoutEffect(() => {
     api.current?.setAutoShapes(shapes ?? candidatePreviewShape(preview));
   }, [position.fen, preview, shapes, interactionVersion, orientation]);
+  // Shafts repaint through the shapes hash (reviewShapes embeds the arrow
+  // style signature); arrowhead markers are append-only defs keyed by brush
+  // name, so callers remount via key on brushes change for fresh heads. This
+  // live set still updates shafts if a caller ever edits brushes in place.
+  useLayoutEffect(() => {
+    api.current?.set({ drawable: { brushes } });
+  }, [brushes]);
   // React owns this element; Chessground owns all its descendants and CSS classes.
   return <div className={`board${thinking ? ' is-thinking' : ''}`} id="board" aria-label="Chess board"><div ref={container} /></div>;
 }

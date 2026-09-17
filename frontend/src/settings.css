@@ -48,6 +48,13 @@
 .settings-control output { color: var(--accent); font-variant-numeric: tabular-nums; }
 .engine-settings input[type=number] { width: 120px; }
 .engine-settings input[type=range] { width: 100%; accent-color: var(--accent); }
+/* Review-arrow rows: label above, color + thickness + value on one wrap row. */
+.arrow-row { display: grid; gap: 6px; margin: 10px 0; }
+.arrow-inputs { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.arrow-inputs input[type=color] { width: 40px; height: 32px; padding: 2px; border: 1px solid var(--line); border-radius: 6px; background: transparent; }
+.arrow-inputs input[type=range] { flex: 1; min-width: 140px; }
+.arrow-inputs input[type=number] { width: 72px; }
+.arrow-inputs output { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .settings-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 16px; }
 .settings-footer span { color: var(--muted); font-size: 12px; }
 @media (max-width: 480px) { .engine-settings { margin: 12px 0; } .settings-footer { align-items: flex-start; flex-direction: column; } }

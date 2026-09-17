@@ -1,6 +1,7 @@
 import { Button } from './components';
 import type { Props } from './Controls';
 import { defaultStockfishSettings } from './stockfishSettings';
+import { ARROW_WIDTH_MAX, ARROW_WIDTH_MIN, type ArrowSettingsKey } from './arrowSettings';
 import { QualityBadge, type BadgeLoading } from './ReviewCharts';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import './settings.css';
@@ -40,6 +41,12 @@ export function SettingsPage({ state, dispatch }: Props) {
     { value: 'white' as const, label: 'White' },
     { value: 'black' as const, label: 'Black' },
   ];
+  const arrowRows: { key: ArrowSettingsKey; label: string; hint: string }[] = [
+    { key: 'actual', label: 'Played move', hint: 'White arrow tracing the game continuation' },
+    { key: 'maia', label: 'Maia suggestion', hint: "Maia's top choice from this position" },
+    { key: 'stockfish', label: 'Stockfish best', hint: "Stockfish's top choice from this position" },
+    { key: 'candidate', label: 'Preview', hint: 'Hover or keyboard preview before exploring' },
+  ];
   return <section className="engine-settings panel" aria-labelledby="settings-title">
     <p className="settings-eyebrow">BOARD</p>
     <h2 className="settings-subhead">Display</h2>
@@ -72,6 +79,25 @@ export function SettingsPage({ state, dispatch }: Props) {
         </div>
       </div>
       <p>Inside squares stay aligned at any board size. Outside matches the classic look.</p>
+    </div>
+    <div className="settings-control">
+      <div className="field field--row">
+        <span className="field-label" id="arrows-label">Review arrows</span>
+        <Button onClick={() => dispatch({ type: 'arrow-settings-reset' })}>Reset arrow defaults</Button>
+      </div>
+      <p>Color and thickness per arrow. Thickness {ARROW_WIDTH_MIN}–{ARROW_WIDTH_MAX}; {ARROW_WIDTH_MAX} fills a full square.</p>
+      {arrowRows.map(row => {
+        const style = state.arrows[row.key];
+        return <div className="field arrow-row" key={row.key}>
+          <span className="field-label" id={`arrow-${row.key}-label`}>{row.label} <span>{row.hint}</span></span>
+          <div className="arrow-inputs" role="group" aria-labelledby={`arrow-${row.key}-label`}>
+            <input id={`arrow-${row.key}-color`} type="color" value={style.color} onChange={e => dispatch({ type: 'arrow-settings', source: row.key, style: { color: e.target.value } })} aria-label={`${row.label} color`} />
+            <input id={`arrow-${row.key}-width`} type="range" min={ARROW_WIDTH_MIN} max={ARROW_WIDTH_MAX} step={1} value={style.width} onChange={e => dispatch({ type: 'arrow-settings', source: row.key, style: { width: e.target.valueAsNumber } })} aria-label={`${row.label} thickness`} />
+            <NumberSetting id={`arrow-${row.key}-width-number`} label={`${row.label} thickness value`} min={ARROW_WIDTH_MIN} max={ARROW_WIDTH_MAX} step={1} value={style.width} onChange={width => dispatch({ type: 'arrow-settings', source: row.key, style: { width } })} />
+            <output aria-label={`${row.label} thickness as share of a square`}>{Math.round(style.width / ARROW_WIDTH_MAX * 100)}% of a square</output>
+          </div>
+        </div>;
+      })}
     </div>
     <p className="settings-eyebrow">ANALYSIS ENGINE</p>
     <h1 id="settings-title">Stockfish</h1>

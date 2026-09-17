@@ -1,16 +1,8 @@
-import type { DrawBrushes, DrawShape } from '@lichess-org/chessground/draw';
+import type { DrawShape } from '@lichess-org/chessground/draw';
 import type { Key } from '@lichess-org/chessground/types';
 import { parseKey } from './domain';
-export const reviewBrushes: DrawBrushes = {
-  green: { key: 'g', color: '#15781B', opacity: 1, lineWidth: 10 },
-  red: { key: 'r', color: '#882020', opacity: 1, lineWidth: 10 },
-  blue: { key: 'b', color: '#003088', opacity: 1, lineWidth: 10 },
-  yellow: { key: 'y', color: '#e68f00', opacity: 1, lineWidth: 10 },
-  actual: { key: 'actual', color: '#ffffff', opacity: .45, lineWidth: 12 },
-  maia: { key: 'maia', color: '#ef4444', opacity: .45, lineWidth: 8 },
-  stockfish: { key: 'stockfish', color: '#3b82f6', opacity: .45, lineWidth: 4 },
-  candidate: { key: 'candidate', color: '#d6b85c', opacity: .65, lineWidth: 2 },
-};
+import { buildReviewBrushes, defaultArrowSettings, type ArrowSettings } from './arrowSettings';
+export const reviewBrushes = buildReviewBrushes(defaultArrowSettings);
 export type ArrowSource = 'actual' | 'maia' | 'stockfish';
 export type ArrowToggles = Record<ArrowSource, boolean>;
 export type SquareBadge = { square: Key; glyph: '💀' | '??' | '?' };
@@ -26,12 +18,16 @@ export function candidatePreviewShape(preview: string | null | undefined): DrawS
   if (orig === undefined || dest === undefined) return [];
   return [{ orig, dest, brush: 'candidate' }];
 }
-export function reviewShapes(moves: Record<ArrowSource, string | null | undefined>, toggles: ArrowToggles, preview?: string | null, badge?: SquareBadge | null): DrawShape[] {
+export function reviewShapes(moves: Record<ArrowSource, string | null | undefined>, toggles: ArrowToggles, preview?: string | null, badge?: SquareBadge | null, arrows?: ArrowSettings): DrawShape[] {
   const entries: { move: string; brush: string }[] = (['actual', 'maia', 'stockfish'] as const).filter(source => toggles[source] && validMove(moves[source])).map(source => ({ move: moves[source]!, brush: source }));
   if (validMove(preview) && !entries.some(entry => entry.move === preview)) entries.push({ move: preview, brush: 'candidate' });
   // Changing the complete set gives all shapes a fresh hash. Chessground appends
   // new SVG groups; a shared hash suffix preserves widest-first layering after toggles.
-  const signature = entries.map(entry => `${entry.brush}:${entry.move}`).join('|');
+  // The arrow style signature forces the same fresh hash when colors/widths
+  // change, so a live brushes update repaints instead of hitting the
+  // prevSvgHash early-return (brush color/width are not part of the hash).
+  const style = arrows ? (['actual', 'maia', 'stockfish', 'candidate'] as const).map(key => `${key}=${arrows[key].color},${arrows[key].width}`).join('|') : '';
+  const signature = `${entries.map(entry => `${entry.brush}:${entry.move}`).join('|')}#${style}`;
   const shapes: DrawShape[] = entries.map(({ move, brush }) => {
     const orig = parseKey(move.slice(0, 2));
     const dest = parseKey(move.slice(2, 4));

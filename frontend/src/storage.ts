@@ -1,7 +1,7 @@
 import { normalizeSettings, replay, type Settings, type StoredGame } from './domain';
 import { isRecord, isStringArray } from './guards';
 
-export const KEYS = { settings: 'maia-board.settings.v1', current: 'maia-board.current-game.v1', saved: 'maia-board.saved-games.v1', analysis: 'maia-board.analysis.v1', snapshot: 'maia-board.analysis-snapshot.v1', feedback: 'maia-board.feedback.v1', badgeLoading: 'maia-board.badge-loading.v1', coordinatesOnSquares: 'maia-board.coordinates-on-squares.v1', boardOrientation: 'maia-board.board-orientation.v1', bestLineWindow: 'maia-board.best-line-window.v1' };
+export const KEYS = { settings: 'maia-board.settings.v1', current: 'maia-board.current-game.v1', saved: 'maia-board.saved-games.v1', analysis: 'maia-board.analysis.v1', snapshot: 'maia-board.analysis-snapshot.v1', feedback: 'maia-board.feedback.v1', badgeLoading: 'maia-board.badge-loading.v1', coordinatesOnSquares: 'maia-board.coordinates-on-squares.v1', boardOrientation: 'maia-board.board-orientation.v1', bestLineWindow: 'maia-board.best-line-window.v1', arrows: 'maia-board.arrows.v1' };
 export function readStorage<T>(key: string): T | undefined {
   // Quarantined JSON boundary: JSON.parse() returns `any`, which flows into
   // the generic without an assertion. Every caller validates downstream —
