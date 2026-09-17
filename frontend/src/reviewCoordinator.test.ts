@@ -4,6 +4,7 @@ import { buildTimeline, START_FEN, timelineBuildsForTests } from './domain';
 import { EvaluationStore, ReviewCoordinator, reviewKey, reviewNodes, parseEvaluation, type ReviewSettings } from './reviewCoordinator';
 import { defaultStockfishSettings, stockfishPolicy } from './stockfishSettings';
 import { jsonResponse, maiaFixture, sfFixture } from './evaluationTestFixtures';
+import { hangingResponse, requestBodyText } from './testUtils';
 import { withDeadline } from './evaluationTransport';
 
 const settings: ReviewSettings = { eloMaia: 1600, eloUser: 1600, model: '79m', stockfish: defaultStockfishSettings };
@@ -11,7 +12,7 @@ const nodes = reviewNodes(buildTimeline(START_FEN, ['e2e4', 'e7e5', 'g1f3']));
 const flush = async () => { for (let n = 0; n < 80; n++) await Promise.resolve(); };
 function liveFetch() {
   return vi.fn<typeof fetch>(async (url, init) => {
-    const body = JSON.parse(init!.body as string);
+    const body = JSON.parse(requestBodyText(init));
     if (url === '/evaluations/lookup') return jsonResponse({ results: [] });
     return jsonResponse(url === '/evaluate' ? sfFixture(body.fen, body.settings) : maiaFixture(body.fen, body.model));
   });
@@ -32,7 +33,7 @@ describe('timeline-backed restoration', () => {
     expect(fetcher.mock.calls[0][0]).toBe('/evaluations/lookup');
     const init = fetcher.mock.calls[0][1]!;
     expect(init.method).toBe('POST');
-    const requests = JSON.parse(init.body as string).requests;
+    const requests = JSON.parse(requestBodyText(init)).requests;
     expect(requests).toHaveLength(8);
     expect(requests[6]).toMatchObject({ engine: 'sf', moves: ['e2e4', 'e7e5', 'g1f3'], initial_fen: START_FEN, fen: nodes[3].fen });
     expect(nodes.every(node => !('moves' in node) && !('sanMoves' in node) && node.timeline === nodes[0].timeline)).toBe(true);
@@ -50,12 +51,12 @@ describe('timeline-backed restoration', () => {
     expect(coordinator.result('maia', nodes[0], settings)).toBeUndefined();
     expect(coordinator.result('maia', nodes[1], settings)).toBeDefined();
     await coordinator.ensure(nodes.slice(0, 2), settings, { signal: new AbortController().signal });
-    const requests = JSON.parse(fetcher.mock.calls[1][1]!.body as string).requests;
+    const requests = JSON.parse(requestBodyText(fetcher.mock.calls[1][1])).requests;
     expect(requests.map((r: { engine: string; moves: string[] }) => [r.engine, r.moves.length])).toEqual([['maia', 0], ['sf', 1]]);
     expect(fetcher.mock.calls.every(([url]) => url === '/evaluations/lookup')).toBe(true);
   });
   it('prime hits report full coverage without extra requests', async () => {
-    const fetcher = vi.fn<typeof fetch>(async (_url, init) => jsonResponse({ results: JSON.parse(init!.body as string).requests.map((r: { engine: string; fen: string }, index: number) => ({ index, value: r.engine === 'sf' ? sfFixture(r.fen) : maiaFixture(r.fen) })) }));
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => jsonResponse({ results: JSON.parse(requestBodyText(init)).requests.map((r: { engine: string; fen: string }, index: number) => ({ index, value: r.engine === 'sf' ? sfFixture(r.fen) : maiaFixture(r.fen) })) }));
     const coordinator = new ReviewCoordinator(fetcher);
     expect(await coordinator.ensure(nodes, settings, { signal: new AbortController().signal })).toEqual({ covered: 4, total: 4 });
     expect(fetcher).toHaveBeenCalledTimes(1);
@@ -74,7 +75,7 @@ describe('timeline-backed restoration', () => {
     expect(coordinator.result('sf', terminal[1], settings)?.score).toEqual({ type: 'mate', value: 0, winning_side: 'black' });
   });
   it('tracks restore pending work and aborts an unresolved response body', async () => {
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue({ ok: true, json: () => new Promise(() => {}) } as unknown as Response);
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(hangingResponse());
     const coordinator = new ReviewCoordinator(fetcher), controller = new AbortController();
     const promise = coordinator.ensure(nodes, settings, { signal: controller.signal });
     expect(coordinator.sfPendingKeys().size).toBe(4);
@@ -85,7 +86,7 @@ describe('timeline-backed restoration', () => {
   });
   it('lookup deadlines cover body consumption and do not launch fallback probes', async () => {
     vi.useFakeTimers();
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue({ ok: true, json: () => new Promise(() => {}) } as unknown as Response);
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(hangingResponse());
     const coordinator = new ReviewCoordinator(fetcher);
     const rejected = expect(coordinator.ensure(nodes, settings, { signal: new AbortController().signal })).rejects.toMatchObject({ name: 'TimeoutError' });
     await vi.advanceTimersByTimeAsync(30_001); await rejected;
@@ -97,7 +98,7 @@ describe('timeline-backed restoration', () => {
     const roots = Array.from({ length: 513 }, (_, index) => reviewNodes(buildTimeline(START_FEN.replace('0 1', `0 ${index + 1}`), []))[0]);
     const fetcher = liveFetch(), coordinator = new ReviewCoordinator(fetcher);
     await coordinator.ensure(roots, settings, { signal: new AbortController().signal });
-    expect(fetcher.mock.calls.map(([url, init]) => [url, JSON.parse(init!.body as string).requests.length])).toEqual([
+    expect(fetcher.mock.calls.map(([url, init]) => [url, JSON.parse(requestBodyText(init)).requests.length])).toEqual([
       ['/evaluations/lookup', 1024], ['/evaluations/lookup', 2],
     ]);
   });
@@ -106,22 +107,22 @@ describe('timeline-backed restoration', () => {
     // subset of line N+1. useBulkPrime no longer aborts it; both must merge.
     const line1 = reviewNodes(buildTimeline(START_FEN, ['e2e4']));
     const line2 = reviewNodes(buildTimeline(START_FEN, ['e2e4', 'e7e5']));
-    const gates = [vi.fn(), vi.fn()];
-    const releases = [new Promise<void>(resolve => gates[0].mockImplementation(resolve as () => void)), new Promise<void>(resolve => gates[1].mockImplementation(resolve as () => void))];
+    let releaseFirst!: () => void, releaseSecond!: () => void;
+    const firstGate = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const secondGate = new Promise<void>(resolve => { releaseSecond = resolve; });
     const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
-      const requests = JSON.parse(init!.body as string).requests as { engine: string; fen: string }[];
-      const gate = requests.length <= 2 ? 0 : 1;
-      await releases[gate];
-      return jsonResponse({ results: requests.map((request, index) => ({ index, value: sfFixture(request.fen) })) });
+      const requests = JSON.parse(requestBodyText(init)).requests;
+      await (requests.length <= 2 ? firstGate : secondGate);
+      return jsonResponse({ results: requests.map((request: { engine: string; fen: string }, index: number) => ({ index, value: sfFixture(request.fen) })) });
     });
     const coordinator = new ReviewCoordinator(fetcher);
     const first = coordinator.ensure(line1, settings, { signal: new AbortController().signal, engines: ['sf'] });
     const second = coordinator.ensure(line2, settings, { signal: new AbortController().signal, engines: ['sf'] });
     // The new line resolves first; the stale line lands after and must still
     // settle its rows instead of being discarded.
-    gates[1]();
+    releaseSecond();
     expect(await second).toEqual({ covered: 3, total: 3 });
-    gates[0]();
+    releaseFirst();
     expect(await first).toEqual({ covered: 2, total: 2 });
     expect(fetcher).toHaveBeenCalledTimes(2);
     for (const node of line2) expect(coordinator.result('sf', node, settings)).toBeDefined();
@@ -171,7 +172,7 @@ describe('workspace scheduler', () => {
     expect(coordinator.isPending('sf', nodes[2], settings)).toBe(true);
     expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(false);
     release(jsonResponse(sfFixture(nodes[0].fen))); await flush();
-    expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init!.body as string).moves.length)).toEqual([0, 2, 3]);
+    expect(fetcher.mock.calls.map(([, init]) => JSON.parse(requestBodyText(init)).moves.length)).toEqual([0, 2, 3]);
     // Non-preemptive slot: the late superseded result still lands (paid for);
     // the dropped queued key never fetches.
     expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(false);
@@ -197,7 +198,7 @@ describe('workspace scheduler', () => {
     expect([...coordinator.sfPendingKeys()]).toHaveLength(1);
     releaseFirst(jsonResponse(sfFixture(nodes[0].fen))); await flush();
     // Late landing stores; dropped queued work never fetched.
-    expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init!.body as string).moves.length)).toEqual([0, 2]);
+    expect(fetcher.mock.calls.map(([, init]) => JSON.parse(requestBodyText(init)).moves.length)).toEqual([0, 2]);
     expect(coordinator.result('sf', nodes[0], settings)).toBeDefined();
     expect(coordinator.result('sf', nodes[1], settings)).toBeUndefined();
     expect(coordinator.result('sf', nodes[2], settings)).toBeDefined();
@@ -358,6 +359,11 @@ describe('identity and provenance', () => {
     const legacy = { ...timed, search_policy: stockfishPolicy(undefined) };
     expect(parseEvaluation(legacy).actual_settings).toBeUndefined();
     expect(() => parseEvaluation(legacy, defaultStockfishSettings)).toThrow('incompatible');
+  });
+  it('rejects non-record evaluation bodies without reading fields', () => {
+    // Locks the isRecord-first narrowing in parseEvaluation: primitives and
+    // arrays fail before any field access.
+    for (const body of [null, undefined, 'x', 42, []]) expect(() => parseEvaluation(body)).toThrow('incomplete');
   });
   it('new requested identities never expose previously settled Maia rows', async () => {
     const fetcher = liveFetch(), coordinator = new ReviewCoordinator(fetcher);

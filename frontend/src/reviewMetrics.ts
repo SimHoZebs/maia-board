@@ -52,6 +52,13 @@ export function maiaRarity(maia: Pick<MoveResponse, 'top_moves' | 'degraded'> | 
 // engine is pending, and SF-settled non-critical moves complete without Maia
 // (fast path), so the cap never flickers a settled badge.
 export const EXCELLENT_MAX_PROB = 0.05;
+// Display labels: the engine-fact labels Critical/Top/Holds never reach the
+// badge. The predicate proves the fallthrough below only carries shared
+// labels instead of asserting the translation.
+const QUALITY_LABELS: readonly Quality['label'][] = ['Forced', 'Allowed mate', 'Blunder', 'Mistake', 'Inaccuracy', 'Excellent', 'Great', 'Best', 'Good', 'Unreviewed'];
+function isQualityLabel(value: unknown): value is Quality['label'] {
+  return QUALITY_LABELS.some(label => label === value);
+}
 export function effectiveQuality(grade: EngineGrade | undefined, rarity: Rarity | undefined): Quality | undefined {
   if (!grade) return undefined;
   if (grade.label === 'Critical') {
@@ -62,7 +69,8 @@ export function effectiveQuality(grade: EngineGrade | undefined, rarity: Rarity 
   }
   if (grade.label === 'Top') return { ...grade, label: 'Best' };
   if (grade.label === 'Holds') return { ...grade, label: 'Good' };
-  return grade as Quality;
+  if (!isQualityLabel(grade.label)) throw new Error(`Unknown engine grade: ${String(grade.label)}`);
+  return { ...grade, label: grade.label };
 }
 function rarityVerdict(quality: Quality, rarity: Rarity | undefined, elo: number, bestRarity?: Rarity | null): string | null {
   if (!rarity || rarity.label === 'Unknown') return null;

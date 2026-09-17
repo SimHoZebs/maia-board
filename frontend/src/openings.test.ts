@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { fetchLineOpenings, openingAt, type OpeningMatch } from './openings';
+import { jsonResponse } from './evaluationTestFixtures';
 
 const matches: OpeningMatch[] = [
   { ply: 1, eco: 'B00', name: 'Test Opening' },
@@ -21,22 +22,22 @@ describe('openingAt', () => {
 });
 
 describe('fetchLineOpenings', () => {
-  const ok = (body: unknown) => (async () => ({ ok: true, status: 200, json: async () => body }) as Response);
+  const ok = (body: unknown) => vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(body));
 
   it('parses a well-formed response', async () => {
     const line = await fetchLineOpenings(
       ['e2e4', 'e7e5'], 'start',
       undefined,
-      ok({ matches, book_flags: [true, false] }) as unknown as typeof fetch,
+      ok({ matches, book_flags: [true, false] }),
     );
     expect(line).toEqual({ matches, bookFlags: [true, false] });
   });
 
   it('rejects HTTP failures and misshapen bodies', async () => {
-    const fail = (async () => ({ ok: false, status: 409, json: async () => ({}) }) as Response) as unknown as typeof fetch;
+    const fail = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({}, 409));
     await expect(fetchLineOpenings(['e2e4'], 'start', undefined, fail)).rejects.toThrow('409');
-    await expect(fetchLineOpenings(['e2e4'], 'start', undefined, ok({ matches, book_flags: [true, false, true] }) as unknown as typeof fetch)).rejects.toThrow();
-    await expect(fetchLineOpenings(['e2e4'], 'start', undefined, ok({ matches, book_flags: ['yes'] }) as unknown as typeof fetch)).rejects.toThrow();
-    await expect(fetchLineOpenings(['e2e4'], 'start', undefined, ok({ matches: [{ ply: '1', eco: 'B00', name: 'X' }], book_flags: [true] }) as unknown as typeof fetch)).rejects.toThrow();
+    await expect(fetchLineOpenings(['e2e4'], 'start', undefined, ok({ matches, book_flags: [true, false, true] }))).rejects.toThrow();
+    await expect(fetchLineOpenings(['e2e4'], 'start', undefined, ok({ matches, book_flags: ['yes'] }))).rejects.toThrow();
+    await expect(fetchLineOpenings(['e2e4'], 'start', undefined, ok({ matches: [{ ply: '1', eco: 'B00', name: 'X' }], book_flags: [true] }))).rejects.toThrow();
   });
 });

@@ -43,8 +43,8 @@ export function isOfflineValue(onLine: unknown): boolean {
 }
 
 export function getNavigatorOnLine(): boolean | undefined {
-  if (typeof window === 'undefined' || typeof (window as { navigator?: { onLine?: unknown } }).navigator === 'undefined') return undefined;
-  const onLine = (window as { navigator?: { onLine?: unknown } }).navigator?.onLine;
+  if (typeof window === 'undefined' || typeof window.navigator === 'undefined') return undefined;
+  const onLine = window.navigator?.onLine;
   return typeof onLine === 'boolean' ? onLine : undefined;
 }
 
@@ -154,8 +154,8 @@ export function usePlayFeedback(state: State): PlayFeedback {
   // no longer covers the failed node) must still heal, or its badge blanks
   // until the next move. Buckets bound the fires; the scheduler skips
   // already-settled keys at the pump, so a sweep re-fetches only misses.
-  const retryTargets = useMemo(() => {
-    if (!active || tooLong) return { key: '', sf: [] as ReviewNode[], maia: [] as ReviewNode[], prime: false };
+  const retryTargets: { key: string; sf: ReviewNode[]; maia: ReviewNode[]; prime: boolean } = useMemo(() => {
+    if (!active || tooLong) return { key: '', sf: [], maia: [], prime: false };
     const sf = new Map<string, ReviewNode>();
     for (const node of [...pair.sfNodes, ...nodes]) sf.set(reviewKey('sf', node, settings), node);
     const maia = new Map<string, ReviewNode>();

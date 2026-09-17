@@ -3,7 +3,7 @@ import { useLayoutEffect, useRef, type ReactNode } from 'react';
 export function Dialog({ title, onCancel, children }: { title: string; onCancel: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null);
   useLayoutEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     ref.current!.showModal();
     return () => { ref.current?.close(); previous?.focus(); };
   }, []);

@@ -3,7 +3,7 @@ import { Chess, type Square } from 'chess.js';
 import { Chessground } from '@lichess-org/chessground';
 import type { Api } from '@lichess-org/chessground/api';
 import type { Color, Key } from '@lichess-org/chessground/types';
-import { legalDests } from './domain';
+import { legalDests, parseKey, parseSquare } from './domain';
 import { toGroundColor } from './board-colors';
 import type { DrawShape } from '@lichess-org/chessground/draw';
 import { candidatePreviewShape, reviewBrushes } from './reviewArrows';
@@ -54,6 +54,17 @@ export function ChessBoard({ position, transition, orientation, enabled, thinkin
     return () => { observer.disconnect(); ground.destroy(); api.current = null; container.current?.replaceChildren(); };
   }, []);
   const lastMove = position.lastMove?.join(',');
+  // lastMove is built from [Key, Key] above, so parsing always succeeds;
+  // an unparsable entry yields no highlight rather than a wrong one.
+  const parseKeyList = (text: string): Key[] | undefined => {
+    const keys: Key[] = [];
+    for (const part of text.split(',')) {
+      const key = parseKey(part);
+      if (key === undefined) return undefined;
+      keys.push(key);
+    }
+    return keys;
+  };
   useLayoutEffect(() => {
     const ground = api.current!;
     // The board may have moved since the last measurement (layout shifts from
@@ -67,13 +78,16 @@ export function ChessBoard({ position, transition, orientation, enabled, thinkin
     const singleStep = previous.current.line === transition.line && Math.abs(previous.current.ply - transition.ply) <= 1;
     previous.current = transition;
     ground.set({ fen: position.fen, orientation, turnColor: toGroundColor(game.turn()), animation: { enabled: singleStep },
-      lastMove: lastMove ? lastMove.split(',') as Key[] : undefined,
+      lastMove: lastMove ? parseKeyList(lastMove) : undefined,
       movable: { free: false, color: enabled ? toGroundColor(game.turn()) : undefined, dests: enabled ? legalDests(game) : new Map(), showDests: true,
         events: { after(from, to) {
           // Chessground queues user callbacks. A context change can retire a gesture
           // before its callback runs, including switching games at the same FEN.
           if (api.current !== ground || generation.current !== version) return;
-          callback.current(from as Square, to as Square);
+          const fromSquare = parseSquare(from);
+          const toSquare = parseSquare(to);
+          if (fromSquare === undefined || toSquare === undefined) throw new Error(`Invalid board squares: ${from}${to}`);
+          callback.current(fromSquare, toSquare);
           // Also reconcile unchanged positions after rejection or promotion selection.
           // React batches this with the parent's authoritative move action.
           resync();

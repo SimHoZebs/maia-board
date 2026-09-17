@@ -1,5 +1,6 @@
 import type { DrawBrushes, DrawShape } from '@lichess-org/chessground/draw';
 import type { Key } from '@lichess-org/chessground/types';
+import { parseKey } from './domain';
 export const reviewBrushes: DrawBrushes = {
   green: { key: 'g', color: '#15781B', opacity: 1, lineWidth: 10 },
   red: { key: 'r', color: '#882020', opacity: 1, lineWidth: 10 },
@@ -20,15 +21,23 @@ const validSquare = (square: unknown): square is Key => typeof square === 'strin
 // both agree on validity and brush. Invalid previews yield no shape.
 export function candidatePreviewShape(preview: string | null | undefined): DrawShape[] {
   if (!validMove(preview)) return [];
-  return [{ orig: preview.slice(0, 2) as Key, dest: preview.slice(2, 4) as Key, brush: 'candidate' }];
+  const orig = parseKey(preview.slice(0, 2));
+  const dest = parseKey(preview.slice(2, 4));
+  if (orig === undefined || dest === undefined) return [];
+  return [{ orig, dest, brush: 'candidate' }];
 }
 export function reviewShapes(moves: Record<ArrowSource, string | null | undefined>, toggles: ArrowToggles, preview?: string | null, badge?: SquareBadge | null): DrawShape[] {
-  const entries = (['actual', 'maia', 'stockfish'] as const).filter(source => toggles[source] && validMove(moves[source])).map(source => ({ move: moves[source]!, brush: source as string }));
+  const entries: { move: string; brush: string }[] = (['actual', 'maia', 'stockfish'] as const).filter(source => toggles[source] && validMove(moves[source])).map(source => ({ move: moves[source]!, brush: source }));
   if (validMove(preview) && !entries.some(entry => entry.move === preview)) entries.push({ move: preview, brush: 'candidate' });
   // Changing the complete set gives all shapes a fresh hash. Chessground appends
   // new SVG groups; a shared hash suffix preserves widest-first layering after toggles.
   const signature = entries.map(entry => `${entry.brush}:${entry.move}`).join('|');
-  const shapes: DrawShape[] = entries.map(({ move, brush }) => ({ orig: move.slice(0, 2) as Key, dest: move.slice(2, 4) as Key, brush, customSvg: { html: `<!--${signature}-->` } }));
+  const shapes: DrawShape[] = entries.map(({ move, brush }) => {
+    const orig = parseKey(move.slice(0, 2));
+    const dest = parseKey(move.slice(2, 4));
+    if (orig === undefined || dest === undefined) throw new Error(`Invalid review arrow move: ${move}`);
+    return { orig, dest, brush, customSvg: { html: `<!--${signature}-->` } };
+  });
   if (badge && validSquare(badge.square) && (badge.glyph === '💀' || badge.glyph === '??' || badge.glyph === '?')) {
     shapes.push({ orig: badge.square, label: { text: badge.glyph, fill: badge.glyph === '💀' ? '#7f1d1d' : badge.glyph === '??' ? '#e5484d' : '#f5a524' } });
   }

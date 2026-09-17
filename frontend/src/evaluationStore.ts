@@ -3,6 +3,7 @@ import { Chess } from 'chess.js';
 import { applyUci, posId, type Timeline, type TimelineRow } from './domain';
 import { outcomeEvaluation } from './outcomeEvaluation';
 import { fetchJsonWithBusyRetry } from './evaluationTransport';
+import { isRecord, isStringArray, isStockfishSettings } from './guards';
 import type { Evaluation, Score } from './reviewMetrics';
 import { defaultStockfishSettings, stockfishPolicy, type StockfishSettings } from './stockfishSettings';
 import { clampMaiaElo } from './BoardTools';
@@ -21,6 +22,18 @@ export const resolveSettings = (input: SettingsInput, node: ReviewNode): ReviewS
 export type Job = { key: string; engine: Engine; node: ReviewNode; settings: ReviewSettings };
 export type EvaluationResult = Evaluation & { actual_settings?: StockfishSettings; cached?: boolean };
 export type StockfishResult = EvaluationResult;
+// Mirrors api.ts: unknown wire codes normalize to 'unknown' (the message is
+// preserved), so the engine→MaiaApiError translation is proven, not asserted.
+const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set([
+  'engine_busy', 'engine_unavailable', 'game_over', 'history_too_long', 'invalid_elo',
+  'invalid_fen', 'invalid_initial_fen', 'invalid_json', 'invalid_maia_color',
+  'invalid_model', 'invalid_move', 'invalid_position', 'invalid_request',
+  'method_not_allowed', 'missing_elo', 'not_maia_turn', 'position_mismatch',
+  'server_unreachable', 'superseded', 'unknown',
+]);
+function isApiErrorCode(value: unknown): value is MaiaApiError['code'] {
+  return typeof value === 'string' && KNOWN_ERROR_CODES.has(value);
+}
 type Result = Evaluation | MoveResponse;
 // One identity struct owns position + engine + settings. posId is
 // hash(initialFen, prefix); the review key adds engine + settings hash.
@@ -47,11 +60,31 @@ export function evaluationRequest(engine: Engine, node: ReviewNode, settings: Re
 }
 const uci = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
 function isScore(value: unknown): value is Score {
-  if (!value || typeof value !== 'object') return false;
-  const score = value as Score;
-  if (!Number.isInteger(score.value)) return false;
-  return score.type === 'cp' ? Math.abs(score.value) <= 100000 && score.winning_side === undefined
-    : score.type === 'mate' && Math.abs(score.value) <= 1000 && ((score.winning_side === 'white' && score.value >= 0) || (score.winning_side === 'black' && score.value <= 0));
+  if (!isRecord(value)) return false;
+  const { type, value: amount, winning_side: side } = value;
+  if (typeof amount !== 'number' || !Number.isInteger(amount)) return false;
+  return type === 'cp' ? Math.abs(amount) <= 100000 && side === undefined
+    : type === 'mate' && Math.abs(amount) <= 1000 && ((side === 'white' && amount >= 0) || (side === 'black' && amount <= 0));
+}
+// Rank-line shape: pv stays unknown here (proven per-rank below — rank 1
+// allows a shaped PV, lower ranks must omit it), except that a present PV
+// must already be a string array so the body predicate never claims a pv
+// type the loop has not proven.
+type EvaluationLine = { move: string; score: Score; depth: number; pv?: string[] };
+function isEvaluationLine(line: unknown): line is EvaluationLine {
+  if (!isRecord(line) || typeof line.move !== 'string' || !isScore(line.score)
+    || typeof line.depth !== 'number' || !Number.isInteger(line.depth)) return false;
+  return line.pv === undefined || isStringArray(line.pv);
+}
+// Top-level wire shape. Deliberately no stricter than the checks below:
+// best_move garbage and malformed lines are still rejected later with the
+// same invalid() error, so the accept set is unchanged — this only gives the
+// rest of the function a proven Evaluation type to work with.
+function isEvaluationBody(value: unknown): value is Evaluation & { actual_settings?: unknown } {
+  return isRecord(value) && value.engine === 'Stockfish 19' && typeof value.search_policy === 'string'
+    && typeof value.depth === 'number' && Number.isInteger(value.depth) && value.depth >= 0 && value.depth <= 256
+    && isScore(value.score) && (value.terminal === null || value.terminal === 'white_win' || value.terminal === 'black_win' || value.terminal === 'draw')
+    && (typeof value.best_move === 'string' || value.best_move === null) && Array.isArray(value.lines) && value.lines.every(isEvaluationLine);
 }
 function actualPolicy(value: Evaluation, requested: StockfishSettings | undefined, actual: unknown): StockfishSettings | undefined {
   if (!requested) {
@@ -63,8 +96,10 @@ function actualPolicy(value: Evaluation, requested: StockfishSettings | undefine
   // identify its settings, but it must agree with any supplied provenance.
   const match = /^sf19-ms(\d+)-mpv(\d+)-d(\d+)-t1-h64-v2$/.exec(value.search_policy);
   const policy = match ? { time_ms: Number(match[1]), lines: Number(match[2]), depth: Number(match[3]) } : undefined;
-  const settings = actual as StockfishSettings | undefined;
-  const found = settings ?? policy;
+  // Present-but-malformed provenance previously failed the integer checks
+  // below; reject it here instead so no fallback can mask it.
+  if (actual != null && !isStockfishSettings(actual)) throw new Error('Stockfish returned incompatible search settings.');
+  const found = (actual == null ? undefined : actual) ?? policy;
   if (!found || !Number.isInteger(found.time_ms) || !Number.isInteger(found.lines) || !Number.isInteger(found.depth)
     || found.time_ms !== want.time_ms || found.depth !== want.depth || found.lines < want.lines || found.lines > 5
     || value.search_policy !== stockfishPolicy(found)) {
@@ -74,14 +109,13 @@ function actualPolicy(value: Evaluation, requested: StockfishSettings | undefine
 }
 export function parseEvaluation(body: unknown, settings?: StockfishSettings, actual?: unknown, fen?: string): StockfishResult {
   const invalid = () => new Error('Stockfish returned an incomplete evaluation.');
-  if (!body || typeof body !== 'object') throw invalid();
-  const value = body as Evaluation & { actual_settings?: unknown };
-  if (value.engine !== 'Stockfish 19' || typeof value.search_policy !== 'string' || !Number.isInteger(value.depth) || value.depth < 0 || value.depth > 256
-    || !isScore(value.score) || ![null, 'white_win', 'black_win', 'draw'].includes(value.terminal) || !Array.isArray(value.lines)) throw invalid();
+  if (!isEvaluationBody(body)) throw invalid();
+  const value = body;
   const provenance = actualPolicy(value, settings, actual ?? value.actual_settings);
   if (actual && value.actual_settings && JSON.stringify(actual) !== JSON.stringify(value.actual_settings)) {
-    const a = actual as StockfishSettings, b = value.actual_settings as StockfishSettings;
-    if (a.time_ms !== b.time_ms || a.lines !== b.lines || a.depth !== b.depth) throw invalid();
+    const left = isRecord(actual) ? actual : undefined;
+    const right = isRecord(value.actual_settings) ? value.actual_settings : undefined;
+    if (left?.time_ms !== right?.time_ms || left?.lines !== right?.lines || left?.depth !== right?.depth) throw invalid();
   }
   if (value.terminal !== null) {
     if (value.best_move !== null || value.lines.length || value.depth !== 0) throw invalid();
@@ -95,15 +129,15 @@ export function parseEvaluation(body: unknown, settings?: StockfishSettings, act
     // known FEN strips the annotation (valid score + lines survive, the note
     // stays silent) instead of rejecting the row. Lower ranks must omit it.
     for (let index = 0; index < value.lines.length; index++) {
-      const line = value.lines[index] as { move: string; pv?: unknown };
+      const line = value.lines[index];
       if (index === 0) {
         if (line.pv !== undefined) {
-          if (!Array.isArray(line.pv) || line.pv.length < 1 || line.pv.length > 5
-            || line.pv.some(move => typeof move !== 'string' || !uci.test(move)) || line.pv[0] !== line.move) throw invalid();
+          if (line.pv.length < 1 || line.pv.length > 5
+            || line.pv.some(move => !uci.test(move)) || line.pv[0] !== line.move) throw invalid();
           if (fen) {
             try {
               const game = new Chess(fen);
-              for (const pvMove of line.pv as string[]) applyUci(game, pvMove);
+              for (const pvMove of line.pv) applyUci(game, pvMove);
             } catch { delete line.pv; }
           }
         }
@@ -132,9 +166,11 @@ export async function fetchEvaluation(node: ReviewNode, signal: AbortSignal, fet
   }
   if (body === null) throw new Error('Stockfish returned unreadable data.');
   if (!response.ok) {
-    const record = body as { code?: unknown; message?: unknown };
-    throw new MaiaApiError((record?.code as MaiaApiError['code'] | undefined) ?? 'unknown',
-      typeof record?.message === 'string' ? record.message : `Stockfish request failed (${response.status}).`, response.status);
+    const record: unknown = body;
+    const code: unknown = isRecord(record) ? record.code : undefined;
+    const message: unknown = isRecord(record) ? record.message : undefined;
+    throw new MaiaApiError(isApiErrorCode(code) ? code : 'unknown',
+      typeof message === 'string' ? message : `Stockfish request failed (${response.status}).`, response.status);
   }
   const parsed = parseEvaluation(body, settings, undefined, node.fen);
   return response.headers.get('X-Eval-Cache') === 'hit' ? { ...parsed, cached: true } : parsed;
@@ -154,10 +190,19 @@ export class EvaluationStore {
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   snapshot = () => this.version;
   notify() { this.version++; this.listeners.forEach(listener => listener()); }
-  result<E extends Engine>(engine: E, node: ReviewNode, settings: ReviewSettings): (E extends 'sf' ? EvaluationResult : MoveResponse) | undefined {
+  result(engine: 'sf', node: ReviewNode, settings: ReviewSettings): EvaluationResult | undefined;
+  result(engine: 'maia', node: ReviewNode, settings: ReviewSettings): MoveResponse | undefined;
+  result(engine: Engine, node: ReviewNode, settings: ReviewSettings): EvaluationResult | MoveResponse | undefined;
+  result(engine: Engine, node: ReviewNode, settings: ReviewSettings): EvaluationResult | MoveResponse | undefined {
     const key = reviewKey(engine, node, settings);
     if (engine === 'sf' && node.outcome && !this.cache.has(key)) this.retain(key, outcomeEvaluation(node.outcome, settings.stockfish)!);
-    return this.cache.get(key) as (E extends 'sf' ? EvaluationResult : MoveResponse) | undefined;
+    const found = this.cache.get(key);
+    if (found === undefined) return undefined;
+    // Keys embed the engine, so a mismatch is unreachable; drop it rather
+    // than hand back a wrongly-typed row. Presence shape discriminates:
+    // only Maia rows carry top_moves.
+    if (engine === 'sf') return 'top_moves' in found ? undefined : found;
+    return 'top_moves' in found ? found : undefined;
   }
   peek(_engine: Engine, key: string) { return this.cache.get(key); }
   store<E extends Engine>(_engine: E, key: string, value: E extends 'sf' ? Evaluation : MoveResponse) { this.retain(key, value); this.notify(); }
@@ -180,12 +225,12 @@ export class EvaluationStore {
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requests }) }, signal, 30_000);
       signal.throwIfAborted();
       if (!response.ok) throw new Error(`Evaluation lookup failed (${response.status}).`);
-      const payload = body as { results?: { index: number; value: unknown; actual_settings?: unknown }[] } | null;
-      if (!Array.isArray(payload?.results)) throw new Error('Evaluation lookup returned an incomplete list.');
+      const payload: unknown = body;
+      if (!isRecord(payload) || !Array.isArray(payload.results)) throw new Error('Evaluation lookup returned an incomplete list.');
       const counts = new Map<number, number>();
-      for (const row of payload.results) if (row && Number.isInteger(row.index)) counts.set(row.index, (counts.get(row.index) ?? 0) + 1);
+      for (const row of payload.results) if (isRecord(row) && typeof row.index === 'number' && Number.isInteger(row.index)) counts.set(row.index, (counts.get(row.index) ?? 0) + 1);
       for (const row of payload.results) {
-        if (!row || !Number.isInteger(row.index) || counts.get(row.index) !== 1) continue;
+        if (!isRecord(row) || typeof row.index !== 'number' || !Number.isInteger(row.index) || counts.get(row.index) !== 1) continue;
         const job = chunk[row.index];
         if (!job) continue;
         try {

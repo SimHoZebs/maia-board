@@ -1,5 +1,6 @@
 import { Chess } from 'chess.js';
 import { fetchJsonWithBusyRetry } from './evaluationTransport';
+import { isRecord } from './guards';
 export type MaiaColor = 'white' | 'black';
 export type MaiaModel = '79m' | '5m';
 
@@ -63,16 +64,27 @@ export class MaiaApiError extends Error {
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
 function isModel(value: unknown): value is MaiaModel {
   return value === '79m' || value === '5m';
 }
 
 const uci = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
 const probability = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+
+function isTopMove(value: unknown): value is TopMove {
+  return isRecord(value) && typeof value.move === 'string' && uci.test(value.move) && probability(value.prob);
+}
+
+function isTopMoves(value: unknown): value is TopMove[] {
+  return Array.isArray(value) && value.length > 0 && value.length <= 5 && value.every(isTopMove)
+    && new Set(value.map(candidate => candidate.move)).size === value.length;
+}
+
+function isWdlTuple(value: unknown): value is [number, number, number] {
+  return Array.isArray(value) && value.length === 3 && value.every(probability)
+    && Math.abs(value.reduce((sum: number, part: number) => sum + part, 0) - 1) <= 1e-6;
+}
+
 // Single legality source for engine responses. Returns the legal set; callers
 // throw their own domain error (MaiaApiError vs incomplete-evaluation Error)
 // so wire error types stay unchanged.
@@ -87,15 +99,16 @@ export function parseMoveResponse(value: unknown, expected?: { model: MaiaModel;
   if (!isRecord(value) || typeof value.move !== 'string' || !uci.test(value.move) || !isModel(value.model_used) || typeof value.degraded !== 'boolean') {
     throw new MaiaApiError('unknown', 'Maia returned an incomplete response.');
   }
-  if (!Array.isArray(value.top_moves) || !value.top_moves.length || value.top_moves.length > 5 || !value.top_moves.every((candidate) => isRecord(candidate) && typeof candidate.move === 'string' && uci.test(candidate.move) && probability(candidate.prob)) || new Set(value.top_moves.map(candidate => candidate.move)).size !== value.top_moves.length) {
+  if (!isTopMoves(value.top_moves)) {
     throw new MaiaApiError('unknown', 'Maia returned invalid candidate moves.');
   }
-  const candidates = value.top_moves as TopMove[];
+  const candidates = value.top_moves;
   const sum = candidates.reduce((total, candidate) => total + candidate.prob, 0);
   if (sum <= 0 || sum > 1.000001 || candidates.some((candidate, index) => index > 0 && candidate.prob > candidates[index - 1].prob + 1e-7)) throw new MaiaApiError('unknown', 'Maia returned invalid candidate probabilities.');
-  if (!Array.isArray(value.wdl) || value.wdl.length !== 3 || !value.wdl.every(probability) || Math.abs(value.wdl.reduce((sum, part) => sum + part, 0) - 1) > 1e-6) {
+  if (!isWdlTuple(value.wdl)) {
     throw new MaiaApiError('unknown', 'Maia returned invalid WDL data.');
   }
+  const wdl = value.wdl;
   if (expected) {
     if (value.model_used !== expected.model && !(expected.model === '79m' && value.model_used === '5m' && value.degraded)) throw new MaiaApiError('unknown', 'Maia returned a different model.');
     if (value.degraded !== (value.model_used !== expected.model)) throw new MaiaApiError('unknown', 'Maia returned inconsistent fallback identity.');
@@ -114,23 +127,28 @@ export function parseMoveResponse(value: unknown, expected?: { model: MaiaModel;
   }
   return {
     move: value.move,
-    top_moves: value.top_moves as TopMove[],
-    wdl: value.wdl as [number, number, number],
+    top_moves: candidates,
+    wdl,
     model_used: value.model_used,
     degraded: value.degraded,
   };
 }
 
-function parseErrorCode(value: unknown): ApiErrorCode {
-  if (!isRecord(value) || typeof value.code !== 'string') return 'unknown';
-  const known: ApiErrorCode[] = [
-    'engine_busy', 'engine_unavailable', 'game_over', 'history_too_long', 'invalid_elo',
-    'invalid_fen', 'invalid_initial_fen', 'invalid_json', 'invalid_maia_color',
-    'invalid_model', 'invalid_move', 'invalid_position', 'invalid_request',
-    'method_not_allowed', 'missing_elo', 'not_maia_turn', 'position_mismatch',
-    'server_unreachable', 'superseded', 'unknown',
-  ];
-  return known.includes(value.code as ApiErrorCode) ? value.code as ApiErrorCode : 'unknown';
+const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set([
+  'engine_busy', 'engine_unavailable', 'game_over', 'history_too_long', 'invalid_elo',
+  'invalid_fen', 'invalid_initial_fen', 'invalid_json', 'invalid_maia_color',
+  'invalid_model', 'invalid_move', 'invalid_position', 'invalid_request',
+  'method_not_allowed', 'missing_elo', 'not_maia_turn', 'position_mismatch',
+  'server_unreachable', 'superseded', 'unknown',
+]);
+
+export function isApiErrorCode(value: unknown): value is ApiErrorCode {
+  return typeof value === 'string' && KNOWN_ERROR_CODES.has(value);
+}
+
+export function parseErrorCode(value: unknown): ApiErrorCode {
+  if (!isRecord(value)) return 'unknown';
+  return isApiErrorCode(value.code) ? value.code : 'unknown';
 }
 
 export type RequestPriority = 'play' | 'focus';

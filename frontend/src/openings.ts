@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { lineKeyFor } from './domain';
+import { isRecord } from './guards';
 
 export type Opening = { eco: string; name: string; matchedPly: number; isExact: boolean };
 export type OpeningMatch = { ply: number; eco: string; name: string };
@@ -16,9 +17,8 @@ export function clearLineOpeningsCache(): void {
 }
 
 function isMatch(value: unknown): value is OpeningMatch {
-  if (typeof value !== 'object' || value === null) return false;
-  const match = value as Record<string, unknown>;
-  return Number.isInteger(match.ply) && typeof match.eco === 'string' && typeof match.name === 'string';
+  if (!isRecord(value)) return false;
+  return Number.isInteger(value.ply) && typeof value.eco === 'string' && typeof value.name === 'string';
 }
 
 export async function fetchLineOpenings(
@@ -35,13 +35,17 @@ export async function fetchLineOpenings(
   });
   if (!response.ok) throw new Error(`Opening lookup failed (${response.status}).`);
   const body: unknown = await response.json();
-  if (typeof body !== 'object' || body === null) throw new Error('Opening lookup returned an unexpected response.');
-  const { matches, book_flags } = body as Record<string, unknown>;
-  if (!Array.isArray(matches) || !matches.every(isMatch)) throw new Error('Opening lookup returned an unexpected response.');
-  if (!Array.isArray(book_flags) || book_flags.length !== moves.length || !book_flags.every((flag): flag is boolean => typeof flag === 'boolean')) {
+  if (!isRecord(body)) throw new Error('Opening lookup returned an unexpected response.');
+  const { matches, book_flags } = body;
+  if (!Array.isArray(matches)) throw new Error('Opening lookup returned an unexpected response.');
+  const validatedMatches = matches.filter(isMatch);
+  if (validatedMatches.length !== matches.length) throw new Error('Opening lookup returned an unexpected response.');
+  if (!Array.isArray(book_flags) || book_flags.length !== moves.length) {
     throw new Error('Opening lookup returned an unexpected response.');
   }
-  return { matches, bookFlags: book_flags };
+  const validatedFlags = book_flags.filter((flag): flag is boolean => typeof flag === 'boolean');
+  if (validatedFlags.length !== book_flags.length) throw new Error('Opening lookup returned an unexpected response.');
+  return { matches: validatedMatches, bookFlags: validatedFlags };
 }
 
 /** Deepest named ancestor at or before atPly. Empty lines name nothing. */

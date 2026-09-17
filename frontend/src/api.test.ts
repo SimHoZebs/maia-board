@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { MaiaApiError, parseMoveResponse, readableApiError, requestMove } from './api';
 import { START_FEN } from './domain';
 import { maiaFixture } from './evaluationTestFixtures';
+import { requestBodyText } from './testUtils';
 
 const payload = {
   fen: START_FEN,
@@ -41,14 +42,16 @@ describe('requestMove', () => {
     }), { status: 400 }));
 
     const error = await requestMove(payload, fetchImpl).catch((value: unknown) => value);
+    if (!(error instanceof MaiaApiError)) throw error;
     expect(error).toBeInstanceOf(MaiaApiError);
-    expect((error as MaiaApiError).code).toBe('not_maia_turn');
+    expect(error.code).toBe('not_maia_turn');
     expect(readableApiError(error)).toBe('Maia is not on move in this position.');
   });
 
   it('maps network failures to server unreachable', async () => {
     const error = await requestMove(payload, vi.fn().mockRejectedValue(new Error('offline'))).catch((value: unknown) => value);
-    expect((error as MaiaApiError).code).toBe('server_unreachable');
+    if (!(error instanceof MaiaApiError)) throw error;
+    expect(error.code).toBe('server_unreachable');
   });
 
   it('never sends the priority lane header (endpoint-implied)', async () => {
@@ -74,8 +77,9 @@ describe('requestMove', () => {
   it('preserves the scheduler 409 code without retrying it', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 'superseded', message: 'superseded' }), { status: 409 }));
     const error = await requestMove(payload, fetchImpl).catch((value: unknown) => value);
+    if (!(error instanceof MaiaApiError)) throw error;
     expect(error).toBeInstanceOf(MaiaApiError);
-    expect((error as MaiaApiError).code).toBe('superseded');
+    expect(error.code).toBe('superseded');
     // retryBusy only retries engine_busy: exactly one attempt here.
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(readableApiError(new MaiaApiError('superseded', 'x'))).toBe('A newer request replaced this position.');
@@ -117,7 +121,7 @@ describe('native Maia response validation', () => {
       ...valid,
       move: 'd2d4',
       top_moves: [{ move: 'e2e4', prob: 0.5 }, { move: 'd2d4', prob: 0.5 }],
-      wdl: [0.2, 0.3, 0.5] as [number, number, number],
+      wdl: [0.2, 0.3, 0.5],
     };
     expect(parseMoveResponse(tied, payload).move).toBe('d2d4');
     expect(() => parseMoveResponse({ ...tied, top_moves: [{ move: 'e2e4', prob: 0.6 }, { move: 'd2d4', prob: 0.4 }] }, payload)).toThrow();
@@ -127,6 +131,6 @@ describe('native Maia response validation', () => {
     await expect(requestMove(payload, fetcher)).rejects.toBeInstanceOf(MaiaApiError);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetcher.mock.calls[0][0]).toBe('/move');
-    expect(JSON.parse(fetcher.mock.calls[0][1]!.body as string)).not.toHaveProperty('cache_hash');
+    expect(JSON.parse(requestBodyText(fetcher.mock.calls[0][1]))).not.toHaveProperty('cache_hash');
   });
 });

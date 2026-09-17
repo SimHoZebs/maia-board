@@ -1,4 +1,5 @@
-import { MaiaApiError } from './api';
+import { MaiaApiError, parseErrorCode } from './api';
+import { isNonNegativeInt, isRecord, isStringMap } from './guards';
 import { evaluationRequest, resolveSettings, reviewKey, type Engine, type ReviewNode, type SettingsInput } from './evaluationStore';
 
 export type BatchItem = { request: ReturnType<typeof evaluationRequest>; key: string; engine: Engine };
@@ -35,8 +36,7 @@ export function hashBatchKeys(keys: string[]): string {
 
 function batchStorage(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null {
   try {
-    const storage = (globalThis as { localStorage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> }).localStorage;
-    return storage ?? null;
+    return globalThis.localStorage ?? null;
   } catch {
     return null;
   }
@@ -46,7 +46,8 @@ export function readPersistedBatch(): PersistedBatch | null {
   try {
     const raw = batchStorage()?.getItem(BATCH_PERSIST_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<PersistedBatch>;
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed)) return null;
     if (typeof parsed.jobId !== 'string' || !parsed.jobId || typeof parsed.lineKey !== 'string'
       || typeof parsed.keysHash !== 'string' || typeof parsed.total !== 'number' || !Number.isInteger(parsed.total)) return null;
     return { jobId: parsed.jobId, lineKey: parsed.lineKey, keysHash: parsed.keysHash, total: parsed.total };
@@ -123,18 +124,33 @@ export function buildBatchItems(nodes: ReviewNode[], settings: SettingsInput, en
 
 async function readError(response: Response, fallback: string): Promise<MaiaApiError> {
   const body: unknown = await response.json().catch(() => null);
-  const record = body && typeof body === 'object' ? body as Record<string, unknown> : null;
-  const code = typeof record?.code === 'string' ? record.code : 'unknown';
-  const message = typeof record?.message === 'string' ? record.message : fallback;
-  return new MaiaApiError(code as MaiaApiError['code'], message, response.status);
+  const record = isRecord(body) ? body : null;
+  const code = record ? parseErrorCode(record) : 'unknown';
+  const message = record && typeof record.message === 'string' ? record.message : fallback;
+  return new MaiaApiError(code, message, response.status);
 }
 
 function parseProgress(body: unknown): BatchProgress {
-  const value = body as BatchProgress;
-  if (!value || typeof value !== 'object' || typeof value.job_id !== 'string' || !Number.isInteger(value.total)) {
+  // Reject, don't default: silently zeroed done/failed/total would paint a
+  // confident progress bar over unknown state (the blank-badge lie family).
+  // Callers already surface MaiaApiError through the batch error paths.
+  if (!isRecord(body) || typeof body.job_id !== 'string'
+    || !isNonNegativeInt(body.total) || !isNonNegativeInt(body.done) || !isNonNegativeInt(body.failed)
+    || typeof body.finished !== 'boolean' || (body.errors !== undefined && !isStringMap(body.errors))) {
     throw new MaiaApiError('unknown', 'The review server returned unreadable data.');
   }
-  return value;
+  return { job_id: body.job_id, total: body.total, done: body.done, failed: body.failed, finished: body.finished,
+    ...(body.errors === undefined ? {} : { errors: body.errors }) };
+}
+
+function parseSubmitted(body: unknown, status?: number): BatchSubmitted {
+  // Same reject-not-default contract as parseProgress: trusted cached/pending
+  // totals would misreport batch size instead of failing visibly.
+  if (!isRecord(body) || typeof body.job_id !== 'string'
+    || !isNonNegativeInt(body.total) || !isNonNegativeInt(body.cached) || !isNonNegativeInt(body.pending)) {
+    throw new MaiaApiError('unknown', 'The review server returned unreadable data.', status);
+  }
+  return { job_id: body.job_id, total: body.total, cached: body.cached, pending: body.pending };
 }
 
 export async function submitBatch(items: BatchItem[], fetchImpl: FetchLike = fetch, sleepImpl: SleepLike = defaultSleep): Promise<BatchSubmitted> {
@@ -145,12 +161,7 @@ export async function submitBatch(items: BatchItem[], fetchImpl: FetchLike = fet
   }).catch(() => { throw new MaiaApiError('server_unreachable', 'The review server could not be reached.'); });
   const readSuccess = async (response: Response): Promise<BatchSubmitted> => {
     if (!response.ok) throw await readError(response, 'The review server rejected this batch.');
-    const body: unknown = await response.json().catch(() => null);
-    const record = body && typeof body === 'object' ? body as Record<string, unknown> : null;
-    if (typeof record?.job_id !== 'string' || !Number.isInteger(record?.total)) {
-      throw new MaiaApiError('unknown', 'The review server returned unreadable data.', response.status);
-    }
-    return body as BatchSubmitted;
+    return parseSubmitted(await response.json().catch(() => null), response.status);
   };
   const first = await postOnce();
   // 429 backpressure sits BEFORE the generic branch: wait once per
@@ -198,7 +209,7 @@ export async function subscribeBatchEvents(
     if (!line) return false;
     let envelope: unknown;
     try { envelope = JSON.parse(line.slice(5).trim()); } catch { return false; }
-    const record = envelope && typeof envelope === 'object' ? envelope as Record<string, unknown> : null;
+    const record = isRecord(envelope) ? envelope : null;
     if (!record?.progress) return false;
     const progress = parseProgress(record.progress);
     onProgress(progress);

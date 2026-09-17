@@ -54,9 +54,9 @@ describe('fetchEvaluation messages', () => {
     const line = loadLine('', '1. e4');
     const node = testNodes(line.initialFen, line.moves)[0];
     const signal = new AbortController().signal;
-    await expect(fetchEvaluation(node, signal, (async () => { throw new TypeError('down'); }) as unknown as typeof fetch))
+    await expect(fetchEvaluation(node, signal, vi.fn<typeof fetch>().mockRejectedValue(new TypeError('down'))))
       .rejects.toThrow('Stockfish is unreachable');
-    await expect(fetchEvaluation(node, signal, (async () => new Response('not json', { status: 200 })) as unknown as typeof fetch))
+    await expect(fetchEvaluation(node, signal, vi.fn<typeof fetch>().mockResolvedValue(new Response('not json', { status: 200 }))))
       .rejects.toThrow('unreadable');
   });
 });

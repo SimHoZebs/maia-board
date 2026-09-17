@@ -29,11 +29,11 @@ export function SettingsPage({ state, dispatch }: Props) {
   // time as a safety cap). The backend still accepts both limits at once;
   // the toggle only makes the depth-0 sentinel explicit.
   const mode = settings.depth === 0 ? 'time' : 'depth';
-  const badgeOptions = [
+  const badgeOptions: { value: BadgeLoading; label: string; hint: string }[] = [
     { value: 'reel', label: 'Slot reel', hint: 'Spins through every verdict' },
     { value: 'shimmer', label: 'Shimmer', hint: 'Calm neutral pulse' },
     { value: 'placeholder', label: 'Original blank', hint: 'Invisible until the verdict lands' },
-  ] as { value: BadgeLoading; label: string; hint: string }[];
+  ];
   const badgeIndex = Math.max(0, badgeOptions.findIndex(option => option.value === state.badgeLoading));
   return <section className="engine-settings panel" aria-labelledby="settings-title">
     <p className="settings-eyebrow">BOARD</p>

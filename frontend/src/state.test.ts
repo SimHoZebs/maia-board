@@ -525,7 +525,7 @@ describe('history sync store', () => {
       { op: 'delete', id: 'a', version: 'v1' },
       { op: 'delete', id: 'b', version: 'v2' },
       { op: 'delete', id: 'c', version: 'v3' },
-    ] as RepositorySnapshot['pending'];
+    ] satisfies RepositorySnapshot['pending'];
     store.setSnapshot(snapshot({ pending: pendingOps }));
     store.setSnapshot(snapshot({ pending: pendingOps, error: 'down' }));
     store.setSnapshot(snapshot({ pending: pendingOps, error: 'down', total: 12 }));

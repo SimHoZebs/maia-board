@@ -48,7 +48,7 @@ describe('bounded canonical timeline', () => {
     ['7k/8/8/3pP3/8/8/8/K7 w - d6 0 1', ['e5d6']],
     ['8/P7/7k/8/8/8/8/7K w - - 0 1', ['a7a8q']],
     ['8/8/8/8/8/7k/p7/7K b - - 0 1', ['a2a1n']],
-  ] as [string, string[]][])('matches independent history facts for %s', (fen, moves) => {
+  ] satisfies [string, string[]][])('matches independent history facts for %s', (fen, moves) => {
     const timeline = buildTimeline(fen, moves), game = new Chess(fen);
     timeline.rows.forEach((row, ply) => {
       const applied = ply ? applyUci(game, moves[ply - 1]) : undefined;

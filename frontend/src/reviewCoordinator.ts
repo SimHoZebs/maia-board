@@ -51,7 +51,12 @@ export class ReviewCoordinator {
   };
   snapshot = () => this.version + this.store.version;
   private notify() { this.version++; this.listeners.forEach(listener => listener()); }
-  result<E extends Engine>(engine: E, node: ReviewNode, settings: ReviewSettings): (E extends 'sf' ? EvaluationResult : MoveResponse) | undefined { return this.store.result(engine, node, settings); }
+  result(engine: 'sf', node: ReviewNode, settings: ReviewSettings): EvaluationResult | undefined;
+  result(engine: 'maia', node: ReviewNode, settings: ReviewSettings): MoveResponse | undefined;
+  result(engine: Engine, node: ReviewNode, settings: ReviewSettings): EvaluationResult | MoveResponse | undefined;
+  result(engine: Engine, node: ReviewNode, settings: ReviewSettings): EvaluationResult | MoveResponse | undefined {
+    return this.store.result(engine, node, settings);
+  }
   error(engine: Engine, node: ReviewNode, settings: ReviewSettings) { return this.failures.get(reviewKey(engine, node, settings)); }
   // Server-batch failures live in the same map so the UI has one error
   // source. Keys from the previous batch are dropped; unrelated (foreground)
@@ -77,7 +82,7 @@ export class ReviewCoordinator {
     opts: { priority?: boolean; engines?: Engine[]; signal?: AbortSignal } = {},
   ): Promise<{ total: number; covered: number }> | void {
     const { priority = false, engines: enginesOpt, signal } = opts;
-    const wanted = (enginesOpt ?? [...engines]) as Engine[];
+    const wanted = enginesOpt ?? [...engines];
     if (priority) {
       const desired: Job[] = [];
       for (const node of nodes) for (const engine of wanted) {
@@ -194,8 +199,17 @@ export class ReviewCoordinator {
       // set and always lands — the content-keyed store makes landing safe,
       // and takebacks may reuse the same rows.
       if (!this.running[engine].has(running)) return;
-      if (engine === 'sf') this.store.store('sf', job.key, result as Evaluation);
-      else this.store.store('maia', job.key, result as MoveResponse);
+      // execute resolves sf jobs with Evaluations and maia jobs with
+      // MoveResponses; presence of top_moves discriminates the union so each
+      // lane stores a proven shape. A mismatch is unreachable — drop it
+      // rather than poison the content-keyed store.
+      if (job.engine === 'sf') {
+        if ('top_moves' in result) return;
+        this.store.store('sf', job.key, result);
+      } else {
+        if (!('top_moves' in result)) return;
+        this.store.store('maia', job.key, result);
+      }
     }).catch(error => {
       if (!this.running[engine].has(running) || running.controller.signal.aborted) return;
       // A superseded focus request was replaced by a newer one; the newer

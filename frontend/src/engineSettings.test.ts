@@ -5,8 +5,7 @@ import { defaultStockfishSettings, normalizeStockfishSettings, stockfishPolicy, 
 import { fetchEvaluation, reviewKey, ReviewCoordinator } from './reviewCoordinator';
 import { toStoredGame } from './serverGames';
 import { KEYS } from './storage';
-import { testNodes } from './testUtils';
-
+import { requestBodyText, testNodes } from './testUtils';
 beforeEach(() => {
   const values = new Map<string, string>();
   vi.stubGlobal('localStorage', { getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => values.set(k, v), removeItem: (k: string) => values.delete(k) });
@@ -76,9 +75,9 @@ it('sends requested options and rejects a response from another search policy', 
   const node = testNodes(START_FEN, [])[0];
   const score = { type: 'cp', value: 12 };
   const body = { engine: 'Stockfish 19', search_policy: stockfishPolicy(settings), depth: 12, terminal: null, best_move: 'e2e4', score, lines: [{ move: 'e2e4', score, depth: 12 }] };
-  const fetcher = vi.fn(async () => new Response(JSON.stringify(body)));
+  const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify(body)));
   await fetchEvaluation(node, new AbortController().signal, fetcher, settings);
-  expect(JSON.parse((fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].body as string).settings).toEqual(settings);
+  expect(JSON.parse(requestBodyText(fetcher.mock.calls[0][1])).settings).toEqual(settings);
   body.search_policy = stockfishPolicy(defaultStockfishSettings);
   await expect(fetchEvaluation(node, new AbortController().signal, fetcher, settings)).rejects.toThrow('incompatible search settings');
 });

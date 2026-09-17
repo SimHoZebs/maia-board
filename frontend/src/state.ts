@@ -1,7 +1,7 @@
 import { Chess, type Square } from 'chess.js';
 import { type MaiaColor, type MoveRequest, type MoveResponse, readableApiError } from './api';
 import { toGroundColor } from './board-colors';
-import { analysisLength, analysisLine, defaultSettings, extendLine, lineRecord, loadLine, newId, oppositeColor, retreatLine, START_FEN,
+import { analysisLength, analysisLine, defaultSettings, extendLine, lineRecord, loadLine, newId, oppositeColor, parseSquare, retreatLine, START_FEN,
   type Analysis, type Insight, type Mode, type Position, type Settings, type StoredGame } from './domain';
 import type { Evaluation } from './reviewMetrics';
 import { sameLine, type UrlLine } from './analysisUrl';
@@ -239,7 +239,10 @@ export function reducer(state: State, action: Action): State {
       if (state.mode !== 'analysis' || !state.analysisLoaded || state.promotion) return state;
       if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(action.uci)) return state;
       if (new Chess(currentPosition(state).fen).isGameOver()) return state;
-      return commitMove(state, action.uci.slice(0, 2) as Square, action.uci.slice(2, 4) as Square, action.uci[4]);
+      const from = parseSquare(action.uci.slice(0, 2));
+      const to = parseSquare(action.uci.slice(2, 4));
+      if (from === undefined || to === undefined) return state;
+      return commitMove(state, from, to, action.uci[4]);
     }
     case 'original': return transition(state, { analysis: { ...state.analysis, index: state.analysis.branchFromPly ?? state.analysis.index, branchFromPly: null, branchMoves: [] } }, false);
     case 'inputs': return { ...state, inputs: { ...state.inputs, ...action.inputs } };
@@ -335,7 +338,10 @@ export function reducer(state: State, action: Action): State {
       if (!state.request || state.request !== action.request) return state;
       try {
         const uci = action.response.move;
-        const { moves } = extendLine(state.play.moves, START_FEN, uci.slice(0, 2) as Square, uci.slice(2, 4) as Square, uci[4]);
+        const from = parseSquare(uci.slice(0, 2));
+        const to = parseSquare(uci.slice(2, 4));
+        if (from === undefined || to === undefined) throw new Error(`Maia returned an unreadable move: ${uci}`);
+        const { moves } = extendLine(state.play.moves, START_FEN, from, to, uci[4]);
         return { ...withPlay(state, { ...state.play, moves }), request: null,
           insight: { response: action.response, fen: action.request.payload.fen, mode: 'play' } };
       } catch { return { ...state, request: null, error: 'Maia returned an illegal move.' }; }

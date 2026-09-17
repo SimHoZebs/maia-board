@@ -40,7 +40,7 @@ export function summarizeReview(nodes: readonly Pick<ReviewNode, 'turn' | 'ply' 
   const rootOffset = rootFen[1] === 'b' ? 1 : 0;
   for (let index = 0; index < nodes.length - 1; index++) {
     const row = nodes[index];
-    const color = row.turn as ReviewSide;
+    const color = row.turn;
     if (onlySide && color !== onlySide) continue;
     const side = sides[color === 'white' ? 0 : 1];
     side.total++;
@@ -55,7 +55,7 @@ export function summarizeReview(nodes: readonly Pick<ReviewNode, 'turn' | 'ply' 
       side.issues[label]++;
       const moveNumber = rootMove + Math.floor((rootOffset + row.ply) / 2);
       issues.push({ beforePly: row.ply, color: side.color, moveNumber,
-        san: nodes[index + 1].san ?? (nodes[index + 1] as { uci?: string }).uci ?? '', label, accuracy: quality.accuracy });
+        san: nodes[index + 1].san ?? nodes[index + 1].uci ?? '', label, accuracy: quality.accuracy });
     }
   }
   for (const side of sides) side.accuracy = side.reviewed ? scores[side.color] / side.reviewed : null;

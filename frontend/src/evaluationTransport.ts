@@ -1,5 +1,6 @@
 // Race the complete operation, including body consumption. Abort-ignoring fetch
 // implementations cannot retain a scheduler slot after cancellation/deadline.
+import { isRecord } from './guards';
 export async function withDeadline<T>(run: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal, timeout = 150_000): Promise<T> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -22,7 +23,7 @@ export async function retryBusy(fetcher: typeof fetch, input: RequestInfo | URL,
     const response = await fetcher(input, { ...init, signal });
     if (response.status !== 503 || attempt === 2) return response;
     const body: unknown = await response.clone().json().catch(() => null);
-    if (!body || typeof body !== 'object' || (body as { code?: unknown }).code !== 'engine_busy') return response;
+    if (!isRecord(body) || body.code !== 'engine_busy') return response;
     const header = response.headers.get('Retry-After');
     const numeric = header ? Number(header) : 1;
     const ms = Number.isFinite(numeric) ? numeric * 1000 : Date.parse(header!) - Date.now();

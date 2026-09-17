@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { Review } from './useReview';
+import { objectKeys } from './guards';
 import { scoreText, whiteWin, type Quality } from './reviewMetrics';
 import type { ReviewSide } from './reviewSummary';
 
@@ -9,7 +10,7 @@ export const qualityGlyphs = { Forced: 'F', 'Allowed mate': '💀', Blunder: '??
 export const qualitySlug = (label: string) => label.toLowerCase().replace(/\s+/g, '-');
 // Slot-reel deck: every real verdict, so the loading spinner previews the
 // exact glyphs it can settle on. Order matches the lab page row 03.
-const loadingFaces: { glyph: string; cls: string }[] = (Object.keys(qualityGlyphs) as (keyof typeof qualityGlyphs)[]).map(label => ({ glyph: qualityGlyphs[label], cls: `quality-${qualitySlug(label)}` }));
+const loadingFaces: { glyph: string; cls: string }[] = objectKeys(qualityGlyphs).map(label => ({ glyph: qualityGlyphs[label], cls: `quality-${qualitySlug(label)}` }));
 const loadingStrip = [...loadingFaces, ...loadingFaces, ...loadingFaces];
 
 // Pending-badge treatment while evaluations settle. Reel is the default;

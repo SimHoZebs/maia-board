@@ -1,4 +1,5 @@
 import type { StoredGame } from './domain';
+import { isRecord } from './guards';
 import { restoreGame } from './storage';
 
 export type ServerGame = {
@@ -22,11 +23,14 @@ export class ServerGamesError extends Error {
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 function isServerGame(value: unknown): value is ServerGame {
-  if (!value || typeof value !== 'object') return false;
-  const game = value as Record<string, unknown>;
-  return typeof game.id === 'string' && typeof game.created_at === 'string' && typeof game.updated_at === 'string'
-    && typeof game.user_color === 'string' && typeof game.elo_maia === 'number' && typeof game.elo_user === 'number'
-    && typeof game.model === 'string' && Array.isArray(game.moves) && game.moves.every(move => typeof move === 'string');
+  if (!isRecord(value)) return false;
+  return typeof value.id === 'string' && typeof value.created_at === 'string' && typeof value.updated_at === 'string'
+    && typeof value.user_color === 'string' && typeof value.elo_maia === 'number' && typeof value.elo_user === 'number'
+    && typeof value.model === 'string' && Array.isArray(value.moves) && value.moves.every(move => typeof move === 'string');
+}
+
+function isServerGameArray(value: unknown): value is ServerGame[] {
+  return Array.isArray(value) && value.every(isServerGame);
 }
 
 export function toStoredGame(row: ServerGame): StoredGame | undefined {
@@ -53,9 +57,8 @@ async function readBody(response: Response): Promise<unknown> {
 }
 
 function throwServerError(body: unknown, status: number): never {
-  const record = body as Record<string, unknown>;
-  const code = typeof record?.code === 'string' ? record.code : 'unknown';
-  const message = typeof record?.message === 'string' ? record.message : 'Game history is unavailable.';
+  const code = isRecord(body) && typeof body.code === 'string' ? body.code : 'unknown';
+  const message = isRecord(body) && typeof body.message === 'string' ? body.message : 'Game history is unavailable.';
   throw new ServerGamesError(code, message, status);
 }
 
@@ -68,16 +71,29 @@ export async function fetchGames(fetchImpl: FetchLike = fetch, offset = 0, signa
   }
   const body = await readBody(response);
   if (!response.ok) throwServerError(body, response.status);
-  const list = body as Partial<GamesList>;
-  if (!Array.isArray(list.games) || !list.games.every(isServerGame)
-    || !(list.current_id === null || typeof list.current_id === 'string') || typeof list.total !== 'number' || !Number.isSafeInteger(list.total) || list.total < 0) {
+  if (!isRecord(body)) throw new ServerGamesError('unknown', 'The game server returned an incomplete list.', response.status);
+  const { games, current_id, total, current_game, next_offset } = body;
+  if (!isServerGameArray(games)
+    || !(current_id === null || typeof current_id === 'string') || typeof total !== 'number' || !Number.isSafeInteger(total) || total < 0) {
     throw new ServerGamesError('unknown', 'The game server returned an incomplete list.', response.status);
   }
-  if (list.current_game != null && (!isServerGame(list.current_game) || list.current_game.id !== list.current_id)) throw new ServerGamesError('unknown', 'The current game is invalid.');
-  if (list.next_offset != null && (!Number.isInteger(list.next_offset) || list.next_offset <= offset)) throw new ServerGamesError('unknown', 'The next history page is invalid.');
-  return { games: list.games, current_id: list.current_id, total: list.total,
-    ...(list.current_game !== undefined ? { current_game: list.current_game } : {}),
-    ...(list.next_offset !== undefined ? { next_offset: list.next_offset } : {}) };
+  let validatedCurrentGame: ServerGame | null | undefined;
+  if (current_game === undefined) validatedCurrentGame = undefined;
+  else if (current_game === null) validatedCurrentGame = null;
+  else {
+    if (!isServerGame(current_game) || current_game.id !== current_id) throw new ServerGamesError('unknown', 'The current game is invalid.');
+    validatedCurrentGame = current_game;
+  }
+  let validatedNextOffset: number | null | undefined;
+  if (next_offset === undefined) validatedNextOffset = undefined;
+  else if (next_offset === null) validatedNextOffset = null;
+  else {
+    if (typeof next_offset !== 'number' || !Number.isInteger(next_offset) || next_offset <= offset) throw new ServerGamesError('unknown', 'The next history page is invalid.');
+    validatedNextOffset = next_offset;
+  }
+  return { games, current_id, total,
+    ...(validatedCurrentGame !== undefined ? { current_game: validatedCurrentGame } : {}),
+    ...(validatedNextOffset !== undefined ? { next_offset: validatedNextOffset } : {}) };
 }
 
 export async function saveRemote(game: StoredGame, current: boolean, fetchImpl: FetchLike = fetch, signal?: AbortSignal): Promise<ServerGame> {
@@ -133,8 +149,8 @@ export type OutboxOp =
 // v2 documents carry their own pending queue.
 
 export function restoreOutboxOp(value: unknown): OutboxOp | undefined {
-  if (!value || typeof value !== 'object') return;
-  const op = value as Record<string, unknown>;
+  if (!isRecord(value)) return;
+  const op = value;
   if (op.op === 'delete' && typeof op.id === 'string') return { op: 'delete', id: op.id };
   if (op.op === 'save' && typeof op.current === 'boolean') {
     const game = restoreGame(op.game);

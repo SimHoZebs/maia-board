@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { Key } from '@lichess-org/chessground/types';
 import type { DrawShape } from '@lichess-org/chessground/draw';
 import { Menu, RotateCw, Plus, Undo2, Flag } from 'lucide-react';
 import { NavLink } from 'react-router';
@@ -10,13 +9,13 @@ import { Button, IconButton } from './components';
 import { AnalysisActions, AnalysisControls, PlayControls, type Props } from './Controls';
 import { InsightPanel, MoveNavBar, MovesPanel, StockfishBar } from './ReadPanels';
 import { Dialog } from './Dialog';
-import { analysisLength, gameResult, lineRecord, oppositeColor, replay, resultTextForTip, sideName, START_FEN, storedGameResult } from './domain';
+import { analysisLength, gameResult, lineRecord, oppositeColor, parseKey, replay, resultTextForTip, sideName, START_FEN, storedGameResult } from './domain';
 import type { BoardPosition, BoardTransition } from './ChessBoard';
 import { toGroundColor } from './board-colors';
 import { currentPosition } from './state';
 import { usePlayFeedback } from './usePlayFeedback';
 import { useReview } from './useReview';
-import { reviewShapes } from './reviewArrows';
+import { reviewShapes, type SquareBadge } from './reviewArrows';
 import { ErrorBoundary, PanelError } from './ErrorBoundary';
 import { destinations } from './BoardRouter';
 import { RegionRecorder } from './perfCommits';
@@ -42,7 +41,7 @@ export function MobileMenu({ state, dispatch }: Props) {
   useEffect(() => {
     if (!open) return;
     const onPointer = (event: PointerEvent) => {
-      if (root.current && !root.current.contains(event.target as Node)) setOpen(false);
+      if (root.current && !(event.target instanceof Node && root.current.contains(event.target))) setOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { setOpen(false); root.current?.querySelector<HTMLButtonElement>('#mobile-menu')?.focus(); }
@@ -258,8 +257,10 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   const arrowMoves = { actual: review.nodes[ply + 1]?.uci ?? undefined, maia: review.maiaCurrent?.top_moves[0]?.move, stockfish: review.current?.best_move };
   const playedQuality = ready && ply > 0 ? review.qualities[ply - 1] : undefined;
   const playedUci = ready && ply > 0 ? review.nodes[ply]?.uci : undefined;
-  const badge = playedQuality && (playedQuality.label === 'Allowed mate' || playedQuality.label === 'Blunder' || playedQuality.label === 'Mistake') && playedUci
-    ? { square: playedUci.slice(2, 4) as Key, glyph: (playedQuality.label === 'Allowed mate' ? '💀' : playedQuality.label === 'Blunder' ? '??' : '?') as '💀' | '??' | '?' } : null;
+  const badgeSquare = playedUci === undefined ? undefined : parseKey(playedUci.slice(2, 4));
+  const badgeGlyph: SquareBadge['glyph'] = playedQuality?.label === 'Allowed mate' ? '💀' : playedQuality?.label === 'Blunder' ? '??' : '?';
+  const badge = playedQuality && (playedQuality.label === 'Allowed mate' || playedQuality.label === 'Blunder' || playedQuality.label === 'Mistake') && playedUci && badgeSquare !== undefined
+    ? { square: badgeSquare, glyph: badgeGlyph } : null;
   const shapes = ready ? reviewShapes(arrowMoves, { actual: true, maia: true, stockfish: true }, state.preview, badge) : [];
   const boardResetKey = JSON.stringify(['analysis', state.play.id, state.play.moves.length, state.analysis.index, state.analysisSourceId, orientation]);
   const insightResetKey = JSON.stringify([state.analysis.initialFen, state.analysis.moves, state.analysisSourceId]);

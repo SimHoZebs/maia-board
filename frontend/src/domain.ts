@@ -1,4 +1,4 @@
-import { Chess, type Square } from 'chess.js';
+import { Chess, SQUARES, type Square } from 'chess.js';
 import type { Key } from '@lichess-org/chessground/types';
 import type { MaiaColor, MaiaModel, MoveResponse } from './api';
 import type { Evaluation } from './reviewMetrics';
@@ -29,9 +29,27 @@ export function normalizeSettings(stored?: Partial<Settings> | null): Settings {
     temperature: typeof stored?.temperature === 'number' && Number.isFinite(stored.temperature) && stored.temperature >= 0 && stored.temperature <= 2 ? stored.temperature : 0 };
 }
 
+// One validated text→square boundary for every chess-square cast site
+// (domain, state, ChessBoard, reviewArrows, workspaces). chess.js owns the
+// 64-square list, so a lookup table proves membership with no assertion;
+// callers handle undefined explicitly (throw or skip) and never misrender.
+// Chessground keys add the off-board rank-0 file (a0..h0) to the 64 squares.
+const SQUARE_LOOKUP: Record<string, Square | undefined> = Object.fromEntries(SQUARES.map(square => [square, square]));
+export function parseSquare(text: unknown): Square | undefined {
+  return typeof text === 'string' ? SQUARE_LOOKUP[text] : undefined;
+}
+const KEY_LOOKUP: Record<string, Key | undefined> = Object.fromEntries([...SQUARES.map(square => [square, square]),
+  ...(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const).map(file => [`${file}0`, `${file}0`])]);
+export function parseKey(text: unknown): Key | undefined {
+  return typeof text === 'string' ? KEY_LOOKUP[text] : undefined;
+}
+
 export function applyUci(game: Chess, uci: string) {
   if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(uci)) throw new Error(`Invalid UCI move: ${uci}`);
-  return game.move({ from: uci.slice(0, 2) as Square, to: uci.slice(2, 4) as Square, ...(uci[4] ? { promotion: uci[4] } : {}) });
+  const from = parseSquare(uci.slice(0, 2));
+  const to = parseSquare(uci.slice(2, 4));
+  if (from === undefined || to === undefined) throw new Error(`Invalid UCI move: ${uci}`);
+  return game.move({ from, to, ...(uci[4] ? { promotion: uci[4] } : {}) });
 }
 export function uciFromMove(move: { from: string; to: string; promotion?: string }) {
   return `${move.from}${move.to}${move.promotion ?? ''}`;

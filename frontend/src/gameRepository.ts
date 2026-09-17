@@ -1,4 +1,5 @@
 import type { StoredGame } from './domain';
+import { isRecord } from './guards';
 import { deleteRemote, fetchGames, mergeSync, restoreOutboxOp, saveRemote, toStoredGame, type FetchLike, type OutboxOp } from './serverGames';
 import { KEYS, loadSaved, readStorage, restoreGame, writeStorage } from './storage';
 
@@ -39,12 +40,12 @@ export function readGameRepository(repositoryRaw?: string | null): DurableGames 
     try { return JSON.parse(raw); }
     catch { recover({ storageKey: key, raw }); return undefined; }
   };
-  const stored = read(REPOSITORY_KEY) as Partial<DurableGames> | undefined;
-  if (stored?.schema === 2 && Array.isArray(stored.games) && Array.isArray(stored.pending)) {
+  const stored: unknown = read(REPOSITORY_KEY);
+  if (isRecord(stored) && stored.schema === 2 && Array.isArray(stored.games) && Array.isArray(stored.pending)) {
     const games = stored.games.flatMap(value => { const game = restoreGame(value); if (game) return [game]; recover(value); return []; });
     const pending = stored.pending.flatMap(value => {
       const op = restoreOutboxOp(value);
-      if (op && typeof value.version === 'string') return [{ ...op, version: value.version }];
+      if (op && isRecord(value) && typeof value.version === 'string') return [{ ...op, version: value.version }];
       recover(value); return [];
     });
     const merged = mergeSync(games, typeof stored.currentId === 'string' ? stored.currentId : null, pending);

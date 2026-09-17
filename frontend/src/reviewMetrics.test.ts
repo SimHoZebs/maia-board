@@ -185,6 +185,15 @@ it('gates praise on Maia: Excellent needs absent-or-tiny, Expected/Unknown cap a
   const shiftedListed: Rarity = { label: 'Rare', r: 0.28, prob: 0.07, topProb: 0.25 };
   expect(effectiveQuality(critical, shiftedListed)?.label).toBe('Great');
 });
+it('passes shared display labels through effectiveQuality unchanged', () => {
+  // Locks the isQualityLabel narrowing: engine facts already translated
+  // above, so every remaining label must survive with accuracy/loss intact.
+  const labels = ['Forced', 'Allowed mate', 'Blunder', 'Mistake', 'Inaccuracy', 'Unreviewed'] as const;
+  for (const label of labels) {
+    const grade: EngineGrade = { label, accuracy: 42, loss: 7 };
+    expect(effectiveQuality(grade, undefined)).toEqual({ label, accuracy: 42, loss: 7 });
+  }
+});
 it('notes when a mistake was hard to avoid because the best move was rare', () => {
   const blunder: Quality = { label: 'Blunder', accuracy: 20, loss: 25 };
   const expected: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };

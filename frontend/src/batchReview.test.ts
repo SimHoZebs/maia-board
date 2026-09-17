@@ -5,6 +5,7 @@ import { BatchGoneError, BATCH_PERSIST_KEY, buildBatchItems,
   writePersistedBatch, type BatchProgress } from './batchReview';
 import { MaiaApiError } from './api';
 import { jsonResponse } from './evaluationTestFixtures';
+import { requestBodyText } from './testUtils';
 import { reviewNodes } from './evaluationStore';
 import type { ReviewSettings } from './evaluationStore';
 import { defaultStockfishSettings } from './stockfishSettings';
@@ -37,7 +38,7 @@ describe('submitBatch', () => {
     const submitted = await submitBatch(items(), fetcher);
     expect(submitted).toMatchObject({ job_id: 'job1', total: 6 });
     expect(fetcher.mock.calls[0][0]).toBe('/reviews');
-    const body = JSON.parse(fetcher.mock.calls[0][1]!.body as string);
+    const body = JSON.parse(requestBodyText(fetcher.mock.calls[0][1]));
     expect(body.requests).toHaveLength(6);
     expect(body.requests[0]).toMatchObject({ engine: 'sf', moves: [], initial_fen: START_FEN });
   });
@@ -76,8 +77,8 @@ describe('submitBatch 429 backpressure', () => {
     const fetcher = vi.fn<typeof fetch>(async () => response429('1'));
     const error = await submitBatch(items(), fetcher, sleep).then(() => null, error => error);
     expect(error).toBeInstanceOf(MaiaApiError);
-    expect((error as MaiaApiError).code).toBe('engine_busy');
-    expect((error as MaiaApiError).status).toBe(429);
+    expect(error.code).toBe('engine_busy');
+    expect(error.status).toBe(429);
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledTimes(1);
     expect(sleep).toHaveBeenCalledWith(1_000);
@@ -105,14 +106,14 @@ describe('429 skew into the old generic path', () => {
     const fetcher = vi.fn<typeof fetch>(async () => response429(null, { code: 'busy', message: 'slow down' }));
     const error = await fetchBatchStatus('job1', fetcher).then(() => null, error => error);
     expect(error).toBeInstanceOf(MaiaApiError);
-    expect((error as MaiaApiError).message).toBe('slow down');
-    expect((error as MaiaApiError).status).toBe(429);
+    expect(error.message).toBe('slow down');
+    expect(error.status).toBe(429);
   });
 });
 
 describe('cancel-free client', () => {
   it('exposes no cancel/busy helpers and never issues DELETE', async () => {
-    const mod = (await import('./batchReview')) as Record<string, unknown>;
+    const mod = await import('./batchReview');
     expect(mod).not.toHaveProperty('cancelBatch');
     expect(mod).not.toHaveProperty('BatchBusyError');
     expect(mod).not.toHaveProperty('classifyBusyJob');
