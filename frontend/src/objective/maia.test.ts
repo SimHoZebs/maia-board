@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { candidatesFor, maiaExpected, maiaPoint } from './maia';
+import { candidatesFor, fixedElo, maiaExpected, maiaPoint } from './maia';
 
 it('reads mover-relative expected scores from WDL triples', () => {
   expect(maiaExpected([0.2, 0.3, 0.5])).toBeCloseTo(65, 9);
@@ -34,4 +34,8 @@ it('lists ranked candidates with per-choice expectations', () => {
     { uci: 'd2d4', expected: 35 },
   ]);
   expect(list).toMatchObject({ degraded: false });
+});
+
+it('pins the panel dropdown to 2400', () => {
+  expect(fixedElo()).toBe(2400);
 });

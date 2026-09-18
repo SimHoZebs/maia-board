@@ -6,7 +6,7 @@ import { Button, CandidateList, CandidateRow, EngineSection } from "./components
 import { Chess } from "chess.js";
 import type { Review } from "./useReview";
 import { describeMove } from "./reviewMetrics";
-import { sourceLabel } from "./objective";
+import { fixedElo, sourceLabel } from "./objective";
 import { bestLinePreview } from "./material";
 import { verdictInputsForPly } from "./theory";
 import { useLineOpenings } from "./openings";
@@ -88,6 +88,9 @@ export function MoveAnalysis({
   const response = hasMove ? review.maia : review.maiaCurrent;
   const node = review.nodes[hasMove ? focus : ply];
   const candidates = hasMove ? review.objectiveCandidates.focus : review.objectiveCandidates.current;
+  // Pinned Elo shown as a locked dropdown in the objective heading; null
+  // hides it (sources without a rating).
+  const objectiveElo = fixedElo();
   const insight = { fen: node.fen };
   const played = hasMove
     ? review.nodes[ply]?.uci ?? undefined
@@ -273,7 +276,21 @@ export function MoveAnalysis({
       <EngineSection
         label={sourceLabel()}
         dotClass="source-maia"
-        title={<>{sourceLabel()}</>}
+        title={
+          <>
+            Maia •{" "}
+            {objectiveElo !== null && (
+              <Rating
+                inline
+                id="objective-rating"
+                label="Objective rating"
+                value={objectiveElo}
+                disabled
+                onChange={() => undefined}
+              />
+            )}
+          </>
+        }
       >
         {candidates?.degraded && <p role="status">Maia3 fallback results.</p>}
         {candidates ? (

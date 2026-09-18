@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { Chess } from 'chess.js';
 import { SEARCH_POLICY, reviewMove, whiteWin, type Evaluation } from '../reviewMetrics';
-import { candidatesFor, sfPoint } from './stockfish';
+import { candidatesFor, fixedElo, sfPoint } from './stockfish';
 
 const evaluation = (cp: number, best = 'e2e4'): Evaluation => ({
   engine: 'Stockfish 19', search_policy: SEARCH_POLICY, score: { type: 'cp', value: cp },
@@ -75,4 +75,8 @@ it('lists engine lines with mover-relative expectations, terminal rows fall back
   expect(black?.entries[0].expected).toBeCloseTo(100 - white!.entries[0].expected, 9);
   expect(candidatesFor({ engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 0, terminal: 'draw',
     best_move: null, lines: [], score: { type: 'cp' as const, value: 0 } }, node)).toBeUndefined();
+});
+
+it('pins no Elo for engine lines', () => {
+  expect(fixedElo()).toBeNull();
 });

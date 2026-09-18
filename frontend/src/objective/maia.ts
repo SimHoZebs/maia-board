@@ -93,6 +93,12 @@ export function sourceLabel(): string {
   return 'Maia3 2400';
 }
 
+// Pinned Elo shown as a locked dropdown in the panel heading. Null means
+// the source has no Elo to show (the heading renders without a dropdown).
+export function fixedElo(): number | null {
+  return GRADING_MAIA_SETTINGS.eloMaia;
+}
+
 // Bulk-restore descriptor for the lane. `settings` null means the source
 // needs no extra inference, so the second prime and batch entries stand
 // down; callers check presence, never model kind.

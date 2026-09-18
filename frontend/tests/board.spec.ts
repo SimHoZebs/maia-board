@@ -751,7 +751,7 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   // The display list follows the reference Elo; the objective heading
   // holds steady across the switch.
   await expect(page.locator('section[aria-label="Maia analysis"] h2')).toContainText('Maia');
-  await expect(page.getByRole('heading', { name: /Maia3 2400/ })).toBeVisible();
+  await expect(page.locator('#objective-rating')).toHaveValue('2400');
   await expect(page.locator('#analysis-rating')).toHaveValue('2000');
   expect(app.requests.some(r => r.payload.elo_maia === 2000 && r.payload.elo_user === 2000)).toBe(true);
   for (const [id, expected] of [['copy-pgn', '1. e4 e5 2. Nf3 Nc6'], ['copy-explored-pgn', '1. e4 e5 2. Nf3 Nf6 3. Bc4']]) {
@@ -1108,7 +1108,7 @@ for (const width of [320, 390]) {
     const exports = (await page.locator('.analysis-actions').boundingBox())!;
     expect(exports.y).toBeGreaterThanOrEqual(engines.y + engines.height);
     await expect(page.locator('.board-stage .analysis-actions')).toHaveCount(0);
-    await expect(page.getByRole('heading', { name: /Maia3 2400/ })).toHaveCount(1);
+    await expect(page.locator('#objective-rating')).toHaveCount(1);
     await expect(page.getByText('Engine moves', { exact: true })).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath(`variation-${width}.png`), fullPage: true });

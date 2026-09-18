@@ -93,6 +93,11 @@ export function sourceLabel(): string {
   return 'Stockfish 19';
 }
 
+// No Elo to pin: engine lines carry no rating.
+export function fixedElo(): null {
+  return null;
+}
+
 // Bulk-restore descriptor for the lane. Null settings mean no extra
 // inference beyond the main prime: the second prime and batch entries
 // stand down, and coverage needs nothing more than the Stockfish rows.
