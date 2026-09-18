@@ -156,27 +156,9 @@ func (w *Worker) predict(waitCtx, execCtx context.Context, prio Priority, submit
 	}
 	// Sync lanes bound their queue wait; batch work waits until granted or
 	// cancelled, since it runs detached without a client deadline.
-	wait := waitCtx
-	cancel := context.CancelFunc(func() {})
-	if prio != PriorityBatch {
-		wait, cancel = context.WithTimeout(waitCtx, syncWait(prio))
-	}
-	grant, joined, err := w.sched.Acquire(wait, prio, key, submitSeq)
-	cancel()
+	grant, err := admit(waitCtx, prio, w.sched, key, submitSeq)
 	if err != nil {
-		switch {
-		case errors.Is(err, ErrSchedulerBusy):
-			return EngineResult{}, nil, ErrWorkerBusy
-		case errors.Is(err, ErrSuperseded):
-			return EngineResult{}, nil, err
-		case waitCtx.Err() != nil:
-			return EngineResult{}, nil, waitCtx.Err()
-		default:
-			return EngineResult{}, nil, ErrWorkerBusy
-		}
-	}
-	if joined {
-		return EngineResult{}, nil, ErrJoined
+		return EngineResult{}, nil, err
 	}
 	w.setBusy(true)
 	release := func() {
@@ -246,14 +228,14 @@ func (w *Worker) predictLocked(parent context.Context, request EngineRequest) (E
 		return EngineResult{}, err
 	}
 	var reply struct {
-		Result     *EngineResult `json:"result,omitempty"`
-		Error      *apiError     `json:"error,omitempty"`
-		LegalCount int           `json:"legal_count"`
+		Result     json.RawMessage `json:"result,omitempty"`
+		Error      *apiError       `json:"error,omitempty"`
+		LegalCount int             `json:"legal_count"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(line))
 	decoder.DisallowUnknownFields()
 	// Decode already rejects invalid JSON; no separate json.Valid re-decode.
-	if err := decoder.Decode(&reply); err != nil || (reply.Result == nil) == (reply.Error == nil) {
+	if err := decoder.Decode(&reply); err != nil || (len(reply.Result) == 0) == (reply.Error == nil) {
 		w.failLocked(ErrProtocol)
 		return EngineResult{}, ErrProtocol
 	}
@@ -271,20 +253,11 @@ func (w *Worker) predictLocked(parent context.Context, request EngineRequest) (E
 			return EngineResult{}, err
 		}
 	}
-	var document any
-	if json.Unmarshal([]byte(line), &document) != nil {
-		w.failLocked(ErrProtocol)
-		return EngineResult{}, ErrProtocol
-	}
-	// Validate the raw result subtree through the single strict path before
-	// trusting the outer-typed copy: encoding/json pads/truncates wdl arrays
-	// and silences nulls, so lengths and nulls are checked on raw JSON.
-	raw, ok := document.(map[string]any)
-	if !ok {
-		w.failLocked(ErrProtocol)
-		return EngineResult{}, ErrProtocol
-	}
-	typed, ok := decodeStrictValue[EngineResult](raw["result"], engineResultRequired, nil)
+	// Validate the raw result bytes through the single strict path before
+	// trusting the typed copy: encoding/json pads/truncates wdl arrays and
+	// silences nulls, so lengths and nulls are checked on raw JSON with no
+	// re-marshal.
+	typed, ok := decodeStrictValue[EngineResult](reply.Result, engineResultRequired, nil)
 	if !ok || !validEngineResult(typed, reply.LegalCount, request.Temperature == 0) {
 		w.failLocked(ErrProtocol)
 		return EngineResult{}, ErrProtocol

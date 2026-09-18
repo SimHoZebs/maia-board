@@ -20,36 +20,26 @@ var (
 )
 
 type cachedEvaluation struct {
-	KeyHash   string `json:"key_hash"`
-	Engine    string `json:"engine"`
-	Key       string `json:"key"`
-	Value     any    `json:"value"`
-	CreatedAt string `json:"created_at"`
+	KeyHash   string          `json:"key_hash"`
+	Engine    string          `json:"engine"`
+	Key       string          `json:"key"`
+	Value     json.RawMessage `json:"value"`
+	CreatedAt string          `json:"created_at"`
 }
 
-type cachePut struct {
-	Engine string `json:"engine"`
-	Key    string `json:"key"`
-	Value  any    `json:"value"`
-}
-
-func validCachePut(put *cachePut) *requestError {
-	if put.Engine != "sf" && put.Engine != "maia" {
+// validCacheValueBytes is the generic cache-shape gate on raw bytes (engine,
+// key bounds, size, JSON validity). Strict shape + ownership stay in
+// validOwnedCacheValue; the strict decode there already requires a non-empty
+// JSON object with the engine's required fields.
+func validCacheValueBytes(engine, key string, encoded []byte) *requestError {
+	if engine != "sf" && engine != "maia" {
 		return &requestError{"invalid_request", "engine must be sf or maia"}
 	}
-	if put.Key == "" || len(put.Key) > evalCacheMaxKeyBytes {
+	if key == "" || len(key) > evalCacheMaxKeyBytes {
 		return &requestError{"invalid_request", "key must be non-empty and short"}
 	}
-	if put.Value == nil {
+	if len(encoded) == 0 || len(encoded) > evalCacheMaxValueBytes || !json.Valid(encoded) {
 		return &requestError{"invalid_request", "value must be a JSON document"}
-	}
-	encoded, err := json.Marshal(put.Value)
-	if err != nil || len(encoded) > evalCacheMaxValueBytes || !json.Valid(encoded) {
-		return &requestError{"invalid_request", "value must be a JSON document"}
-	}
-	object, ok := put.Value.(map[string]any)
-	if !ok || len(object) == 0 {
-		return &requestError{"invalid_request", "value must be a JSON object"}
 	}
 	return nil
 }
@@ -71,40 +61,37 @@ func ensureV2Cache(db *sql.DB) error {
 
 func (s *GameStore) cachePut(hash, engine, key, value string) (cachedEvaluation, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	tx, err := s.db.Begin()
-	if err != nil {
-		return cachedEvaluation{}, err
-	}
-	defer tx.Rollback()
-	// DELETE then INSERT (rather than ON CONFLICT DO UPDATE) so the row gets
-	// a fresh rowid: eviction below orders by rowid, making it
-	// least-recently-written-first. An upsert would keep the original rowid
-	// and let refreshed openings age out as if never rewritten. Reads do not
-	// touch rank: a read-touch would double write load on this
-	// single-connection database for a recency signal the current working
-	// set (recent games, re-touched on every visit) does not need.
-	if _, err := tx.Exec(`DELETE FROM evaluations_v2 WHERE key_hash = ?`, hash); err != nil {
-		return cachedEvaluation{}, err
-	}
-	if _, err := tx.Exec(`INSERT INTO evaluations_v2 (key_hash, engine, cache_key, value, created_at)
-		VALUES (?, ?, ?, ?, ?)`,
-		hash, engine, key, value, now); err != nil {
-		return cachedEvaluation{}, err
-	}
-	// SQLite optimizes unfiltered COUNT(*) with its b-tree count operation.
-	// Delete only overflow rows using rowid order.
-	var count int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM evaluations_v2`).Scan(&count); err != nil {
-		return cachedEvaluation{}, err
-	}
-	if count > evalCacheMaxRows {
-		if _, err := tx.Exec(`DELETE FROM evaluations_v2 WHERE rowid IN (
-		SELECT rowid FROM evaluations_v2 ORDER BY rowid LIMIT ?)`, count-evalCacheMaxRows); err != nil {
-			return cachedEvaluation{}, err
+	_, err := withTx(s.db, func(tx *sql.Tx) (struct{}, error) {
+		// DELETE then INSERT (rather than ON CONFLICT DO UPDATE) so the row gets
+		// a fresh rowid: eviction below orders by rowid, making it
+		// least-recently-written-first. An upsert would keep the original rowid
+		// and let refreshed openings age out as if never rewritten. Reads do not
+		// touch rank: a read-touch would double write load on this
+		// single-connection database for a recency signal the current working
+		// set (recent games, re-touched on every visit) does not need.
+		if _, err := tx.Exec(`DELETE FROM evaluations_v2 WHERE key_hash = ?`, hash); err != nil {
+			return struct{}{}, err
 		}
-		log.Printf("evaluation cache eviction rows=%d", count-evalCacheMaxRows)
-	}
-	if err := tx.Commit(); err != nil {
+		if _, err := tx.Exec(`INSERT INTO evaluations_v2 (key_hash, engine, cache_key, value, created_at)
+			VALUES (?, ?, ?, ?, ?)`,
+			hash, engine, key, value, now); err != nil {
+			return struct{}{}, err
+		}
+		// SQLite optimizes unfiltered COUNT(*) with its b-tree count operation.
+		// Delete only overflow rows using rowid order.
+		count, err := countRows(tx, `SELECT COUNT(*) FROM evaluations_v2`)
+		if err != nil {
+			return struct{}{}, err
+		}
+		if count > evalCacheMaxRows {
+			if err := evictOldestRows(tx, "evaluations_v2", count-evalCacheMaxRows); err != nil {
+				return struct{}{}, err
+			}
+			log.Printf("evaluation cache eviction rows=%d", count-evalCacheMaxRows)
+		}
+		return struct{}{}, nil
+	})
+	if err != nil {
 		return cachedEvaluation{}, err
 	}
 	return cachedEvaluation{KeyHash: hash, Engine: engine, Key: key, CreatedAt: now}, nil
@@ -119,11 +106,13 @@ func (s *GameStore) cacheGet(hash string) (cachedEvaluation, error) {
 	if err != nil {
 		return cachedEvaluation{}, err
 	}
-	var decoded any
-	if err := json.Unmarshal([]byte(value), &decoded); err != nil {
-		return cachedEvaluation{}, err
+	// Thread raw bytes: no decode/re-marshal here. Strict readers validate
+	// the bytes once via decodeStrictValue; the GET handler serves them
+	// verbatim. Corrupt rows still error instead of serving garbage.
+	if !json.Valid([]byte(value)) {
+		return cachedEvaluation{}, errors.New("evaluation cache decode failed")
 	}
-	entry.Value = decoded
+	entry.Value = json.RawMessage(value)
 	return entry, nil
 }
 
@@ -156,16 +145,14 @@ func (s *server) storeCache(hash, engine, key string, value any) {
 		log.Printf("evaluation cache encode failed: %v", err)
 		return
 	}
-	var document any
-	if err := json.Unmarshal(encoded, &document); err != nil {
-		log.Printf("evaluation cache decode failed: %v", err)
-		return
-	}
-	if validCachePut(&cachePut{Engine: engine, Key: key, Value: document}) != nil {
+	// Single strict entry on raw bytes: generic shape gate first, then the
+	// ownership + typed + semantic gate. No intermediate any document and no
+	// re-marshal.
+	if validCacheValueBytes(engine, key, encoded) != nil {
 		log.Printf("evaluation cache rejected engine=%s", engine)
 		return
 	}
-	if !validOwnedCacheValue(hash, engine, key, document) {
+	if !validOwnedCacheValue(hash, engine, key, encoded) {
 		log.Printf("evaluation cache rejected untrusted output engine=%s", engine)
 		return
 	}

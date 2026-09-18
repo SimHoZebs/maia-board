@@ -76,42 +76,23 @@ var (
 	engineResultRequired = []string{"move", "candidates", "wdl"}
 )
 
-// noBadNulls rejects JSON nulls except for explicitly optional keys (terminal,
-// best_move, actual_settings, winning_side). Go decodes null into zero values
-// without error, so without this a missing degraded flag or a null prob would
-// silently become false/0 and could still pass semantic validation.
-func noBadNulls(value any, allow map[string]bool) bool {
+// walkShape is the single recursive poisoning-defense pass, merging the
+// former noBadNulls + validWDLLens walks. It rejects JSON nulls except for
+// explicitly optional keys (terminal, best_move, actual_settings,
+// winning_side) — Go decodes null into zero values without error, so without
+// this a missing degraded flag or a null prob would silently become false/0
+// and could still pass semantic validation — and enforces exactly three
+// numeric entries for every wdl array (encoding/json silently pads
+// ([0,1] -> [0,1,0]) or truncates ([0,0,1,0] -> [0,0,1]) when decoding into
+// [3]float64, so length must be checked on the raw document before typed
+// decoding).
+func walkShape(value any, allow map[string]bool) bool {
 	switch v := value.(type) {
 	case map[string]any:
 		for key, item := range v {
 			if item == nil && !allow[key] {
 				return false
 			}
-			if !noBadNulls(item, allow) {
-				return false
-			}
-		}
-		return true
-	case []any:
-		for _, item := range v {
-			if !noBadNulls(item, allow) {
-				return false
-			}
-		}
-		return true
-	default:
-		return true
-	}
-}
-
-// validWDLLens enforces exactly three numeric entries for every wdl array.
-// encoding/json silently pads ([0,1] -> [0,1,0]) or truncates ([0,0,1,0] ->
-// [0,0,1]) when decoding into [3]float64, so length must be checked on the
-// raw document before typed decoding.
-func validWDLLens(value any) bool {
-	switch v := value.(type) {
-	case map[string]any:
-		for key, item := range v {
 			if key == "wdl" {
 				items, ok := item.([]any)
 				if !ok || len(items) != 3 {
@@ -123,14 +104,14 @@ func validWDLLens(value any) bool {
 					}
 				}
 			}
-			if !validWDLLens(item) {
+			if !walkShape(item, allow) {
 				return false
 			}
 		}
 		return true
 	case []any:
 		for _, item := range v {
-			if !validWDLLens(item) {
+			if !walkShape(item, allow) {
 				return false
 			}
 		}
@@ -157,7 +138,7 @@ func checkShapeAny(value any, required []string, allowNull map[string]bool) bool
 	if allowNull == nil {
 		allowNull = map[string]bool{}
 	}
-	return noBadNulls(value, allowNull) && validWDLLens(value)
+	return walkShape(value, allowNull)
 }
 
 // decodeStrict is the one generic strict decoder shared by UnmarshalJSON
@@ -186,17 +167,15 @@ func decodeStrict[T any](data []byte, required []string, allowNull map[string]bo
 	return decoded, nil
 }
 
-// decodeStrictValue is the single strict typed decode path for cached/worker
-// documents: required presence, null rejection, wdl lengths, size bound,
-// DisallowUnknownFields, and trailing-data rejection. Semantic ranges stay in
-// valid*.
-func decodeStrictValue[T any](value any, required []string, allowNull map[string]bool) (T, bool) {
+// decodeStrictValue is the single strict typed decode entry for cached and
+// worker documents: raw bytes → one shape walk → one typed strict decode.
+// Required presence, null rejection, wdl lengths, size bound,
+// DisallowUnknownFields, and trailing-data rejection live here; semantic
+// ranges stay in valid*. Callers thread []byte (cache rows, worker replies)
+// so nothing re-marshals just to re-parse.
+func decodeStrictValue[T any](data []byte, required []string, allowNull map[string]bool) (T, bool) {
 	var zero T
-	if !checkShapeAny(value, required, allowNull) {
-		return zero, false
-	}
-	data, err := json.Marshal(value)
-	if err != nil || len(data) > evalCacheMaxValueBytes {
+	if len(data) > evalCacheMaxValueBytes {
 		return zero, false
 	}
 	decoded, err := decodeStrict[T](data, required, allowNull)
@@ -204,23 +183,6 @@ func decodeStrictValue[T any](value any, required []string, allowNull map[string
 		return zero, false
 	}
 	return decoded, true
-}
-
-func strictDocument(value any, target any, required ...string) bool {
-	if !checkShapeAny(value, required, docAllowNull) {
-		return false
-	}
-	data, err := json.Marshal(value)
-	if err != nil || len(data) > evalCacheMaxValueBytes {
-		return false
-	}
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.DisallowUnknownFields()
-	if d.Decode(target) != nil {
-		return false
-	}
-	var trailing any
-	return d.Decode(&trailing) == io.EOF
 }
 
 func probability(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 && v <= 1 }
@@ -404,21 +366,17 @@ type lookupResult struct {
 }
 
 func (s *server) evaluationLookup(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeAPIError(w, 405, "method_not_allowed", "POST is required")
-		return
-	}
 	var body struct {
 		Requests []lookupRequest `json:"requests"`
 	}
-	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024*1024))
-	d.DisallowUnknownFields()
-	if err := d.Decode(&body); err != nil {
-		writeAPIError(w, 400, "invalid_json", "request body must be a valid lookup object")
+	decoded, ok := decodeSingle[struct {
+		Requests []lookupRequest `json:"requests"`
+	}](w, r, 4*1024*1024)
+	if !ok {
 		return
 	}
-	var trailing any
-	if d.Decode(&trailing) != io.EOF || body.Requests == nil || len(body.Requests) > 1024 {
+	body = decoded
+	if body.Requests == nil || len(body.Requests) > 1024 {
 		writeAPIError(w, 400, "invalid_request", "requests must be an array of at most 1024 entries")
 		return
 	}

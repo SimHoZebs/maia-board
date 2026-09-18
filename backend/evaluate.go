@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log"
 	"net/http"
 	"os/exec"
@@ -117,10 +116,6 @@ func (e *Evaluator) Idle() bool {
 }
 
 func (s *server) evaluate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeAPIError(w, 405, "method_not_allowed", "POST is required")
-		return
-	}
 	started := time.Now()
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	w = rec
@@ -138,17 +133,11 @@ func (s *server) evaluate(w http.ResponseWriter, r *http.Request) {
 		log.Printf("evaluate status=%d plies=%d policy=%s duration_ms=%d depth=%d lines=%d",
 			rec.status, len(request.Moves), policy, time.Since(started).Milliseconds(), depth, lines)
 	}()
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		writeAPIError(w, 400, "invalid_json", "request body must be a valid JSON object")
+	decoded, ok := decodeSingle[evaluationRequest](w, r, 64*1024)
+	if !ok {
 		return
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		writeAPIError(w, 400, "invalid_json", "request body must contain one JSON object")
-		return
-	}
+	request = decoded
 	if err := validateEvaluationRequest(&request); err != nil {
 		writeAPIError(w, 400, err.Code, err.Message)
 		return
@@ -160,19 +149,7 @@ func (s *server) evaluate(w http.ResponseWriter, r *http.Request) {
 	execCtx := context.WithoutCancel(r.Context())
 	live, hit, runErr := s.executeSF(r.Context(), execCtx, PriorityFocus, 0, request, false)
 	if runErr != nil {
-		err := runErr
-		requestErr, isRequestErr := errors.AsType[*requestError](err)
-		switch {
-		case errors.Is(err, ErrSuperseded):
-			writeAPIError(w, 409, "superseded", "a newer request superseded this position")
-		case errors.Is(err, ErrWorkerBusy):
-			w.Header().Set("Retry-After", "1")
-			writeAPIError(w, 503, "engine_busy", "Stockfish is busy")
-		case isRequestErr:
-			writeAPIError(w, 400, requestErr.Code, requestErr.Message)
-		default:
-			writeAPIError(w, 502, "engine_unavailable", "Stockfish evaluation is unavailable")
-		}
+		mapEngineError(w, runErr, "Stockfish evaluation is unavailable")
 		return
 	}
 	result = live
@@ -230,28 +207,10 @@ func (b *cappedOutput) Write(p []byte) (int, error) {
 
 func (e *Evaluator) run(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, request evaluationRequest) (*evaluationResponse, func(), error) {
 	key, _ := sfIdentity(request).coordinates()
-	wait := waitCtx
-	cancel := context.CancelFunc(func() {})
-	if prio != PriorityBatch {
-		wait, cancel = context.WithTimeout(waitCtx, syncWait(prio))
-	}
 	sched := e.schedulerFor(prio)
-	grant, joined, err := sched.Acquire(wait, prio, key, submitSeq)
-	cancel()
+	grant, err := admit(waitCtx, prio, sched, key, submitSeq)
 	if err != nil {
-		switch {
-		case errors.Is(err, ErrSchedulerBusy):
-			return nil, nil, ErrWorkerBusy
-		case errors.Is(err, ErrSuperseded):
-			return nil, nil, err
-		case waitCtx.Err() != nil:
-			return nil, nil, waitCtx.Err()
-		default:
-			return nil, nil, ErrWorkerBusy
-		}
-	}
-	if joined {
-		return nil, nil, ErrJoined
+		return nil, nil, err
 	}
 	release := func() { sched.Release(grant) }
 	fail := func(err error) (*evaluationResponse, func(), error) {

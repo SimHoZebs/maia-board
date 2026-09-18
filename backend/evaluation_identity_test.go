@@ -56,6 +56,18 @@ func lookupValues(t *testing.T, w *httptest.ResponseRecorder) []lookupResult {
 	}
 	return body.Results
 }
+
+// strictEvalResponse decodes a lookup-returned value through the single
+// strict entry. The marshal is test-only (tests hold any after JSON
+// round-trips); production threads raw bytes with no re-marshal.
+func strictEvalResponse(t *testing.T, value any) (evaluationResponse, bool) {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return decodeStrictValue[evaluationResponse](data, evalRequired, docAllowNull)
+}
 func TestLookupCompatibleSettingsPreserveActualProvenance(t *testing.T) {
 	s := &server{store: testStore(t)}
 	large := &stockfishSettings{750, 5, 8}
@@ -67,7 +79,9 @@ func TestLookupCompatibleSettingsPreserveActualProvenance(t *testing.T) {
 		t.Fatalf("provenance %+v", rows)
 	}
 	var value evaluationResponse
-	if !strictDocument(rows[0].Value, &value) || value.SearchPolicy != large.policy() || len(value.Lines) != 2 || value.ActualSettings == nil || *value.ActualSettings != *large {
+	var ok bool
+	value, ok = strictEvalResponse(t, rows[0].Value)
+	if !ok || value.SearchPolicy != large.policy() || len(value.Lines) != 2 || value.ActualSettings == nil || *value.ActualSettings != *large {
 		t.Fatalf("compatible value %+v", value)
 	}
 	// Live endpoint exposes the same provenance; reuse never produces a new row
@@ -89,7 +103,8 @@ func TestLookupCompatibleSettingsPreserveActualProvenance(t *testing.T) {
 	}
 	seedSF(t, s, requested, 99)
 	rows = lookupValues(t, lookup(t, s, []lookupRequest{query}))
-	if !strictDocument(rows[0].Value, &value) || value.Score.Value != 99 || value.SearchPolicy != query.Settings.policy() || *rows[0].ActualSettings != *query.Settings {
+	value, ok = strictEvalResponse(t, rows[0].Value)
+	if !ok || value.Score.Value != 99 || value.SearchPolicy != query.Settings.policy() || *rows[0].ActualSettings != *query.Settings {
 		t.Fatalf("exact search did not win: %+v", rows)
 	}
 }
@@ -147,7 +162,11 @@ func TestInconsistentTripleRejectedNeverFiled(t *testing.T) {
 	// called directly (poisoning guard on the write path).
 	r := evaluationRequest{FEN: startFEN, InitialFEN: badInitial, Moves: []string{}, Settings: &stockfishSettings{750, 2, 8}}
 	hash, key := sfIdentity(r).coordinates()
-	if validOwnedCacheValue(hash, "sf", key, sfFixture(r.Settings, 10)) {
+	fixture, err := json.Marshal(sfFixture(r.Settings, 10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validOwnedCacheValue(hash, "sf", key, fixture) {
 		t.Fatal("inconsistent triple passed write guard")
 	}
 	var rows int

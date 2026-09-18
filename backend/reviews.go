@@ -75,23 +75,29 @@ func resolveMaiaQuery(query lookupRequest) (EngineRequest, string, *requestError
 	return req, model, nil
 }
 
-// executeSF runs one Stockfish search with join-retry and write-through.
-// Returns hit=true when served from cache. strictBatch is kept for symmetry
-// (SF has no degraded fallback); both modes store and serve identically.
-// submitSeq orders batch-lane tickets; sync callers pass 0.
-func (s *server) executeSF(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, req evaluationRequest, strictBatch bool) (*evaluationResponse, bool, error) {
-	if s.evaluator == nil {
-		// Cache-only path (e.g. evaluator absent): hits serve, misses fail.
-		if cached, ok := s.cachedSF(req); ok {
-			return cached, true, nil
-		}
-		return nil, false, errors.New("Stockfish is unavailable")
-	}
+// engineExecutor unifies the Stockfish and Maia execute paths behind one
+// contract: cache-read, run, validate, store, with degraded policy handled
+// generically (SF never degrades; Maia live serves degraded without caching,
+// batch fails per-index). Both engines keep one timeout policy each;
+// admission lives inside runLive.
+type engineExecutor[T any] interface {
+	loadCached() (T, bool)
+	runLive(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64) (T, func(), bool, error)
+	validate(T) error
+	store(T)
+}
+
+// executeWithRetry runs cache→predict→validate→store→release with up to 3
+// ErrJoined retries. Release is exactly-once: runLive's grant is released
+// after store (or on every error/degraded path) before the next admission,
+// so batch entries yield to interactive lanes between entries.
+func executeWithRetry[T any](ex engineExecutor[T], waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, strictBatch bool) (T, bool, error) {
+	var zero T
 	for attempt := 0; attempt < 3; attempt++ {
-		if cached, ok := s.cachedSF(req); ok {
+		if cached, ok := ex.loadCached(); ok {
 			return cached, true, nil
 		}
-		result, release, err := s.evaluator.run(waitCtx, execCtx, prio, submitSeq, req)
+		result, release, degraded, err := ex.runLive(waitCtx, execCtx, prio, submitSeq)
 		if err != nil {
 			if release != nil {
 				release()
@@ -99,17 +105,109 @@ func (s *server) executeSF(waitCtx, execCtx context.Context, prio Priority, subm
 			if errors.Is(err, ErrJoined) {
 				continue
 			}
-			return nil, false, err
+			return zero, false, err
 		}
-		result.ActualSettings = req.Settings
-		hash, key := sfIdentity(req).coordinates()
-		s.storeCache(hash, "sf", key, result)
+		if degraded {
+			if release != nil {
+				release()
+			}
+			if strictBatch {
+				return zero, false, errors.New("degraded fallback is not cached; retry as live analysis")
+			}
+			return result, false, nil
+		}
+		if err := ex.validate(result); err != nil {
+			if release != nil {
+				release()
+			}
+			return zero, false, err
+		}
+		ex.store(result)
 		if release != nil {
 			release()
 		}
 		return result, false, nil
 	}
-	return nil, false, errors.New("evaluation did not settle")
+	return zero, false, errors.New("evaluation did not settle")
+}
+
+type sfExecutor struct {
+	s   *server
+	req evaluationRequest
+}
+
+func (e sfExecutor) loadCached() (*evaluationResponse, bool) { return e.s.cachedSF(e.req) }
+
+func (e sfExecutor) runLive(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64) (*evaluationResponse, func(), bool, error) {
+	if e.s.evaluator == nil {
+		// Cache-only path (e.g. evaluator absent): hits serve, misses fail.
+		return nil, nil, false, errors.New("Stockfish is unavailable")
+	}
+	result, release, err := e.s.evaluator.run(waitCtx, execCtx, prio, submitSeq, e.req)
+	if err != nil {
+		return nil, release, false, err
+	}
+	result.ActualSettings = e.req.Settings
+	return result, release, false, nil
+}
+
+func (e sfExecutor) validate(*evaluationResponse) error { return nil }
+
+func (e sfExecutor) store(result *evaluationResponse) {
+	hash, key := sfIdentity(e.req).coordinates()
+	e.s.storeCache(hash, "sf", key, result)
+}
+
+type maiaExecutor struct {
+	s        *server
+	req      EngineRequest
+	model    string
+	useCache bool
+}
+
+func (e maiaExecutor) loadCached() (moveResponse, bool) {
+	if !e.useCache {
+		return moveResponse{}, false
+	}
+	if cached, ok := e.s.cachedMaia(e.req, e.model); ok {
+		return *cached, true
+	}
+	return moveResponse{}, false
+}
+
+func (e maiaExecutor) runLive(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64) (moveResponse, func(), bool, error) {
+	result, release, used, degraded, err := e.s.pool.predict(waitCtx, execCtx, prio, submitSeq, e.model, e.req)
+	if err != nil {
+		return moveResponse{}, release, false, err
+	}
+	response := moveResponse{Move: result.Move, WDL: result.WDL, ModelUsed: used, Degraded: degraded}
+	for _, candidate := range result.Candidates {
+		response.TopMoves = append(response.TopMoves, topMove{Move: candidate.Move, Prob: candidate.Policy, WDL: candidate.WDL})
+	}
+	return response, release, degraded, nil
+}
+
+func (e maiaExecutor) validate(response moveResponse) error {
+	if !validMoveValue(response, e.model, e.useCache) {
+		return errors.New("invalid Maia worker response")
+	}
+	return nil
+}
+
+func (e maiaExecutor) store(response moveResponse) {
+	if !e.useCache {
+		return
+	}
+	hash, key := maiaIdentity(e.req, e.model).coordinates()
+	e.s.storeCache(hash, "maia", key, response)
+}
+
+// executeSF runs one Stockfish search with join-retry and write-through.
+// Returns hit=true when served from cache. strictBatch is kept for symmetry
+// (SF has no degraded fallback); both modes store and serve identically.
+// submitSeq orders batch-lane tickets; sync callers pass 0.
+func (s *server) executeSF(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, req evaluationRequest, strictBatch bool) (*evaluationResponse, bool, error) {
+	return executeWithRetry[(*evaluationResponse)](sfExecutor{s: s, req: req}, waitCtx, execCtx, prio, submitSeq, strictBatch)
 }
 
 // executeMaia runs one Maia inference with join-retry and write-through.
@@ -118,52 +216,7 @@ func (s *server) executeSF(waitCtx, execCtx context.Context, prio Priority, subm
 // per-index so the position can be retried live. submitSeq orders batch-lane
 // tickets; sync callers pass 0.
 func (s *server) executeMaia(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, req EngineRequest, model string, strictBatch bool) (moveResponse, bool, error) {
-	useCache := req.Temperature == 0
-	for attempt := 0; attempt < 3; attempt++ {
-		if useCache {
-			if cached, ok := s.cachedMaia(req, model); ok {
-				return *cached, true, nil
-			}
-		}
-		result, release, used, degraded, err := s.pool.predict(waitCtx, execCtx, prio, submitSeq, model, req)
-		if err != nil {
-			if release != nil {
-				release()
-			}
-			if errors.Is(err, ErrJoined) {
-				continue
-			}
-			return moveResponse{}, false, err
-		}
-		response := moveResponse{Move: result.Move, WDL: result.WDL, ModelUsed: used, Degraded: degraded}
-		for _, candidate := range result.Candidates {
-			response.TopMoves = append(response.TopMoves, topMove{Move: candidate.Move, Prob: candidate.Policy, WDL: candidate.WDL})
-		}
-		if degraded {
-			if release != nil {
-				release()
-			}
-			if strictBatch {
-				return moveResponse{}, false, errors.New("degraded fallback is not cached; retry as live analysis")
-			}
-			return response, false, nil
-		}
-		if !validMoveValue(response, model, useCache) {
-			if release != nil {
-				release()
-			}
-			return moveResponse{}, false, errors.New("invalid Maia worker response")
-		}
-		if !degraded && useCache {
-			hash, key := maiaIdentity(req, model).coordinates()
-			s.storeCache(hash, "maia", key, response)
-		}
-		if release != nil {
-			release()
-		}
-		return response, false, nil
-	}
-	return moveResponse{}, false, errors.New("evaluation did not settle")
+	return executeWithRetry[moveResponse](maiaExecutor{s: s, req: req, model: model, useCache: req.Temperature == 0}, waitCtx, execCtx, prio, submitSeq, strictBatch)
 }
 
 type batchStatus string
@@ -437,17 +490,13 @@ func (js *ReviewJobs) reviews(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Requests []lookupRequest `json:"requests"`
 	}
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024*1024))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_json", "request body must be a valid batch object")
+	decoded, ok := decodeSingle[struct {
+		Requests []lookupRequest `json:"requests"`
+	}](w, r, 4*1024*1024)
+	if !ok {
 		return
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		writeAPIError(w, http.StatusBadRequest, "invalid_json", "request body must contain one JSON object")
-		return
-	}
+	body = decoded
 	if body.Requests == nil || len(body.Requests) == 0 || len(body.Requests) > maxBatchRequests {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("requests must contain 1 to %d entries", maxBatchRequests))
 		return
@@ -592,11 +641,7 @@ func (js *ReviewJobs) drain(job *batchJob) {
 				if entry.engine != engine || !job.claim(entry) {
 					continue
 				}
-				if engine == "sf" {
-					js.runSFEntry(job, entry)
-				} else {
-					js.runMaiaEntry(job, entry)
-				}
+				js.runEntry(job, entry)
 			}
 		}()
 	}
@@ -649,20 +694,29 @@ func batchErrMessage(err error) string {
 	return sanitizeError(err.Error())
 }
 
-func (js *ReviewJobs) runSFEntry(job *batchJob, entry *batchEntry) {
+// runEntry executes one batch entry through the shared executor table.
+// Each entry holds its engine slot only for that entry; the slot is released
+// inside execute before the next entry is admitted, so interactive work waits
+// at most one batch op. Per-index completion (with job correlation) stays in
+// job.complete, which emits the per-entry timing line.
+func (js *ReviewJobs) runEntry(job *batchJob, entry *batchEntry) {
 	bg := context.Background()
-	_, _, err := js.s.executeSF(bg, bg, PriorityBatch, entry.submitSeq, entry.evalReq, true)
-	if err != nil {
-		job.complete(entry, batchErrMessage(err))
+	runners := map[string]func() error{
+		"sf": func() error {
+			_, _, err := js.s.executeSF(bg, bg, PriorityBatch, entry.submitSeq, entry.evalReq, true)
+			return err
+		},
+		"maia": func() error {
+			_, _, err := js.s.executeMaia(bg, bg, PriorityBatch, entry.submitSeq, entry.maiaReq, entry.maiaModel, true)
+			return err
+		},
+	}
+	run, ok := runners[entry.engine]
+	if !ok {
+		job.complete(entry, "unknown engine")
 		return
 	}
-	job.complete(entry, "")
-}
-
-func (js *ReviewJobs) runMaiaEntry(job *batchJob, entry *batchEntry) {
-	bg := context.Background()
-	_, _, err := js.s.executeMaia(bg, bg, PriorityBatch, entry.submitSeq, entry.maiaReq, entry.maiaModel, true)
-	if err != nil {
+	if err := run(); err != nil {
 		job.complete(entry, batchErrMessage(err))
 		return
 	}

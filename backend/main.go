@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -155,11 +154,6 @@ func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) move(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST is required")
-		return
-	}
-
 	started := time.Now()
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	w = rec
@@ -169,15 +163,8 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 		log.Printf("move status=%d plies=%d model=%s degraded=%t duration_ms=%d",
 			rec.status, len(request.Moves), model, degraded, time.Since(started).Milliseconds())
 	}()
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_json", "request body must be a valid JSON object")
-		return
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		writeAPIError(w, http.StatusBadRequest, "invalid_json", "request body must contain one JSON object")
+	request, ok := decodeSingle[moveRequest](w, r, 64*1024)
+	if !ok {
 		return
 	}
 	engineRequest, validated, err := validateMoveRequest(request)
@@ -199,22 +186,7 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 	execCtx := context.WithoutCancel(r.Context())
 	response, hit, predictErr := s.executeMaia(r.Context(), execCtx, PriorityPlay, 0, engineRequest, model, false)
 	if predictErr != nil {
-		err := predictErr
-		switch {
-		case errors.Is(err, ErrSuperseded):
-			writeAPIError(w, http.StatusConflict, "superseded", "a newer request superseded this position")
-		case errors.Is(err, ErrWorkerBusy):
-			w.Header().Set("Retry-After", "1")
-			writeAPIError(w, http.StatusServiceUnavailable, "engine_busy", "the selected Maia3 worker is busy")
-		case errors.Is(err, ErrPositionMismatch):
-			writeAPIError(w, http.StatusBadRequest, "position_mismatch", "moves do not produce fen")
-		case errors.Is(err, ErrInvalidPosition):
-			writeAPIError(w, http.StatusBadRequest, "invalid_position", "position or move history is invalid")
-		case errors.Is(err, ErrNoLegalMoves):
-			writeAPIError(w, http.StatusBadRequest, "game_over", "position has no legal moves")
-		default:
-			writeAPIError(w, http.StatusBadGateway, "engine_unavailable", sanitizeError(err.Error()))
-		}
+		mapEngineError(w, predictErr, sanitizeError(predictErr.Error()))
 		return
 	}
 	model, degraded = response.ModelUsed, response.Degraded

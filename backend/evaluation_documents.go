@@ -5,14 +5,7 @@ import (
 	"strings"
 )
 
-// evaluationDocument preserves the presence-check API for non-owned callers
-// (evaluate.go) but delegates to the single strict typed decode path.
-func evaluationDocument(value any) bool {
-	_, ok := decodeStrictValue[evaluationResponse](value, evalRequired, docAllowNull)
-	return ok
-}
-
-func validOwnedCacheValue(hash, engine, key string, value any) bool {
+func validOwnedCacheValue(hash, engine, key string, encoded []byte) bool {
 	if !strings.HasPrefix(key, "v2:") {
 		return false
 	}
@@ -31,10 +24,10 @@ func validOwnedCacheValue(hash, engine, key string, value any) bool {
 	}
 	switch engine {
 	case "sf":
-		response, ok := decodeStrictValue[evaluationResponse](value, evalRequired, docAllowNull)
+		response, ok := decodeStrictValue[evaluationResponse](encoded, evalRequired, docAllowNull)
 		return ok && identity.Revision == "Stockfish-19" && identity.Policy == identity.Settings.policy() && identity.Settings.validate() == nil && validEvaluationValue(response, identity.Settings)
 	case "maia":
-		response, ok := decodeStrictValue[moveResponse](value, moveRequired, nil)
+		response, ok := decodeStrictValue[moveResponse](encoded, moveRequired, nil)
 		return ok && identity.Revision == maiaRevision && !response.Degraded && validMoveValue(response, identity.Model, true)
 	}
 	return false

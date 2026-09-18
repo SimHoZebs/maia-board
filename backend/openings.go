@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log"
 	"net/http"
 	"os/exec"
@@ -80,10 +79,6 @@ func execOpeningsLookup(ctx context.Context, command []string, input []byte) ([]
 }
 
 func (s *server) openingsHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeAPIError(w, 405, "method_not_allowed", "POST is required")
-		return
-	}
 	started := time.Now()
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	w = rec
@@ -91,17 +86,11 @@ func (s *server) openingsHandler(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		log.Printf("openings status=%d plies=%d duration_ms=%d", rec.status, len(request.Moves), time.Since(started).Milliseconds())
 	}()
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		writeAPIError(w, 400, "invalid_json", "request body must be a valid JSON object")
+	decoded, ok := decodeSingle[openingsRequest](w, r, 64*1024)
+	if !ok {
 		return
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		writeAPIError(w, 400, "invalid_json", "request body must contain one JSON object")
-		return
-	}
+	request = decoded
 	if err := validateOpeningsRequest(&request); err != nil {
 		writeAPIError(w, 400, err.Code, err.Message)
 		return

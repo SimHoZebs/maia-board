@@ -13,15 +13,15 @@ import (
 // address nothing since the legacy table was dropped: they 404.
 func putCache(t *testing.T, s *server, hash, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	var put cachePut
+	var put struct {
+		Engine string          `json:"engine"`
+		Key    string          `json:"key"`
+		Value  json.RawMessage `json:"value"`
+	}
 	if err := json.Unmarshal([]byte(body), &put); err != nil {
 		t.Fatal(err)
 	}
-	data, err := json.Marshal(put.Value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	entry, err := s.store.cachePut(hash, put.Engine, put.Key, string(data))
+	entry, err := s.store.cachePut(hash, put.Engine, put.Key, string(put.Value))
 	if err != nil {
 		t.Fatal(err)
 	}

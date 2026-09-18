@@ -4,9 +4,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -176,66 +174,57 @@ func (s *GameStore) Save(payload gamePayload) (gameRow, error) {
 		}
 		id = generated
 	}
-	moves, err := json.Marshal(payload.Moves)
+	moves, err := encodeJSONColumn(payload.Moves)
 	if err != nil {
 		return gameRow{}, err
 	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return gameRow{}, err
-	}
-	defer tx.Rollback()
-	var created, updated, stored string
-	var storedColor, storedModel, storedResult string
-	var storedMaia, storedUser int
-	var storedTemperature float64
-	err = tx.QueryRow(`SELECT created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result
-		FROM games WHERE id = ?`, id).Scan(&created, &updated, &storedColor, &storedMaia, &storedUser, &storedModel, &stored, &storedTemperature, &storedResult)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		created = payload.CreatedAt
-		if created == "" {
-			created = now
-		}
-	case err != nil:
-		return gameRow{}, err
-	default:
-		// Resuming or re-saving unchanged content must not churn recency order.
-		if storedColor == payload.UserColor && storedMaia == *payload.EloMaia && storedUser == *payload.EloUser &&
-			storedModel == payload.Model && stored == string(moves) && storedTemperature == payload.Temperature && storedResult == payload.Result {
-			if payload.Current {
-				if _, err := tx.Exec(`INSERT INTO meta (key, value) VALUES ('current_game_id', ?)
-					ON CONFLICT (key) DO UPDATE SET value = excluded.value`, id); err != nil {
-					return gameRow{}, err
+	return withTx(s.db, func(tx *sql.Tx) (gameRow, error) {
+		var created, updated, stored string
+		var storedColor, storedModel, storedResult string
+		var storedMaia, storedUser int
+		var storedTemperature float64
+		err := tx.QueryRow(`SELECT created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result
+			FROM games WHERE id = ?`, id).Scan(&created, &updated, &storedColor, &storedMaia, &storedUser, &storedModel, &stored, &storedTemperature, &storedResult)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			created = payload.CreatedAt
+			if created == "" {
+				created = now
+			}
+		case err != nil:
+			return gameRow{}, err
+		default:
+			// Resuming or re-saving unchanged content must not churn recency order.
+			if storedColor == payload.UserColor && storedMaia == *payload.EloMaia && storedUser == *payload.EloUser &&
+				storedModel == payload.Model && stored == moves && storedTemperature == payload.Temperature && storedResult == payload.Result {
+				if payload.Current {
+					if _, err := tx.Exec(`INSERT INTO meta (key, value) VALUES ('current_game_id', ?)
+						ON CONFLICT (key) DO UPDATE SET value = excluded.value`, id); err != nil {
+						return gameRow{}, err
+					}
 				}
+				return gameRow{ID: id, CreatedAt: created, UpdatedAt: updated, UserColor: payload.UserColor,
+					EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result}, nil
 			}
-			if err := tx.Commit(); err != nil {
-				return gameRow{}, err
-			}
-			return gameRow{ID: id, CreatedAt: created, UpdatedAt: updated, UserColor: payload.UserColor,
-				EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result}, nil
 		}
-	}
-	_, err = tx.Exec(`INSERT INTO games (id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (id) DO UPDATE SET updated_at = excluded.updated_at, user_color = excluded.user_color,
-			elo_maia = excluded.elo_maia, elo_user = excluded.elo_user, model = excluded.model, moves = excluded.moves, temperature = excluded.temperature, result = excluded.result`,
-		id, created, now, payload.UserColor, *payload.EloMaia, *payload.EloUser, payload.Model, string(moves), payload.Temperature, payload.Result)
-	if err != nil {
-		return gameRow{}, err
-	}
-	if payload.Current {
-		_, err = tx.Exec(`INSERT INTO meta (key, value) VALUES ('current_game_id', ?)
-			ON CONFLICT (key) DO UPDATE SET value = excluded.value`, id)
+		_, err = tx.Exec(`INSERT INTO games (id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT (id) DO UPDATE SET updated_at = excluded.updated_at, user_color = excluded.user_color,
+				elo_maia = excluded.elo_maia, elo_user = excluded.elo_user, model = excluded.model, moves = excluded.moves, temperature = excluded.temperature, result = excluded.result`,
+			id, created, now, payload.UserColor, *payload.EloMaia, *payload.EloUser, payload.Model, moves, payload.Temperature, payload.Result)
 		if err != nil {
 			return gameRow{}, err
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return gameRow{}, err
-	}
-	return gameRow{ID: id, CreatedAt: created, UpdatedAt: now, UserColor: payload.UserColor,
-		EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result}, nil
+		if payload.Current {
+			_, err = tx.Exec(`INSERT INTO meta (key, value) VALUES ('current_game_id', ?)
+				ON CONFLICT (key) DO UPDATE SET value = excluded.value`, id)
+			if err != nil {
+				return gameRow{}, err
+			}
+		}
+		return gameRow{ID: id, CreatedAt: created, UpdatedAt: now, UserColor: payload.UserColor,
+			EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result}, nil
+	})
 }
 
 type gameScanner interface {
@@ -249,12 +238,11 @@ func scanGame(scanner gameScanner) (gameRow, error) {
 		&game.EloMaia, &game.EloUser, &game.Model, &moves, &game.Temperature, &game.Result); err != nil {
 		return gameRow{}, err
 	}
-	if err := json.Unmarshal([]byte(moves), &game.Moves); err != nil {
+	decoded, err := decodeMovesColumn(moves)
+	if err != nil {
 		return gameRow{}, err
 	}
-	if game.Moves == nil {
-		game.Moves = []string{}
-	}
+	game.Moves = decoded
 	return game, nil
 }
 
@@ -273,7 +261,8 @@ func (s *GameStore) List(limit int, offsets ...int) ([]gameRow, int, error) {
 		offset = offsets[0]
 	}
 	var total int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM games`).Scan(&total); err != nil {
+	total, err := countRows(s.db, `SELECT COUNT(*) FROM games`)
+	if err != nil {
 		return nil, 0, err
 	}
 	rows, err := s.db.Query(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result
@@ -304,18 +293,16 @@ func (s *GameStore) CurrentID() string {
 // Delete removes a game and clears the current-game marker when it points there.
 // Deleting an unknown id still succeeds, keeping client retries idempotent.
 func (s *GameStore) Delete(id string) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM games WHERE id = ?`, id); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DELETE FROM meta WHERE key = 'current_game_id' AND value = ?`, id); err != nil {
-		return err
-	}
-	return tx.Commit()
+	_, err := withTx(s.db, func(tx *sql.Tx) (struct{}, error) {
+		if _, err := tx.Exec(`DELETE FROM games WHERE id = ?`, id); err != nil {
+			return struct{}{}, err
+		}
+		if _, err := tx.Exec(`DELETE FROM meta WHERE key = 'current_game_id' AND value = ?`, id); err != nil {
+			return struct{}{}, err
+		}
+		return struct{}{}, nil
+	})
+	return err
 }
 
 func (s *server) games(w http.ResponseWriter, r *http.Request) {
@@ -365,16 +352,8 @@ func (s *server) games(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"games": games, "current_id": nullableString(currentID), "current_game": current, "total": total, "next_offset": nextOffset})
 	case http.MethodPost:
-		var payload gamePayload
-		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&payload); err != nil {
-			writeAPIError(w, http.StatusBadRequest, "invalid_json", "request body must be a valid JSON object")
-			return
-		}
-		var trailing any
-		if err := decoder.Decode(&trailing); err != io.EOF {
-			writeAPIError(w, http.StatusBadRequest, "invalid_json", "request body must contain one JSON object")
+		payload, ok := decodeSingle[gamePayload](w, r, 64*1024)
+		if !ok {
 			return
 		}
 		if err := validateGamePayload(&payload); err != nil {
