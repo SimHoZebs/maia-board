@@ -8,6 +8,17 @@ import { toGroundColor } from './board-colors';
 import type { DrawBrushes, DrawShape } from '@lichess-org/chessground/draw';
 import { candidatePreviewShape, reviewBrushes } from './reviewArrows';
 
+// Chessground renders its built-in red radial `square.check` style (already
+// imported via chessground.brown.css) for whatever `check` names. chess.js
+// owns check truth; Chessground only finds that side's king square.
+function checkForFen(fen: string): Color | false {
+  try {
+    const game = new Chess(fen);
+    return game.inCheck() ? toGroundColor(game.turn()) : false;
+  } catch {
+    return false;
+  }
+}
 export type BoardPosition = { fen: string; lastMove?: readonly string[] | null };
 export type BoardTransition = { line: string; ply: number };
 type Props = { position: BoardPosition; transition: BoardTransition; orientation: Color; enabled: boolean; thinking: boolean; interactionVersion: number; coordinatesOnSquares: boolean; preview?: string | null; shapes?: DrawShape[]; brushes?: DrawBrushes; onMove: (from: Square, to: Square) => void };
@@ -27,9 +38,19 @@ export function ChessBoard({ position, transition, orientation, enabled, thinkin
   const previous = useRef<BoardTransition>(transition);
   useLayoutEffect(() => { callback.current = onMove; });
   useLayoutEffect(() => {
+    const initialFen = initial.current!.fen;
+    const initialCheck = checkForFen(initialFen);
+    let initialTurn: Color | undefined;
+    try {
+      initialTurn = toGroundColor(new Chess(initialFen).turn());
+    } catch {
+      initialTurn = initialCheck || undefined;
+    }
     const ground = Chessground(container.current!, {
-      fen: initial.current!.fen,
+      fen: initialFen,
       orientation: initial.current!.orientation,
+      turnColor: initialTurn,
+      check: initialCheck,
       addDimensionsCssVarsTo: container.current!.closest<HTMLElement>('.board-frame') ?? undefined,
       viewOnly: false, coordinates: true, coordinatesOnSquares, animation: { enabled: true, duration: 220 },
       // Hold-and-drag (press, hold, move, release) shares the board with
@@ -77,7 +98,7 @@ export function ChessBoard({ position, transition, orientation, enabled, thinkin
     // instead of animating every piece from the previous line's tip.
     const singleStep = previous.current.line === transition.line && Math.abs(previous.current.ply - transition.ply) <= 1;
     previous.current = transition;
-    ground.set({ fen: position.fen, orientation, turnColor: toGroundColor(game.turn()), animation: { enabled: singleStep },
+    ground.set({ fen: position.fen, orientation, turnColor: toGroundColor(game.turn()), check: game.inCheck() ? toGroundColor(game.turn()) : false, animation: { enabled: singleStep },
       lastMove: lastMove ? parseKeyList(lastMove) : undefined,
       movable: { free: false, color: enabled ? toGroundColor(game.turn()) : undefined, dests: enabled ? legalDests(game) : new Map(), showDests: true,
         events: { after(from, to) {

@@ -156,17 +156,20 @@ export function storedGameResult(game: StoredGame): string {
 // Losing-king marker for game-over boards: scan the displayed FEN for the
 // given side's king. Invalid FEN or a missing king yields undefined so
 // callers render no badge rather than a wrong one.
+export function findKingSquare(game: Chess, color: 'w' | 'b'): Square | null {
+  for (const row of game.board()) {
+    for (const square of row) {
+      if (square && square.type === 'k' && square.color === color) return square.square;
+    }
+  }
+  return null;
+}
 export function kingSquare(fen: string, color: MaiaColor): Key | undefined {
   let game: Chess;
   try { game = new Chess(fen); }
   catch { return undefined; }
-  const target = color === 'white' ? 'w' : 'b';
-  for (const row of game.board()) {
-    for (const square of row) {
-      if (square && square.type === 'k' && square.color === target) return parseKey(square.square);
-    }
-  }
-  return undefined;
+  const found = findKingSquare(game, color === 'white' ? 'w' : 'b');
+  return found ? parseKey(found) : undefined;
 }
 // White-relative expected score (0-100) from a mover-relative Maia WDL
 // triple. The bar, graphs, and score copy read this at the fixed 2400

@@ -1,5 +1,5 @@
 import { Chess, type Square } from 'chess.js';
-import { applyUci, uciFromMove, START_FEN } from './domain';
+import { applyUci, findKingSquare, uciFromMove, START_FEN } from './domain';
 import { playedMoveForkNote, playedMoveGainNote, type MaiaSide } from './material';
 import { openingAt, type OpeningMatch } from './openings';
 import type { DomainOutcome } from './domain';
@@ -36,15 +36,6 @@ export function classifyTerminal(afterFen: string, afterOutcome: DomainOutcome |
     return null;
   }
   return 'repetition';
-}
-
-function kingSquare(game: Chess, color: 'w' | 'b'): Square | null {
-  for (const row of game.board()) {
-    for (const square of row) {
-      if (square && square.type === 'k' && square.color === color) return square.square;
-    }
-  }
-  return null;
 }
 
 function neighborSquares(square: Square): Square[] {
@@ -91,7 +82,7 @@ export function matePattern(args: {
   const mover = before.turn();
   // Fool's mate: Black mates on h4 within the first five plies against an
   // unmoved White king.
-  if (mover === 'b' && san === 'Qh4#' && ply <= 5 && kingSquare(after, 'w') === 'e1') return "Fool's mate";
+  if (mover === 'b' && san === 'Qh4#' && ply <= 5 && findKingSquare(after, 'w') === 'e1') return "Fool's mate";
   // Scholar's mate family: early queen mate on f7/f2/h7/h2.
   if (
     ply <= 9 &&
@@ -101,7 +92,7 @@ export function matePattern(args: {
   }
   const to = playedUci.slice(2, 4) as Square;
   const matedColor = after.turn();
-  const king = kingSquare(after, matedColor);
+  const king = findKingSquare(after, matedColor);
   if (!king) return null;
   const piece = san[0];
   // Smothered mate: a knight mates a king whose every flight is off-board

@@ -1,5 +1,5 @@
 import { Chess, type Square } from 'chess.js';
-import { applyUci } from './domain';
+import { applyUci, findKingSquare } from './domain';
 
 export type CapturedPiece = 'p' | 'n' | 'b' | 'r' | 'q';
 export type MaiaSide = 'white' | 'black';
@@ -180,7 +180,7 @@ function collectForkVictims(postMoveGame: Chess, to: Square, victimColor: 'w' | 
     const victims: ForkVictim[] = probe.moves({ square: to, verbose: true })
       .map(move => move.captured?.toLowerCase())
       .filter((captured): captured is Exclude<ForkVictim, 'k'> => !!captured && isForkVictim(captured));
-    const kingSquare = findKing(probe, victimColor);
+    const kingSquare = findKingSquare(probe, victimColor);
     if (kingSquare && probe.attackers(kingSquare, beneficiaryColor).includes(to)) victims.push('k');
     return victims;
   } catch { return null; }
@@ -284,12 +284,6 @@ export function playedMoveForkNote(beforeFen: string, playedUci: string, mover: 
   if (!ordered) return null;
   const side = mover === 'white' ? "Black's" : "White's";
   return `${san} forks ${side} ${joinVictims(ordered)}.`;
-}
-function findKing(game: Chess, color: 'w' | 'b'): Square | null {
-  for (const row of game.board()) for (const square of row) {
-    if (square && square.type === 'k' && square.color === color) return square.square;
-  }
-  return null;
 }
 function joinVictims(victims: ForkVictim[]): string {
   if (victims.length === 2 && victims[0] === victims[1] && victims[0] !== 'k') return `both ${FORK_PLURALS[victims[0]]}`;
