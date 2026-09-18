@@ -1,4 +1,5 @@
 import { MaiaApiError, parseErrorCode } from './api';
+import { postJson, readJsonBody } from './evaluationTransport';
 import { isNonNegativeInt, isRecord, isStringMap } from './guards';
 import { evaluationRequest, resolveSettings, reviewKey, type Engine, type ReviewNode, type SettingsInput } from './evaluationStore';
 
@@ -134,12 +135,15 @@ export function buildBatchItems(nodes: ReviewNode[], settings: SettingsInput, en
   return items;
 }
 
-async function readError(response: Response, fallback: string): Promise<MaiaApiError> {
-  const body: unknown = await response.json().catch(() => null);
+function errorFromBody(response: Response, body: unknown, fallback: string): MaiaApiError {
   const record = isRecord(body) ? body : null;
   const code = record ? parseErrorCode(record) : 'unknown';
   const message = record && typeof record.message === 'string' ? record.message : fallback;
   return new MaiaApiError(code, message, response.status);
+}
+
+async function readError(response: Response, fallback: string): Promise<MaiaApiError> {
+  return errorFromBody(response, await readJsonBody(response), fallback);
 }
 
 function parseProgress(body: unknown): BatchProgress {
@@ -166,22 +170,23 @@ function parseSubmitted(body: unknown, status?: number): BatchSubmitted {
 }
 
 export async function submitBatch(items: BatchItem[], fetchImpl: FetchLike = fetch, sleepImpl: SleepLike = defaultSleep): Promise<BatchSubmitted> {
-  const postOnce = () => fetchImpl('/reviews', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ requests: items.map(item => item.request) }),
-  }).catch(() => { throw new MaiaApiError('server_unreachable', 'The review server could not be reached.'); });
-  const readSuccess = async (response: Response): Promise<BatchSubmitted> => {
-    if (!response.ok) throw await readError(response, 'The review server rejected this batch.');
-    return parseSubmitted(await response.json().catch(() => null), response.status);
+  // The one shared JSON-POST sender (see evaluationTransport.postJson): one
+  // send + one body read per attempt. 429 wait-once backpressure below is
+  // per-endpoint policy and stays here; per-endpoint codes ride the shared
+  // error map (errorFromBody).
+  const postOnce = () => postJson(fetchImpl, '/reviews', { requests: items.map(item => item.request) })
+    .catch(() => { throw new MaiaApiError('server_unreachable', 'The review server could not be reached.'); });
+  const readSuccess = ({ response, body }: { response: Response; body: unknown }): BatchSubmitted => {
+    if (!response.ok) throw errorFromBody(response, body, 'The review server rejected this batch.');
+    return parseSubmitted(body, response.status);
   };
   const first = await postOnce();
   // 429 backpressure sits BEFORE the generic branch: wait once per
   // Retry-After, resubmit once, else surface engine-busy.
-  if (first.status === 429) {
-    await sleepImpl(parseBatchRetryDelayMs(first.headers?.get('Retry-After') ?? null));
+  if (first.response.status === 429) {
+    await sleepImpl(parseBatchRetryDelayMs(first.response.headers?.get('Retry-After') ?? null));
     const second = await postOnce();
-    if (second.status === 429) {
+    if (second.response.status === 429) {
       throw new MaiaApiError('engine_busy', 'The review servers are busy. Try again shortly.', 429);
     }
     return readSuccess(second);
@@ -194,72 +199,65 @@ export async function fetchBatchStatus(jobId: string, fetchImpl: FetchLike = fet
     .catch(() => { throw new MaiaApiError('server_unreachable', 'The review server could not be reached.'); });
   if (response.status === 404) throw new BatchGoneError();
   if (!response.ok) throw await readError(response, 'The review server rejected this batch.');
-  return parseProgress(await response.json().catch(() => null));
+  return parseProgress(await readJsonBody(response));
 }
 
-// Streams live progress until the batch finishes, the caller aborts, or the
-// stream breaks (the caller then falls back to polling status + bulk
-// lookup, which is also the reconnect path). Snapshot-first: the server
-// opens with current progress, so gaps self-heal through reconciliation.
+// Streams live progress over the browser's native EventSource; the status
+// endpoint stays the ground truth. The stream is a pure optimization (fast
+// path): every tick reconciles through the shared lookup restore, and the
+// caller refetches status + reprimes on mount, focus, visibility-visible,
+// online, and stream error — so the app stays correct with the stream broken
+// or deleted. Resolves when a tick reports finished; rejects on stream error
+// (the caller then refetches status, which maps gone jobs to BatchGoneError,
+// and falls back to polling). A caller abort is the normal unsubscribe path
+// and resolves silently, never a failure.
+export type BatchEventSource = Pick<EventSource, 'onmessage' | 'onerror' | 'close'>;
 export async function subscribeBatchEvents(
-  jobId: string, onProgress: (progress: BatchProgress) => void, signal: AbortSignal, fetchImpl: FetchLike = fetch,
+  jobId: string, onProgress: (progress: BatchProgress) => void, signal: AbortSignal,
+  createSource: new (url: string) => BatchEventSource = globalThis.EventSource,
 ): Promise<void> {
-  const response = await fetchImpl(`/reviews/${jobId}/events`, { method: 'GET', headers: { Accept: 'text/event-stream' }, signal })
-    .catch(error => {
-      if (signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return null;
-      throw new MaiaApiError('server_unreachable', 'The review server could not be reached.');
-    });
-  if (!response) return;
-  if (response.status === 404) throw new BatchGoneError();
-  if (!response.ok || !response.body) throw await readError(response, 'The review server rejected this batch.');
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  const handleFrame = (frame: string): boolean => {
-    if (frame.startsWith(':')) return false;
-    const line = frame.split('\n').find(entry => entry.startsWith('data:'));
-    if (!line) return false;
-    let envelope: unknown;
-    try { envelope = JSON.parse(line.slice(5).trim()); } catch { return false; }
-    const record = isRecord(envelope) ? envelope : null;
-    if (!record?.progress) return false;
-    const progress = parseProgress(record.progress);
-    onProgress(progress);
-    return progress.finished;
-  };
-  try {
-    let onAbort: () => void = () => undefined;
-    const aborted = new Promise<never>((_, reject) => {
-      onAbort = () => {
-        void reader.cancel().catch(() => undefined);
-        reject(new DOMException('Aborted', 'AbortError'));
-      };
-      if (signal.aborted) onAbort();
-      else signal.addEventListener('abort', onAbort, { once: true });
-    });
-    try {
-      for (;;) {
-        const next = await Promise.race([reader.read(), aborted]);
-        buffer += decoder.decode(next.value ?? new Uint8Array(), { stream: !next.done });
-        let boundary = buffer.indexOf('\n\n');
-        while (boundary >= 0) {
-          if (handleFrame(buffer.slice(0, boundary))) return;
-          buffer = buffer.slice(boundary + 2);
-          boundary = buffer.indexOf('\n\n');
-        }
-        if (next.done) {
-          if (buffer.trim()) handleFrame(buffer);
-          throw new MaiaApiError('server_unreachable', 'The review stream broke mid-batch.');
-        }
-      }
-    } catch (error) {
-      // A caller abort is the normal unsubscribe path, not a failure.
-      if (signal.aborted) return;
-      throw error;
-    } finally {
-      signal.removeEventListener('abort', onAbort);
-    }
-  } finally {
-    try { reader.releaseLock(); } catch { /* already cancelled */ }
+  if (signal.aborted) return;
+  if (typeof createSource !== 'function') {
+    throw new MaiaApiError('server_unreachable', 'The review stream broke mid-batch.');
   }
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const source = new createSource(`/reviews/${jobId}/events`);
+    const cleanup = () => {
+      source.onmessage = null;
+      source.onerror = null;
+      source.close();
+      signal.removeEventListener('abort', onAbort);
+    };
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    source.onmessage = (event) => {
+      if (settled || signal.aborted) return;
+      let envelope: unknown;
+      try { envelope = JSON.parse(event.data); } catch { return; }
+      const record = isRecord(envelope) ? envelope : null;
+      // The server wraps ticks as {progress}; accept a bare progress body
+      // too so a missed wrap never drops a live tick (status reconciles).
+      const body: unknown = record?.progress ?? envelope;
+      let progress: BatchProgress;
+      try { progress = parseProgress(body); } catch { return; }
+      onProgress(progress);
+      if (progress.finished) {
+        settled = true;
+        cleanup();
+        resolve();
+      }
+    };
+    source.onerror = () => {
+      if (settled || signal.aborted) return;
+      settled = true;
+      cleanup();
+      reject(new MaiaApiError('server_unreachable', 'The review stream broke mid-batch.'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }

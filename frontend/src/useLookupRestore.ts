@@ -7,16 +7,38 @@ import { ReviewCoordinator, type Engine, type ReviewNode, type SettingsInput } f
 // cache reads return), never the normal path.
 const MAX_CONCURRENT_RESTORES = 3;
 
-// Bulk cache restore, shared by useReview and usePlayFeedback: settle settled
-// rows through the lookup path even when no batch runs. A newer loadKey
-// (line content, settings, explicit retry) starts a new restore WITHOUT
-// aborting the previous one: lookup rows are content-keyed, so a landing
-// stale line can only settle rows the new line still wants (play lines grow
-// by append; the shared store merges everything). Aborts happen only on
-// unmount, on deactivation, or past the concurrency cap. nodes/settings ride
-// refs so object identities rebuilt by a parent render cannot refire a key.
-// Backgrounding never aborts.
-export function useBulkPrime(args: {
+// Shared imperative restore: batch progress and bulk prime are the same
+// operation observed two ways. Both call through here to the coordinator's
+// single restore entry (store-owned cache-fill + visible-pair-first); only
+// the caller's timing differs (loadKey effect below vs 2s-coalesced progress
+// ticks in useServerBatch). Batch-specific bits ride as caller-passed keys:
+// engines + priorityPlies select the wanted set, nothing branches here.
+export function restoreLookup(
+  coordinator: ReviewCoordinator,
+  nodes: ReviewNode[],
+  settings: SettingsInput,
+  signal: AbortSignal,
+  opts: { engines?: Engine[]; priorityPlies?: readonly number[] } = {},
+): Promise<{ total: number; covered: number }> {
+  return coordinator.restore(
+    nodes,
+    settings,
+    signal,
+    opts.engines ? [...opts.engines] : undefined,
+    opts.priorityPlies?.length ? [...opts.priorityPlies] : undefined,
+  );
+}
+
+// Bulk cache restore, shared by useReviewPipeline (both rooms) and the batch
+// progress reconciler: settle settled rows through the lookup path even when
+// no batch runs. A newer loadKey (line content, settings, explicit retry)
+// starts a new restore WITHOUT aborting the previous one: lookup rows are
+// content-keyed, so a landing stale line can only settle rows the new line
+// still wants (play lines grow by append; the shared store merges
+// everything). Aborts happen only on unmount, on deactivation, or past the
+// concurrency cap. nodes/settings ride refs so object identities rebuilt by
+// a parent render cannot refire a key. Backgrounding never aborts.
+export function useLookupRestore(args: {
   active: boolean;
   nodes: ReviewNode[];
   settings: SettingsInput;
@@ -24,12 +46,11 @@ export function useBulkPrime(args: {
   loadKey: string;
   onSettled?: (error: string | undefined) => void;
   // Focus-first restore: ReviewNode .ply values (e.g. focus/current) to settle
-  // before the rest of the line. When provided, the coordinator runs the
-  // priority prime first (small fast lookup) then the background full-line
-  // prime; the store's existing cache check dedupes the second phase so no
-  // duplicate fetch storm occurs. Omitted (current callers) keeps the single
-  // full-line restore. Rides a ref like nodes/settings so an inline literal
-  // cannot resubmit every render.
+  // before the rest of the line. When provided, the single store restore
+  // orders those jobs first in the lookup chunks; the store's existing cache
+  // check dedupes, so no duplicate fetch storm occurs. Omitted keeps the
+  // single full-line restore. Rides a ref like nodes/settings so an inline
+  // literal cannot resubmit every render.
   priorityPlies?: readonly number[];
   engines?: Engine[];
 }): void {
@@ -74,15 +95,10 @@ export function useBulkPrime(args: {
     const controller = new AbortController();
     flights.current.set(loadKey, controller);
     const forget = () => { flights.current.delete(loadKey); };
-    // Focus-first when the caller names plies: primeWithPriority settles the
-    // visible pair in its own small lookup, then the background full-line
-    // prime reuses those rows from cache (dedupe, no storm). Chunk limits and
-    // the MAX_CONCURRENT_RESTORES cap below still apply per prime call.
-    const priority = priorityRef.current;
-    const wanted = enginesRef.current;
-    const task = priority?.length
-      ? coordinator.primeWithPriority(nodesRef.current, settingsRef.current, controller.signal, priority, wanted)
-      : coordinator.ensure(nodesRef.current, settingsRef.current, { signal: controller.signal, ...(wanted ? { engines: wanted } : {}) });
+    const task = restoreLookup(coordinator, nodesRef.current, settingsRef.current, controller.signal, {
+      ...(enginesRef.current ? { engines: enginesRef.current } : {}),
+      ...(priorityRef.current?.length ? { priorityPlies: priorityRef.current } : {}),
+    });
     void Promise.resolve(task).then(
       () => {
         forget();

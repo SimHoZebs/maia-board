@@ -9,7 +9,7 @@ import { terminalEvaluation, type Evaluation } from './reviewMetrics';
 import { outcomeEvaluation } from './outcomeEvaluation';
 import { HistorySyncStore } from './syncStore';
 import type { RepositorySnapshot } from './gameRepository';
-import { currentPosition, initialState, reducer, snapshotOf } from './state';
+import { currentPosition, initialState, reducer, snapshotOf } from './state/index';
 import { KEYS, restoreGame } from './storage';
 
 beforeEach(() => {

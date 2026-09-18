@@ -12,7 +12,7 @@ import { Dialog } from './Dialog';
 import { analysisLength, gameResult, kingSquare, lineRecord, oppositeColor, parseKey, replay, resolveBoardOrientation, resultTextForTip, sideName, START_FEN, storedGameResult } from './domain';
 import type { BoardPosition, BoardTransition } from './ChessBoard';
 import { toGroundColor } from './board-colors';
-import { currentPosition } from './state';
+import { currentPosition } from './state/index';
 import { usePlayFeedback } from './usePlayFeedback';
 import { useReview } from './useReview';
 import { reviewBrushes, reviewShapes, type SquareBadge } from './reviewArrows';

@@ -36,6 +36,26 @@ export async function retryBusy(fetcher: typeof fetch, input: RequestInfo | URL,
   }
 }
 
+// Single JSON-body read for engine work: every sender maps an unreadable
+// body through its own per-endpoint domain error, but the read itself is one
+// shape (null on failure, never a throw).
+export async function readJsonBody(response: Response): Promise<unknown> {
+  try { return await response.json(); }
+  catch { return null; }
+}
+
+// Single JSON-POST shape for engine work: one headers/body/read path for the
+// play sender, the evaluation sender, and the batch sender. Busy-retry and
+// deadlines layer above in fetchJsonWithBusyRetry; the batch 429 wait-once
+// stays in submitBatch; per-endpoint error codes, parses, and cache-hit
+// flags stay with the callers.
+export async function postJson(
+  fetcher: typeof fetch, input: RequestInfo | URL, payload: unknown, signal?: AbortSignal,
+): Promise<{ response: Response; body: unknown }> {
+  const response = await fetcher(input, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload), ...(signal ? { signal } : {}) });
+  return { response, body: await readJsonBody(response) };
+}
 // Single fetch path for engine work: deadline + structured busy retry +
 // JSON read. Preserves superseded/503 codes for callers; only
 // engine_busy 503s retry here. Wire format unchanged.
@@ -44,9 +64,7 @@ export async function fetchJsonWithBusyRetry(
 ): Promise<{ response: Response; body: unknown }> {
   return withDeadline(async transportSignal => {
     const response = await retryBusy(fetcher, input, init, transportSignal);
-    let body: unknown = null;
-    try { body = await response.json(); }
-    catch { /* Callers map unreadable bodies to domain errors. */ }
-    return { response, body };
+    // Callers map unreadable bodies to domain errors.
+    return { response, body: await readJsonBody(response) };
   }, signal, timeout);
 }

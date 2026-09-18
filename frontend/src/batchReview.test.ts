@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildTimeline, START_FEN } from './domain';
 import { BatchGoneError, BATCH_PERSIST_KEY, buildBatchItems,
   clearPersistedBatch, fetchBatchStatus, hashBatchKeys, parseBatchRetryDelayMs, readPersistedBatch, submitBatch, subscribeBatchEvents,
-  writePersistedBatch, type BatchProgress } from './batchReview';
+  writePersistedBatch, type BatchEventSource, type BatchProgress } from './batchReview';
 import { MaiaApiError } from './api';
 import { jsonResponse } from './evaluationTestFixtures';
 import { requestBodyText } from './testUtils';
@@ -150,27 +150,53 @@ describe('fetchBatchStatus', () => {
 });
 
 describe('subscribeBatchEvents', () => {
-  const stream = (chunks: string[]) => {
-    const encoded = chunks.map(chunk => new TextEncoder().encode(chunk));
-    return new Response(new ReadableStream({ start(controller) { for (const part of encoded) controller.enqueue(part); controller.close(); } }));
+  // Browser-native EventSource fake: the hook, not a fetch-stream parser,
+  // owns live ticks; status stays the ground truth (gone jobs surface via
+  // fetchBatchStatus, not here).
+  class FakeSource {
+    static instances: FakeSource[] = [];
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror: ((event: Event) => void) | null = null;
+    closed = false;
+    url: string;
+    constructor(url: string) {
+      this.url = url;
+      FakeSource.instances.push(this);
+    }
+    close() { this.closed = true; }
+    emit(data: unknown) { this.onmessage?.({ data: JSON.stringify(data) } as MessageEvent); }
+    fail() { this.onerror?.({} as Event); }
+  }
+  const sourceFor = () => {
+    const found = FakeSource.instances.at(-1);
+    if (!found) throw new Error('expected an EventSource subscription');
+    return found;
   };
-  it('delivers progress frames and resolves on finished', async () => {
-    const body = `:ping\n\nid: 1\nevent: progress\ndata: ${JSON.stringify({ id: 1, progress: progress({ done: 2 }) })}\n\n`
-      + `id: 2\nevent: progress\ndata: ${JSON.stringify({ id: 2, progress: progress({ done: 6, finished: true }) })}\n\n`;
-    // Split mid-frame to prove chunk-boundary parsing.
-    const fetcher = vi.fn<typeof fetch>(async () => stream([body.slice(0, 40), body.slice(40)]));
+  it('delivers progress ticks over EventSource and resolves on finished', async () => {
+    FakeSource.instances = [];
     const seen: BatchProgress[] = [];
-    await subscribeBatchEvents('job1', update => { seen.push(update); }, new AbortController().signal, fetcher);
+    const done = subscribeBatchEvents('job1', update => { seen.push(update); }, new AbortController().signal, FakeSource as unknown as new (url: string) => BatchEventSource);
+    const source = sourceFor();
+    expect(source.url).toBe('/reviews/job1/events');
+    source.emit({ progress: progress({ done: 2 }) });
+    source.emit({ progress: progress({ done: 6, finished: true }) });
+    await done;
     expect(seen.map(update => update.done)).toEqual([2, 6]);
-    expect(fetcher.mock.calls[0][1]!.headers).toMatchObject({ Accept: 'text/event-stream' });
+    expect(source.closed).toBe(true);
   });
-  it('maps unknown jobs and stops on abort', async () => {
-    const gone = vi.fn<typeof fetch>(async () => jsonResponse({}, 404));
-    await expect(subscribeBatchEvents('nope', () => undefined, new AbortController().signal, gone)).rejects.toBeInstanceOf(BatchGoneError);
+  it('rejects on stream error so the caller refetches ground-truth status', async () => {
+    FakeSource.instances = [];
+    const failed = subscribeBatchEvents('job1', () => undefined, new AbortController().signal, FakeSource as unknown as new (url: string) => BatchEventSource);
+    sourceFor().fail();
+    await expect(failed).rejects.toBeInstanceOf(MaiaApiError);
+  });
+  it('stops on abort', async () => {
+    FakeSource.instances = [];
     const controller = new AbortController();
-    const hanging = vi.fn<typeof fetch>(async () => new Response(new ReadableStream({ start() {} })));
+    const stopped = subscribeBatchEvents('job1', () => undefined, controller.signal, FakeSource as unknown as new (url: string) => BatchEventSource);
     controller.abort();
-    await subscribeBatchEvents('job1', () => undefined, controller.signal, hanging);
+    await stopped;
+    expect(sourceFor().closed).toBe(true);
   });
 });
 

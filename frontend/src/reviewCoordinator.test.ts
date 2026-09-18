@@ -105,7 +105,7 @@ describe('timeline-backed restoration', () => {
   });
   it('overlapping restores merge: a stale line landing late still settles shared rows', async () => {
     // Play lines grow by append, so an in-flight restore for line N covers a
-    // subset of line N+1. useBulkPrime no longer aborts it; both must merge.
+    // subset of line N+1. useLookupRestore no longer aborts it; both must merge.
     const line1 = reviewNodes(buildTimeline(START_FEN, ['e2e4']));
     const line2 = reviewNodes(buildTimeline(START_FEN, ['e2e4', 'e7e5']));
     let releaseFirst!: () => void, releaseSecond!: () => void;

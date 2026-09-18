@@ -13,7 +13,7 @@ import { App } from "./App";
 const EvalLoadingLab = lazy(() => import("./EvalLoadingLab").then(module => ({ default: module.EvalLoadingLab })));
 import type { Mode } from "./domain";
 import { loadLine } from "./domain";
-import type { Action, State } from "./state";
+import type { Action, State } from "./state/index";
 import { useMaiaBoard } from "./useMaiaBoard";
 import { SyncContext } from "./syncStore";
 import { analysisPath, analysisSearch, parseAnalysisSearch, sameLine } from "./analysisUrl";

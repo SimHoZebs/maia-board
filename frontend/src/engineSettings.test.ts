@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { defaultSettings, normalizeSettings, START_FEN } from './domain';
-import { initialState, reducer } from './state';
+import { initialState, reducer } from './state/index';
 import { defaultStockfishSettings, normalizeStockfishSettings, stockfishPolicy, STOCKFISH_STORAGE_KEY } from './stockfishSettings';
 import { fetchEvaluation, reviewKey, ReviewCoordinator } from './reviewCoordinator';
 import { toStoredGame } from './serverGames';

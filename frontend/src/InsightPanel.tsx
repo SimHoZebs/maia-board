@@ -1,6 +1,6 @@
 import { useRef, useState, type Dispatch, type ReactNode } from "react";
 import { candidateSan } from "./domain";
-import type { Action, State } from "./state";
+import type { Action, State } from "./state/index";
 import { Rating } from "./BoardTools";
 import { Button, CandidateList, CandidateRow, EngineSection } from "./components";
 import { Chess } from "chess.js";

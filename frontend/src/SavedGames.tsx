@@ -7,7 +7,7 @@ import {
   sideName,
   storedGameResult,
 } from "./domain";
-import type { Action, State } from "./state";
+import type { Action, State } from "./state/index";
 import { copyText } from "./BoardTools";
 import { Button, IconButton } from "./components";
 import { Dialog } from "./Dialog";

@@ -1,4 +1,4 @@
-import { assertLegalUci, MaiaApiError, parseMoveResponse, type MaiaModel, type MoveResponse } from './api';
+import { assertLegalUci, isApiErrorCode, MaiaApiError, parseMoveResponse, type MaiaModel, type MoveResponse } from './api';
 import { Chess } from 'chess.js';
 import { applyUci, posId, type Timeline, type TimelineRow } from './domain';
 import { outcomeEvaluation } from './outcomeEvaluation';
@@ -50,18 +50,9 @@ export function fastReviewSettings(settings: ReviewSettings): ReviewSettings | u
 }
 export type EvaluationResult = Evaluation & { actual_settings?: StockfishSettings; cached?: boolean };
 export type StockfishResult = EvaluationResult;
-// Mirrors api.ts: unknown wire codes normalize to 'unknown' (the message is
-// preserved), so the engine→MaiaApiError translation is proven, not asserted.
-const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set([
-  'engine_busy', 'engine_unavailable', 'game_over', 'history_too_long', 'invalid_elo',
-  'invalid_fen', 'invalid_initial_fen', 'invalid_json', 'invalid_maia_color',
-  'invalid_model', 'invalid_move', 'invalid_position', 'invalid_request',
-  'method_not_allowed', 'missing_elo', 'not_maia_turn', 'position_mismatch',
-  'server_unreachable', 'superseded', 'unknown',
-]);
-function isApiErrorCode(value: unknown): value is MaiaApiError['code'] {
-  return typeof value === 'string' && KNOWN_ERROR_CODES.has(value);
-}
+// Error-code vocabulary is owned once by api.ts (isApiErrorCode): unknown
+// wire codes normalize to 'unknown' with the message preserved. Per-endpoint
+// codes ride under that one sender taxonomy — no fork here.
 type Result = Evaluation | MoveResponse;
 // One identity struct owns position + engine + settings. posId is
 // hash(initialFen, prefix); the review key adds engine + settings hash.
@@ -93,22 +84,6 @@ export function evaluationRequest(engine: Engine, node: ReviewNode, settings: Re
       : { elo_maia: clampMaiaElo(settings.eloMaia), elo_user: clampMaiaElo(settings.eloUser), model: settings.model }) };
 }
 
-// Focus-first ordering for bulk restore. Jobs for the given plies (ReviewNode
-// .ply values, e.g. focus/current) lead the array so they land in the first
-// /evaluations/lookup chunk. Pure reorder — no filtering, no new fetches, no
-// chunk-limit change; callers still dedupe via the existing cache check.
-export function reorderJobsForPriority(jobs: Job[], priorityPlies: readonly number[]): Job[] {
-  if (!priorityPlies.length) return jobs;
-  const wanted = new Set(priorityPlies);
-  const head: Job[] = [];
-  const tail: Job[] = [];
-  for (const job of jobs) (wanted.has(job.node.ply) ? head : tail).push(job);
-  return [...head, ...tail];
-}
-export function buildPrimeJobs(nodes: ReviewNode[], settings: SettingsInput, engines: Engine[], priorityPlies?: readonly number[]): Job[] {
-  const jobs = nodes.flatMap(node => node.outcome ? [] : engines.map(engine => ({ engine, node, settings: resolveSettings(settings, node), key: reviewKey(engine, node, resolveSettings(settings, node)) })));
-  return priorityPlies?.length ? reorderJobsForPriority(jobs, priorityPlies) : jobs;
-}
 const uci = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
 function isScore(value: unknown): value is Score {
   if (!isRecord(value)) return false;
@@ -271,8 +246,24 @@ export class EvaluationStore {
     const fast = fastReviewSettings(settings);
     return fast ? this.result('sf', node, fast) : undefined;
   }
-  private async restore(jobs: Job[], signal: AbortSignal, priorityPlies?: readonly number[]): Promise<void> {
-    const ordered = priorityPlies?.length ? reorderJobsForPriority(jobs, priorityPlies) : jobs;
+  // Single restore path: cache-fill + visible-pair-first live here and
+  // nowhere else. Jobs for the given plies (ReviewNode .ply values, e.g.
+  // focus/current) lead the first /evaluations/lookup chunk; the remainder
+  // follows in line order within the same chunk limits. Pure reorder — no
+  // filtering, no new fetches, no chunk-limit change; the cache check below
+  // dedupes already-settled rows so a focus-first call never double-fetches.
+  // The coordinator keeps only the live foreground pump and delegates here
+  // for settled rows; there is no second two-phase focus path.
+  async restore(nodes: ReviewNode[], settings: SettingsInput, engines: Engine[], signal: AbortSignal, priorityPlies?: readonly number[]): Promise<{ total: number; covered: number }> {
+    const jobs = nodes.flatMap(node => node.outcome ? [] : engines.map(engine => ({ engine, node, settings: resolveSettings(settings, node), key: reviewKey(engine, node, resolveSettings(settings, node)) })));
+    const ordered = (() => {
+      if (!priorityPlies?.length) return jobs;
+      const wanted = new Set(priorityPlies);
+      const head: Job[] = [];
+      const tail: Job[] = [];
+      for (const job of jobs) (wanted.has(job.node.ply) ? head : tail).push(job);
+      return [...head, ...tail];
+    })();
     const pending = [...new Map(ordered.filter(job => !this.cache.has(job.key)).map(job => [job.key, job])).values()];
     // The byte bound includes the surrounding JSON and commas. Encode only
     // the current chunk so long histories do not retain all prefix arrays.
@@ -307,17 +298,7 @@ export class EvaluationStore {
       }
       this.notify();
     }
-  }
-  async prime(nodes: ReviewNode[], settings: SettingsInput, engines: Engine[], signal: AbortSignal, priorityPlies?: readonly number[]) {
-    const jobs = nodes.flatMap(node => node.outcome ? [] : engines.map(engine => ({ engine, node, settings: resolveSettings(settings, node), key: reviewKey(engine, node, resolveSettings(settings, node)) })));
-    await this.restore(jobs, signal, priorityPlies);
-  }
-  // Focus-first prime: priorityPlies (ReviewNode .ply values, e.g.
-  // focus/current) go in the first lookup chunk; the remainder follows in
-  // line order within the same chunk limits. Identical parse/cache path to
-  // prime() — only the job order differs.
-  async primeWithPriority(nodes: ReviewNode[], settings: SettingsInput, engines: Engine[], signal: AbortSignal, priorityPlies: readonly number[]) {
-    await this.prime(nodes, settings, engines, signal, priorityPlies);
+    return this.primeCoverage(nodes, settings, engines);
   }
   primeCoverage(nodes: ReviewNode[], settings: SettingsInput, engines: Engine[]): { total: number; covered: number } {
     const both = engines.includes('sf') && engines.includes('maia');
@@ -327,12 +308,3 @@ export class EvaluationStore {
   }
 }
 export const evaluationStore = new EvaluationStore();
-
-// Standalone focus-first helper matching the requested
-// primeWithPriority(nodes, settings, engines, signal, priorityPlies) shape.
-// Operates on the shared app store; workspaces with an isolated store use the
-// EvaluationStore.primeWithPriority method directly. Exported for callers
-// that hold nodes but not the store instance.
-export async function primeWithPriority(nodes: ReviewNode[], settings: SettingsInput, engines: Engine[], signal: AbortSignal, priorityPlies: readonly number[]): Promise<void> {
-  await evaluationStore.primeWithPriority(nodes, settings, engines, signal, priorityPlies);
-}

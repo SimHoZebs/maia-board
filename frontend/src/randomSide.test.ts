@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { resolveSide } from './randomSide';
-import { initialState, reducer } from './state';
+import { initialState, reducer } from './state/index';
 it('resolves both random outcomes and leaves chosen sides alone', () => {
   expect(resolveSide('random', () => 0)).toBe('white');
   expect(resolveSide('random', () => 1)).toBe('black');

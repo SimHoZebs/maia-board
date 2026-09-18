@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { computePlayQualities, getNavigatorOnLine, hasExhaustedPlayRetries, isOfflineNow, isOfflineValue, PLAY_RETRY_EXHAUSTED_MESSAGE, playExhaustedError, wantedPlayPair, type PlayQualitiesMemo } from './usePlayFeedback';
 import { computeReviewQualities, translateReviewQualities } from './useReview';
 import { qualityGlyphs } from './ReviewCharts';
-import { initialState, reducer } from './state';
+import { initialState, reducer } from './state/index';
 import { KEYS } from './storage';
 import { buildTimeline, START_FEN, timelineBuildsForTests } from './domain';
 import { reviewKey, reviewNodes, stablePositionKey, type ReviewNode, type ReviewSettings } from './reviewCoordinator';

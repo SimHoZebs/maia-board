@@ -4,7 +4,7 @@ import { ErrorBoundary, PanelError } from './ErrorBoundary';
 import { fetchEvaluation } from './reviewCoordinator';
 import { loadLine } from './domain';
 import { testNodes } from './testUtils';
-import { initialState, reducer } from './state';
+import { initialState, reducer } from './state/index';
 import { MaiaApiError } from './api';
 
 const local = () => {

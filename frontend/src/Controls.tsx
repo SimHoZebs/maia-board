@@ -1,7 +1,7 @@
 import { useState, type Dispatch } from 'react';
 import { ChessKing, Dices } from 'lucide-react';
 import { exportExplored, exportLine, newId, sideName } from './domain';
-import type { Action, State } from './state';
+import type { Action, State } from './state/index';
 import { Dialog } from './Dialog';
 import { Button } from './components';
 import { resolveSide } from './randomSide';

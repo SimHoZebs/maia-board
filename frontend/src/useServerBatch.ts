@@ -4,14 +4,18 @@ import { BatchGoneError, buildBatchItems, clearPersistedBatch,
   readPersistedBatch, submitBatch, subscribeBatchEvents, writePersistedBatch,
   type BatchItem, type BatchProgress, type PersistedBatch } from './batchReview';
 import type { Engine, LineScope, ReviewCoordinator, ReviewNode, SettingsInput } from './reviewCoordinator';
+import { restoreLookup } from './useLookupRestore';
 
 export type ServerBatchProgress = { total: number; done: number; failed: number; running: boolean };
 
 // Server-batch client: submit(nodes, scope) + progress UI. Nothing cancels:
 // a scope change, unmount, deactivation, or game delete only drops local
 // references while server jobs drain on their own, and every late
-// SSE/poll/prime callback is ignored by a single lineKey guard.
-// Backgrounding never aborts: a broken stream falls back to polls silently.
+// EventSource/poll/prime callback is ignored by a single lineKey guard.
+// Backgrounding never aborts: live ticks ride the browser's native
+// EventSource as a pure optimization, while the status endpoint is the
+// ground truth — status + prime refetch on mount, focus, visibility-visible,
+// online, and stream error, so a broken or deleted stream only costs speed.
 // The submitted job id + content hash persist in localStorage so a reload
 // reattaches to the still-running server job instead of showing Analyze
 // again. A settings change or different line never reattaches (hash/lineKey
@@ -31,10 +35,10 @@ export function useServerBatch(args: {
   auto?: boolean;
   fetcher?: typeof fetch;
   // Focus-first reconciliation: ReviewNode .ply values to settle before the
-  // rest of the line when reconciling batch progress via the lookup path.
-  // Forwarded to the coordinator's priority prime; the existing 2s throttle
-  // below and the store's cache check still apply (no duplicate storm).
-  // Rides a ref so an inline literal cannot resubmit.
+  // rest of the line when reconciling batch progress via the single lookup
+  // restore. The existing 2s throttle below and the store's cache check still
+  // apply (no duplicate storm). Rides a ref so an inline literal cannot
+  // resubmit.
   priorityPlies?: readonly number[];
 }): { progress: ServerBatchProgress | null; error: string | undefined; start: () => void; retry: () => void } {
   const { active, nodes, settings, engines, coordinator, scope, auto, fetcher } = args;
@@ -252,7 +256,9 @@ export function useServerBatch(args: {
     }
   }, [active, jobId, jobScopeKey]);
 
-  // Track progress by stream, falling back to polls; reconcile values by prime.
+  // Track progress by EventSource live ticks (fast path) with the status
+  // endpoint as ground truth, falling back to polls; reconcile values through
+  // the single shared lookup restore (the same operation bulk prime runs).
   // Guarded by one lineKey check: late events for a superseded scope are dropped.
   useEffect(() => {
     if (!active || !jobId || !jobScopeKey) return;
@@ -270,14 +276,14 @@ export function useServerBatch(args: {
     const primeNow = async () => {
       if (stopped || stale()) return;
       lastPrime = Date.now();
-      // Focus-first reconciliation when the caller names plies: the visible
-      // pair settles in its own small lookup, then the background full-line
-      // prime reuses those rows from cache. Throttling (2s coalescing above)
-      // and dedupe (store cache check) are unchanged.
+      // Batch-specific keys ride the shared restore: the visible pair (when
+      // the caller names plies) settles first, then the background full-line
+      // remainder reuses those rows from cache. Throttling (2s coalescing
+      // above) and dedupe (store cache check) are unchanged.
       const priority = priorityRef.current;
       try {
-        if (priority?.length) await coordinator.primeWithPriority(nodesRef.current, settingsRef.current, primeController.signal, priority);
-        else await coordinator.ensure(nodesRef.current, settingsRef.current, { signal: primeController.signal });
+        await restoreLookup(coordinator, nodesRef.current, settingsRef.current, primeController.signal,
+          { ...(priority?.length ? { priorityPlies: priority } : {}) });
       } catch { /* superseded prime */ }
       // The objective lane files server-side with the batch; reconcile it
       // through the same lookup so its badges settle without waiting for a
@@ -285,8 +291,8 @@ export function useServerBatch(args: {
       const objective = objectiveLaneRef.current;
       if (objective && !primeController.signal.aborted) {
         try {
-          if (priority?.length) await coordinator.primeWithPriority(nodesRef.current, objective, primeController.signal, priority, ['maia']);
-          else await coordinator.ensure(nodesRef.current, objective, { signal: primeController.signal, engines: ['maia'] });
+          await restoreLookup(coordinator, nodesRef.current, objective, primeController.signal,
+            { engines: ['maia'], ...(priority?.length ? { priorityPlies: priority } : {}) });
         } catch { /* superseded prime */ }
       }
     };
@@ -333,23 +339,58 @@ export function useServerBatch(args: {
         }
       }
     };
+    // Ground-truth refresh: status first (gone jobs surface here), then the
+    // shared lookup prime rides inside apply. Used on mount, resume signals,
+    // and stream error.
+    const refreshFromStatus = async () => {
+      if (stopped || stale()) return;
+      try {
+        apply(await fetchBatchStatus(jobId, fetcher));
+      } catch (statusError) {
+        if (stopped || stale()) return;
+        if (statusError instanceof BatchGoneError) { gone(); return; }
+        fail(statusError instanceof Error ? statusError.message : 'Review batch failed.');
+      }
+    };
+    // Mount reconciles from ground truth immediately instead of waiting for
+    // the first live tick.
+    void refreshFromStatus();
     void (async () => {
       try {
-        await subscribeBatchEvents(jobId, apply, primeController.signal, fetcher);
+        await subscribeBatchEvents(jobId, apply, primeController.signal);
         if (!stopped && !stale()) void primeNow();
-      } catch (streamError) {
+      } catch {
         if (stopped || stale() || primeController.signal.aborted) return;
-        if (streamError instanceof BatchGoneError) { gone(); return; }
+        // The stream is a pure optimization: refetch ground truth first (a
+        // gone job surfaces here via the status 404), then poll.
+        void refreshFromStatus();
         void poll();
       }
     })();
-    const show = () => { void primeNow(); };
-    window.addEventListener('online', show);
+    // Status is the truth: resume signals refetch it (apply reprimes), not
+    // just the lookup. Guarded for non-browser/test envs.
+    const onResume = () => { void refreshFromStatus(); };
+    const onVisible = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') void refreshFromStatus();
+    };
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('online', onResume);
+      window.addEventListener('focus', onResume);
+    }
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', onVisible);
+    }
     return () => {
       stopped = true;
       clearTimeout(primeTimer);
       primeController.abort();
-      window.removeEventListener('online', show);
+      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+        window.removeEventListener('online', onResume);
+        window.removeEventListener('focus', onResume);
+      }
+      if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+        document.removeEventListener('visibilitychange', onVisible);
+      }
     };
   }, [active, jobId, jobScopeKey, coordinator, fetcher]);
 

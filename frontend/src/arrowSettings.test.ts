@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { ARROW_WIDTH_MAX, ARROW_WIDTH_MIN, buildReviewBrushes, defaultArrowSettings, normalizeArrowSettings, sameArrowSettings } from './arrowSettings';
 import { reviewBrushes, reviewShapes } from './reviewArrows';
-import { initialState, reducer } from './state';
+import { initialState, reducer } from './state/index';
 import { KEYS } from './storage';
 
 beforeEach(() => {

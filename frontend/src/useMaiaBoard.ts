@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MaiaApiError, requestMove } from './api';
-import { initialState, reducer, snapshotOf, type Action, type State } from './state';
+import { MaiaApiError } from './api';
+import { ReviewCoordinator } from './reviewCoordinator';
+import { initialState, reducer, snapshotOf, type Action, type State } from './state/index';
 import { KEYS, readStorage, writeStorage } from './storage';
 import { GameRepository } from './gameRepository';
 import { HistorySyncStore } from './syncStore';
@@ -8,39 +9,38 @@ import type { Mode } from './domain';
 import type { UrlLine } from './analysisUrl';
 import { STOCKFISH_STORAGE_KEY } from './stockfishSettings';
 
-type PlayFlight = { id: number; controller: AbortController; stalled: number; cancelled: boolean };
+type PlayFlight = { id: number };
 type FlightRef = { current: PlayFlight | null };
 
 // Play POST execution, shared by dispatch and the mount effect. Firing is
 // deferred a microtask so a supersede (or StrictMode rehearsal cleanup) that
-// lands in the same tick cancels before any byte is sent — the same timing
-// the old state-keyed effect relied on. Reply and failure match by request
-// identity in the reducer, and the flight record guards the commit itself,
-// so a late response can never land on a newer game.
-function firePlayRequest(request: State['request'], flight: FlightRef, commit: (action: Action) => void) {
+// lands in the same tick cancels before any byte is sent. The flight itself
+// rides the foreground scheduler (ReviewCoordinator.playMove: latest-wins
+// with the shared transport deadline); this record is only the firing
+// identity — reply and failure match by request identity in the reducer, and
+// the record guard drops a late response a newer game superseded, so it can
+// never land on a newer game.
+function firePlayRequest(request: State['request'], flight: FlightRef, commit: (action: Action) => void, coordinator: ReviewCoordinator) {
   const running = flight.current;
   if (!request) {
-    if (running) { running.cancelled = true; running.controller.abort(); window.clearTimeout(running.stalled); flight.current = null; }
+    if (running) { flight.current = null; coordinator.abortPlayMove(); }
     return;
   }
   if (running && running.id === request.id) return;
-  if (running) { running.cancelled = true; running.controller.abort(); window.clearTimeout(running.stalled); }
-  const controller = new AbortController();
-  const record: PlayFlight = { id: request.id, controller, stalled: 0, cancelled: false };
-  record.stalled = window.setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), 150_000);
+  // Supersede frees the scheduler slot now; the replacement fires below.
+  if (running) coordinator.abortPlayMove();
+  const record: PlayFlight = { id: request.id };
   flight.current = record;
   queueMicrotask(() => {
-    if (record.cancelled || flight.current !== record) return;
-    void requestMove(request.payload, fetch, controller.signal, { priority: 'play' }).then(
+    if (flight.current !== record) return;
+    void coordinator.playMove(request.payload).then(
       response => {
-        window.clearTimeout(record.stalled);
-        if (record.cancelled || flight.current !== record) return;
+        if (flight.current !== record) return;
         flight.current = null;
         commit({ type: 'reply', request, response });
       },
       error => {
-        window.clearTimeout(record.stalled);
-        if (record.cancelled || flight.current !== record) return;
+        if (flight.current !== record) return;
         flight.current = null;
         commit({ type: 'failure', request, error: error instanceof DOMException ? new MaiaApiError('server_unreachable', 'The Maia server could not be reached.') : error });
       },
@@ -53,12 +53,15 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
   const [state, setState] = useState(() => initialState(mode, urlLine, repository.snapshot()));
   const current = useRef(state);
   const [sync] = useState(() => new HistorySyncStore());
+  // The play /move flight rides the foreground scheduler; dispatch owns only
+  // the firing identity (see firePlayRequest).
   // In-flight play POST, owned by dispatch — the shared function every board
   // event funnels through (the doc's "extract a function called from event
   // handlers"). An interaction-caused POST runs because of the interaction,
   // not because the component displayed. state.request stays the UI source
-  // of truth (thinking indicator, retry gating); firePlayRequest only owns
-  // the network flight.
+  // of truth (thinking indicator, retry gating); the coordinator owns the
+  // network flight.
+  const [playCoordinator] = useState(() => new ReviewCoordinator());
   const flight = useRef<PlayFlight | null>(null);
   const lastPersisted = useRef(new Map<string, string>());
   const dispatch = useCallback((action: Action) => {
@@ -81,25 +84,23 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
     // Execute a fresh play request; abort a superseded flight (takeback,
     // resign, and new games clear `request` through transition, so the abort
     // rides along with the same dispatch — no separate effect needed).
-    firePlayRequest(next.request, flight, dispatch);
-  }, [repository, sync]);
+    firePlayRequest(next.request, flight, dispatch, playCoordinator);
+  }, [repository, sync, playCoordinator]);
   // Boot + unmount: a restored game with Maia to move carries a request from
   // initialState that no dispatch may ever produce (e.g. history sync fails
   // or returns nothing new), so the mount pass fires it directly — the
   // same-id guard makes the later sync dispatch a no-op, and StrictMode
   // rehearsal single-fires through the microtask cancellation above.
-  // Unmount aborts the flight; its handlers ignore it via cancelled.
+  // Unmount aborts the scheduler flight; its handlers ignore it by record
+  // identity.
   useEffect(() => {
     const boot = current.current.request;
-    if (boot && !flight.current) firePlayRequest(boot, flight, dispatch);
+    if (boot && !flight.current) firePlayRequest(boot, flight, dispatch, playCoordinator);
     return () => {
-      const running = flight.current;
-      if (running) { running.cancelled = true; running.controller.abort(); window.clearTimeout(running.stalled); flight.current = null; }
+      flight.current = null;
+      playCoordinator.abortPlayMove();
     };
-  }, [dispatch]);
-  // TODO: split god State into play/analysis/ui slices. Kept whole here:
-  // slicing the reducer + persistence + sync projection risks scope creep
-  // beyond the eval refactor.
+  }, [dispatch, playCoordinator]);
   // Mode arrives exclusively through dispatch: tab taps sync it in their
   // click handlers, Back/Forward in the popstate listener, and the review /
   // unload / saved navigations through their own actions. There is no

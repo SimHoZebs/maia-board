@@ -1,9 +1,9 @@
-import { MaiaApiError, requestMove, type MoveResponse } from './api';
+import { MaiaApiError, requestMove, type MoveRequest, type MoveResponse } from './api';
 import { clampMaiaElo } from './BoardTools';
 import type { Evaluation } from './reviewMetrics';
 import { EvaluationStore, evaluationStore, evaluationRequest, fastReviewSettings, fetchEvaluation, reviewKey, resolveSettings, stablePositionKey,
   type Engine, type EvaluationResult, type Job, type ReviewNode, type ReviewSettings, type SettingsInput } from './evaluationStore';
-export { EvaluationStore, buildPrimeJobs, fastReviewSettings, fastStockfishSettings, fetchEvaluation, parseEvaluation, primeWithPriority, reorderJobsForPriority, resolveSettings, reviewKey, reviewNodes, stablePositionKey,
+export { EvaluationStore, fastReviewSettings, fastStockfishSettings, fetchEvaluation, parseEvaluation, resolveSettings, reviewKey, reviewNodes, stablePositionKey,
   type Engine, type EvaluationResult, type Job, type ReviewNode, type ReviewSettings, type SettingsInput } from './evaluationStore';
 
 export function subscribeNone(): () => void { return () => undefined; }
@@ -35,6 +35,10 @@ export class ReviewCoordinator {
   readonly store: EvaluationStore;
   private pending: Record<Engine, Map<string, Pending>> = { sf: new Map(), maia: new Map() };
   private running: Record<Engine, Set<Running>> = { sf: new Set(), maia: new Set() };
+  // The single in-flight play /move POST. Play replies are never cached
+  // (per-game sampling settings), but the flight still rides this scheduler
+  // so supersedes share one latest-wins policy with the review lanes.
+  private playFlight: AbortController | null = null;
   private failures = new Map<string, string>();
   private restoring = new Map<string, { count: number; engine: Engine }>();
   private listeners = new Set<() => void>();
@@ -177,45 +181,23 @@ export class ReviewCoordinator {
       if (priorityPlies?.length) return this.restore(nodes, settings, signal, wanted, priorityPlies);
     }
   }
-  // Focus-first restore entry point: prime the focus/current plies alone so
-  // the visible pair settles without waiting for full-line chunks, then prime
-  // the full line in the background. Sequential awaits + the store's cache
-  // check mean the second phase skips already-settled focus rows (no duplicate
-  // storm); chunk limits (1024 req / 4 MiB) still apply per prime call.
-  primeWithPriority(
+  // Single restore entry: settled rows come from the store's one restore
+  // path (cache-fill + visible-pair-first ordering inside it). The
+  // coordinator adds only foreground pending accounting around that call —
+  // no second two-phase focus path, no job building here. The live
+  // foreground pump above stays the coordinator's only fetch ownership.
+  async restore(
     nodes: ReviewNode[],
     settings: SettingsInput,
     signal: AbortSignal,
-    priorityPlies: readonly number[],
     wanted: Engine[] = [...engines],
+    priorityPlies?: readonly number[],
   ): Promise<{ total: number; covered: number }> {
-    return this.restore(nodes, settings, signal, wanted, priorityPlies);
-  }
-  private async restore(nodes: ReviewNode[], settings: SettingsInput, signal: AbortSignal, wanted: Engine[], priorityPlies?: readonly number[]) {
     const keys = new Map(nodes.filter(node => !node.outcome).flatMap(node => wanted.map(engine => [reviewKey(engine, node, resolveSettings(settings, node)), engine] as const)));
     for (const [key, engine] of keys) this.restoring.set(key, { count: (this.restoring.get(key)?.count ?? 0) + 1, engine });
     this.notify();
     try {
-      if (priorityPlies?.length) {
-        // Two-phase focus-first: a small priority-only lookup settles the
-        // visible pair fast; the full-line prime that follows reuses those
-        // rows from the store cache (existing cache check dedupes, so the
-        // second POST carries misses only). Both phases honor the store's
-        // 1024-request / 4 MiB chunking, so throttling is unchanged.
-        const prioritySet = new Set(priorityPlies);
-        const focusNodes = nodes.filter(node => prioritySet.has(node.ply));
-        if (focusNodes.length && focusNodes.length < nodes.length) {
-          await this.store.prime(focusNodes, settings, [...wanted], signal);
-          signal.throwIfAborted();
-        }
-        // Reordered full-line prime: any still-missing priority jobs (focus
-        // == full line, or a race that settled nothing) still lead the first
-        // chunk. Parse/cache logic is identical — only job order differs.
-        await this.store.prime(nodes, settings, [...wanted], signal, priorityPlies);
-      } else {
-        await this.store.prime(nodes, settings, [...wanted], signal);
-      }
-      return this.store.primeCoverage(nodes, settings, [...wanted]);
+      return await this.store.restore(nodes, settings, [...wanted], signal, priorityPlies);
     } finally {
       for (const [key, engine] of keys) {
         const entry = this.restoring.get(key);
@@ -309,5 +291,26 @@ export class ReviewCoordinator {
     const request = evaluationRequest('maia', job.node, job.settings);
     return requestMove({ fen: request.fen, moves: request.moves, initial_fen: request.initial_fen,
       elo_maia: clampMaiaElo(job.settings.eloMaia), elo_user: clampMaiaElo(job.settings.eloUser), model: job.settings.model, maia_color: job.node.turn }, this.fetcher, signal);
+  }
+  // Play /move flight with play's tighter parameters: latest-wins (a newer
+  // play move supersedes the in-flight one; the superseded reply is dropped
+  // by request identity in the reducer) over the one shared sender
+  // (busy-retry → parse → cache-hit inside requestMove) with the shared
+  // transport deadline — no bespoke stall timer at the call site. Replies
+  // are never cached: play payloads carry per-game sampling settings
+  // (temperature, colors), so they must not settle content-keyed review rows.
+  async playMove(payload: MoveRequest): Promise<MoveResponse & { cached?: boolean }> {
+    this.playFlight?.abort();
+    const controller = new AbortController();
+    this.playFlight = controller;
+    try {
+      return await requestMove(payload, this.fetcher, controller.signal, { priority: 'play' });
+    } finally {
+      if (this.playFlight === controller) this.playFlight = null;
+    }
+  }
+  abortPlayMove(): void {
+    this.playFlight?.abort();
+    this.playFlight = null;
   }
 }
