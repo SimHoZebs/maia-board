@@ -64,7 +64,20 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
       await route.fulfill({ json: { matches: [], book_flags: Array.isArray(moves) ? moves.map(() => false) : [] } });
       return;
     }
-    if (path === '/move') { requests.push({ route, payload: route.request().postDataJSON() }); return; }
+    if (path === '/move') {
+      const payload = route.request().postDataJSON();
+      // Grading lane (fixed Maia 2400) auto-fulfills: these specs choreograph
+      // the display lane by holding its routes open, so grading settles in
+      // the background and bars/badges never block on it here. Grading-only
+      // behavior is covered by review.spec's instant mocks and unit tests.
+      if (payload.elo_maia === 2400) {
+        const game = replay(payload.moves, payload.initial_fen);
+        const first = game.moves({ verbose: true }).map(m => `${m.from}${m.to}${m.promotion ?? ''}`)[0];
+        await route.fulfill({ json: { move: first, top_moves: [{ move: first, prob: 0.6, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], model_used: payload.model, degraded: false } });
+        return;
+      }
+      requests.push({ route, payload: route.request().postDataJSON() }); return;
+    }
     if (path === '/evaluate') {
       const payload = route.request().postDataJSON();
       const game = replay(payload.moves, payload.initial_fen);
@@ -124,7 +137,7 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
     const item = requests[index];
     const chosen = move ?? new Chess(item.payload.fen).moves({ verbose: true }).map(m => `${m.from}${m.to}${m.promotion ?? ''}`)[0];
     const delivered = page.waitForResponse(response => response.request() === item.route.request());
-    await item.route.fulfill({ status, json: status === 200 ? { move: chosen, top_moves: topMoves ?? [{ move: chosen, prob: 0.6 }], wdl: [0.2, 0.3, 0.5], model_used: item.payload.model, degraded: false } : { code: 'engine_busy', message: 'busy' } });
+    await item.route.fulfill({ status, json: status === 200 ? { move: chosen, top_moves: topMoves ?? [{ move: chosen, prob: 0.6, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], model_used: item.payload.model, degraded: false } : { code: 'engine_busy', message: 'busy' } });
     await (await delivered).finished();
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   }
@@ -457,7 +470,9 @@ test('analysis load, navigation, copy, request history, stale reply and mode reu
   await page.locator('#load-analysis').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 4');
   await piece(page, 'f3', 'white knight');
-  await expect.poll(() => app.requests.length).toBe(1);
+  // Focus + current display singles (the grading lane auto-fulfills, and
+  // each instant completion pumps the next display job forward).
+  await expect.poll(() => app.requests.length).toBe(2);
   expect(app.requests[0].payload.moves).toEqual(['e2e4', 'e7e5']);
   await page.locator('#analysis-prev').click();
   await app.reply(0, 'g1f3');
@@ -667,11 +682,11 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   await page.locator('#analysis-pgn').fill('1. e4 e5 2. Nf3 Nc6');
   await page.locator('#load-analysis').click();
   await expect(page.locator('#analysis-controls')).toHaveCount(0);
-  await app.reply(0, 'b8c6', 200, [{ move: 'b8c6', prob: .4 }, { move: 'g8f6', prob: .15 }]);
-  await expect(page.locator('section[aria-label="Maia analysis"] .candidate-reading')).toHaveText(['Played, Nc640%', 'Nf615%']);
+  await app.reply(0, 'b8c6', 200, [{ move: 'b8c6', prob: .4, wdl: [0.2, 0.3, 0.5] }, { move: 'g8f6', prob: .15, wdl: [0.2, 0.3, 0.5] }]);
+  await expect(page.locator('section[aria-label="Maia analysis"] .candidate-reading')).toHaveText(['Played, Nc665%', 'Nf665%']);
   await expect(page.locator('.win-hero')).toHaveCount(0);
   await expect(page.locator('section[aria-label="Maia analysis"] .candidate-list')).toContainText('Nc6');
-  await expect(page.locator('.balance-track')).toHaveAccessibleName(/estimated White winning chance 52%/);
+  await expect(page.locator('.balance-track')).toHaveAccessibleName(/estimated White winning chance 65%/);
   await page.getByRole('button', { name: 'Explore Nf6' }).hover();
   await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(0);
   await piece(page, 'g8', 'black knight');
@@ -686,7 +701,7 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(0);
   await move(page, 'f1', 'c4');
   // Either branch move can win the 200ms foreground race. A parked
-  // intermediate tip holds the single Maia lane (the fixture holds routes
+  // intermediate tip holds the Maia lanes (the fixture holds routes
   // open), so answer held requests until the tip fires.
   const full = ['e2e4', 'e7e5', 'g1f3', 'g8f6', 'f1c4'];
   const replied = new Set([0]);
@@ -806,12 +821,14 @@ test('analysis entry sources and input keyboard isolation', async ({ page }) => 
   await page.locator('#analysis-controls').getByRole('button', { name: 'Starting position', exact: true }).click();
   await page.locator('#load-analysis').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 1');
-  // Drain the startpos single: the boot mock strips abort signals, so a
-  // still-held lane would wedge the next load's foreground forever. Reply
-  // e2e4 explicitly: the default legal-first top would seed a3, but the tail
-  // below reads e4 back from this row.
+  // Drain the startpos display single: the boot mock strips abort signals,
+  // so a still-held lane would wedge the next load's foreground forever.
+  // Reply e2e4 explicitly: the default legal-first top would seed a3, but
+  // the tail below reads e4 back from this row. The grading lane has its
+  // own 2400 request — leave it held.
   await expect.poll(() => app.requests.length).toBeGreaterThan(0);
-  await app.reply(app.requests.length - 1, 'e2e4', 200, [{ move: 'e2e4', prob: .6 }]);
+  const lane = app.requests.map(request => request.payload.elo_maia !== 2400);
+  await app.reply(lane.lastIndexOf(true), 'e2e4', 200, [{ move: 'e2e4', prob: .6, wdl: [0.2, 0.3, 0.5] }]);
   // The panel judges the displayed move from its before-position, so an
   // empty start has no candidates: unload back to the importer, then load
   // one move to read the single back.
@@ -1081,7 +1098,7 @@ for (const width of [320, 390]) {
     const exports = (await page.locator('.analysis-actions').boundingBox())!;
     expect(exports.y).toBeGreaterThanOrEqual(engines.y + engines.height);
     await expect(page.locator('.board-stage .analysis-actions')).toHaveCount(0);
-    await expect(page.getByRole('heading', { name: /Stockfish/ })).toHaveCount(1);
+    await expect(page.getByRole('heading', { name: /Maia/ })).toHaveCount(1);
     await expect(page.getByText('Engine moves', { exact: true })).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath(`variation-${width}.png`), fullPage: true });

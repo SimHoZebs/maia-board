@@ -30,6 +30,11 @@ type evaluationIdentity struct {
 	SelfElo    int                `json:"self_elo,omitempty"`
 	OppoElo    int                `json:"oppo_elo,omitempty"`
 	Model      string             `json:"model,omitempty"`
+	// ValueRev versions the Maia value shape only (per-candidate WDL
+	// arrived in v1). Old Maia rows miss by key instead of failing
+	// validation on read; Stockfish rows never set it, so their keys —
+	// and cache — are untouched.
+	ValueRev int `json:"value_rev,omitempty"`
 }
 
 func baseIdentity(engine, fen, initial string, moves []string) evaluationIdentity {
@@ -50,7 +55,7 @@ func sfIdentity(r evaluationRequest) evaluationIdentity {
 
 func maiaIdentity(r EngineRequest, model string) evaluationIdentity {
 	i := baseIdentity("maia", r.FEN, r.InitialFEN, r.Moves)
-	i.Revision, i.SelfElo, i.OppoElo, i.Model = maiaRevision, r.SelfElo, r.OppoElo, model
+	i.Revision, i.SelfElo, i.OppoElo, i.Model, i.ValueRev = maiaRevision, r.SelfElo, r.OppoElo, model, 1
 	return i
 }
 
@@ -235,7 +240,7 @@ func validMoveValue(v moveResponse, model string, deterministic bool) bool {
 	}
 	seen, sum, previous := map[string]bool{}, 0.0, 1.0
 	for _, m := range v.TopMoves {
-		if !uciMovePattern.MatchString(m.Move) || seen[m.Move] || !probability(m.Prob) || m.Prob > previous+1e-7 {
+		if !uciMovePattern.MatchString(m.Move) || seen[m.Move] || !probability(m.Prob) || m.Prob > previous+1e-7 || !validWDL(m.WDL) {
 			return false
 		}
 		seen[m.Move], previous, sum = true, m.Prob, sum+m.Prob

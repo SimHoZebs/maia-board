@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { Review } from './useReview';
 import { objectKeys } from './guards';
-import { scoreText, whiteWin, type Quality } from './reviewMetrics';
+import { sourceLabel } from './objective';
+import { scoreValueText, whiteExpected, type Quality } from './reviewMetrics';
 import type { ReviewSide } from './reviewSummary';
 
 export const qualityGlyphs = { Forced: 'F', 'Allowed mate': '💀', Blunder: '??', Mistake: '?', Inaccuracy: '?!', Excellent: '!!', Great: '!', Best: 'B', Good: 'G' } as const;
@@ -67,17 +68,27 @@ export function ReviewCharts({ review, ply, sans, onView, side }: { review: Revi
   }, [ply]);
   const points = review.nodes.map((node, index) => {
     const evaluation = review.evaluations[index];
+    const objective = review.objective[index];
     const quality = index ? review.qualities[index - 1] : undefined;
     const beforeNode = index ? review.nodes[index - 1] : null;
     const beforeFen = beforeNode?.fen.split(' ') ?? null;
     const mover = beforeNode ? beforeNode.turn : null;
     const outOfScope = !!side && mover !== side;
-    const value = outOfScope ? null : evaluation ? whiteWin(evaluation.score) : null;
+    // Objective track: provider White winning chances; terminal positions
+    // synthesize from the outcome since Maia never infers game-over nodes.
+    // A Stockfish-seen forced mate pins the ends (mate display survives in
+    // the copy even though centipawns are gone from the UI).
+    const mate = evaluation && evaluation.score.type === 'mate' ? evaluation.score : null;
+    const mateWhite = mate ? ((mate.winning_side ?? (mate.value > 0 ? 'white' : 'black')) === 'white') : null;
+    const value = outOfScope ? null
+      : node.outcome ? (node.outcome.kind === 'checkmate' ? (node.outcome.winner === 'white' ? 100 : 0) : 50)
+      : mateWhite !== null ? (mateWhite ? 100 : 0)
+      : objective?.expected != null ? whiteExpected(node.turn, objective.expected) : null;
     const moveNumber = beforeFen ? `${beforeFen[5]}${beforeFen[1] === 'w' ? '.' : '…'}` : '0';
     const description = [
       index === 0 ? 'Starting position' : `${moveNumber} ${sans[index - 1]} · ${mover === 'white' ? 'White' : 'Black'}`,
-      value === null ? null : `${value.toFixed(1)}% White winning chance`,
-      evaluation ? `${scoreText(evaluation)} · ${evaluation.terminal ? 'terminal result' : `depth ${evaluation.depth}`}` : null,
+      value === null ? null : `${value.toFixed(1)}% White winning chance · ${sourceLabel()}`,
+      mate ? scoreValueText(mate) : null,
       quality && quality.label !== 'Unreviewed' ? quality.label : null,
     ].filter(Boolean).join(' · ');
     return { node, value, description, evaluation, quality, moveNumber, mover };

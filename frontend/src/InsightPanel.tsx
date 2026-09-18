@@ -6,11 +6,12 @@ import { Button, CandidateList, CandidateRow, EngineSection } from "./components
 import { Chess } from "chess.js";
 import type { Review } from "./useReview";
 import { describeMove } from "./reviewMetrics";
+import { maiaExpected } from "./objective/maia";
 import { bestLinePreview } from "./material";
 import { verdictInputsForPly } from "./theory";
 import { useLineOpenings } from "./openings";
 import { ReviewIssues, ReviewSummary } from "./ReviewOverview";
-import { SkeletonList, SkeletonText, StockfishBody } from "./StockfishBar";
+import { SkeletonList, SkeletonText } from "./ObjectiveBar";
 
 // Tab-bar action: the Analyze / Analyzed button owns the right
 // end of the tab row. While running it is replaced in place by the progress
@@ -171,7 +172,6 @@ export function MoveAnalysis({
     }
   }
   const maiaLoading = !response && !hasError && !terminalPosition && !tooLong;
-  const sfLoading = !evaluation && !hasError && !tooLong;
   // The verdict needs both sides of the move; the foreground lane fetches
   // both, prime/batch backfill the rest. Render as soon as the pair is
   // present regardless of batch progress (progress surfaces separately via
@@ -247,7 +247,7 @@ export function MoveAnalysis({
                     key={`${candidate.move}:${index}`}
                     index={index}
                     san={san}
-                    metric={`${Math.round(candidate.prob * 100)}%`}
+                    metric={`${Math.round(maiaExpected(candidate.wdl))}%`}
                     isPlayed={isPlayed}
                     preview={{
                       label: `Explore ${san}${isPlayed ? " (played)" : ""}${hasMove ? " from before this move" : ""}`,
@@ -264,27 +264,6 @@ export function MoveAnalysis({
           </div>
         ) : maiaLoading ? (
           <SkeletonList label="Loading Maia moves" rows={3} />
-        ) : (
-          <p className="empty-copy">No analysis yet.</p>
-        )}
-      </EngineSection>
-      <EngineSection
-        label="Stockfish evaluation"
-        dotClass="source-stockfish"
-        title={`Stockfish 19${evaluation && !evaluation.terminal ? ` · depth ${evaluation.depth}` : ""}`}
-      >
-        {evaluation ? (
-          <StockfishBody
-            fen={node.fen}
-            evaluation={evaluation}
-            played={played}
-            retrospective={hasMove}
-            previewUci={hasMove ? null : state.preview}
-            onPreview={(uci) => dispatch({ type: "preview", uci: hasMove ? null : uci })}
-            onExplore={(uci) => exploreFromFocus(uci)}
-          />
-        ) : sfLoading ? (
-          <SkeletonList label="Loading Stockfish lines" rows={2} />
         ) : (
           <p className="empty-copy">No analysis yet.</p>
         )}

@@ -43,8 +43,13 @@ backend URL to proxy `/move`, `/evaluate`, `/evaluations`, `/games`, and `/openi
   request removes the operation with its version, preserving newer work.
   `serverGames.ts` transports game requests; `storage.ts` supplies browser storage
   and legacy record readers. Preferences and analysis inputs are browser-local.
-- `reviewMetrics.ts` derives retrospective move grades from Stockfish evaluations.
-  Current-position candidates and previous-move grading refer to different positions.
+- `reviewMetrics.ts` derives retrospective move grades from objective points
+  (best move + mover-relative expected score), never from engine responses
+  directly. `src/objective/maia.ts` and `src/objective/stockfish.ts` expose
+  identical provider functions; `src/objective/index.ts` re-exports the
+  active one, so switching sources is a one-line import flip with no call
+  site changes. Current-position candidates and previous-move grading refer
+  to different positions.
 
 ### Chess timeline and evaluation
 

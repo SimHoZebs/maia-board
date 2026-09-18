@@ -30,7 +30,7 @@ for (const width of [360, 1440]) test(`engine settings and Play temperature at $
       const game = replay(body.moves, body.initial_fen);
       const moves = game.moves({ verbose: true }).map(m => `${m.from}${m.to}${m.promotion ?? ''}`);
       const score = { type: 'cp', value: 20 };
-      await route.fulfill({ json: path === '/move' ? { move: moves[0], top_moves: [{ move: moves[0], prob: .5 }], wdl: [.2, .3, .5], model_used: body.model, degraded: false } : {
+      await route.fulfill({ json: path === '/move' ? { move: moves[0], top_moves: [{ move: moves[0], prob: .5, wdl: [.2, .3, .5] }], wdl: [.2, .3, .5], model_used: body.model, degraded: false } : {
         engine: 'Stockfish 19', search_policy: stockfishPolicy(body.settings), depth: 12, terminal: null, best_move: moves[0], score,
         lines: moves.slice(0, body.settings.lines).map(move => ({ move, score, depth: 12 })),
       } });

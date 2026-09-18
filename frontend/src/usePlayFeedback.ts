@@ -3,7 +3,9 @@ import { buildTimeline, legalPrefixLength, lineKeyFor, START_FEN, type Timeline 
 import { ReviewCoordinator, reviewKey, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
 import { useLineScope } from './useLineScope';
 import { useBulkPrime } from './useBulkPrime';
-import { computeLineQualities, type UnifiedMemo } from './qualities';
+import { computeLineQualities, type ObjectiveLane, type UnifiedMemo } from './qualities';
+import { ensureLane, laneFailures, laneKey, lanePending, lanePoints, laneRows, primeDescriptor } from './objective';
+
 import { effectiveQuality, maiaRarity, type Evaluation, type Quality } from './reviewMetrics';
 import type { MoveResponse } from './api';
 import type { State } from './state';
@@ -69,17 +71,19 @@ const PRAISE_PENDING: Quality = { label: 'Unreviewed', accuracy: null, loss: nul
 export function computePlayQualities(args: {
   gameId: string; timeline: Timeline; userColor: 'white' | 'black'; settings: ReviewSettings;
   sfLookup: (node: ReviewNode) => Evaluation | undefined; maiaLookup: (node: ReviewNode) => MoveResponse | undefined;
+  objective?: ObjectiveLane;
   sfPending: Set<string>; maiaPending: Set<string>; prev: PlayQualitiesMemo | null; stats?: PlayQualitiesStats;
 }): { qualities: (Quality | undefined)[]; memo: PlayQualitiesMemo } {
-  const { gameId, timeline, userColor, settings, sfLookup, maiaLookup, sfPending, maiaPending, prev, stats } = args;
+  const { gameId, timeline, userColor, settings, sfLookup, maiaLookup, objective, sfPending, maiaPending, prev, stats } = args;
   const nodes = reviewNodes(timeline);
-  // Pass 1 stays pure-SF engine facts (memo-safe: keys never see Maia
-  // identity). Pass 2 translates only engine-Critical into displayed praise;
-  // everything else settles the badge on SF alone (fast path) and reads Maia
-  // for its sentence only when cheap.
+  // Pass 1 stays engine-fact grading (memo-safe: keys never see objective
+  // identity): negatives read the objective lane, praise still translates
+  // engine-Critical below. Pass 2 translates only engine-Critical into
+  // displayed praise; everything else settles the badge on the objective
+  // lane and reads display Maia for its sentence only when cheap.
   const sf = computeLineQualities({ scope: `${gameId}|${userColor}`, moves: [...timeline.moves], nodes,
     evaluations: nodes.map(sfLookup), settingsForNode: () => settings,
-    active: node => node.turn === userColor, pending: sfPending, prev, stats });
+    active: node => node.turn === userColor, pending: sfPending, prev, stats, objective });
   // Translation map: engine facts become displayed judgments. Raw memo
   // reuse still holds underneath (proven by stats.reviews); only this
   // translated array is fresh per call. Every grade goes through
@@ -130,7 +134,10 @@ export function usePlayFeedback(state: State): PlayFeedback {
     // the server batch is out of this path entirely — no per-ply submit,
     // no cancel/resubmit churn, no 409 races with ourselves.
     coordinator.ensure(pair.sfNodes, settings, { priority: true, engines: ['sf'], signal: scope.signal });
-    if (pair.maiaNode) coordinator.ensure([pair.maiaNode], settings, { priority: true, engines: ['maia'], signal: scope.signal });
+    if (pair.maiaNode) {
+      coordinator.ensure([pair.maiaNode], settings, { priority: true, engines: ['maia'], signal: scope.signal });
+      ensureLane(coordinator, pair.sfNodes, scope.signal);
+    }
   }, [coordinator, active, tooLong, pair, settings, scope]);
   const nodes = useMemo(() => {
     const all = reviewNodes(timeline);
@@ -146,28 +153,43 @@ export function usePlayFeedback(state: State): PlayFeedback {
   // through the same capped bucket as foreground failures below.
   const [primeAttempt, setPrimeAttempt] = useState(0);
   const [prime, setPrime] = useState<{ key: string; error?: string } | null>(null);
+  const [gradePrime, setGradePrime] = useState<{ key: string; error?: string } | null>(null);
   const primeBaseKey = `${lineKey}|${settingsKey}`;
+  const lanePrime = useMemo(() => primeDescriptor(), []);
   useBulkPrime({ active, nodes, settings, coordinator, loadKey: `${primeBaseKey}|${primeAttempt}`,
     onSettled: error => setPrime({ key: primeBaseKey, error }) });
+  useBulkPrime({ active: active && lanePrime.settings !== null, nodes, settings: lanePrime?.settings ?? settings, engines: lanePrime?.engines ?? [], coordinator,
+    loadKey: `${primeBaseKey}|${lanePrime?.suffix ?? 'nolane'}|${primeAttempt}`,
+    onSettled: error => setGradePrime({ key: primeBaseKey, error }) });
   // Retry sweeps every user-side endpoint with a recorded failure, not just
   // the newest pair: a failure that lands right before a reply (whose pair
   // no longer covers the failed node) must still heal, or its badge blanks
   // until the next move. Buckets bound the fires; the scheduler skips
   // already-settled keys at the pump, so a sweep re-fetches only misses.
-  const retryTargets: { key: string; sf: ReviewNode[]; maia: ReviewNode[]; prime: boolean } = useMemo(() => {
-    if (!active || tooLong) return { key: '', sf: [], maia: [], prime: false };
+  const retryTargets: { key: string; sf: ReviewNode[]; maia: ReviewNode[]; lane: ReviewNode[]; prime: boolean } = useMemo(() => {
+    if (!active || tooLong) return { key: '', sf: [], maia: [], lane: [], prime: false };
     const sf = new Map<string, ReviewNode>();
     for (const node of [...pair.sfNodes, ...nodes]) sf.set(reviewKey('sf', node, settings), node);
     const maia = new Map<string, ReviewNode>();
     if (pair.maiaNode) maia.set(reviewKey('maia', pair.maiaNode, settings), pair.maiaNode);
     for (const node of nodes) maia.set(reviewKey('maia', node, settings), node);
+    // Objective-lane failures sweep through the provider module; the
+    // Stockfish twin reports none (the main sweep above already covers it).
+    const seen = new Set<string>();
+    const laneCandidates: ReviewNode[] = [];
+    for (const node of [...pair.sfNodes, ...nodes]) {
+      const id = `${node.initialFen}|${node.ply}`;
+      if (!seen.has(id)) { seen.add(id); laneCandidates.push(node); }
+    }
+    const laneFailed = laneFailures(laneCandidates, coordinator);
     const sfFailed = [...sf.values()].filter(node => coordinator.error('sf', node, settings));
     const maiaFailed = [...maia.values()].filter(node => coordinator.error('maia', node, settings));
-    const primeFailed = prime?.key === primeBaseKey && !!prime.error;
-    const parts = [...sfFailed.map(node => reviewKey('sf', node, settings)), ...maiaFailed.map(node => reviewKey('maia', node, settings))];
+    const primeFailed = (prime?.key === primeBaseKey && !!prime.error) || (lanePrime.settings !== null && gradePrime?.key === primeBaseKey && !!gradePrime.error);
+    const parts = [...sfFailed.map(node => reviewKey('sf', node, settings)), ...maiaFailed.map(node => reviewKey('maia', node, settings)),
+      ...laneFailed.map(node => laneKey(node, () => settings))];
     if (primeFailed) parts.push('prime');
-    return { key: parts.sort().join('|'), sf: sfFailed, maia: maiaFailed, prime: primeFailed };
-  }, [active, tooLong, pair, nodes, settings, version, coordinator, prime, primeBaseKey]);
+    return { key: parts.sort().join('|'), sf: sfFailed, maia: maiaFailed, lane: laneFailed, prime: primeFailed };
+  }, [active, tooLong, pair, nodes, settings, version, coordinator, prime, gradePrime, primeBaseKey, lanePrime]);
   const attempts = useRef(new Map<string, number>());
   const [sustainedError, setSustainedError] = useState<string | undefined>(undefined);
   // Deps key on the derived error signature, not the targets object: the key
@@ -208,7 +230,7 @@ export function usePlayFeedback(state: State): PlayFeedback {
       attempts.current.set(bucket, (attempts.current.get(bucket) ?? 0) + 1);
       // Re-issuing is enough: the scheduler clears failures for desired
       // jobs and skips already-settled ones at the pump.
-      const { sf, maia, prime: primeFailed } = latestRetry.current;
+      const { sf, maia, lane, prime: primeFailed } = latestRetry.current;
       if (!latestRetry.current.key) {
         setSustainedError(undefined);
       } else if (hasExhaustedPlayRetries(attempts.current.get(bucket) ?? 0)) {
@@ -216,6 +238,7 @@ export function usePlayFeedback(state: State): PlayFeedback {
       }
       if (sf.length) coordinator.ensure(sf, settings, { priority: true, engines: ['sf'], signal: scope.signal });
       if (maia.length) coordinator.ensure(maia, settings, { priority: true, engines: ['maia'], signal: scope.signal });
+      if (lane.length) ensureLane(coordinator, lane, scope.signal);
       if (primeFailed) setPrimeAttempt(count => count + 1);
     }, FOREGROUND_RETRY_MS);
     return () => clearTimeout(timer);
@@ -235,6 +258,7 @@ export function usePlayFeedback(state: State): PlayFeedback {
       if (sc.signal.aborted) return;
       if (targets.sf.length) coordinator.ensure(targets.sf, s, { priority: true, engines: ['sf'], signal: sc.signal });
       if (targets.maia.length) coordinator.ensure(targets.maia, s, { priority: true, engines: ['maia'], signal: sc.signal });
+      if (targets.lane.length) ensureLane(coordinator, targets.lane, sc.signal);
       if (targets.prime) setPrimeAttempt(count => count + 1);
     };
     window.addEventListener('online', onOnline);
@@ -242,20 +266,29 @@ export function usePlayFeedback(state: State): PlayFeedback {
   }, [coordinator]);
   const previous = useRef<PlayQualitiesMemo | null>(null);
   const sfPending = coordinator.sfPendingKeys(), maiaPending = coordinator.maiaPendingKeys();
+  // Objective lane for the active source, built from full-timeline rows so
+  // indexes align with the pure grader's internal nodes below.
+  const fullNodes = useMemo(() => reviewNodes(timeline), [timeline]);
+  const lane: ObjectiveLane = useMemo(() => ({
+    points: lanePoints(laneRows(fullNodes, { coordinator, sfEvaluations: fullNodes.map(node => coordinator.result('sf', node, settings)) }), fullNodes),
+    pending: lanePending(coordinator),
+    keyFor: (node: ReviewNode) => laneKey(node, () => settings),
+  }), [fullNodes, settings, version, coordinator]);
   // Same effect-free memo cache as useReview: synchronous carry-forward,
   // content-keyed so a speculative cache can only cost a recompute.
   const computed = useMemo(() => {
     const result = active ? computePlayQualities({ gameId, timeline, userColor, settings,
       sfLookup: node => coordinator.result('sf', node, settings), maiaLookup: node => coordinator.result('maia', node, settings),
+      objective: lane,
       sfPending, maiaPending, prev: previous.current }) : null;
     previous.current = result?.memo ?? null;
     return result;
   },
-  [active, gameId, timeline, userColor, settings, version, coordinator]);
+  [active, gameId, timeline, userColor, settings, lane, version, coordinator]);
   // Play queues no whole-line work and owns no batch job: the foreground
   // pair above plus the bulk restore are the only evaluation traffic, so
   // there is nothing to prune or cancel beyond the line scope's own abort.
-  // Badges settle on SF alone via computePlayQualities; the coordinator
-  // keeps sole ownership of its queues.
+  // Badges settle on the objective lane via computePlayQualities; the
+  // coordinator keeps sole ownership of its queues.
   return { active, qualities: computed?.qualities ?? [], error: sustainedError };
 }

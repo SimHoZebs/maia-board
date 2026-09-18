@@ -1,9 +1,10 @@
 import { expect, it } from 'vitest';
 import { Chess } from 'chess.js';
-import { classifyLoss, describeMove, effectiveQuality, isMateFor, maiaAfterExpected, maiaExpected, maiaRarity, moveAccuracy, reviewMove, SEARCH_POLICY, terminalEvaluation, whiteWin, type EngineGrade, type Evaluation, type MaiaGrading, type Quality, type Rarity } from './reviewMetrics';
+import { classifyLoss, describeMove, effectiveQuality, isMateFor, maiaRarity, moveAccuracy, outcomeExpected, reviewMove, SEARCH_POLICY, terminalEvaluation, whiteExpected, whiteWin, type EngineGrade, type Evaluation, type ObjectiveGrade, type Quality, type Rarity } from './reviewMetrics';
+import { maiaExpected } from './objective/maia';
 const evaluation = (cp: number): Evaluation => ({ engine: 'Stockfish 19', search_policy: SEARCH_POLICY, score: { type: 'cp', value: cp }, depth: 14, best_move: 'e2e4', lines: [], terminal: null });
-const grading = (top: string, wdl: [number, number, number], afterExpected: number | null): MaiaGrading => ({
-  before: { top_moves: [{ move: top, prob: 0.5 }], wdl, degraded: false }, afterExpected, beforePending: false, afterPending: false,
+const grading = (top: string | null, wdl: [number, number, number], afterExpected: number | null): ObjectiveGrade => ({
+  top, expected: maiaExpected(wdl), afterExpected, beforePending: false, afterPending: false,
 });
 it('uses canonical white cp and preserves mate winner independent of distance', () => {
   expect(whiteWin({ type: 'cp', value: 0 })).toBe(50);
@@ -75,7 +76,7 @@ it('never allows mate on unavoidable or best-played mates, and forced still wins
   expect(forced.moves()).toHaveLength(1);
   expect(reviewMove(evaluation(-900), matedAfter, forced, 'h8h7').label).toBe('Forced');
 });
-const maia = (probs: [string, number][], degraded = false) => ({ top_moves: probs.map(([move, prob]) => ({ move, prob })), degraded });
+const maia = (probs: [string, number][], degraded = false) => ({ top_moves: probs.map(([move, prob]) => ({ move, prob, wdl: [0.2, 0.3, 0.5] as [number, number, number] })), degraded });
 it('reads a missed win that stays alive as Blunder by loss', () => {
   // winB ~90 (cp 600), winA 50 (cp 0): loss ~40 is Blunder damage even
   // though the mover is alive at 50. There is no Miss label: the engine
@@ -93,21 +94,21 @@ it('reads a missed win that stays alive as Blunder by loss', () => {
   // Played the win: Top.
   expect(reviewMove(before, before, new Chess(), 'g1f3').label).toBe('Top');
 });
-it('reads Maia expected scores mover-relative with terminal synthesis', () => {
+it('reads terminal outcomes and White-relative views provider-neutrally', () => {
   expect(maiaExpected([0.2, 0.3, 0.5])).toBeCloseTo(65, 9);
-  // Opponent-relative after-WDL: loss_opp + half draws is the mover's share.
-  expect(maiaAfterExpected({ wdl: [0.6, 0.2, 0.2] }, null)).toBeCloseTo(70, 9);
-  expect(maiaAfterExpected(undefined, { kind: 'checkmate', winner: 'white' })).toBe(100);
-  expect(maiaAfterExpected(undefined, { kind: 'draw' })).toBe(50);
-  expect(maiaAfterExpected(undefined, null)).toBeNull();
+  expect(outcomeExpected({ kind: 'checkmate', winner: 'white' })).toBe(100);
+  expect(outcomeExpected({ kind: 'draw' })).toBe(50);
+  expect(outcomeExpected(null)).toBeNull();
+  expect(whiteExpected('white', 65)).toBe(65);
+  expect(whiteExpected('black', 65)).toBe(35);
 });
-it('grades Maia-2400 top play as Top even when Stockfish disagrees', () => {
-  // SF sees a self-destruction (600 -> -1000); 2400s play it and hold.
+it('grades objective top play as Top even when Stockfish disagrees', () => {
+  // SF sees a self-destruction (600 -> -1000); the objective top plays it and hold.
   const before = evaluation(600); before.best_move = 'e2e4';
   const grade = reviewMove(before, evaluation(-1000), new Chess(), 'e2e4', grading('e2e4', [0.1, 0.2, 0.7], 80));
   expect(grade.label).toBe('Top');
 });
-it('flags Maia-2400 expected-score drops with shared cutoffs', () => {
+it('flags objective expected-score drops with shared cutoffs', () => {
   // Flat SF pair (no engine loss) isolates the Maia axis: 80 -> 50.
   const grade = reviewMove(evaluation(0), evaluation(0), new Chess(), 'd2d4', grading('e2e4', [0.1, 0.2, 0.7], 50));
   expect(grade.label).toBe('Blunder');
@@ -118,21 +119,20 @@ it('flags Maia-2400 expected-score drops with shared cutoffs', () => {
   const holds = reviewMove(evaluation(0), evaluation(0), new Chess(), 'd2d4', grading('e2e4', [0.1, 0.2, 0.7], 78));
   expect(holds.label).toBe('Holds');
 });
-it('caps Stockfish negatives once the 2400 lane settles without finding loss', () => {
-  // SF alone reads Mistake (60 -> -60); Maia holds (loss 2) with another top.
+it('caps Stockfish negatives once the objective lane settles without finding loss', () => {
+  // SF alone reads Mistake (60 -> -60); objective holds (loss 2) with another top.
   const before = evaluation(60); before.best_move = 'g1f3';
   const grade = reviewMove(before, evaluation(-60), new Chess(), 'e2e4', grading('g1f3', [0.1, 0.2, 0.7], 78));
   expect(grade.label).toBe('Holds');
 });
-it('holds the spinner while the 2400 lane is pending, falls back when it fails', () => {
+it('holds the spinner while the objective lane is pending, falls back when it fails', () => {
   const blunderSf = reviewMove(evaluation(600), evaluation(-1000), new Chess(), 'd2d4');
   expect(blunderSf.label).toBe('Blunder');
-  const pending: MaiaGrading = { before: undefined, afterExpected: null, beforePending: true, afterPending: false };
+  const pending: ObjectiveGrade = { top: null, expected: null, afterExpected: null, beforePending: true, afterPending: false };
   expect(reviewMove(evaluation(600), evaluation(-1000), new Chess(), 'd2d4', pending).label).toBe('Unreviewed');
-  const failed: MaiaGrading = { before: undefined, afterExpected: null, beforePending: false, afterPending: false };
+  const failed: ObjectiveGrade = { top: null, expected: null, afterExpected: null, beforePending: false, afterPending: false };
   expect(reviewMove(evaluation(600), evaluation(-1000), new Chess(), 'd2d4', failed).label).toBe('Blunder');
-  const degraded = grading('e2e4', [0.1, 0.2, 0.7], 80);
-  degraded.before = { ...degraded.before!, degraded: true };
+  const degraded: ObjectiveGrade = { top: null, expected: 80, afterExpected: 80, beforePending: false, afterPending: false };
   expect(reviewMove(evaluation(600), evaluation(-1000), new Chess(), 'd2d4', degraded).label).toBe('Blunder');
 });
 it('keeps Critical praise reachable through the 2400 top', () => {

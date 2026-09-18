@@ -14,10 +14,11 @@ import (
 )
 
 const (
-	// maxBatchRequests bounds one game: 256 plies x two engines. Intake
-	// cache-filtering means the queued remainder is misses only. It also
-	// bounds unresolved misses per engine scheduler (§2 cap a).
-	maxBatchRequests = 512
+	// maxBatchRequests bounds one game: 256 plies x three lanes (Stockfish,
+	// display Maia, grading Maia 2400). Intake cache-filtering means the
+	// queued remainder is misses only. It also bounds unresolved misses per
+	// engine scheduler (§2 cap a).
+	maxBatchRequests = 768
 	// maxKeptJobs bounds in-memory history. Results stay queryable through
 	// evaluations_v2 + lookup long after their job row is evicted.
 	maxKeptJobs = 8
@@ -136,7 +137,7 @@ func (s *server) executeMaia(waitCtx, execCtx context.Context, prio Priority, su
 		}
 		response := moveResponse{Move: result.Move, WDL: result.WDL, ModelUsed: used, Degraded: degraded}
 		for _, candidate := range result.Candidates {
-			response.TopMoves = append(response.TopMoves, topMove{Move: candidate.Move, Prob: candidate.Policy})
+			response.TopMoves = append(response.TopMoves, topMove{Move: candidate.Move, Prob: candidate.Policy, WDL: candidate.WDL})
 		}
 		if degraded {
 			if release != nil {

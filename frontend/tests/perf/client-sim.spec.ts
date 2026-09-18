@@ -206,7 +206,7 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
       // duplicate-rank validation and fails the job (rightly).
       const sfMoves = [best, ...legal.filter(m => m !== best)].slice(0, 2);
       const value = engine === 'maia'
-        ? { move: best, top_moves: [{ move: best, prob: 0.6 }], wdl: [0.2, 0.3, 0.5], model_used: payload.model, degraded: false }
+        ? { move: best, top_moves: [{ move: best, prob: 0.6, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], model_used: payload.model, degraded: false }
         : {
             engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 14, terminal: null,
             best_move: sfMoves[0], score: { type: 'cp', value: 20 },

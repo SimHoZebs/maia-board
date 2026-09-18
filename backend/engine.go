@@ -300,7 +300,7 @@ func validEngineResult(result EngineResult, legalCount int, deterministic bool) 
 		if !validWDL(c.WDL) {
 			return false
 		}
-		value.TopMoves = append(value.TopMoves, topMove{Move: c.Move, Prob: c.Policy})
+		value.TopMoves = append(value.TopMoves, topMove{Move: c.Move, Prob: c.Policy, WDL: c.WDL})
 	}
 	return result.WDL == result.Candidates[0].WDL && validMoveValue(value, "79m", deterministic)
 }

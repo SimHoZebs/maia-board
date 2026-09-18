@@ -70,7 +70,7 @@ async function bootGames(page: Page, seed: Record<string, unknown> = {}, offline
     }
     if (url.pathname === '/move') {
       const payload = route.request().postDataJSON();
-      await route.fulfill({ json: { move: 'e7e5', top_moves: [{ move: 'e7e5', prob: .6 }], wdl: [0.2, 0.3, 0.5], model_used: payload.model, degraded: false } });
+      await route.fulfill({ json: { move: 'e7e5', top_moves: [{ move: 'e7e5', prob: .6, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], model_used: payload.model, degraded: false } });
       return;
     }
     const filename = url.pathname.startsWith('/assets/') ? url.pathname.slice(1) : 'index.html';
@@ -92,7 +92,7 @@ test('live play shows the actual 5m fallback after requesting 79m', async ({ pag
   let requestedModel: unknown;
   await page.route('http://maia.test/move', async route => {
     requestedModel = route.request().postDataJSON().model;
-    await route.fulfill({ json: { move: 'e7e5', top_moves: [{ move: 'e7e5', prob: .6 }], wdl: [.2, .3, .5], model_used: '5m', degraded: true } });
+    await route.fulfill({ json: { move: 'e7e5', top_moves: [{ move: 'e7e5', prob: .6, wdl: [.2, .3, .5] }], wdl: [.2, .3, .5], model_used: '5m', degraded: true } });
   });
   await page.goto('http://maia.test/play');
   await page.locator('#start-game').click();

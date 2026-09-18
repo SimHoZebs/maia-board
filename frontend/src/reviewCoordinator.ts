@@ -85,9 +85,9 @@ export class ReviewCoordinator {
   ensure(
     nodes: ReviewNode[],
     settings: SettingsInput,
-    opts: { priority?: boolean; engines?: Engine[]; signal?: AbortSignal; priorityPlies?: readonly number[]; fastFirst?: boolean } = {},
+    opts: { priority?: boolean; engines?: Engine[]; signal?: AbortSignal; priorityPlies?: readonly number[]; fastFirst?: boolean; append?: boolean } = {},
   ): Promise<{ total: number; covered: number }> | void {
-    const { priority = false, engines: enginesOpt, signal, priorityPlies, fastFirst = false } = opts;
+    const { priority = false, engines: enginesOpt, signal, priorityPlies, fastFirst = false, append = false } = opts;
     const wanted = enginesOpt ?? [...engines];
     if (priority) {
       const desired: Job[] = [];
@@ -125,9 +125,11 @@ export class ReviewCoordinator {
         }
       }
       // Latest-wins within this workspace: the new set replaces queued work
-      // for the same engines. Running work continues (non-preemptive server
-      // slot) and lands via its generation below.
-      for (const engine of wanted) this.pending[engine].clear();
+      // for the same engines, unless append keeps both (the grading lane
+      // shares the maia queue with display Maia under different keys, so a
+      // grading ensure must not wipe queued display jobs or vice versa).
+      // Running work continues either way (non-preemptive server slot).
+      if (!append) for (const engine of wanted) this.pending[engine].clear();
       for (const job of desired) {
         this.failures.delete(job.key);
         this.pending[job.engine].set(job.key, { job });

@@ -32,8 +32,23 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
   };
   const maiaValue = (payload: any) => {
     const best = bestMove(payload);
-    return { move: best, top_moves: [{ move: best, prob: .6 }], wdl: [.2,.3,.5], model_used: payload.model, degraded: false };
+    const game = replay(payload.moves, payload.initial_fen);
+    const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
+    const second = legal.find(move => move !== best) ?? best;
+    const extra = second === best ? [] : [{ move: second, prob: .25, wdl: [.2,.3,.5] }];
+    return { move: best, top_moves: [{ move: best, prob: .6, wdl: [.2,.3,.5] }, ...extra], wdl: [.2,.3,.5], model_used: payload.model, degraded: false };
   };
+  const gradeValue = (payload: any) => {
+    const game = replay(payload.moves, payload.initial_fen);
+    const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
+    const pgn = bestMove(payload);
+    const top = legal.find(move => move !== pgn) ?? legal[0];
+    const cp = scores[payload.moves.length] ?? 0;
+    const white = 100 / (1 + Math.exp(-0.00368208 * cp));
+    const win = (game.turn() === 'w' ? white : 100 - white) / 100;
+    return { move: top, top_moves: [{ move: top, prob: .5, wdl: [1 - win, 0, win] }], wdl: [1 - win, 0, win], model_used: '79m', degraded: false };
+  };
+  const maiaOrGrade = (payload: any) => payload.elo_maia === 2400 ? gradeValue(payload) : maiaValue(payload);
   const sfValue = (payload: any) => {
     const game = replay(payload.moves, payload.initial_fen);
     const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
@@ -49,7 +64,7 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
     if (!job || job.filed) return;
     job.filed = true;
     for (const request of job.requests) {
-      cache.set(request.engine, request, request.engine === 'maia' ? maiaValue(request) : sfValue(request));
+      cache.set(request.engine, request, request.engine === 'maia' ? maiaOrGrade(request) : sfValue(request));
     }
   };
   page.on('pageerror', error => errors.push(error.message));
@@ -96,7 +111,7 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
         await route.fulfill({ json: hit.value, headers: { 'X-Eval-Cache': 'hit' } });
         return;
       }
-      const value = path === '/move' ? maiaValue(payload) : sfValue(payload);
+      const value = path === '/move' ? maiaOrGrade(payload) : sfValue(payload);
       cache.set(engine, payload, value);
       await route.fulfill({ json: value }); return;
     }
@@ -125,8 +140,8 @@ test('standalone FEN shows current candidates and clears correct-frame previews'
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 1');
   const maia = page.getByRole('region', { name: 'Maia analysis', exact: true });
   await expect(maia.getByRole('button', { name: 'Explore e4', exact: true })).toBeVisible();
-  const candidate = page.getByRole('region', { name: 'Stockfish evaluation', exact: true }).getByRole('button', { name: 'Explore e3', exact: true });
-  await expect(page.getByRole('region', { name: 'Stockfish evaluation', exact: true }).getByRole('button').first()).toBeVisible();
+  const candidate = maia.getByRole('button', { name: 'Explore e3', exact: true });
+  await expect(maia.getByRole('button').first()).toBeVisible();
   const preview = page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]');
   await candidate.hover();
   await expect(preview).toHaveCount(1);
@@ -150,7 +165,7 @@ test('root identifies requested and actual fallback models', async ({ page }) =>
     const body = route.request().postDataJSON();
     const move = replay(body.moves, body.initial_fen).moves({ verbose: true })[0];
     const uci = `${move.from}${move.to}${move.promotion ?? ''}`;
-    return route.fulfill({ json: { move: uci, top_moves: [{ move: uci, prob: .13 }], wdl: [.2,.3,.5], model_used: '5m', degraded: true } });
+    return route.fulfill({ json: { move: uci, top_moves: [{ move: uci, prob: .13, wdl: [.2,.3,.5] }], wdl: [.2,.3,.5], model_used: '5m', degraded: true } });
   });
   await page.goto('http://maia.test/analyze?moves=');
   await expect(page.getByRole('heading', { name: 'Maia 5m • 1600', exact: true })).toBeVisible();
@@ -192,13 +207,14 @@ test('automatic review shows real overlapping SVG arrows', async ({ page }, info
   await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
   await page.screenshot({ path: info.outputPath('coincident-arrows.png'), fullPage: true });
   expect(app.errors).toEqual([]);
-  expect(app.requests.filter(request => request.engine === '/move' && request.moves.length === 0)).toHaveLength(1);
+  // Display + grading lanes each fetch the root once in the foreground.
+  expect(app.requests.filter(request => request.engine === '/move' && request.moves.length === 0)).toHaveLength(2);
 });
 test('whole game completes independently of viewing and updates the position balance', async ({ page }, info) => {
   // Book chips would occupy the badge boxes on this all-book line (see
   // badge-loading.spec.ts): the fixture names nothing so verdicts render.
   const app = await bootReview(page, '1. e4 e5 2. Nf3 Nc6', [20,20,200,-700,-680]);
-  await expect(page.locator('.balance-score')).toHaveText('-6.80');
+  await expect(page.locator('.balance-score')).toHaveText('8%');
   // The charts shell mounts pre-analysis (lines stay empty until verdicts
   // settle); only the hero must stay absent before the review runs.
   await expect(page.locator('.win-hero')).toHaveCount(0);
@@ -217,7 +233,7 @@ test('whole game completes independently of viewing and updates the position bal
   const settled = inferred();
   await page.locator('.move-cell').nth(2).click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
-  await expect(page.locator('.balance-score')).toHaveText('-7.00');
+  await expect(page.locator('.balance-score')).toHaveText('7%');
   await expect(page.locator('.balance-track')).toHaveAccessibleName(/estimated White winning chance 7%/);
   await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
   await page.screenshot({ path: info.outputPath('completed-review.png'), fullPage: true });
@@ -248,10 +264,10 @@ for (const width of [320, 1440]) {
 
 test('move analysis summarizes the game below the engines and links mistakes from moves to review', async ({ page }, info) => {
   const app = await bootReview(page);
-  await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 15' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Maia 79m • 1600', exact: true })).toBeVisible();
   await expect(page.getByRole('tabpanel', { name: 'Move analysis', exact: true })).toBeVisible();
   await expect(page.locator('.overview-partial')).toContainText('Summary covers reviewed moves only');
-  await expect(page.getByRole('region', { name: 'White move counts', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'White move quality', exact: true })).toBeVisible();
   await expect(page.locator('.accuracy-value')).toHaveCount(0);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.locator('.review-coverage')).toHaveCount(0);
@@ -265,7 +281,7 @@ test('move analysis summarizes the game below the engines and links mistakes fro
   await expect(page.getByRole('tab', { name: 'Move analysis', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
   await expect(page.locator('#insight-content').getByRole('button', { name: 'Explore Nf3 (played) from before this move', exact: true })).toBeVisible();
-  await expect(page.locator('.balance-score')).toHaveText('-7.00');
+  await expect(page.locator('.balance-score')).toHaveText('7%');
   expect(app.errors).toEqual([]);
 });
 
@@ -347,18 +363,18 @@ for (const width of [1440, 360]) test(`move analysis restores evaluation graph a
   await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/2\. Nf3/);
   await expect(page.getByRole('tab', { name: 'Move accuracy', exact: true })).toHaveCount(0);
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
-  await expect(page.locator('.chart-point').nth(4)).toHaveAccessibleName(/2… Nc6 · Black.*White winning chance.*-6\.80/);
+  await expect(page.locator('.chart-point').nth(4)).toHaveAccessibleName(/2… Nc6 · Black.*7\.6% White winning chance.*Best/);
   await page.locator('.chart-point').nth(4).click();
   await expect(page.getByRole('tab', { name: 'Move analysis', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
-  await expect(page.locator('.balance-score')).toHaveText('-6.80');
+  await expect(page.locator('.balance-score')).toHaveText('8%');
   await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/2… Nc6/);
   expect(app.errors).toEqual([]);
 });
 
 test('move analysis graphs leave unreviewed positions as gaps', async ({ page }) => {
   await bootReview(page);
-  await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 15' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Maia 79m • 1600', exact: true })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Evaluation graph', exact: true })).toBeVisible();
   await expect(page.locator('.chart-point i')).toHaveCount(2);
   await expect(page.locator('.chart-line')).toHaveCount(1);
@@ -373,8 +389,8 @@ test('move analysis shows only your moves with your decision points on the graph
   }, KEYS.snapshot);
   await page.reload();
   await expect(page.locator('.accuracy-card')).toHaveCount(1);
-  await expect(page.getByRole('region', { name: 'Black move counts', exact: true })).toContainText('Black · You');
-  await expect(page.getByRole('region', { name: 'White move counts', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Black move quality · You', exact: true })).toContainText('Black move quality · You');
+  await expect(page.getByRole('region', { name: 'White move quality', exact: true })).toHaveCount(0);
   await expect(page.locator('.quality-counts li')).toHaveCount(9);
   await expect(page.locator('.chart-point i')).toHaveCount(1);
   await expect(page.locator('.chart-point:disabled')).toHaveCount(0);
@@ -395,7 +411,7 @@ test('move analysis shows only your moves with your decision points on the graph
   await expect(page.locator('.chart-line')).toHaveCount(1);
   expect(await page.locator('.chart-point span').allTextContents()).toEqual(['1…', '2…']);
   await expect(page.locator('.chart-point:disabled')).toHaveCount(0);
-  await expect(page.getByRole('region', { name: 'Black move counts', exact: true })).toContainText('Black · You');
+  await expect(page.getByRole('region', { name: 'Black move quality · You', exact: true })).toContainText('Black move quality · You');
   expect(app.errors).toEqual([]);
 });
 
@@ -420,7 +436,6 @@ test('unlisted played moves have no fallback below either prediction list', asyn
   await page.locator('#analysis-next').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 3');
   await expect(page.locator('#insight-content .candidate-list')).toContainText('e4');
-  await expect(page.locator('section[aria-label="Stockfish evaluation"] .candidate-list')).toContainText('e4');
   await expect(page.locator('.engine-duo')).not.toContainText('Played d4');
   await expect(page.locator('.engine-duo .candidate-list')).not.toContainText(['d4', 'd4']);
 });
@@ -444,16 +459,15 @@ test('blunder and mistake destinations carry board badges', async ({ page }) => 
 });
 test('server-cached positions skip inference after reload', async ({ page }) => {
   const app = await bootReview(page);
-  await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 15' })).toBeVisible();
-  // Both engines at the before/current pair must finish before reloading.
-  // Three rows can leave current-position Maia uncached and legitimately
-  // trigger the fourth request after reload.
-  await expect.poll(() => app.evaluations.size).toBe(4);
+  await expect(page.getByRole('heading', { name: 'Maia 79m • 1600', exact: true })).toBeVisible();
+  // Both engines at the before/current pair must finish before reloading:
+  // fast+full Stockfish plus display and grading Maia rows.
+  await expect.poll(() => app.evaluations.size).toBe(8);
   const calls = app.requests.length;
   await page.reload();
   // The loaded line restores from the snapshot with the import panel closed;
   // cached positions resolve without new inference.
-  await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 15' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Maia 79m • 1600', exact: true })).toBeVisible();
   await expect(page.locator('.candidate-list li')).not.toHaveCount(0);
   expect(app.requests).toHaveLength(calls);
   expect(app.errors).toEqual([]);
@@ -519,7 +533,7 @@ test('changed analysis settings gate the missing positions behind a new batch', 
 });
 test('mixed arrow sources retain their own endpoints', async ({ page }, info) => {
   await bootReview(page);
-  await page.route('http://maia.test/move', route => route.fulfill({ json: { move: 'g1f3', top_moves: [{ move: 'g1f3', prob: .6 }], wdl: [.2,.3,.5], model_used: '79m', degraded: false } }));
+  await page.route('http://maia.test/move', route => route.fulfill({ json: { move: 'g1f3', top_moves: [{ move: 'g1f3', prob: .6, wdl: [.2,.3,.5] }], wdl: [.2,.3,.5], model_used: '79m', degraded: false } }));
   await page.route('http://maia.test/evaluate', route => route.fulfill({ json: { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'd2d4', score: { type: 'cp', value: 20 }, lines: [{ move: 'd2d4', score: { type: 'cp', value: 20 }, depth: 12 }, { move: 'e2e4', score: { type: 'cp', value: 0 }, depth: 12 }] } }));
   await atStart(page);
   const endpoints = await lines(page).evaluateAll(elements => elements.map(el => `${el.getAttribute('x1')},${el.getAttribute('y1')}:${el.getAttribute('x2')},${el.getAttribute('y2')}`));
@@ -528,15 +542,13 @@ test('mixed arrow sources retain their own endpoints', async ({ page }, info) =>
   // displayed move from its before-position: step forward to read predictions.
   await page.locator('#analysis-next').click();
   await expect(page.getByRole('heading', { name: 'Maia 79m • 1600', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Stockfish' })).toBeVisible();
   await expect(page.locator('.insight-panel')).toContainText('Nf3');
-  await expect(page.locator('.insight-panel')).toContainText('d4');
   await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
   await page.screenshot({ path: info.outputPath('mixed-arrows.png'), fullPage: true });
 });
 test('current position balance replaces the win-rate sections', async ({ page }) => {
   await bootReview(page);
-  await expect(page.locator('.balance-score')).toHaveText('-6.80');
+  await expect(page.locator('.balance-score')).toHaveText('8%');
   // The evaluation graph lives in Move analysis now, so the section
   // renders before any review — the foreground pair settles one segment
   // immediately (dot coverage is asserted in the gaps test below).
@@ -547,7 +559,7 @@ test('current position balance replaces the win-rate sections', async ({ page })
 });
 test('analysis progress replaces the analyze button while running without a cancel option', async ({ page }) => {
   await bootReview(page);
-  await expect(page.getByRole('heading', { name: 'Stockfish 19 · depth 15' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Maia 79m • 1600', exact: true })).toBeVisible();
   // Hold the batch event stream open: the job stays running until the
   // stream resolves, so progress UI is observable deterministically instead
   // of racing the instant-mock finish. (Holding foreground fetches cannot
@@ -636,10 +648,10 @@ test('explored branches keep the original line badges', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   // Mainline badges settled: two Best, one Mistake, one Blunder.
   await expect(page.locator('.move-cell .quality-best')).toHaveCount(2);
-  // Branch from the root via the second Stockfish candidate.
+  // Branch from the root via the second Maia candidate.
   await page.locator('#analysis-first').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 5');
-  const candidates = page.locator('section[aria-label="Stockfish evaluation"] .candidate-reading');
+  const candidates = page.locator('section[aria-label="Maia analysis"] .candidate-reading');
   await expect(candidates).toHaveCount(2);
   await candidates.nth(1).click();
   await expect(page.locator('.original-move')).toHaveCount(4);

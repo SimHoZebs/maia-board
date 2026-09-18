@@ -191,7 +191,7 @@ export function EvalLoadingLab() {
         <h1>Evaluation badge loading states</h1>
         <p className="lab-intro">
           Every row below is a live loading treatment for{" "}
-          <code>QualityBadge</code> while Stockfish evaluations settle. Badges
+          <code>QualityBadge</code> while move grades settle. Badges
           sit in real <code>.move-cell</code> rows so you can judge layout
           shift. Animations pause under{" "}
           <code>prefers-reduced-motion</code>.

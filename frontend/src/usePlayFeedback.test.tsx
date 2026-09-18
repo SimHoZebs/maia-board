@@ -6,6 +6,8 @@ import { initialState, reducer } from './state';
 import { KEYS } from './storage';
 import { buildTimeline, START_FEN, timelineBuildsForTests } from './domain';
 import { reviewKey, reviewNodes, stablePositionKey, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
+import { laneKey, lanePoints } from './objective/maia';
+import type { ObjectiveLane } from './qualities';
 import { sfFixture } from './evaluationTestFixtures';
 import { defaultStockfishSettings } from './stockfishSettings';
 import type { Evaluation } from './reviewMetrics';
@@ -108,8 +110,8 @@ describe('timeline-backed move feedback', () => {
     const held = { ...sfFixture(afterNode.fen), score: { type: 'cp' as const, value: 50 } };
     const sfLookup = (node: ReviewNode) => node.ply === 0 ? critical : held;
     const maiaKey = reviewKey('maia', beforeNode, settings);
-    const absent = { move: 'd2d4', top_moves: [{ move: 'd2d4', prob: 0.4 }], wdl: [0.2, 0.3, 0.5] as [number, number, number], model_used: '79m' as const, degraded: false };
-    const expected = { ...absent, top_moves: [{ move: 'e2e4', prob: 0.5 }, { move: 'd2d4', prob: 0.4 }] };
+    const absent = { move: 'd2d4', top_moves: [{ move: 'd2d4', prob: 0.4, wdl: [0.2, 0.3, 0.5] as [number, number, number] }], wdl: [0.2, 0.3, 0.5] as [number, number, number], model_used: '79m' as const, degraded: false };
+    const expected = { ...absent, top_moves: [{ move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] as [number, number, number] }, { move: 'd2d4', prob: 0.4, wdl: [0.2, 0.3, 0.5] as [number, number, number] }] };
     const base = { gameId: 'praise', timeline: line, userColor: 'white' as const, settings, sfLookup, maiaLookup: (_node: ReviewNode) => undefined, sfPending: new Set<string>(), maiaPending: new Set<string>(), prev: null };
     // Maia still queued: spinner, not a provisional Best.
     expect(computePlayQualities({ ...base, maiaPending: new Set([maiaKey]) }).qualities[0]?.label).toBe('Unreviewed');
@@ -117,6 +119,32 @@ describe('timeline-backed move feedback', () => {
     expect(computePlayQualities({ ...base, maiaLookup: () => absent }).qualities[0]?.label).toBe('Excellent');
     // Maia expects it: Best.
     expect(computePlayQualities({ ...base, maiaLookup: () => expected }).qualities[0]?.label).toBe('Best');
+  });
+  it('grades play negatives from the objective lane, holding the spinner while pending', () => {
+    const line = buildTimeline(START_FEN, ['e2e4']);
+    const [beforeNode, afterNode] = reviewNodes(line);
+    const flat = { ...sfFixture(beforeNode.fen), best_move: 'e2e4', score: { type: 'cp' as const, value: 20 },
+      lines: [{ move: 'e2e4', score: { type: 'cp' as const, value: 20 }, depth: 12 }] };
+    const flatAfter = { ...sfFixture(afterNode.fen), score: { type: 'cp' as const, value: 20 } };
+    const sfLookup = (node: ReviewNode) => node.ply === 0 ? flat : flatAfter;
+    const grade = (top: string, wdl: [number, number, number]) =>
+      ({ move: top, top_moves: [{ move: top, prob: 0.4, wdl: [0.2, 0.3, 0.5] as [number, number, number] }], wdl, model_used: '79m' as const, degraded: false });
+    const base = { gameId: 'grading', timeline: line, userColor: 'white' as const, settings, sfLookup,
+      maiaLookup: (_node: ReviewNode) => undefined, sfPending: new Set<string>(), maiaPending: new Set<string>(), prev: null };
+    const laneNodes = reviewNodes(line);
+    const laneFor = (rows: (Parameters<typeof lanePoints>[0][number])[], pending: Set<string>): ObjectiveLane => ({
+      points: lanePoints(rows, laneNodes),
+      pending,
+      keyFor: (node: ReviewNode) => laneKey(node, () => settings),
+    });
+    // 2400s top d2d4 (exp 80); e4 leaves White at 60: Blunder despite flat SF.
+    const blunder = computePlayQualities({ ...base,
+      objective: laneFor([grade('d2d4', [0.1, 0.2, 0.7]), grade('e7e5', [0.5, 0.2, 0.3])], new Set<string>()) });
+    expect(blunder.qualities[0]?.label).toBe('Blunder');
+    // Objective lane pending: spinner, not the SF Top.
+    const waiting = computePlayQualities({ ...base,
+      objective: laneFor([undefined, grade('e7e5', [0.5, 0.2, 0.3])], new Set([laneKey(beforeNode, () => settings)])) });
+    expect(waiting.qualities[0]?.label).toBe('Unreviewed');
   });
 });
 

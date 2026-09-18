@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { candidateSan } from "./domain";
-import { CandidateList, CandidateRow } from "./components";
+import type { DomainOutcome } from "./domain";
 import {
   scoreValueText,
-  whiteWin,
-  type Evaluation,
+  whiteExpected,
+  type Score,
 } from "./reviewMetrics";
+import { sourceLabel } from "./objective";
 
 export function SkeletonList({ label, rows = 3 }: { label: string; rows?: number }) {
   return (
@@ -90,49 +90,51 @@ function useTweenedPercent(target: number): number {
   return display;
 }
 
-export function StockfishBar({
-  evaluation,
+export function ObjectiveBar({
+  turn,
+  expected,
+  mate,
+  outcome,
   orientation,
   failed,
 }: {
-  evaluation?: Evaluation;
+  turn: 'white' | 'black';
+  expected?: number | null;
+  mate?: Score | null;
+  outcome?: DomainOutcome | null;
   orientation: "white" | "black";
   failed?: boolean;
 }) {
-  // Retain the last settled evaluation while the next position loads: the bar
+  // Objective reading: a Stockfish-seen forced mate outranks everything
+  // (mate distance survives here and in the verdict), then terminal
+  // outcomes, then the objective expectation. The bar never shows
+  // centipawns: scores are White winning chances from human-like play.
+  const display = objectiveReading(turn, expected, mate ?? null, outcome ?? null);
+  // Retain the last settled reading while the next position loads: the bar
   // keeps showing the previous value (dimmed/pulsing via .loading) so the
   // tween runs previous -> current instead of previous -> 50 -> current.
   // Render-phase retention (no effect): the committed value is available to
-  // the same commit's tween input, with no one-commit ref lag. Evaluation
-  // objects are cache-stable identities, so this settles after one commit.
-  const [last, setLast] = useState<Evaluation | undefined>(evaluation);
-  if (evaluation && evaluation !== last) setLast(evaluation);
-  const display = evaluation ?? last;
-  const percent = display ? whiteWin(display.score) : 50;
-  const shown = useTweenedPercent(percent);
-  const score = display ? scoreValueText(display.score) : "—";
-  const pending = !evaluation;
+  // the same commit's tween input, with no one-commit ref lag.
+  const [last, setLast] = useState(display);
+  if (display && (display.percent !== last?.percent || display.score !== last?.score)) setLast(display);
+  const shown = display ?? last;
+  const percent = shown ? shown.percent : 50;
+  const shownTween = useTweenedPercent(percent);
+  const score = shown ? shown.score : "—";
+  const pending = !display;
   // A failed fetch is not loading: drop the pulse so the bar never spins
   // forever on the old value. Retry clears the failure upstream and the pulse
   // resumes while the refetch is in flight.
-  const loading = pending && !!display && !failed;
+  const loading = pending && !!shown && !failed;
   const statusSuffix = loading ? " · updating" : failed && pending ? " · update failed" : "";
-  const description = !display
-    ? "No evaluation yet"
-    : display.terminal === "draw"
-      ? "Draw"
-      : display.terminal === "white_win"
-        ? "White wins"
-        : display.terminal === "black_win"
-          ? "Black wins"
-          : `${score} · White perspective`;
-  const accessibleName = !display
+  const description = shown ? shown.description : "No evaluation yet";
+  const accessibleName = !shown
     ? `${description}${failed && pending ? " · update failed" : ""}`
     : `${description} · estimated White winning chance ${Math.round(percent)}%${statusSuffix}`;
   return (
     <section
-      className={`stockfish-balance orientation-${orientation}${pending ? " pending" : ""}${loading ? " loading" : ""}`}
-      aria-label="Stockfish position evaluation"
+      className={`maia-balance orientation-${orientation}${pending ? " pending" : ""}${loading ? " loading" : ""}`}
+      aria-label="Position evaluation"
       aria-busy={loading || undefined}
     >
       <div
@@ -141,7 +143,7 @@ export function StockfishBar({
         aria-label={accessibleName}
         title={description}
       >
-        <div className="balance-white" style={{ height: `${shown}%` }} />
+        <div className="balance-white" style={{ height: `${shownTween}%` }} />
         <strong className="balance-score" aria-hidden="true">
           {score}
         </strong>
@@ -150,59 +152,19 @@ export function StockfishBar({
   );
 }
 
-export function StockfishBody({
-  fen,
-  evaluation,
-  played,
-  previewUci,
-  onPreview,
-  onExplore,
-  retrospective = false,
-}: {
-  fen: string;
-  evaluation: Evaluation;
-  played?: string;
-  previewUci: string | null;
-  onPreview: (uci: string | null) => void;
-  onExplore: (uci: string) => void;
-  retrospective?: boolean;
-}) {
-  if (evaluation.terminal)
-    return (
-      <div>
-        <p>
-          {evaluation.terminal === "draw"
-            ? "Draw"
-            : evaluation.terminal === "white_win"
-              ? "White wins"
-              : "Black wins"}
-        </p>
-      </div>
-    );
-  return (
-    <div>
-      <CandidateList>
-        {evaluation.lines.map((line, index) => {
-          const san = candidateSan(fen, line.move);
-          const isPlayed = line.move === played;
-          return (
-            <CandidateRow
-              key={`${line.move}:${index}`}
-              index={index}
-              san={san}
-              metric={scoreValueText(line.score)}
-              isPlayed={isPlayed}
-              preview={{
-                label: `Explore ${san}${isPlayed ? " (played)" : ""}${retrospective ? " from before this move" : ""}`,
-                active: previewUci === line.move,
-                onPreview: () => onPreview(line.move),
-                onClear: () => onPreview(null),
-                onSelect: () => onExplore(line.move),
-              }}
-            />
-          );
-        })}
-      </CandidateList>
-    </div>
-  );
+function objectiveReading(turn: 'white' | 'black', expected: number | null | undefined, mate: Score | null, outcome: DomainOutcome | null) {
+  if (outcome?.kind === "checkmate") {
+    const white = outcome.winner === "white";
+    return { percent: white ? 100 : 0, score: white ? "+M0" : "-M0", description: white ? "White wins" : "Black wins" };
+  }
+  if (outcome) return { percent: 50, score: "Draw", description: "Draw" };
+  if (mate) {
+    const white = (mate.winning_side ?? (mate.value > 0 ? "white" : "black")) === "white";
+    const text = scoreValueText(mate);
+    return { percent: white ? 100 : 0, score: text, description: `${text} · White perspective` };
+  }
+  if (expected == null) return undefined;
+  const percent = whiteExpected(turn, expected);
+  const text = `${Math.round(percent)}%`;
+  return { percent, score: text, description: `${text} · White perspective · ${sourceLabel()}` };
 }

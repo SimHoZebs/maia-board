@@ -18,6 +18,7 @@ export type MoveRequest = {
 export type TopMove = {
   move: string;
   prob: number;
+  wdl: [number, number, number];
 };
 
 export type MoveResponse = {
@@ -72,7 +73,7 @@ const uci = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
 const probability = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
 
 function isTopMove(value: unknown): value is TopMove {
-  return isRecord(value) && typeof value.move === 'string' && uci.test(value.move) && probability(value.prob);
+  return isRecord(value) && typeof value.move === 'string' && uci.test(value.move) && probability(value.prob) && isWdlTuple(value.wdl);
 }
 
 function isTopMoves(value: unknown): value is TopMove[] {

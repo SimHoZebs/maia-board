@@ -33,8 +33,9 @@ type moveRequest struct {
 }
 
 type topMove struct {
-	Move string  `json:"move"`
-	Prob float64 `json:"prob"`
+	Move string     `json:"move"`
+	Prob float64    `json:"prob"`
+	WDL  [3]float64 `json:"wdl"`
 }
 
 type moveResponse struct {

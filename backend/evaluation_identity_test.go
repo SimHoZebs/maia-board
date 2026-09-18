@@ -160,7 +160,7 @@ func TestMaiaLookupModelEloAndLegacyIsolation(t *testing.T) {
 	elo, other := 1600, 1700
 	r := EngineRequest{FEN: startFEN, SelfElo: elo, OppoElo: elo}
 	hash, key := maiaIdentity(r, "79m").coordinates()
-	value := moveResponse{Move: "e2e4", TopMoves: []topMove{{Move: "e2e4", Prob: 1}}, WDL: [3]float64{.2, .3, .5}, ModelUsed: "79m"}
+	value := moveResponse{Move: "e2e4", TopMoves: []topMove{{Move: "e2e4", Prob: 1, WDL: [3]float64{.2, .3, .5}}}, WDL: [3]float64{.2, .3, .5}, ModelUsed: "79m"}
 	s.storeCache(hash, "maia", key, value)
 	base := lookupRequest{Engine: "maia", FEN: startFEN, InitialFEN: startFEN, Moves: []string{}, EloMaia: &elo, EloUser: &elo, Model: "79m"}
 	queries := []lookupRequest{base, base, base, base}
@@ -251,17 +251,39 @@ func TestCorruptV2ValuesMissThenRecomputeAndOverwrite(t *testing.T) {
 		}
 	}
 }
+func TestMaiaIdentityVersionsCandidateWDLShape(t *testing.T) {
+	r := EngineRequest{FEN: startFEN, SelfElo: 1600, OppoElo: 1600}
+	_, key := maiaIdentity(r, "79m").coordinates()
+	if !strings.Contains(key, `"value_rev":1`) {
+		t.Fatalf("maia identity must version the candidate-WDL shape: %s", key)
+	}
+	// A legacy-shaped row (no per-candidate WDL) filed under the new key
+	// still misses on validation, so mixed-version caches heal by recompute.
+	s := &server{store: testStore(t)}
+	hash, _ := maiaIdentity(r, "79m").coordinates()
+	legacy := `{"move":"e2e4","top_moves":[{"move":"e2e4","prob":0.8}],"wdl":[0.2,0.3,0.5],"model_used":"79m","degraded":false}`
+	if _, err := s.store.cachePut(hash, "maia", key, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.cachedMaia(r, "79m"); ok {
+		t.Fatal("legacy candidate shape hit")
+	}
+}
+
 func TestCorruptMaiaShapeAndValuesAreMisses(t *testing.T) {
 	s := &server{store: testStore(t)}
 	r := EngineRequest{FEN: startFEN, SelfElo: 1600, OppoElo: 1600}
 	hash, key := maiaIdentity(r, "79m").coordinates()
-	valid := `{"move":"e2e4","top_moves":[{"move":"e2e4","prob":0.8}],"wdl":[0.2,0.3,0.5],"model_used":"79m","degraded":false}`
+	valid := `{"move":"e2e4","top_moves":[{"move":"e2e4","prob":0.8,"wdl":[0.3,0.3,0.4]}],"wdl":[0.2,0.3,0.5],"model_used":"79m","degraded":false}`
 	for _, corrupt := range []string{
 		strings.Replace(valid, `,"prob":0.8`, "", 1),
 		strings.Replace(valid, `0.8`, `null`, 1),
 		strings.Replace(valid, `0.8`, `1.5`, 1),
+		strings.Replace(valid, `[0.3,0.3,0.4]`, `[0,1]`, 1),
+		strings.Replace(valid, `[0.3,0.3,0.4]`, `[0,0,1,0]`, 1),
+		strings.Replace(valid, `[0.3,0.3,0.4]`, `[0.5,0.5,0.5]`, 1),
+		strings.Replace(valid, `,"wdl":[0.3,0.3,0.4]`, "", 1),
 		strings.Replace(valid, `[0.2,0.3,0.5]`, `[0,1]`, 1),
-		strings.Replace(valid, `[0.2,0.3,0.5]`, `[0,0,1,0]`, 1),
 		strings.Replace(valid, `[0.2,0.3,0.5]`, `[0.5,0.5,0.5]`, 1),
 		strings.Replace(valid, `"degraded":false`, `"degraded":null`, 1),
 		strings.Replace(valid, `"degraded":false`, `"degraded":true`, 1),

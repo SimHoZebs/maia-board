@@ -10,6 +10,6 @@ export function sfFixture(fen: string, settings: StockfishSettings = defaultStoc
 }
 export function maiaFixture(fen: string, model: MaiaModel = '79m', degraded = false): MoveResponse {
   const candidates = new Chess(fen).moves({ verbose: true }).slice(0, 2).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
-  return { move: candidates[0], top_moves: candidates.map(move => ({ move, prob: 0.3 })), wdl: [0.2, 0.3, 0.5], model_used: model, degraded };
+  return { move: candidates[0], top_moves: candidates.map(move => ({ move, prob: 0.3, wdl: [0.2, 0.3, 0.5] as [number, number, number] })), wdl: [0.2, 0.3, 0.5], model_used: model, degraded };
 }
 export const jsonResponse = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });

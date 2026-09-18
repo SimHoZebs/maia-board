@@ -22,6 +22,10 @@ export function useServerBatch(args: {
   nodes: ReviewNode[];
   settings: SettingsInput;
   engines?: Engine[];
+  // Objective lane: extra per-node entries the active source needs beyond
+  // Stockfish, hashed and tracked exactly like the rest of the batch.
+  // Module-singleton identity expected; rides a ref like settings.
+  objectiveLane?: SettingsInput | null;
   coordinator: ReviewCoordinator;
   scope: LineScope | null;
   auto?: boolean;
@@ -52,6 +56,8 @@ export function useServerBatch(args: {
   // That is React error #185 the moment auto && active (play + feedback on).
   const enginesRef = useRef(engines);
   enginesRef.current = engines;
+  const objectiveLaneRef = useRef(args.objectiveLane);
+  objectiveLaneRef.current = args.objectiveLane;
   const priorityRef = useRef(args.priorityPlies);
   priorityRef.current = args.priorityPlies;
   const jobIdRef = useRef<string | null>(null);
@@ -84,7 +90,7 @@ export function useServerBatch(args: {
     const current = scopeRef.current;
     if (!active || !current) return;
     const submittedKey = current.lineKey;
-    const batchItems = buildBatchItems(nodesRef.current, settingsRef.current, enginesRef.current);
+    const batchItems = buildBatchItems(nodesRef.current, settingsRef.current, enginesRef.current, objectiveLaneRef.current);
     itemsRef.current = batchItems;
     const keysHash = hashBatchKeys(batchItems.map(item => item.key));
     coordinator.replaceFailures(new Set(batchItems.map(item => item.key)), new Map());
@@ -126,7 +132,7 @@ export function useServerBatch(args: {
     if (!key) return null;
     const stored = readPersistedBatch();
     if (!stored || stored.lineKey !== key) return null;
-    const currentItems = buildBatchItems(nodesRef.current, settingsRef.current, enginesRef.current);
+    const currentItems = buildBatchItems(nodesRef.current, settingsRef.current, enginesRef.current, objectiveLaneRef.current);
     if (!currentItems.length || currentItems.length !== stored.total) return null;
     if (hashBatchKeys(currentItems.map(item => item.key)) !== stored.keysHash) return null;
     return { stored, items: currentItems };
@@ -273,6 +279,16 @@ export function useServerBatch(args: {
         if (priority?.length) await coordinator.primeWithPriority(nodesRef.current, settingsRef.current, primeController.signal, priority);
         else await coordinator.ensure(nodesRef.current, settingsRef.current, { signal: primeController.signal });
       } catch { /* superseded prime */ }
+      // The objective lane files server-side with the batch; reconcile it
+      // through the same lookup so its badges settle without waiting for a
+      // navigation-triggered foreground fetch.
+      const objective = objectiveLaneRef.current;
+      if (objective && !primeController.signal.aborted) {
+        try {
+          if (priority?.length) await coordinator.primeWithPriority(nodesRef.current, objective, primeController.signal, priority, ['maia']);
+          else await coordinator.ensure(nodesRef.current, objective, { signal: primeController.signal, engines: ['maia'] });
+        } catch { /* superseded prime */ }
+      }
     };
     const prime = () => {
       if (stopped || stale()) return;

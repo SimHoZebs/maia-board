@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Chess } from 'chess.js';
 import { buildTimeline, START_FEN, timelineBuildsForTests } from './domain';
 import { EvaluationStore, ReviewCoordinator, fastReviewSettings, fastStockfishSettings, reviewKey, reviewNodes, parseEvaluation, type ReviewSettings } from './reviewCoordinator';
+import { GRADING_MAIA_SETTINGS } from './evaluationStore';
 import { defaultStockfishSettings, stockfishPolicy } from './stockfishSettings';
 import { jsonResponse, maiaFixture, sfFixture } from './evaluationTestFixtures';
 import { hangingResponse, requestBodyText } from './testUtils';
@@ -411,6 +412,38 @@ describe('fast-then-refine', () => {
     await flush();
     expect(coordinator.result('sf', target, settings)?.lines).toHaveLength(2);
     expect(coordinator.provisionalSfResult(target, settings)?.lines).toHaveLength(2);
+  });
+  it('appended grading ensure preserves queued display jobs and cascades in lane order', async () => {
+    // Regression: the grading lane shares the maia queue under different
+    // keys. Its ensure must append (never wipe the queued display current),
+    // and held display jobs must not starve it — completions cascade FIFO.
+    const line = reviewNodes(buildTimeline(START_FEN, ['e2e4', 'e7e5', 'g1f3', 'g8f6', 'f1c4']));
+    const started: string[] = [];
+    const resolvers = new Map<string, () => void>();
+    const fetcher = vi.fn<typeof fetch>(async (url, init) => {
+      const body = JSON.parse(requestBodyText(init));
+      const key = url === '/move' ? `maia:${body.elo_maia}:${body.moves.length}` : `sf:${body.moves.length}`;
+      started.push(key);
+      if (url === '/move') {
+        await new Promise<void>(resolve => resolvers.set(key, resolve));
+        return jsonResponse(maiaFixture(body.fen, body.model));
+      }
+      return jsonResponse(sfFixture(body.fen, body.settings));
+    });
+    const coordinator = new ReviewCoordinator(fetcher);
+    const scope = new AbortController().signal;
+    const targets = [line[4], line[5]];
+    coordinator.ensure(targets, settings, { priority: true, signal: scope, fastFirst: true });
+    coordinator.ensure(targets, GRADING_MAIA_SETTINGS, { priority: true, engines: ['maia'], signal: scope, append: true });
+    await flush();
+    expect(started).toContain('maia:1600:4');
+    expect(started).toContain('maia:1600:5');
+    resolvers.get('maia:1600:4')!();
+    await flush();
+    expect(started).toContain('maia:2400:4');
+    resolvers.get('maia:1600:5')!();
+    await flush();
+    expect(started).toContain('maia:2400:5');
   });
   it('fast failure never blocks the full refine and never surfaces', async () => {
     const fetcher = vi.fn<typeof fetch>(async (_url, init) => {

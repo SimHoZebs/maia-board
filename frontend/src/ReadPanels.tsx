@@ -8,8 +8,7 @@ export {
 export type { MovesPanelProps, MoveNavBarProps } from "./MovesPanel";
 export { SavedGames } from "./SavedGames";
 export {
-  StockfishBar,
-  StockfishBody,
+  ObjectiveBar,
   SkeletonList,
   SkeletonText,
-} from "./StockfishBar";
+} from "./ObjectiveBar";

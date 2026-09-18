@@ -109,14 +109,26 @@ const defaultSleep: SleepLike = ms => new Promise(resolve => setTimeout(resolve,
 
 // One entry per engine per analyzable node, in a stable order the server
 // echoes back as per-index errors. Outcome nodes and over-long lines are
-// skipped exactly like the foreground scheduler skips them.
-export function buildBatchItems(nodes: ReviewNode[], settings: SettingsInput, engines: Engine[] = ['sf', 'maia']): BatchItem[] {
+// skipped exactly like the foreground scheduler skips them. The optional
+// objective lane (extra inference the active source needs beyond Stockfish)
+// appends one entry per node under its own Elo keys; entries colliding with
+// an identical display key collapse to one.
+export function buildBatchItems(nodes: ReviewNode[], settings: SettingsInput, engines: Engine[] = ['sf', 'maia'], objectiveLane?: SettingsInput | null): BatchItem[] {
   const items: BatchItem[] = [];
+  const seen = new Set<string>();
+  const push = (engine: Engine, node: ReviewNode, resolved: ReturnType<typeof resolveSettings>) => {
+    const key = reviewKey(engine, node, resolved);
+    if (seen.has(key)) return;
+    seen.add(key);
+    items.push({ request: evaluationRequest(engine, node, resolved), key, engine });
+  };
   for (const node of nodes) {
     if (node.outcome || node.ply > 256) continue;
     for (const engine of engines) {
-      const resolved = resolveSettings(settings, node);
-      items.push({ request: evaluationRequest(engine, node, resolved), key: reviewKey(engine, node, resolved), engine });
+      push(engine, node, resolveSettings(settings, node));
+    }
+    if (objectiveLane) {
+      push('maia', node, resolveSettings(objectiveLane, node));
     }
   }
   return items;

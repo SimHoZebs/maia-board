@@ -41,7 +41,7 @@ async function bootHistory(page: Page, pgn: string, primeMs: number) {
       const payload = route.request().postDataJSON();
       const game = replay(payload.moves, payload.initial_fen);
       const best = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`)[0];
-      await route.fulfill({ json: { move: best, top_moves: [{ move: best, prob: .6 }], wdl: [.2,.3,.5], model_used: payload.model, degraded: false } });
+      await route.fulfill({ json: { move: best, top_moves: [{ move: best, prob: .6, wdl: [.2,.3,.5] }], wdl: [.2,.3,.5], model_used: payload.model, degraded: false } });
       return;
     }
     if (path === '/games' || path.startsWith('/games/')) {

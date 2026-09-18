@@ -30,6 +30,18 @@ describe('buildBatchItems', () => {
     expect(built[1].request).toMatchObject({ engine: 'maia', fen: nodes[0].fen });
     expect(new Set(built.map(item => item.key)).size).toBe(6);
   });
+  it('appends one grading-maia entry per node, collapsing identical keys', () => {
+    const grading = { eloMaia: 2400, eloUser: 2400, model: '79m' as const };
+    const built = buildBatchItems(nodes, settings, ['sf', 'maia'], grading);
+    expect(built).toHaveLength(9);
+    expect(built.map(item => item.engine)).toEqual(['sf', 'maia', 'maia', 'sf', 'maia', 'maia', 'sf', 'maia', 'maia']);
+    expect(new Set(built.map(item => item.key)).size).toBe(9);
+    expect(built[2].request).toMatchObject({ engine: 'maia', elo_maia: 2400, elo_user: 2400, model: '79m' });
+    // Analysis already at the grading identity: no duplicate Maia entries.
+    const same = buildBatchItems(nodes, { ...grading, stockfish: defaultStockfishSettings }, ['sf', 'maia'], grading);
+    expect(same).toHaveLength(6);
+    expect(new Set(same.map(item => item.key)).size).toBe(6);
+  });
 });
 
 describe('submitBatch', () => {

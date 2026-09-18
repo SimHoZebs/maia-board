@@ -17,6 +17,15 @@ export function reviewNodes(timeline: Timeline): ReviewNode[] {
 }
 export type ReviewSettings = { eloMaia: number; eloUser: number; model: MaiaModel; stockfish?: StockfishSettings };
 export type Engine = 'sf' | 'maia';
+// Objective grading lane: Maia 2400/2400 on the strong model. This is the
+// "Stockfish seat" for retrospective grades (Option 1): negative labels
+// derive from its WDL loss while the adjustable display Maia owns rarity and
+// wording. A frozen singleton so batch hashes and effect identities never
+// churn; reviewKey already disambiguates it from display-Maia rows by Elo.
+export const GRADING_MAIA_SETTINGS: ReviewSettings = Object.freeze({ eloMaia: 2400, eloUser: 2400, model: '79m' });
+export function gradingMaiaKey(node: ReviewNode): string {
+  return reviewKey('maia', node, GRADING_MAIA_SETTINGS);
+}
 export type SettingsInput = ReviewSettings | ((node: ReviewNode) => ReviewSettings);
 export const resolveSettings = (input: SettingsInput, node: ReviewNode): ReviewSettings => typeof input === 'function' ? input(node) : input;
 export type Job = { key: string; engine: Engine; node: ReviewNode; settings: ReviewSettings; fast?: boolean };

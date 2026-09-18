@@ -24,7 +24,7 @@ function maiaEvaluation(fen: string, payload: any) {
   const game = new Chess(fen);
   const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
   const preferred = payload.maia_color === 'black' && legal.includes('e7e5') ? 'e7e5' : legal[0];
-  return { move: preferred, top_moves: [{ move: preferred, prob: 0.6 }], wdl: [0.2, 0.3, 0.5], model_used: payload.model ?? '79m', degraded: false };
+  return { move: preferred, top_moves: [{ move: preferred, prob: 0.6, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], model_used: payload.model ?? '79m', degraded: false };
 }
 
 async function bootPlay(page: Page, behavior: Behavior) {
@@ -156,10 +156,15 @@ test('foreground maia evals only cover the user mover', async ({ page }) => {
   await startAndPlayNf3(page);
   await expect(page.locator(settledBadges)).toHaveCount(1, { timeout: 20000 });
   // Play replies name Maia's color; the user is the other side, and every
-  // foreground Maia eval must name the user's side (the mover it translates).
+  // display-lane Maia eval must name the user's side (the mover it
+  // translates). The 2400 grading lane reads both endpoints of the move,
+  // including the opponent-turn after-position.
   const userColor = app.hits.playMoves[0].maia_color === 'white' ? 'black' : 'white';
-  expect(app.hits.maiaEvals.length).toBeGreaterThan(0);
-  for (const payload of app.hits.maiaEvals) expect(payload.maia_color).toBe(userColor);
+  const display = app.hits.maiaEvals.filter(payload => payload.elo_maia !== 2400);
+  const grading = app.hits.maiaEvals.filter(payload => payload.elo_maia === 2400);
+  expect(display.length).toBeGreaterThan(0);
+  for (const payload of display) expect(payload.maia_color).toBe(userColor);
+  expect(grading.length).toBeGreaterThan(0);
   expect(app.hits.reviews).toEqual([]);
   expect(app.errors).toEqual([]);
 });
@@ -185,8 +190,9 @@ test('superseded lookup landing still settles the rows the new line shares', asy
   const app = await bootPlay(page, { evaluateFailuresRemaining: 0, evaluateAlwaysFail: true, lookup: 'incremental' });
   await startAndPlayNf3(page);
   await expect(page.locator(settledBadges)).toHaveCount(1, { timeout: 20000 });
-  // One lookup per line, no refetch storms, no batch fallback.
-  expect(app.hits.lookups).toHaveLength(2);
+  // One lookup per line per lane (display + grading 2400), no refetch
+  // storms, no batch fallback.
+  expect(app.hits.lookups).toHaveLength(4);
   expect(app.hits.reviews).toEqual([]);
   expect(app.errors).toEqual([]);
 });

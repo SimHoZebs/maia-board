@@ -195,43 +195,44 @@ export function describeMove(args: VerdictArgs): string | null {
 export function whiteWin(score: Score): number {
   return score.type === 'cp' ? 100 / (1 + Math.exp(-.00368208 * score.value)) : (score.winning_side ?? (score.value > 0 ? 'white' : 'black')) === 'white' ? 100 : 0;
 }
-// Maia-2400 objective axis (Option 1: badges pure 2400, words from the
-// user-Elo Maia). expected() reads a mover-relative WDL triple
-// [loss, draw, win] as an expected score on the shared 0-100 scale, so the
-// existing 20/10/5 cutoffs and the moveAccuracy curve transfer unchanged.
-// Maia WDL compresses extremes relative to Stockfish win%, so identical
-// numbers flag fewer moves — that leniency is the point, not a bug.
-export function maiaExpected(wdl: MoveResponse['wdl']): number {
-  const [loss, draw, win] = wdl;
-  return 100 * (win + 0.5 * draw);
+// Objective axis: what "best" and "expected score" mean is a provider
+// choice, not a model choice. An ObjectivePoint is one position read in the
+// provider's units, normalized here: the objective best move (null when the
+// provider cannot name one — degraded, missing, or terminal rows) and the
+// mover-relative expected score on the shared 0-100 scale (null when the
+// provider has no reading). Loss cutoffs (20/10/5) and the moveAccuracy
+// curve below operate on these numbers only and never know the source.
+// consequence: switching providers changes which fetches feed the points,
+// never the grading math.
+export type ObjectivePoint = {
+  top: string | null;
+  expected: number | null;
+};
+// White-relative view of a mover-relative expectation. Callers pass the
+// node's turn; no FEN parsing, no model knowledge.
+export function whiteExpected(turn: 'white' | 'black', moverExpected: number): number {
+  return turn === 'white' ? moverExpected : 100 - moverExpected;
 }
-// Mover-relative expectation after the move. Terminal positions synthesize
-// (a checkmate after your move is always one you delivered; draws split)
-// because Maia never infers game-over positions. Non-terminal reads the
-// opponent-relative WDL: loss_opp + half draws is the mover's share, i.e.
-// 100 - expected_opp.
-export function maiaAfterExpected(after: Pick<MoveResponse, 'wdl'> | undefined, afterOutcome: DomainOutcome | null | undefined): number | null {
-  if (afterOutcome) return afterOutcome.kind === 'checkmate' ? 100 : 50;
-  if (!after) return null;
-  const [loss, draw] = after.wdl;
-  return 100 * (loss + 0.5 * draw);
+// Mover-relative expectation from a terminal outcome, for objective lanes
+// whose provider never infers game-over positions: a checkmate after your
+// move is always one you delivered; draws split.
+export function outcomeExpected(outcome: DomainOutcome | null | undefined): number | null {
+  if (!outcome) return null;
+  return outcome.kind === 'checkmate' ? 100 : 50;
 }
 // Grading input for one move, assembled by the caller (which owns node
-// lookups and pending keys): the 2400-lane response before the move plus the
+// lookups and pending keys): the objective point before the move plus the
 // mover-relative expectation after it. Pending flags hold the spinner while
-// the 2400 lane is in flight so badges never flash an SF grade that Maia
-// then replaces.
-export type MaiaGrading = {
-  before: Pick<MoveResponse, 'top_moves' | 'wdl' | 'degraded'> | undefined;
+// the objective lane is in flight so badges never flash a stale grade.
+// The after expectation arrives mover-relative; lane assembly owns the
+// opponent-relative inversion and terminal-outcome synthesis, never here.
+export type ObjectiveGrade = {
+  top: string | null;
+  expected: number | null;
   afterExpected: number | null;
   beforePending: boolean;
   afterPending: boolean;
 };
-function gradingTop(grading: MaiaGrading): string | null {
-  if (!grading.before || grading.before.degraded) return null;
-  const top = grading.before.top_moves?.[0]?.move;
-  return typeof top === 'string' ? top : null;
-}
 export function moveAccuracy(loss: number): number { return loss === 0 ? 100 : Math.max(0, Math.min(100, 103.1668 * Math.exp(-.04354 * loss) - 3.1669)); }
 export function classifyLoss(loss: number): 'Blunder' | 'Mistake' | 'Inaccuracy' | null { return loss >= 20 ? 'Blunder' : loss >= 10 ? 'Mistake' : loss >= 5 ? 'Inaccuracy' : null; }
 // Mate allowed when avoidable: the mover had no forced mate against them
@@ -245,7 +246,7 @@ export function isMateFor(score: Score, side: 'white' | 'black'): boolean {
   if (score.type !== 'mate') return false;
   return (score.winning_side ?? (score.value > 0 ? 'white' : 'black')) === side;
 }
-export function reviewMove(before: Evaluation | undefined, after: Evaluation | undefined, game: Chess, played: string, grading?: MaiaGrading): EngineGrade {
+export function reviewMove(before: Evaluation | undefined, after: Evaluation | undefined, game: Chess, played: string, objective?: ObjectiveGrade): EngineGrade {
   if (!before || !after) return { label: 'Unreviewed', accuracy: null, loss: null };
   const legal = game.moves().length;
   if (legal === 1) return { label: 'Forced', accuracy: 100, loss: 0 };
@@ -257,13 +258,13 @@ export function reviewMove(before: Evaluation | undefined, after: Evaluation | u
   const opp = mover === 'white' ? 'black' : 'white';
   if (!best && isMateFor(after.score, opp) && !isMateFor(before.score, opp)) return { label: 'Allowed mate', accuracy: 0, loss };
   const critical = best && loss <= 1 && legal >= 2 && before.score.type === 'cp' && after.score.type === 'cp' && first?.move === played && second?.move !== played && first.score.type === 'cp' && second?.score.type === 'cp' && pov(first.score) - pov(second.score) >= 10;
-  if (grading !== undefined) return gradedReviewMove(grading, played, { best, critical, loss });
+  if (objective !== undefined) return gradedReviewMove(objective, played, { best, critical, loss });
   return sfGrade({ best, critical, loss, capNegatives: false });
 }
 // Stockfish-only grade path: mate/forced already returned above. Negative
-// labels fire on SF loss; capNegatives (Maia-2400 decided) restricts this to
-// the praise/holds vocabulary so an engine dislike can never surface as a
-// badge once the human objective axis owns negatives.
+// labels fire on SF loss; capNegatives (objective lane decided) restricts
+// this to the praise/holds vocabulary so an engine dislike can never surface
+// as a badge once the objective axis owns negatives.
 function sfGrade(args: { best: boolean; critical: boolean; loss: number; capNegatives: boolean }): EngineGrade {
   const { best, critical, loss, capNegatives } = args;
   if (!capNegatives) {
@@ -272,23 +273,22 @@ function sfGrade(args: { best: boolean; critical: boolean; loss: number; capNega
   }
   return { label: critical ? 'Critical' : best ? 'Top' : 'Holds', accuracy: moveAccuracy(loss), loss };
 }
-// Maia-2400 objective path (Option 1). Precedence after mate/forced:
-// pending 2400 lane holds the spinner (never flash an SF grade Maia then
-// replaces); a missing-but-settled lane falls back to pure SF so a 2400
-// failure degrades to old behavior instead of blanking badges. Played-top
-// is never negative (the human-optimal move cannot be a human mistake);
-// other moves classify on Maia expected-score loss. Whatever remains reads
-// the SF vocabulary with negatives capped, preserving Critical/Top/Holds
-// for praise gating and material notes.
-function gradedReviewMove(grading: MaiaGrading, played: string, sf: { best: boolean; critical: boolean; loss: number }): EngineGrade {
-  const top = gradingTop(grading);
-  const settled = top !== null && grading.afterExpected !== null;
+// Objective path. Precedence after mate/forced: a pending objective lane
+// holds the spinner (never flash a stale grade the lane then replaces); a
+// missing-but-settled lane falls back to pure SF so an objective failure
+// degrades to engine behavior instead of blanking badges. Played-top is
+// never negative (the objectively best move cannot be an objective
+// mistake); other moves classify on objective expected-score loss.
+// Whatever remains reads the SF vocabulary with negatives capped,
+// preserving Critical/Top/Holds for praise gating and material notes.
+function gradedReviewMove(grading: ObjectiveGrade, played: string, sf: { best: boolean; critical: boolean; loss: number }): EngineGrade {
+  const settled = grading.top !== null && grading.expected !== null && grading.afterExpected !== null;
   if (!settled) {
     if (grading.beforePending || grading.afterPending) return { label: 'Unreviewed', accuracy: null, loss: null };
     return sfGrade({ ...sf, capNegatives: false });
   }
-  if (played !== top) {
-    const loss = Math.max(0, maiaExpected(grading.before!.wdl) - grading.afterExpected!);
+  if (played !== grading.top) {
+    const loss = Math.max(0, grading.expected! - grading.afterExpected!);
     const negative = classifyLoss(loss);
     if (negative) return { label: negative, accuracy: moveAccuracy(loss), loss };
   }

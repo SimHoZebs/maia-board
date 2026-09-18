@@ -17,7 +17,7 @@ describe('requestMove', () => {
   it('passes cancellation through without changing the wire payload', async () => {
     const controller = new AbortController();
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      move: 'e2e4', top_moves: [{ move: 'e2e4', prob: 0.6 }], wdl: [0.2, 0.3, 0.5], model_used: '79m', degraded: false,
+      move: 'e2e4', top_moves: [{ move: 'e2e4', prob: 0.6, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], model_used: '79m', degraded: false,
     })));
     await requestMove(payload, fetchImpl, controller.signal);
     expect(fetchImpl).toHaveBeenCalledWith('/move', expect.objectContaining({ signal: expect.any(AbortSignal), body: JSON.stringify(payload) }));
@@ -25,7 +25,7 @@ describe('requestMove', () => {
   it('maps a successful API response', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       move: 'e2e4',
-      top_moves: [{ move: 'e2e4', prob: 0.6 }],
+      top_moves: [{ move: 'e2e4', prob: 0.6, wdl: [0.2, 0.3, 0.5] }],
       wdl: [0.2, 0.3, 0.5],
       model_used: '79m',
       degraded: false,
@@ -57,7 +57,7 @@ describe('requestMove', () => {
   it('never sends the priority lane header (endpoint-implied)', async () => {
     const body = JSON.stringify({
       move: 'e2e4',
-      top_moves: [{ move: 'e2e4', prob: 0.6 }],
+      top_moves: [{ move: 'e2e4', prob: 0.6, wdl: [0.2, 0.3, 0.5] }],
       wdl: [0.2, 0.3, 0.5],
       model_used: '79m',
       degraded: false,
@@ -101,14 +101,17 @@ describe('requestMove', () => {
 describe('native Maia response validation', () => {
   const valid = maiaFixture(START_FEN);
   it.each([NaN, Infinity, -0.1, 1.1])('rejects out-of-bound candidate and WDL probability %s', prob => {
-    expect(() => parseMoveResponse({ ...valid, top_moves: [{ move: 'e2e4', prob }] })).toThrow();
+    expect(() => parseMoveResponse({ ...valid, top_moves: [{ move: 'e2e4', prob, wdl: [0.2, 0.3, 0.5] }] })).toThrow();
     expect(() => parseMoveResponse({ ...valid, wdl: [prob, 0, 1] })).toThrow();
   });
   it('rejects empty, malformed, duplicate and illegal candidates', () => {
     expect(() => parseMoveResponse({ ...valid, top_moves: [] })).toThrow();
     expect(() => parseMoveResponse({ ...valid, move: 'e4' })).toThrow();
     expect(() => parseMoveResponse({ ...valid, top_moves: [valid.top_moves[0], valid.top_moves[0]] })).toThrow();
-    expect(() => parseMoveResponse({ ...valid, top_moves: [{ move: 'a1a8', prob: 0.2 }] }, payload)).toThrow();
+    expect(() => parseMoveResponse({ ...valid, top_moves: [{ move: 'a1a8', prob: 0.2, wdl: [0.2, 0.3, 0.5] }] }, payload)).toThrow();
+    expect(() => parseMoveResponse({ ...valid, top_moves: [{ ...valid.top_moves[0], wdl: [0.2, 0.3] }] })).toThrow();
+    expect(() => parseMoveResponse({ ...valid, top_moves: [{ ...valid.top_moves[0], wdl: [0.5, 0.5, 0.5] }] })).toThrow();
+    expect(() => parseMoveResponse({ ...valid, top_moves: [{ move: 'e2e4', prob: 0.6 }] })).toThrow();
   });
   it('accepts 79m-to-5m fallback only with degraded and preserves actual identity', () => {
     const fallback = { ...valid, model_used: '5m' as const, degraded: true };
@@ -120,11 +123,11 @@ describe('native Maia response validation', () => {
     const tied = {
       ...valid,
       move: 'd2d4',
-      top_moves: [{ move: 'e2e4', prob: 0.5 }, { move: 'd2d4', prob: 0.5 }],
+      top_moves: [{ move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] }, { move: 'd2d4', prob: 0.5, wdl: [0.2, 0.3, 0.5] }],
       wdl: [0.2, 0.3, 0.5],
     };
     expect(parseMoveResponse(tied, payload).move).toBe('d2d4');
-    expect(() => parseMoveResponse({ ...tied, top_moves: [{ move: 'e2e4', prob: 0.6 }, { move: 'd2d4', prob: 0.4 }] }, payload)).toThrow();
+    expect(() => parseMoveResponse({ ...tied, top_moves: [{ move: 'e2e4', prob: 0.6, wdl: [0.2, 0.3, 0.5] }, { move: 'd2d4', prob: 0.4, wdl: [0.2, 0.3, 0.5] }] }, payload)).toThrow();
   });
   it('does not issue client repair writes for invalid cache hits', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ ...valid, top_moves: [] }), { headers: { 'X-Eval-Cache': 'hit' } }));

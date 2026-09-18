@@ -297,14 +297,14 @@ func TestOverCap(t *testing.T) {
 	if overCap(7, 0, 0, 0, 0, 0, 0) {
 		t.Fatal("7 unfinished must pass")
 	}
-	if !overCap(0, 512, 0, 0, 1, 0, 0) {
-		t.Fatal("sf 512+1 must be over cap")
+	if !overCap(0, maxBatchRequests, 0, 0, 1, 0, 0) {
+		t.Fatal("sf maxBatchRequests+1 must be over cap")
 	}
-	if overCap(0, 511, 0, 0, 1, 0, 0) {
-		t.Fatal("sf 511+1 must pass")
+	if overCap(0, maxBatchRequests-1, 0, 0, 1, 0, 0) {
+		t.Fatal("sf maxBatchRequests-1+1 must pass")
 	}
-	if !overCap(0, 0, 0, 512, 0, 0, 1) {
-		t.Fatal("small 512+1 must be over cap")
+	if !overCap(0, 0, 0, maxBatchRequests, 0, 0, 1) {
+		t.Fatal("small maxBatchRequests+1 must be over cap")
 	}
 }
 
@@ -369,7 +369,7 @@ func TestBatchMissCapSF(t *testing.T) {
 
 func TestBatchMissCapMaiaDoubleCounts(t *testing.T) {
 	s := batchServer(t, "ok")
-	// 512 large-model misses fill both large and small (fallback-eligible).
+	// maxBatchRequests large-model misses fill both large and small (fallback-eligible).
 	seedFakeJob(s.reviews, "fill-large", false, 0, maxBatchRequests, 0)
 	otherFEN := strings.Replace(startFEN, "w KQkq", "b KQkq", 1)
 	// Large-destined submit 429s on large.
@@ -414,7 +414,7 @@ func TestBatchCachedHitsDontCount(t *testing.T) {
 
 func TestBatchRaceRetryThen429(t *testing.T) {
 	s := batchServer(t, "ok")
-	// One slot of headroom: 511 of 512.
+	// One slot of headroom: maxBatchRequests-1 of maxBatchRequests.
 	seedFakeJob(s.reviews, "fill", false, maxBatchRequests-1, 0, 0)
 	fenA := strings.Replace(startFEN, "0 1", "0 2", 1)
 	fenB := strings.Replace(startFEN, "0 1", "0 3", 1)

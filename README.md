@@ -38,10 +38,13 @@ candidate after that move, expressed for the choosing side by the API. A respons
 `model_used` and `degraded` fields identify a 79M-to-5M fallback, which the
 interface labels with the model actually used.
 
-Stockfish scores describe the position from White's perspective. Positive
-centipawn scores favor White; 100 centipawns equal one pawn. Move grades are
-project-specific estimates derived from engine scores at the reported search
-depth, rather than guarantees about a move's quality.
+Scores, the balance bar, and graphs show Maia 2400 White winning chances
+from human-like play, not centipawns. Move grades compare Maia 2400
+expectations before and after the played move; the top Maia 2400 choice is
+the objective best. Forced mates and the concrete "this line wins material"
+notes still come from Stockfish running underneath, as does praise for
+finding the engine's only good move. Grades are project-specific estimates,
+rather than guarantees about a move's quality.
 
 Successful evaluations can be reused from browser memory and the server's SQLite
 cache. Reuse depends on position history, engine identity, ratings/model for Maia,

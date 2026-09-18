@@ -1,6 +1,9 @@
 import { expect, it } from 'vitest';
 import { buildTimeline, defaultSettings, START_FEN } from './domain';
-import { EvaluationStore, fastReviewSettings, reviewKey, reviewNodes, type ReviewSettings } from './evaluationStore';
+import { EvaluationStore, fastReviewSettings, gradingMaiaKey, reviewKey, reviewNodes, type ReviewNode, type ReviewSettings } from './evaluationStore';
+import { laneKey, lanePoints } from './objective/maia';
+import type { ObjectiveLane } from './qualities';
+import type { MoveResponse } from './api';
 import { defaultStockfishSettings } from './stockfishSettings';
 import { computeReviewQualities, gameIdentityFor, isMaiaPosition } from './useReview';
 import { sfFixture } from './evaluationTestFixtures';
@@ -38,8 +41,7 @@ it('resolves the same game identity for branched views and mainline passes', () 
   expect(gameIdentityFor('missing', [saved], live)).toBeNull();
   expect(gameIdentityFor(null, [saved], live)).toBe(live);
 });
-it('display layer accepts the fast MPV1 row provisionally until the full MPV2 lands', () => {
-  const fullSettings: ReviewSettings = { eloMaia: 1600, eloUser: 1600, model: '79m', stockfish: defaultStockfishSettings };
+it('display layer accepts the fast MPV1 row provisionally until the full MPV2 lands', () => {  const fullSettings: ReviewSettings = { eloMaia: 1600, eloUser: 1600, model: '79m', stockfish: defaultStockfishSettings };
   const fastSettings = fastReviewSettings(fullSettings)!;
   const node = reviewNodes(buildTimeline(START_FEN, ['e2e4']))[0];
   const store = new EvaluationStore();
@@ -49,4 +51,41 @@ it('display layer accepts the fast MPV1 row provisionally until the full MPV2 la
   expect(store.provisionalSfResult(node, fullSettings)?.lines).toHaveLength(1);
   store.store('sf', reviewKey('sf', node, fullSettings), sfFixture(node.fen, defaultStockfishSettings));
   expect(store.provisionalSfResult(node, fullSettings)?.lines).toHaveLength(2);
+});
+it('grades negatives from the 2400 lane and holds the spinner while it is pending', () => {
+  const timeline = buildTimeline(START_FEN, ['e2e4', 'e7e5']);
+  const nodes = reviewNodes(timeline);
+  const flat = (fen: string, best: string) => ({ ...sfFixture(fen),
+    score: { type: 'cp' as const, value: 20 }, best_move: best,
+    lines: [{ move: best, score: { type: 'cp' as const, value: 20 }, depth: 12 },
+      { move: 'a2a3', score: { type: 'cp' as const, value: 20 }, depth: 12 }] });
+  const evaluations = [flat(nodes[0].fen, 'd2d4'), flat(nodes[1].fen, 'e7e5'), flat(nodes[2].fen, 'e7e5')];
+  const grade = (top: string, wdl: [number, number, number]): MoveResponse =>
+    ({ move: top, top_moves: [{ move: top, prob: 0.4, wdl: [0.2, 0.3, 0.5] }], wdl, model_used: '79m', degraded: false });
+  // Move 1: 2400s play d2d4 (exp 80), e4 leaves White at 60 -> Blunder by loss 20.
+  // Move 2: 2400 top is the played e7e5 -> SF Top (best), never negative.
+  const gradingMaia = [grade('d2d4', [0.1, 0.2, 0.7]), grade('e7e5', [0.5, 0.2, 0.3]), grade('e7e5', [0.5, 0.3, 0.2])];
+  const laneFor = (rows: (MoveResponse | undefined)[], pending: Set<string>): ObjectiveLane => ({
+    points: lanePoints(rows, nodes),
+    pending,
+    keyFor: (node: ReviewNode) => laneKey(node, () => settings),
+  });
+  const run = (rows: (MoveResponse | undefined)[], pending: Set<string>) => computeReviewQualities({
+    line: timeline, nodes, evaluations, settingsForNode: () => settings, pending: new Set(), prev: null,
+    objective: laneFor(rows, pending),
+  });
+  const settled = run(gradingMaia, new Set());
+  expect(settled.qualities[0]?.label).toBe('Blunder');
+  expect(settled.qualities[1]?.label).toBe('Top');
+  // Memo reuses the settled verdicts when nothing changes.
+  const reused = computeReviewQualities({ line: timeline, nodes, evaluations, settingsForNode: () => settings,
+    pending: new Set(), prev: settled.memo, objective: laneFor(gradingMaia, new Set()) });
+  expect(reused.qualities[0]).toBe(settled.qualities[0]);
+  // Missing before-position with its grading key pending: spinner, not SF fallback.
+  const waiting = run([undefined, gradingMaia[1], gradingMaia[2]], new Set([laneKey(nodes[0], () => settings)]));
+  expect(laneKey(nodes[0], () => settings)).toBe(gradingMaiaKey(nodes[0]));
+  expect(waiting.qualities[0]?.label).toBe('Unreviewed');
+  expect(waiting.qualities[1]?.label).toBe('Top');
+  // Same miss without pending: legacy SF fallback (flat pair -> Holds).
+  expect(run([undefined, gradingMaia[1], gradingMaia[2]], new Set()).qualities[0]?.label).toBe('Holds');
 });

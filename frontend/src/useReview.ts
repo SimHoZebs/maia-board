@@ -3,6 +3,8 @@ import type { MoveResponse } from './api';
 import { buildTimeline, lineKeyFor, type StoredGame, type TimelineRow } from './domain';
 import type { State } from './state';
 import { ReviewCoordinator, resolveSettings, reviewKey, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
+import { ensureLane, laneError, laneKey, lanePending, lanePoints, laneRows, primeDescriptor } from './objective';
+import type { ObjectiveLane } from './qualities';
 import { useLineScope } from './useLineScope';
 import { useBulkPrime } from './useBulkPrime';
 import { useServerBatch } from './useServerBatch';
@@ -31,9 +33,10 @@ export type ReviewQualitiesStats = { reviews: number };
 export function computeReviewQualities(args: {
   line: { moves: string[] }; nodes: ReviewNode[]; evaluations: (Evaluation | undefined)[];
   settingsForNode: (node: ReviewNode) => ReviewSettings; pending: Set<string>; prev: ReviewQualitiesMemo | null; stats?: ReviewQualitiesStats;
+  objective?: ObjectiveLane;
 }): { qualities: (EngineGrade | undefined)[]; memo: ReviewQualitiesMemo } {
-  const { line, nodes, evaluations, settingsForNode, pending, prev, stats } = args;
-  return computeLineQualities({ scope: '', moves: line.moves, nodes, evaluations, settingsForNode, pending, prev, stats });
+  const { line, nodes, evaluations, settingsForNode, pending, prev, stats, objective } = args;
+  return computeLineQualities({ scope: '', moves: line.moves, nodes, evaluations, settingsForNode, pending, prev, stats, objective });
 }
 
 // Display translation for review badges: every engine grade goes through
@@ -108,6 +111,11 @@ export function useReview(state: State) {
   const focusSettings = focusNode ? settingsForNode(focusNode) : settings;
   const focusIsMaia = !!focusNode && !!userColor && isMaiaPosition(focusNode, userColor, ownGame);
   const tooLong = timeline.moves.length > 256;
+  // Bulk descriptor for the objective lane, if the source needs extra
+  // inference. Null means the source re-derives from Stockfish rows, so the
+  // second prime and batch entries stand down below. Presence — never model
+  // kind — is the only thing callers check.
+  const lanePrime = useMemo(() => primeDescriptor(), []);
 
   useEffect(() => {
     if (!active || tooLong) return;
@@ -126,10 +134,12 @@ export function useReview(state: State) {
     });
     if (sfCached) {
       coordinator.ensure(focusNode ? [focusNode, currentNode] : [currentNode], settingsForNode, { priority: true, signal: scope.signal, fastFirst: true });
+      ensureLane(coordinator, focusNode ? [focusNode, currentNode] : [currentNode], scope.signal);
       return;
     }
     const timer = setTimeout(() => {
       coordinator.ensure(focusNode ? [focusNode, currentNode] : [currentNode], settingsForNode, { priority: true, signal: scope.signal, fastFirst: true });
+      ensureLane(coordinator, focusNode ? [focusNode, currentNode] : [currentNode], scope.signal);
     }, 200);
     return () => { clearTimeout(timer); };
   }, [coordinator, active, tooLong, nodes, currentPly, combinedKey, scope]);
@@ -137,32 +147,49 @@ export function useReview(state: State) {
   const primeKey = `${lineKey}|${combinedKey}`;
   // Focus-first restore: visible pair settles in the first lookup chunk.
   const priorityPlies = focusNode ? [focusPly, currentPly] : [currentPly];
-  const batch = useServerBatch({ active: active && !tooLong, nodes, settings: settingsForNode, coordinator, scope: active ? scope : null, auto: false, priorityPlies });
+  const batch = useServerBatch({ active: active && !tooLong, nodes, settings: settingsForNode, objectiveLane: lanePrime?.settings ?? null, coordinator, scope: active ? scope : null, auto: false, priorityPlies });
   const [prime, setPrime] = useState<{ key: string; error?: string } | null>(null);
+  const [gradePrime, setGradePrime] = useState<{ key: string; error?: string } | null>(null);
   const [primeAttempt, setPrimeAttempt] = useState(0);
+  const gradePrimeKey = `${primeKey}|${lanePrime?.suffix ?? 'nolane'}`;
   useBulkPrime({ active: active && !tooLong, nodes, settings: settingsForNode, coordinator,
     loadKey: `${primeKey}|${primeAttempt}`, priorityPlies,
     onSettled: (error) => setPrime({ key: primeKey, error }) });
+  useBulkPrime({ active: (active && !tooLong) && lanePrime.settings !== null, nodes, settings: lanePrime?.settings ?? settings, engines: lanePrime?.engines ?? [], coordinator,
+    loadKey: `${gradePrimeKey}|${primeAttempt}`, priorityPlies,
+    onSettled: (error) => setGradePrime({ key: gradePrimeKey, error }) });
 
-  // Display evaluations accept the fast MPV1 row provisionally: bar +
-  // verdict need only rank-1, so they render from fast while the full MPV2
-  // refines in the background. The candidate list shows the single fast line
-  // until full lands. Coverage below stays exact-full (completeness, not
-  // readiness) so a fast-only pair never marks the line complete.
+  // Display evaluations accept the fast MPV1 row provisionally: mate
+  // detection and the material-note gating need only rank-1, so they render
+  // from fast while the full MPV2 refines in the background. Coverage below
+  // stays exact-full (completeness, not readiness) so a fast-only pair never
+  // marks the line complete.
   // Known transient: a 1-line provisional can understate Critical (gap needs
   // before.lines[1]) and converge to Critical/Excellent/Great on full refine.
   const evaluations = useMemo(() => nodes.map(node => coordinator.provisionalSfResult(node, settingsForNode(node))), [nodes, settingsForNode, version, coordinator]);
   const maiaResults = useMemo(() => nodes.map(node => coordinator.result('maia', node, settingsForNode(node))), [nodes, settingsForNode, version, coordinator]);
+  // Objective points for the active source. Row reads and point
+  // conversion both live in the provider module; provisional Stockfish rows
+  // keep first paint fast while coverage below still requires exact rows
+  // independently.
+  const objectivePoints = useMemo(() => lanePoints(
+    laneRows(nodes, { coordinator, sfEvaluations: evaluations }), nodes,
+  ), [nodes, evaluations, version, coordinator]);
+  const objectiveLane: ObjectiveLane = useMemo(() => ({
+    points: objectivePoints,
+    pending: lanePending(coordinator),
+    keyFor: (node: ReviewNode) => laneKey(node, settingsForNode),
+  }), [objectivePoints, nodes, settingsForNode, version, coordinator]);
   const previous = useRef<ReviewQualitiesMemo | null>(null);
   // Memo cache without an effect: the ref carries the last computed memo into
   // the next computation synchronously, so reuse never lags one commit
   // behind. Worst case (abandoned concurrent render) is a recompute — keys
   // are stable content, so correctness never depends on the cache.
   const computed = useMemo(() => {
-    const result = computeReviewQualities({ line: timeline, nodes, evaluations, settingsForNode, pending: coordinator.sfPendingKeys(), prev: previous.current });
+    const result = computeReviewQualities({ line: timeline, nodes, evaluations, settingsForNode, pending: coordinator.sfPendingKeys(), prev: previous.current, objective: objectiveLane });
     previous.current = result.memo;
     return result;
-  }, [timeline, nodes, evaluations, settingsForNode, version, coordinator]);
+  }, [timeline, nodes, evaluations, settingsForNode, objectiveLane, version, coordinator]);
   const rarities = useMemo(() => timeline.moves.map((move, ply) => maiaRarity(maiaResults[ply], move)), [timeline, maiaResults]);
   // Best-move rarity per ply: for mistakes, avoidance difficulty is the
   // rarity of the move they had to find, not the one they played. UCI-level
@@ -180,10 +207,12 @@ export function useReview(state: State) {
     settingsForNode, isMaiaPending: (node, settings) => coordinator.isPending('maia', node, settings) }),
   [computed.qualities, rarities, maiaResults, nodes, settingsForNode, version, coordinator]);
   const bestRarities = useMemo(() => timeline.moves.map((_move, ply) => {
-    const best = evaluations[ply]?.best_move;
+    // Avoidance difficulty is the findability of the objective best move
+    // at the displayed (user) level, not the engine best.
+    const best = objectivePoints[ply]?.top ?? evaluations[ply]?.best_move;
     const maia = maiaResults[ply];
     return best && maia ? maiaRarity(maia, best) : undefined;
-  }), [timeline, evaluations, maiaResults]);
+  }), [timeline, evaluations, objectivePoints, maiaResults]);
   // Mainline display qualities for the original-line continuation rendered
   // under an explored branch. MovesPanel draws that continuation from the
   // mainline while review.qualities aligns with the branch timeline, so
@@ -196,20 +225,33 @@ export function useReview(state: State) {
     const mainNodes = reviewNodes(mainTimeline);
     const mainSf = mainNodes.map(node => coordinator.provisionalSfResult(node, mainlineSettingsForNode(node)));
     const mainMaiaResults = mainNodes.map(node => coordinator.result('maia', node, mainlineSettingsForNode(node)));
+    const mainPoints = lanePoints(
+      laneRows(mainNodes, { coordinator, sfEvaluations: mainSf }), mainNodes,
+    );
     const mainRarities = mainTimeline.moves.map((move, ply) => maiaRarity(mainMaiaResults[ply], move));
     const mainGrades = computeReviewQualities({ line: mainTimeline, nodes: mainNodes, evaluations: mainSf,
-      settingsForNode: mainlineSettingsForNode, pending: coordinator.sfPendingKeys(), prev: null });
+      settingsForNode: mainlineSettingsForNode, pending: coordinator.sfPendingKeys(), prev: null,
+      objective: {
+        points: mainPoints,
+        pending: lanePending(coordinator),
+        keyFor: (node: ReviewNode) => laneKey(node, mainlineSettingsForNode),
+      } });
     return translateReviewQualities({ grades: mainGrades.qualities, nodes: mainNodes, maiaResults: mainMaiaResults,
       rarities: mainRarities, settingsForNode: mainlineSettingsForNode, isMaiaPending: (node, settings) => coordinator.isPending('maia', node, settings) });
   }, [state.analysis.branchFromPly, state.analysis.moves, state.analysis.initialFen, mainlineSettingsForNode, version, coordinator]);
   // Coverage is completeness (badges + sentences), not badge readiness:
-  // badges fast-path on SF alone, but progress stays partial until Maia
-  // lands for every non-outcome node. Exact full SF only — fast provisional
-  // rows never count toward completeness.
-  const coverage = useMemo(() => active && prime?.key === primeKey ? { total: nodes.length,
-    covered: nodes.filter((node, ply) => coordinator.result('sf', node, settingsForNode(node)) && (node.outcome || maiaResults[ply])).length } : null,
-  [active, prime, primeKey, nodes, settingsForNode, maiaResults, version, coordinator]);
-  const recordStatus: RecordStatus = { state: !active || tooLong ? 'none' : prime?.key !== primeKey ? 'checking' : coverage?.covered === coverage?.total ? 'fresh' : 'none' };
+  // badges fast-path, but progress stays partial until both Maia lanes land
+  // for every non-outcome node: display Maia for the sentence, objective
+  // points for the badge. Exact full SF only — fast provisional rows never
+  // count toward completeness (the objective-point check additionally
+  // requires presence, and SF-sourced points always accompany exact rows
+  // through the shared check).
+  const laneReady = lanePrime === null || gradePrime?.key === gradePrimeKey;
+  const primesReady = prime?.key === primeKey && laneReady;
+  const coverage = useMemo(() => active && primesReady ? { total: nodes.length,
+    covered: nodes.filter((node, ply) => coordinator.result('sf', node, settingsForNode(node)) && (node.outcome || maiaResults[ply]) && (node.outcome || objectivePoints[ply] !== undefined)).length } : null,
+  [active, primesReady, nodes, settingsForNode, maiaResults, objectivePoints, version, coordinator]);
+  const recordStatus: RecordStatus = { state: !active || tooLong ? 'none' : prime?.key !== primeKey || !laneReady ? 'checking' : coverage?.covered === coverage?.total ? 'fresh' : 'none' };
   const priorFocus = useRef<MaiaDisplayEntry | null>(null);
   const displayed = selectMaiaDisplay(active ? focusNode : undefined, focusSettings, active ? maiaResults[focusPly] : undefined, priorFocus.current,
     active && !!focusNode && coordinator.isPending('maia', focusNode, focusSettings));
@@ -225,15 +267,23 @@ export function useReview(state: State) {
   const maiaCurrent = active ? maiaResults[currentPly] : undefined;
   const currentError = active ? coordinator.error('sf', currentNode, currentSettings) : undefined;
   const error = currentError || (active && focusNode ? coordinator.error('sf', focusNode, focusSettings) || coordinator.error('maia', focusNode, focusSettings) : undefined)
-    || (active ? coordinator.error('maia', currentNode, currentSettings) : undefined) || (prime?.key === primeKey ? prime.error : undefined)
+    || (active ? coordinator.error('maia', currentNode, currentSettings) : undefined)
+    || (active ? laneError(coordinator, focusNode) ?? laneError(coordinator, currentNode) : undefined)
+    || (prime?.key === primeKey ? prime.error : undefined) || (lanePrime.settings !== null && gradePrime?.key === gradePrimeKey ? gradePrime.error : undefined)
     || batch.error;
   const batchComplete = !!batch.progress && !batch.progress.running && batch.progress.done === batch.progress.total && !batch.progress.failed;
   const coverageComplete = !!(coverage && coverage.covered === coverage.total);
   const reviewState: ReviewState = error || (batch.progress && batch.progress.failed > 0) ? 'failed'
     : batchComplete || coverageComplete ? 'complete'
-    : !prime || prime.key !== primeKey || !coverage ? 'loading'
+    : !prime || prime.key !== primeKey || !laneReady || !coverage ? 'loading'
     : 'partial';
   return { timeline, nodes, evaluations, qualities, rarities, bestRarities, mainlineQualities, coverage,
+    // Objective lane (provider points per position): the bar, graphs, and
+    // score copy read this; move grades already derive from it. The
+    // display-Maia results above stay on the selected Elo for rarity and
+    // wording; Stockfish evaluations stay for material, mate, and praise.
+    objective: objectivePoints,
+    objectiveError: (node: ReviewNode | undefined) => laneError(coordinator, node),
     // Raw engine grades (Critical/Top/Holds intact) for the verdict's
     // only-move fact. Badges and text read the translated `qualities`; this
     // never reaches display directly.
@@ -246,6 +296,6 @@ export function useReview(state: State) {
     maiaCurrentPending: active && coordinator.isPending('maia', currentNode, currentSettings),
     gameElo: gameForLine?.settings.eloMaia, error, currentError,
     progress: batch.progress, recordStatus, reviewState, scope, lineKey, start: batch.start,
-    retry: () => { coordinator.retry(); batch.retry(); if (prime?.error) setPrimeAttempt(attempt => attempt + 1); }, tooLong };
+    retry: () => { coordinator.retry(); batch.retry(); if (prime?.error || gradePrime?.error) setPrimeAttempt(attempt => attempt + 1); }, tooLong };
 }
 export type Review = ReturnType<typeof useReview>;
