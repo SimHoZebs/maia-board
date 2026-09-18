@@ -1,6 +1,7 @@
 import { Chess, type Square } from 'chess.js';
 import { applyUci, findKingSquare, uciFromMove, START_FEN } from './domain';
-import { playedMoveForkNote, playedMoveGainNote, type MaiaSide } from './material';
+import { exchangePlayedClaim, forkPlayedClaim, playedMoveGainNote, skewerPlayedClaim, type MaiaSide } from './material';
+import { createMoveFacts, type MoveFacts } from './moveFacts';
 import { openingAt, type OpeningMatch } from './openings';
 import type { DomainOutcome } from './domain';
 import { isMateFor, isPraiseLabel, type OpeningRef, type Quality, type Rarity, type Score } from './reviewMetrics';
@@ -351,17 +352,28 @@ export function escapeNote(beforeFen: string): string | null {
   }
 }
 
-// Positive-why candidates for praise grades. Array order IS the priority:
-// the first non-null note wins, so reordering candidates reorders the why.
-// Each entry owns one fact; add a why by adding one entry. Fork claims only
-// the attack, never the fall — unlike the best-line fork, no window proves
-// a capture. En passant outranks the generic gain it always implies. Escape
-// trails everything: every legal move out of check escapes, so it explains
-// only when nothing sharper fires.
+// Positive-why candidates for praise grades. Array order IS the rank: the
+// first non-null claim wins. Every tactic claimant reads the same shared
+// MoveFacts (one parse, memoized geometry) instead of replaying the move —
+// cheap O(1) shape notes (promotion, castle, en passant, gain, escape) keep
+// their own single replays, which cost nothing next to the parry scan.
+// Explicit conflicts, each pair-tested:
+// - skewer-check beats fork: a checking slider that both x-rays the king
+//   and attacks a second piece tells the forced-evacuation story, not the
+//   double attack.
+// - recapture-exchange beats bare gain: a same-square take-take is an
+//   exchange (even or winning), never a fresh win.
+// Each entry owns one fact; add a why by adding one entry plus its conflict
+// lines. Fork claims only the attack, never the fall — unlike the best-line
+// fork, no window proves a capture. En passant outranks the generic gain it
+// always implies (a same-square en-passant recapture cannot happen: the
+// capture lands off the taken pawn's square). Escape trails everything:
+// every legal move out of check escapes, so it explains only when nothing
+// sharper fires.
 type PositiveContext = Pick<
   VerdictInputs,
   'beforeFen' | 'afterFen' | 'playedUci' | 'san' | 'mover' | 'beforeScore' | 'afterScore' | 'isCritical'
->;
+> & { facts: MoveFacts | null };
 const POSITIVE_CANDIDATES: { name: string; note: (ctx: PositiveContext) => string | null }[] = [
   { name: 'forces-mate',
     note: ({ beforeScore, afterScore, mover }) => {
@@ -371,10 +383,12 @@ const POSITIVE_CANDIDATES: { name: string; note: (ctx: PositiveContext) => strin
   { name: 'only-move', note: ({ isCritical }) => (isCritical ? 'The only move to hold.' : null) },
   { name: 'promotion', note: ({ beforeFen, playedUci }) => promotionNote(beforeFen, playedUci) },
   { name: 'castle', note: ({ beforeFen, playedUci, san }) => castleNote(beforeFen, playedUci, san) },
-  { name: 'fork', note: ({ beforeFen, playedUci, mover }) => playedMoveForkNote(beforeFen, playedUci, mover) },
+  { name: 'skewer', note: ({ facts, mover }) => (facts ? skewerPlayedClaim(facts, mover) : null) },
+  { name: 'fork', note: ({ facts, mover }) => (facts ? forkPlayedClaim(facts, mover) : null) },
   { name: 'en-passant', note: ({ beforeFen, playedUci }) => enPassantNote(beforeFen, playedUci) },
   { name: 'gain',
-    note: ({ beforeFen, afterFen, playedUci, mover }) => playedMoveGainNote(beforeFen, afterFen, playedUci, mover) },
+    note: ({ facts, beforeFen, afterFen, playedUci, mover }) =>
+      (facts ? exchangePlayedClaim(facts) : null) ?? playedMoveGainNote(beforeFen, afterFen, playedUci, mover) },
   // Parry sits below the material and shape notes so dual-truth moves keep
   // their existing verdicts (a parrying capture stays a gain story), and
   // above escape as the more specific defensive claim.
@@ -449,6 +463,11 @@ export type VerdictInputs = {
   // translation. The translated Quality alone cannot recover it: Critical +
   // Expected and Top both display as Best.
   isCritical?: boolean | null;
+  // Previous ply for recapture-as-exchange framing (Option A plumbing: the
+  // UCI that led into beforeFen plus the FEN before it). Null at the game
+  // start or off-timeline; the exchange claimant stays silent without both.
+  prevUci?: string | null;
+  prevBeforeFen?: string | null;
   // Sound-sacrifice detection is cut from v1: a single move never reduces
   // the mover's own material (moves preserve, captures/promotions gain),
   // so a before→after swing gate is vacuous. A real sacrifice detector
@@ -524,12 +543,15 @@ export function verdictInputsForPly(inputs: VerdictInputs): VerdictFacts {
       ? pawnDamageNote(beforeFen, afterFen, mover)
       : null;
   // Positive why: the first non-null POSITIVE_CANDIDATES entry wins (see
-  // its order comment for the ranking). Gated to praise grades with no
-  // terminal, dead draw, underpromotion, or book hit.
+  // its rank/conflict comment for the ordering). Facts are built once here
+  // and shared by the skewer, fork, and exchange claimants. Gated to praise
+  // grades with no terminal, dead draw, underpromotion, or book hit.
   const praise = isPraiseLabel(label);
   let positiveNote: string | null = null;
   if (praise && terminal === null && !deadDraw && !underpromotionAvoids && !opening) {
-    const ctx: PositiveContext = { beforeFen, afterFen, playedUci, san, mover, beforeScore, afterScore, isCritical };
+    const { prevUci, prevBeforeFen } = inputs;
+    const facts = createMoveFacts({ beforeFen, playedUci, mover, prevBeforeFen, prevUci });
+    const ctx: PositiveContext = { beforeFen, afterFen, playedUci, san, mover, beforeScore, afterScore, isCritical, facts };
     for (const candidate of POSITIVE_CANDIDATES) {
       positiveNote = candidate.note(ctx);
       if (positiveNote) break;

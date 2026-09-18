@@ -1,10 +1,13 @@
 import { Chess, type Square } from 'chess.js';
-import { applyUci, findKingSquare } from './domain';
+import { applyUci } from './domain';
+import { createMoveFacts, TACTIC_VALUES, type ForkFacts, type ForkVictim, type MoveFacts, type SkewerFacts } from './moveFacts';
 
 export type CapturedPiece = 'p' | 'n' | 'b' | 'r' | 'q';
 export type MaiaSide = 'white' | 'black';
 
-export const PIECE_VALUES: Record<CapturedPiece, number> = { p: 1, n: 3, b: 3, r: 5, q: 9 };
+// Display-side alias of the single tactic value table (moveFacts.ts owns it;
+// this re-export keeps existing import sites stable).
+export const PIECE_VALUES: Record<CapturedPiece, number> = TACTIC_VALUES;
 
 // Display order: most valuable first, bishops before knights on the 3-point tie.
 const SORT_ORDER: Record<CapturedPiece, number> = { q: 0, r: 1, b: 2, n: 3, p: 4 };
@@ -140,14 +143,21 @@ export type BestLinePreview = { ucis: string[]; sans: string[]; text: string; no
 export function bestLinePreview(afterFen: string, pv: readonly string[] | undefined, mover: MaiaSide, windowPlies: number = DEFAULT_BEST_LINE_WINDOW): BestLinePreview | null {
   const analyzed = analyzeBestLineWindow(afterFen, pv, mover, windowPlies);
   if (!analyzed) return null;
+  // Even non-tactic windows carry a clickable line but no claim: the note
+  // owns silence, and the preview stays in agreement with it.
+  const note = noteFromAnalysis(afterFen, analyzed, mover);
+  if (!note) return null;
   const sans = sansFromWindow(afterFen, analyzed.ucis);
   if (!sans) return null;
-  return { ucis: analyzed.ucis, sans, text: formatSanLine(afterFen, sans), note: noteFromAnalysis(afterFen, analyzed, mover) };
+  return { ucis: analyzed.ucis, sans, text: formatSanLine(afterFen, sans), note };
 }
 
-type BestLineAnalysis = { ucis: string[]; oppCaptures: CapturedPiece[]; moverCaptures: CapturedPiece[]; oppSide: string };
-function noteFromAnalysis(afterFen: string, analyzed: BestLineAnalysis, mover: MaiaSide): string {
-  return tacticNote(afterFen, analyzed, mover) ?? genericNote(analyzed);
+type BestLineAnalysis = { ucis: string[]; oppCaptures: CapturedPiece[]; moverCaptures: CapturedPiece[]; oppSide: string; evenExchange: boolean };
+function noteFromAnalysis(afterFen: string, analyzed: BestLineAnalysis, mover: MaiaSide): string | null {
+  // Even exchanges stay silent in the generic composition (no newsworthy
+  // swing) but still reach the tactic layer, which names proven even
+  // fork/skewer swaps. Null propagates: preview and note stay in agreement.
+  return tacticNote(afterFen, analyzed, mover) ?? (analyzed.evenExchange ? null : genericNote(analyzed));
 }
 function genericNote(analyzed: BestLineAnalysis): string {
   const oppText = piecesText(sortCaptured(analyzed.oppCaptures));
@@ -158,79 +168,97 @@ function genericNote(analyzed: BestLineAnalysis): string {
 
 // Fork nouns live here, not in PIECE_NAMES: victims include the king (which
 // is never a capture), and the verdict lists bare nouns ("bishop and queen").
-type ForkVictim = 'k' | 'q' | 'r' | 'b' | 'n';
+// Geometry (victim discovery, ordering, defended-ness, nets) lives in
+// moveFacts.ts so every claimant shares one computation; this module owns
+// wording only.
 const FORK_NOUNS: Record<ForkVictim, string> = { k: 'king', q: 'queen', r: 'rook', b: 'bishop', n: 'knight' };
 const FORK_PLURALS: Record<Exclude<ForkVictim, 'k'>, string> = { q: 'queens', r: 'rooks', b: 'bishops', n: 'knights' };
-// Ascending value; bishops before knights on the 3-point tie (mirrors
-// SORT_ORDER).
-const FORK_RANK: Record<Exclude<ForkVictim, 'k'>, number> = { b: 0, n: 1, r: 2, q: 3 };
-const isForkVictim = (piece: string): piece is Exclude<ForkVictim, 'k'> =>
-  piece === 'q' || piece === 'r' || piece === 'b' || piece === 'n';
-
-// Shared fork geometry: victims attacked by the piece now on `to` in the
-// post-move position. Non-pawn victims come from its legal captures in a
-// flipped-turn copy (only the turn field is swapped for the query), and the
-// king counts iff attackers(kingSq, beneficiary) contains the destination
-// square. Pawns never count. Null on illegal positions, never throws.
-function collectForkVictims(postMoveGame: Chess, to: Square, victimColor: 'w' | 'b', beneficiaryColor: 'w' | 'b'): ForkVictim[] | null {
-  try {
-    const parts = postMoveGame.fen().split(/\s+/);
-    parts[1] = beneficiaryColor;
-    const probe = new Chess(parts.join(' '));
-    const victims: ForkVictim[] = probe.moves({ square: to, verbose: true })
-      .map(move => move.captured?.toLowerCase())
-      .filter((captured): captured is Exclude<ForkVictim, 'k'> => !!captured && isForkVictim(captured));
-    const kingSquare = findKingSquare(probe, victimColor);
-    if (kingSquare && probe.attackers(kingSquare, beneficiaryColor).includes(to)) victims.push('k');
-    return victims;
-  } catch { return null; }
-}
-// Orders victims king-first, then cheapest-first (bishops before knights on
-// the 3-point tie). Null unless at least two victims with a capturable piece
-// among them.
-function orderForkVictims(victims: ForkVictim[]): ForkVictim[] | null {
-  if (victims.length < 2) return null;
-  const rest = victims.filter((victim): victim is Exclude<ForkVictim, 'k'> => victim !== 'k')
-    .sort((a, b) => FORK_RANK[a] - FORK_RANK[b]);
-  if (rest.length === 0) return null;
-  return [...(victims.includes('k') ? ['k' as const] : []), ...rest];
-}
-// Names the tactic when PV move 1 forks two pieces and the window shows the
-// cheaper one falling: "Nd4 forks White's bishop and queen, losing the
-// bishop." Detection runs on the moved piece only (no discovered-attack
-// attribution). Returns null unless the window composition matches the claim
-// exactly (opp captures exactly the lost piece, mover captures nothing); an
-// opening capture is never fork pressure. Illegal positions and bad FENs
-// silence, never throw.
+// Names the tactic when PV move 1 forks or skewers with check and the window
+// proves the consequence. Three material shapes per tactic:
+// - Free win (victim undefended, capture square holds): "Nd4 forks White's
+//   bishop and queen, losing the bishop."
+// - Contested (the capture square is attacked, so the recapture sits just
+//   outside the window): no fall is claimed — "Nd4 forks White's bishop and
+//   queen, but only forces an even exchange."
+// - Proven exchange (the window itself holds victim-for-forker): winning
+//   nets keep the fall ("losing the rook for the knight"), even nets name it
+//   ("only forcing an even bishop-for-knight exchange").
+// Explicit conflict: a checking skewer outranks a fork on the same move —
+// the forced king evacuation is the stronger story. Detection runs on the
+// moved piece only (no discovered-attack attribution). An opening capture is
+// never tactic pressure. Illegal positions and bad FENs silence, never throw.
 function tacticNote(afterFen: string, analyzed: BestLineAnalysis, mover: MaiaSide): string | null {
-  if (analyzed.moverCaptures.length > 0 || analyzed.oppCaptures.length !== 1) return null;
+  if (analyzed.oppCaptures.length !== 1 || analyzed.moverCaptures.length > 1) return null;
   const firstUci = analyzed.ucis[0];
   if (typeof firstUci !== 'string' || firstUci.length === 5) return null;
-  let game: Chess;
-  try { game = new Chess(afterFen); } catch { return null; }
-  let to: Square;
-  let san: string;
-  let firstCapture: boolean;
-  try {
-    const applied = applyUci(game, firstUci);
-    to = applied.to;
-    san = applied.san;
-    // An opening capture is never fork pressure: a piece taken on the fork
-    // move itself must not be counted as "lost to the fork".
-    firstCapture = applied.captured !== undefined;
-  } catch { return null; }
-  if (firstCapture) return null;
+  // The tactic belongs to the opponent of the mover (the victim side).
+  const forker: MaiaSide = mover === 'white' ? 'black' : 'white';
+  const facts = createMoveFacts({ beforeFen: afterFen, playedUci: firstUci, mover: forker });
+  if (!facts || facts.captured) return null;
   const victimColor = mover === 'white' ? 'w' : 'b';
-  const beneficiaryColor = mover === 'white' ? 'b' : 'w';
-  const victims = collectForkVictims(game, to, victimColor, beneficiaryColor);
-  if (!victims) return null;
-  const ordered = orderForkVictims(victims);
-  if (!ordered) return null;
-  const rest = ordered.filter((victim): victim is Exclude<ForkVictim, 'k'> => victim !== 'k');
-  const lost = rest[0];
-  if (analyzed.oppCaptures[0] !== lost) return null;
   const side = mover === 'white' ? "White's" : "Black's";
-  return `${san} forks ${side} ${joinVictims(ordered)}, losing the ${FORK_NOUNS[lost]}.`;
+  const skewer = facts.skewer();
+  if (skewer && !skewer.hanging && analyzed.oppCaptures[0] === skewer.back) {
+    if (analyzed.moverCaptures.length === 1 && analyzed.moverCaptures[0] !== skewer.checkerType) return null;
+    return skewerWindowNote(facts.san, side, skewer, analyzed, afterFen, victimColor);
+  }
+  const fork = facts.fork();
+  if (!fork || fork.hanging) return null;
+  if (analyzed.oppCaptures[0] !== fork.cheapest) return null;
+  if (analyzed.moverCaptures.length === 1 && analyzed.moverCaptures[0] !== fork.forkerType) return null;
+  return forkWindowNote(facts.san, side, fork, analyzed, afterFen, victimColor);
+}
+// Shared window tail: free fall vs contested vs proven exchange. The window
+// is trimmed to its last capture, so the capture square is the destination
+// of the final UCI; attacked means the recapture sits one ply past the
+// window and no fall may be claimed.
+function windowTail(afterFen: string, analyzed: BestLineAnalysis, victimColor: 'w' | 'b'): boolean | null {
+  try {
+    const replay = new Chess(afterFen);
+    let square: Square | null = null;
+    for (const uci of analyzed.ucis) {
+      const applied = applyUci(replay, uci);
+      if (applied.captured) square = applied.to;
+    }
+    if (!square) return null;
+    return replay.attackers(square, victimColor).length > 0;
+  } catch { return null; }
+}
+function forkWindowNote(san: string, side: string, fork: ForkFacts, analyzed: BestLineAnalysis, afterFen: string, victimColor: 'w' | 'b'): string | null {
+  const lead = `${san} forks ${side} ${joinVictims(fork.victims)}`;
+  if (analyzed.moverCaptures.length === 1) {
+    const back = analyzed.moverCaptures[0];
+    if (fork.net === null) return null;
+    if (fork.net > 0) return `${lead}, losing the ${FORK_NOUNS[fork.cheapest]} for the ${PIECE_NAMES[back]}.`;
+    if (fork.net === 0) return `${lead}, only forcing an even ${FORK_NOUNS[fork.cheapest]}-for-${PIECE_NAMES[back]} exchange.`;
+    return null;
+  }
+  const attacked = windowTail(afterFen, analyzed, victimColor);
+  if (attacked === null) return null;
+  if (attacked) {
+    // A looming recapture only contests the claim when the net does not
+    // survive it: a knight given for a defended rook still wins the
+    // exchange after the queen takes it back.
+    if (fork.net !== null && fork.net > 0) return `${lead}, losing the ${FORK_NOUNS[fork.cheapest]}.`;
+    return `${lead}, but only forces an even exchange.`;
+  }
+  return `${lead}, losing the ${FORK_NOUNS[fork.cheapest]}.`;
+}
+function skewerWindowNote(san: string, side: string, skewer: SkewerFacts, analyzed: BestLineAnalysis, afterFen: string, victimColor: 'w' | 'b'): string | null {
+  const lead = `${san} skewers ${side} ${joinVictims(['k', skewer.back])}`;
+  if (analyzed.moverCaptures.length === 1) {
+    const back = analyzed.moverCaptures[0];
+    if (skewer.net > 0) return `${lead}, losing the ${FORK_NOUNS[skewer.back]} for the ${PIECE_NAMES[back]}.`;
+    if (skewer.net === 0) return `${lead}, only forcing an even ${FORK_NOUNS[skewer.back]}-for-${PIECE_NAMES[back]} exchange.`;
+    return null;
+  }
+  const attacked = windowTail(afterFen, analyzed, victimColor);
+  if (attacked === null) return null;
+  if (attacked) {
+    if (skewer.net > 0) return `${lead}, losing the ${FORK_NOUNS[skewer.back]}.`;
+    return `${lead}, but only forces an even exchange.`;
+  }
+  return `${lead}, losing the ${FORK_NOUNS[skewer.back]}.`;
 }
 // Immediate material won by the played move itself (the mirror of the
 // best-line window, which reads the opponent's reply). Requires a capture on
@@ -260,30 +288,65 @@ export function playedMoveGainNote(beforeFen: string, afterFen: string, playedUc
 // Names the tactic when the played move itself forks two pieces: "Nd4 forks
 // White's bishop and queen." Unlike tacticNote there is no "losing the …"
 // clause — the fall of a piece is a future claim the immediate board cannot
-// prove. Same tight gates (moved piece only, no pawns, no opening capture,
-// no promotions). The caller gates on praise grades. Never throws.
+// prove. Contested forks (cheapest victim defended, no winning net) qualify
+// instead of overclaiming: "…, but only forces an even exchange." A hanging
+// forker refutes the tactic outright (the victim simply takes it), so the
+// note yields to the next positive candidate. Same tight gates (moved piece
+// only, no pawns, no opening capture, no promotions). The caller gates on
+// praise grades. Never throws.
 export function playedMoveForkNote(beforeFen: string, playedUci: string, mover: MaiaSide): string | null {
-  if (typeof playedUci !== 'string' || playedUci.length === 5) return null;
-  let game: Chess;
-  try { game = new Chess(beforeFen); } catch { return null; }
-  let to: Square;
-  let san: string;
-  let firstCapture: boolean;
-  try {
-    const applied = applyUci(game, playedUci);
-    to = applied.to;
-    san = applied.san;
-    firstCapture = applied.captured !== undefined;
-  } catch { return null; }
-  if (firstCapture) return null;
-  const victimColor = mover === 'white' ? 'b' : 'w';
-  const beneficiaryColor = mover === 'white' ? 'w' : 'b';
-  const victims = collectForkVictims(game, to, victimColor, beneficiaryColor);
-  if (!victims) return null;
-  const ordered = orderForkVictims(victims);
-  if (!ordered) return null;
+  const facts = createMoveFacts({ beforeFen, playedUci, mover });
+  if (!facts) return null;
+  return forkPlayedClaim(facts, mover);
+}
+export function forkPlayedClaim(facts: MoveFacts, mover: MaiaSide): string | null {
+  const fork = facts.fork();
+  if (!fork || fork.hanging) return null;
   const side = mover === 'white' ? "Black's" : "White's";
-  return `${san} forks ${side} ${joinVictims(ordered)}.`;
+  const lead = `${facts.san} forks ${side} ${joinVictims(fork.victims)}`;
+  // Royal tempo and free or winning victims stay unqualified; contested
+  // forks name the pressure without claiming a win.
+  if (fork.hasKing || !fork.cheapestDefended) return `${lead}.`;
+  if (fork.net !== null && fork.net > 0) return `${lead}.`;
+  return `${lead}, but only forces an even exchange.`;
+}
+// Names a checking skewer: a slider checks the king through to a piece
+// behind it ("Re7+ skewers Black's king and rook."). The check forces the
+// king off the ray, so the back piece is the story — but blocks of the check
+// and captures of the checker by third pieces are not proven here (v1), so
+// like the fork there is no fall clause and a hanging checker suppresses.
+// Capturing checkers outrank the gain note on purpose: a capturing checking
+// slider (Rxe7+) tells the forced-evacuation story, not the fresh-win story —
+// the taken piece is never part of the claim, so unlike the fork no opening-
+// capture exclusion applies. Same praise-grade gating. Never throws.
+export function playedMoveSkewerNote(beforeFen: string, playedUci: string, mover: MaiaSide): string | null {
+  const facts = createMoveFacts({ beforeFen, playedUci, mover });
+  if (!facts) return null;
+  return skewerPlayedClaim(facts, mover);
+}
+export function skewerPlayedClaim(facts: MoveFacts, mover: MaiaSide): string | null {
+  const skewer = facts.skewer();
+  if (!skewer || skewer.hanging) return null;
+  const side = mover === 'white' ? "Black's" : "White's";
+  const lead = `${facts.san} skewers ${side} ${joinVictims(['k', skewer.back])}`;
+  if (!skewer.defended) return `${lead}.`;
+  if (skewer.net > 0) return `${lead}.`;
+  return `${lead}, but only forces an even exchange.`;
+}
+// Names a same-square recapture as the exchange it is, instead of a fresh
+// win: even ("Takes the knight back, but only forces an even exchange."),
+// winning ("Wins a knight for a pawn."). Losing recaptures stay silent.
+// v1 requires the two takes to share a square and looks one ply back only.
+export function playedMoveExchangeNote(thisPiece: CapturedPiece, prevPiece: CapturedPiece): string | null {
+  const net = PIECE_VALUES[thisPiece] - PIECE_VALUES[prevPiece];
+  if (net < 0) return null;
+  if (net > 0) return `Wins ${PIECE_ARTICLE[thisPiece]} for ${PIECE_ARTICLE[prevPiece]}.`;
+  return `Takes the ${PIECE_NAMES[thisPiece]} back, but only forces an even exchange.`;
+}
+export function exchangePlayedClaim(facts: MoveFacts): string | null {
+  const recapture = facts.recapture();
+  if (!recapture || !recapture.sameSquare) return null;
+  return playedMoveExchangeNote(recapture.thisPiece, recapture.prevPiece);
 }
 function joinVictims(victims: ForkVictim[]): string {
   if (victims.length === 2 && victims[0] === victims[1] && victims[0] !== 'k') return `both ${FORK_PLURALS[victims[0]]}`;
@@ -355,12 +418,20 @@ function analyzeBestLineWindow(afterFen: string, pv: readonly string[] | undefin
     const swingWhite = materialFromFen(game.fen()).diff - startDiff;
     swingMover = mover === 'white' ? swingWhite : -swingWhite;
   } catch { return null; }
-  if (swingMover > -1) return null;
+  if (swingMover > -1) {
+    // Even exchanges (swing 0 with one take per side) flow through flagged:
+    // the generic composition stays silent on them below, but the tactic
+    // layer still names a proven even fork/skewer swap.
+    if (swingMover !== 0 || oppCaptures.length !== 1 || moverCaptures.length !== 1) return null;
+    if (!window.length) return null;
+    const oppSide = opp === 'white' ? 'White' : 'Black';
+    return { ucis: window.slice(0, lastCapture + 1), oppCaptures, moverCaptures, oppSide, evenExchange: true };
+  }
   if (!oppCaptures.length) return null; // non-capture swing (should not happen outside promotions, already excluded)
   const oppSide = opp === 'white' ? 'White' : 'Black';
   // Tail-trim to the last capture: trailing quiet moves add nothing to a
   // material claim (no captures, no promotions by the gates above), so the
   // clickable line ends where the story ends. The head is never trimmed —
   // the branch must root at the current position to stay explorable.
-  return { ucis: window.slice(0, lastCapture + 1), oppCaptures, moverCaptures, oppSide };
+  return { ucis: window.slice(0, lastCapture + 1), oppCaptures, moverCaptures, oppSide, evenExchange: false };
 }

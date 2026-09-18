@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BEST_LINE_WINDOW_MAX, bestLineMaterialNote, bestLinePreview, capturesFromLine, capturedLabel, DEFAULT_BEST_LINE_WINDOW, materialFromFen, materialLeadFor, normalizeBestLineWindow, playedMoveForkNote, playedMoveGainNote, sortCaptured } from './material';
+import { BEST_LINE_WINDOW_MAX, bestLineMaterialNote, bestLinePreview, capturesFromLine, capturedLabel, DEFAULT_BEST_LINE_WINDOW, materialFromFen, materialLeadFor, normalizeBestLineWindow, playedMoveExchangeNote, playedMoveForkNote, playedMoveGainNote, playedMoveSkewerNote, sortCaptured } from './material';
 import { START_FEN } from './domain';
 
 describe('material', () => {
@@ -121,7 +121,8 @@ describe('bestLineMaterialNote', () => {
   it('trims the fork line to the falling piece', () => {
     const forkFen = '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1';
     const preview = bestLinePreview(forkFen, ['f5d4', 'b3c3', 'd4c2', 'e1e2'], 'white', 4);
-    expect(preview?.note).toBe("Nd4 forks White's bishop and queen, losing the bishop.");
+    // The queen retakes on c2 one ply past the window: contested, no fall.
+    expect(preview?.note).toBe("Nd4 forks White's bishop and queen, but only forces an even exchange.");
     expect(preview?.ucis).toEqual(['f5d4', 'b3c3', 'd4c2']);
     expect(preview?.text).toBe('1… Nd4 2. Qc3 2… Nxc2+');
   });
@@ -171,8 +172,23 @@ describe('playedMoveGainNote', () => {
 describe('playedMoveForkNote', () => {
   const forkFen = '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1';
   it('names the fork without claiming the fall', () => {
+    // Mutual defense (Q guards B, B guards Q): the knight takes, the queen
+    // takes back — contested, so no win is claimed.
     expect(playedMoveForkNote(forkFen, 'f5d4', 'black'))
-      .toBe("Nd4 forks White's bishop and queen.");
+      .toBe("Nd4 forks White's bishop and queen, but only forces an even exchange.");
+  });
+
+  it('leaves winning trades unqualified', () => {
+    // The rook is defended, but knight-for-rook still wins the exchange.
+    expect(playedMoveForkNote('4k3/8/8/5n2/8/1Q6/2R5/4K3 b - - 0 1', 'f5d4', 'black'))
+      .toBe("Nd4 forks White's rook and queen.");
+  });
+
+  it('suppresses hanging forkers', () => {
+    // White's c-pawn simply takes the knight: no fork story to tell.
+    expect(playedMoveForkNote('4k3/8/8/5n2/8/1QP5/2B5/4K3 b - - 0 1', 'f5d4', 'black')).toBeNull();
+    // The king eats the forker outright.
+    expect(playedMoveForkNote('4k3/8/8/5n2/8/1Q2K3/2B5/8 b - - 0 1', 'f5d4', 'black')).toBeNull();
   });
 
   it('names royal forks with the king first', () => {
@@ -219,17 +235,27 @@ describe('bestLinePreview', () => {
 describe('bestLineForkNote', () => {
   const forkFen = '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1';
   const forkPv = ['f5d4', 'b3c3', 'd4c2'];
-  it('names the fork and the falling piece', () => {
+  it('qualifies the fork when the recapture sits past the window', () => {
     expect(bestLineMaterialNote(forkFen, forkPv, 'white'))
-      .toBe("Nd4 forks White's bishop and queen, losing the bishop.");
+      .toBe("Nd4 forks White's bishop and queen, but only forces an even exchange.");
   });
 
   it('keeps the preview line agreeing with the fork note', () => {
     const preview = bestLinePreview(forkFen, forkPv, 'white');
-    expect(preview?.note).toBe("Nd4 forks White's bishop and queen, losing the bishop.");
+    expect(preview?.note).toBe("Nd4 forks White's bishop and queen, but only forces an even exchange.");
     expect(preview?.ucis).toEqual(forkPv);
     expect(preview?.sans).toEqual(['Nd4', 'Qc3', 'Nxc2+']);
     expect(preview?.text).toBe('1… Nd4 2. Qc3 2… Nxc2+');
+  });
+
+  it('names proven exchanges with the net', () => {
+    // Even: the window holds Nxc2 and Qxc2 — bishop for knight, all square.
+    expect(bestLineMaterialNote(forkFen, ['f5d4', 'b3c3', 'd4c2', 'c3c2'], 'white', 4))
+      .toBe("Nd4 forks White's bishop and queen, only forcing an even bishop-for-knight exchange.");
+    // Winning: knight given for a defended rook still wins after the retake.
+    const rookFen = '4k3/8/8/5n2/8/1Q6/2R5/4K3 b - - 0 1';
+    expect(bestLineMaterialNote(rookFen, ['f5d4', 'b3c3', 'd4c2', 'c3c2'], 'white', 4))
+      .toBe("Nd4 forks White's rook and queen, losing the rook for the knight.");
   });
 
   it('names royal forks with the king first', () => {
@@ -258,5 +284,72 @@ describe('bestLineForkNote', () => {
     // through fork pressure, so the generic composition holds.
     expect(bestLineMaterialNote('4k3/8/8/3B4/5n2/2Q1B3/8/4K3 b - - 0 1', ['f4d5', 'c3b3', 'e8e7'], 'white'))
       .toBe('This line wins a bishop for Black.');
+  });
+});
+
+describe('playedMoveSkewerNote', () => {
+  it('names a checking skewer through the king', () => {
+    // Re7+ forces the king off the e-file's d7 square, uncovering the queen.
+    expect(playedMoveSkewerNote('8/2qk4/8/2B5/8/8/5K2/4R3 w - - 0 1', 'e1e7', 'white'))
+      .toBe("Re7+ skewers Black's king and queen.");
+  });
+
+  it('qualifies defended back pieces without a winning net', () => {
+    // The knight is guarded (pawn and king): bishop for knight comes out even.
+    expect(playedMoveSkewerNote('8/8/5p2/4n3/3k4/8/8/2B4K w - - 0 1', 'c1b2', 'white'))
+      .toBe("Bb2+ skewers Black's king and knight, but only forces an even exchange.");
+  });
+
+  it('lets capturing checkers tell the skewer story, not the gain', () => {
+    // Rxe7+ takes a pawn, but the forced evacuation outranks the fresh win.
+    expect(playedMoveSkewerNote('8/2qkp3/8/2B5/8/8/5K2/4R3 w - - 0 1', 'e1e7', 'white'))
+      .toBe("Rxe7+ skewers Black's king and queen.");
+  });
+
+  it('rejects quiet moves, non-sliders, and hanging checkers', () => {
+    expect(playedMoveSkewerNote('8/2qk4/8/2B5/8/8/5K2/4R3 w - - 0 1', 'f2f3', 'white')).toBeNull();
+    // Knight checks never skewer: no ray, no shield.
+    expect(playedMoveSkewerNote('4k3/8/8/8/8/3n4/8/3Q3K b - - 0 1', 'd3f2', 'black')).toBeNull();
+    // Undefended checker the king simply eats: Re7 hangs when Bc5 is gone.
+    expect(playedMoveSkewerNote('8/2qk4/8/8/8/8/5K2/4R3 w - - 0 1', 'e1e7', 'white')).toBeNull();
+    expect(playedMoveSkewerNote('bad', 'e1e7', 'white')).toBeNull();
+  });
+});
+
+describe('bestLineSkewerNote', () => {
+  const skewerFen = '8/2qk4/8/2B5/8/8/5K2/4R3 w - - 0 1';
+  it('names the skewer and the falling piece', () => {
+    // Rxc7 hangs to Kxc7, but queen-for-rook still wins the exchange.
+    expect(bestLineMaterialNote(skewerFen, ['e1e7', 'd7c8', 'e7c7'], 'black'))
+      .toBe("Re7+ skewers Black's king and queen, losing the queen.");
+  });
+
+  it('keeps the preview line agreeing with the skewer note', () => {
+    const preview = bestLinePreview(skewerFen, ['e1e7', 'd7c8', 'e7c7'], 'black');
+    expect(preview?.note).toBe("Re7+ skewers Black's king and queen, losing the queen.");
+    expect(preview?.sans).toEqual(['Re7+', 'Kc8', 'Rxc7+']);
+  });
+
+  it('stays silent on even non-tactic windows, note and preview together', () => {
+    // Bxe3/dxe3 is bishop-for-knight with no fork or skewer: the generic
+    // composition has no swing to report, so nothing may claim the line.
+    const evenFen = '4k3/8/8/8/3b4/4N3/3PP3/4K3 b - - 0 1';
+    expect(bestLineMaterialNote(evenFen, ['d4e3', 'd2e3'], 'white')).toBeNull();
+    expect(bestLinePreview(evenFen, ['d4e3', 'd2e3'], 'white')).toBeNull();
+  });
+});
+
+describe('playedMoveExchangeNote', () => {
+  it('frames even recaptures as exchanges, not wins', () => {
+    expect(playedMoveExchangeNote('n', 'b'))
+      .toBe('Takes the knight back, but only forces an even exchange.');
+  });
+
+  it('names winning recaptures with the net', () => {
+    expect(playedMoveExchangeNote('n', 'p')).toBe('Wins a knight for a pawn.');
+  });
+
+  it('stays silent on losing recaptures', () => {
+    expect(playedMoveExchangeNote('p', 'n')).toBeNull();
   });
 });

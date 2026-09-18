@@ -469,7 +469,51 @@ describe('verdictInputsForPly', () => {
       san: 'Nd4',
       quality: quality('Best'),
       mover: 'black',
-    })).positiveNote).toBe("Nd4 forks White's bishop and queen.");
+    })).positiveNote).toBe("Nd4 forks White's bishop and queen, but only forces an even exchange.");
+    expect(verdictInputsForPly(baseInputs({
+      beforeFen: '8/2qk4/8/2B5/8/8/5K2/4R3 w - - 0 1',
+      afterFen: '8/2qkR3/8/2B5/8/8/5K2/8 b - - 1 1',
+      playedUci: 'e1e7',
+      san: 'Re7+',
+      quality: quality('Best'),
+    })).positiveNote).toBe("Re7+ skewers Black's king and queen.");
+    // A capturing checker tells the skewer story, not the gain story.
+    expect(verdictInputsForPly(baseInputs({
+      beforeFen: '8/2qkp3/8/2B5/8/8/5K2/4R3 w - - 0 1',
+      afterFen: '8/2qkR3/8/2B5/8/8/5K2/8 b - - 0 1',
+      playedUci: 'e1e7',
+      san: 'Rxe7+',
+      quality: quality('Best'),
+    })).positiveNote).toBe("Rxe7+ skewers Black's king and queen.");
+    // Skewer-check outranks fork on the same move: the rook also hits the
+    // e8 bishop, but the forced evacuation is the stronger story.
+    expect(verdictInputsForPly(baseInputs({
+      beforeFen: '4b3/2qk4/8/2B5/8/8/5K2/4R3 w - - 0 1',
+      afterFen: '4b3/2qkR3/8/2B5/8/8/5K2/8 b - - 1 1',
+      playedUci: 'e1e7',
+      san: 'Re7+',
+      quality: quality('Best'),
+    })).positiveNote).toBe("Re7+ skewers Black's king and queen.");
+    // Same-square recapture: the take-back is an exchange, never a fresh win.
+    expect(verdictInputsForPly(baseInputs({
+      beforeFen: '4k3/8/8/8/8/2Q5/2n5/4K3 w - - 0 3',
+      afterFen: '4k3/8/8/8/8/8/2Q5/4K3 b - - 0 3',
+      playedUci: 'c3c2',
+      san: 'Qxc2',
+      quality: quality('Best'),
+      prevBeforeFen: '4k3/8/8/8/3n4/2Q5/2B5/4K3 b - - 2 2',
+      prevUci: 'd4c2',
+    })).positiveNote).toBe('Takes the knight back, but only forces an even exchange.');
+    // Winning recapture names the net instead.
+    expect(verdictInputsForPly(baseInputs({
+      beforeFen: '4k3/8/8/4n3/3P4/8/8/4K3 w - - 0 2',
+      afterFen: '4k3/8/8/4P3/8/8/8/4K3 b - - 0 2',
+      playedUci: 'd4e5',
+      san: 'dxe5',
+      quality: quality('Best'),
+      prevBeforeFen: '4k3/3n4/8/4P3/3P4/8/8/4K3 b - - 0 1',
+      prevUci: 'd7e5',
+    })).positiveNote).toBe('Wins a knight for a pawn.');
     expect(verdictInputsForPly(baseInputs({
       beforeFen: '4k3/8/8/8/1b6/8/8/4K3 w - - 0 1',
       afterFen: '4k3/8/8/8/1b6/8/8/3K4 b - - 1 1',
