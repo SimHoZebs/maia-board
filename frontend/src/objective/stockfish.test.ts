@@ -68,7 +68,7 @@ it('lists engine lines with mover-relative expectations, terminal rows fall back
   expect(white?.entries.map(entry => entry.uci)).toEqual(['e2e4', 'd2d4']);
   expect(white?.entries[0].expected).toBeGreaterThan(50);
   expect(white?.entries[1].expected).toBeLessThan(50);
-  expect(white).toMatchObject({ modelUsed: null, requestedModel: null, degraded: false });
+  expect(white).toMatchObject({ degraded: false });
   const blackNode = { fen: '', turn: 'black' } as never;
   const black = candidatesFor({ engine: 'Stockfish 19', search_policy: SEARCH_POLICY, score: lines[0].score,
     depth: 14, best_move: 'e2e4', lines, terminal: null }, blackNode);

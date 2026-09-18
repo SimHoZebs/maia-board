@@ -205,7 +205,7 @@ export function PlayWorkspace({ state, dispatch }: Props) {
     const shownGame = historic ? game : live;
     const shownOver = (historic ? (position.terminal ?? null) : (playLine?.terminal ?? null)) !== null;
     const active = !resigned && toGroundColor(shownGame.turn()) === color && !shownOver;
-    return <div className={`player-strip${active && ready ? ' active' : ''}`}><span className={`side-dot ${color}`} /><strong>{color === settings.userColor ? 'You' : `Maia · ${settings.eloMaia}`}</strong><MaterialSummary by={color} captures={playCaptures[color]} lead={materialLeadFor(playDiff, color)} />{color !== settings.userColor && replyIdentity?.degraded && <span role="status">{replyIdentity.model_used} fallback · requested {settings.model}</span>}<span className="player-side">{sideName(color)}</span>{active && ready && <span className="turn-indicator" role="status">{historic ? 'At this position' : request ? 'Thinking…' : 'To move'}</span>}</div>;
+    return <div className={`player-strip${active && ready ? ' active' : ''}`}><span className={`side-dot ${color}`} /><strong>{color === settings.userColor ? 'You' : `Maia · ${settings.eloMaia}`}</strong><MaterialSummary by={color} captures={playCaptures[color]} lead={materialLeadFor(playDiff, color)} />{color !== settings.userColor && replyIdentity?.degraded && <span role="status">Maia3 fallback reply</span>}<span className="player-side">{sideName(color)}</span>{active && ready && <span className="turn-indicator" role="status">{historic ? 'At this position' : request ? 'Thinking…' : 'To move'}</span>}</div>;
   };
   const over = boardOver || resigned;
   // Render-phase dismissal (no effect): a finished game cannot keep the

@@ -61,8 +61,6 @@ export function candidatesFor(
       uci: line.move,
       expected: mover === 'white' ? whiteWin(line.score) : 100 - whiteWin(line.score),
     })),
-    modelUsed: null,
-    requestedModel: null,
     degraded: false,
   };
 }

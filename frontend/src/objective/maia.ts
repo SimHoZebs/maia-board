@@ -59,8 +59,6 @@ export function candidatesFor(
   if (!row) return undefined;
   return {
     entries: row.top_moves.map(candidate => ({ uci: candidate.move, expected: maiaExpected(candidate.wdl) })),
-    modelUsed: row.model_used,
-    requestedModel: GRADING_MAIA_SETTINGS.model,
     degraded: row.degraded,
   };
 }
@@ -92,7 +90,7 @@ export function ensureLane(coordinator: ReviewCoordinator, targets: ReviewNode[]
 
 // Human name for copy (bar, graphs). Twins differ here by definition.
 export function sourceLabel(): string {
-  return 'Maia 2400';
+  return 'Maia3 2400';
 }
 
 // Bulk-restore descriptor for the lane. `settings` null means the source

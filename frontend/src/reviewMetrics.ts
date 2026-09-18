@@ -213,8 +213,6 @@ export type ObjectivePoint = {
 // plus the model identity behind the list for headings and fallback copy.
 export type ObjectiveCandidates = {
   entries: { uci: string; expected: number }[];
-  modelUsed: string | null;
-  requestedModel: string | null;
   degraded: boolean;
 };
 // White-relative view of a mover-relative expectation. Callers pass the

@@ -181,7 +181,7 @@ test('standalone FEN shows current candidates and clears correct-frame previews'
   expect(app.errors).toEqual([]);
 });
 
-test('root identifies requested and actual fallback models', async ({ page }) => {
+test('root shows the fallback notice without model parameters', async ({ page }) => {
   const app = await bootReview(page);
   await page.route('http://maia.test/move', route => {
     const body = route.request().postDataJSON();
@@ -190,8 +190,8 @@ test('root identifies requested and actual fallback models', async ({ page }) =>
     return route.fulfill({ json: { move: uci, top_moves: [{ move: uci, prob: .13, wdl: [.2,.3,.5] }], wdl: [.2,.3,.5], model_used: '5m', degraded: true } });
   });
   await page.goto('http://maia.test/analyze?moves=');
-  await expect(page.getByRole('heading', { name: /Maia 2400 · 5m/ })).toBeVisible();
-  await expect(page.getByText('Requested 79m; using 5m fallback.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Maia3 2400/ })).toBeVisible();
+  await expect(page.getByText('Maia3 fallback results.', { exact: true })).toBeVisible();
   expect(app.errors).toEqual([]);
 });
 
@@ -286,7 +286,7 @@ for (const width of [320, 1440]) {
 
 test('move analysis summarizes the game below the engines and links mistakes from moves to review', async ({ page }, info) => {
   const app = await bootReview(page);
-  await expect(page.getByRole('heading', { name: /Maia 2400/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Maia3 2400/ })).toBeVisible();
   await expect(page.getByRole('tabpanel', { name: 'Move analysis', exact: true })).toBeVisible();
   await expect(page.locator('.overview-partial')).toContainText('Summary covers reviewed moves only');
   await expect(page.getByRole('region', { name: 'White move quality', exact: true })).toBeVisible();
@@ -407,7 +407,7 @@ for (const width of [1440, 360]) test(`move analysis restores evaluation graph a
 
 test('move analysis graphs leave unreviewed positions as gaps', async ({ page }) => {
   await bootReview(page);
-  await expect(page.getByRole('heading', { name: /Maia 2400/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Maia3 2400/ })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Evaluation graph', exact: true })).toBeVisible();
   await expect(page.locator('.chart-point i')).toHaveCount(2);
   await expect(page.locator('.chart-line')).toHaveCount(1);
@@ -492,7 +492,7 @@ test('blunder and mistake destinations carry board badges', async ({ page }) => 
 });
 test('server-cached positions skip inference after reload', async ({ page }) => {
   const app = await bootReview(page);
-  await expect(page.getByRole('heading', { name: /Maia 2400/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Maia3 2400/ })).toBeVisible();
   // Both engines at the before/current pair must finish before reloading:
   // fast+full Stockfish plus display and grading Maia rows.
   await expect.poll(() => app.evaluations.size).toBe(8);
@@ -500,7 +500,7 @@ test('server-cached positions skip inference after reload', async ({ page }) => 
   await page.reload();
   // The loaded line restores from the snapshot with the import panel closed;
   // cached positions resolve without new inference.
-  await expect(page.getByRole('heading', { name: /Maia 2400/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Maia3 2400/ })).toBeVisible();
   await expect(page.locator('.candidate-list li')).not.toHaveCount(0);
   expect(app.requests).toHaveLength(calls);
   expect(app.errors).toEqual([]);
@@ -581,7 +581,7 @@ test('mixed arrow sources retain their own endpoints', async ({ page }, info) =>
   // Arrows project forward from the viewed position, but the panel judges the
   // displayed move from its before-position: step forward to read predictions.
   await page.locator('#analysis-next').click();
-  await expect(page.getByRole('heading', { name: /Maia 2400/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Maia3 2400/ })).toBeVisible();
   await expect(page.locator('.insight-panel')).toContainText('Nf3');
   await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
   await page.screenshot({ path: info.outputPath('mixed-arrows.png'), fullPage: true });
@@ -599,7 +599,7 @@ test('current position balance replaces the win-rate sections', async ({ page })
 });
 test('analysis progress replaces the analyze button while running without a cancel option', async ({ page }) => {
   await bootReview(page);
-  await expect(page.getByRole('heading', { name: /Maia 2400/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Maia3 2400/ })).toBeVisible();
   // Hold the batch event stream AND the status endpoint open: the client
   // reconciles from ground-truth status on mount (not just live ticks), so
   // holding the stream alone no longer keeps the job observably running —

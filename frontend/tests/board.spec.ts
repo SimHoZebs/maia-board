@@ -509,7 +509,7 @@ test('analysis load, navigation, copy, request history, stale reply and mode reu
     }
   }
   await expect(page.locator('#insight-content')).toBeVisible();
-  await expect(page.getByRole('heading', { name: /Maia 2400/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Maia3 2400/ })).toBeVisible();
   await expect(page.locator('#analysis-rating')).toHaveValue('1600');
   await page.locator('#mode-play').click();
   await expect(page.locator('#takeback')).toBeVisible();
@@ -752,7 +752,7 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   await expect.poll(() => app.requests.filter(r => r.payload.elo_maia === 2000)).toHaveLength(2);
   await app.reply(app.requests.map((r, i) => (r.payload.elo_maia === 2000 ? i : -1)).filter(i => i >= 0).at(-1)!);
   // Objective heading and list hold steady across the reference switch.
-  await expect(page.getByRole('heading', { name: /Maia 2400/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Maia3 2400/ })).toBeVisible();
   await expect(page.locator('section[aria-label="Maia analysis"] .candidate-reading')).toHaveText(listBefore);
   await expect(page.locator('#analysis-rating')).toHaveValue('2000');
   expect(app.requests.some(r => r.payload.elo_maia === 2000 && r.payload.elo_user === 2000)).toBe(true);

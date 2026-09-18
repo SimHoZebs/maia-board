@@ -33,5 +33,5 @@ it('lists ranked candidates with per-choice expectations', () => {
     { uci: 'e2e4', expected: 65 },
     { uci: 'd2d4', expected: 35 },
   ]);
-  expect(list).toMatchObject({ modelUsed: '79m', requestedModel: '79m', degraded: false });
+  expect(list).toMatchObject({ degraded: false });
 });

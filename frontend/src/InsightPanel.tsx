@@ -142,6 +142,10 @@ export function MoveAnalysis({
       beforeScore: evaluation?.score ?? null,
       afterScore: afterEvaluation?.score ?? null,
       isCritical: review.engineGrades?.[focus]?.label === 'Critical',
+      // Previous ply for recapture-as-exchange framing: the UCI arriving at
+      // the before-position plus the FEN before it. Null at the game start.
+      prevUci: focus >= 1 ? (review.nodes[focus]?.uci || null) : null,
+      prevBeforeFen: focus >= 1 ? (review.nodes[focus - 1]?.fen ?? null) : null,
     })
     : null;
   const verdict = verdictFacts ? describeMove(verdictFacts) : null;
@@ -212,7 +216,7 @@ export function MoveAnalysis({
         dotClass="source-maia"
         title={
           <>
-            {sourceLabel()}{candidates?.modelUsed ? ` · ${candidates.modelUsed}` : ""} •{" "}
+            {sourceLabel()} •{" "}
             <Rating
               inline
               id="analysis-rating"
@@ -226,18 +230,10 @@ export function MoveAnalysis({
           </>
         }
       >
-        {candidates?.degraded && candidates.modelUsed && candidates.requestedModel && <p role="status">Requested {candidates.requestedModel}; using {candidates.modelUsed} fallback.</p>}
+        {candidates?.degraded && <p role="status">Maia3 fallback results.</p>}
         {review.maiaStale && (
           <p role="status">
-            Showing Maia {review.maiaElo}
-            {review.maiaModel !== review.maiaWantedModel
-              ? ` (${review.maiaModel})`
-              : ""}{" "}
-            · updating to {review.maiaWantedElo}
-            {review.maiaModel !== review.maiaWantedModel
-              ? ` (${review.maiaWantedModel})`
-              : ""}
-            …
+            Showing Maia {review.maiaElo} · updating to {review.maiaWantedElo}…
           </p>
         )}
         {candidates && insight ? (

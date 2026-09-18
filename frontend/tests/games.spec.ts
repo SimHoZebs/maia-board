@@ -87,7 +87,7 @@ async function clickSquare(page: Page, key: string) {
   await page.mouse.click(bounds.x + (file + 0.5) * bounds.width / 8, bounds.y + (7 - rank + 0.5) * bounds.height / 8);
 }
 
-test('live play shows the actual 5m fallback after requesting 79m', async ({ page }) => {
+test('live play shows a fallback notice when the worker degrades', async ({ page }) => {
   const app = await bootGames(page, { 'maia-board.migrated-games.v1': true });
   let requestedModel: unknown;
   await page.route('http://maia.test/move', async route => {
@@ -98,12 +98,12 @@ test('live play shows the actual 5m fallback after requesting 79m', async ({ pag
   await page.locator('#start-game').click();
   await clickSquare(page, 'e2');
   await clickSquare(page, 'e4');
-  await expect(page.getByRole('status').filter({ hasText: '5m fallback · requested 79m' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Maia3 fallback reply' })).toBeVisible();
   expect(requestedModel).toBe('79m');
   await expect.poll(() => [...app.store.games.values()][0]?.moves).toEqual(['e2e4', 'e7e5']);
   expect([...app.store.games.values()][0].model).toBe('79m');
   await page.getByRole('button', { name: 'Takeback', exact: true }).click();
-  await expect(page.getByText('5m fallback · requested 79m', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Maia3 fallback reply', { exact: true })).toHaveCount(0);
   expect(app.errors).toEqual([]);
 });
 
