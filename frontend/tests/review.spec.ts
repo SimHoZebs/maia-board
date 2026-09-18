@@ -290,6 +290,17 @@ test('tabs support keyboard navigation without stepping the board and link inacc
   const app = await bootReview(page, '1. e4 e5 2. Nf3 Nc6', [0,0,100,0,0]);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
+  // Quiescence: the foreground pair-ensure drains against batch filing in a
+  // ~40ms race window, so capture the baseline only after the inference
+  // count settles (stable across 3x200ms). Intent unchanged: tabbing itself
+  // must issue nothing.
+  let settled = -1, stableRounds = 0;
+  while (stableRounds < 3) {
+    await page.waitForTimeout(200);
+    const count = app.requests.length;
+    if (count === settled) stableRounds++;
+    else { settled = count; stableRounds = 0; }
+  }
   const before = app.requests.length;
   await page.getByRole('tab', { name: 'Move analysis', exact: true }).focus();
   await page.keyboard.press('ArrowRight');
@@ -498,12 +509,19 @@ test('partially evicted analysis restores cached positions and gates the rest', 
   expect(evicted.length).toBeGreaterThan(0);
   for (const hash of evicted) app.evaluations.delete(hash);
   const inferred = (engine: string) => app.requests.filter(request => request.engine === engine).length;
-  const evalsBefore = inferred('/evaluate');
-  const jobsBefore = app.batches.size;
-  const reloadMark = app.requests.length;
   await page.reload();
   await expect(page.getByRole('button', { name: 'Analyze entire game' })).toBeVisible();
   await expect(page.getByRole('status').filter({ hasText: /of \d+ positions cached/ })).toHaveCount(0);
+  // Quiescence: the mount pair-ensure peeks full-row coverage at +200ms
+  // against the instant prime filing it — order decides whether the viewed
+  // pair's fast row fetches live. Wait past the debounce for prime coverage
+  // (candidates prove the viewed pair landed) so the measured window starts
+  // settled; intent unchanged (resubmit must cover evicted Maia rows with
+  // zero new Stockfish inference).
+  await expect(page.locator('.candidate-list li').first()).toBeVisible();
+  await page.waitForTimeout(600);
+  const evalsBefore = inferred('/evaluate');
+  const jobsBefore = app.batches.size;
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   // Every evicted Maia position is gated behind the new batch: the fresh
@@ -560,17 +578,32 @@ test('current position balance replaces the win-rate sections', async ({ page })
 test('analysis progress replaces the analyze button while running without a cancel option', async ({ page }) => {
   await bootReview(page);
   await expect(page.getByRole('heading', { name: 'Maia 79m • 1600', exact: true })).toBeVisible();
-  // Hold the batch event stream open: the job stays running until the
-  // stream resolves, so progress UI is observable deterministically instead
-  // of racing the instant-mock finish. (Holding foreground fetches cannot
-  // stall a server batch; whole-game inference runs server-side now.)
+  // Hold the batch event stream AND the status endpoint open: the client
+  // reconciles from ground-truth status on mount (not just live ticks), so
+  // holding the stream alone no longer keeps the job observably running —
+  // the instant-mock status would finish it first. Holding both keeps the
+  // submit-time optimism ("Analyzing 0 of N…") on screen deterministically
+  // instead of racing the instant-mock finish. (Holding foreground fetches
+  // cannot stall a server batch; whole-game inference runs server-side now.)
   const heldEvents: Route[] = [];
+  const heldStatus: Route[] = [];
   await page.route('http://maia.test/reviews/*/events', route => { heldEvents.push(route); });
+  await page.route(url => {
+    if (url.host !== 'maia.test') return false;
+    const segments = url.pathname.slice('/reviews/'.length).split('/');
+    return url.pathname.startsWith('/reviews/') && segments.length === 1 && segments[0].length > 0;
+  }, route => { heldStatus.push(route); });
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect.poll(() => heldEvents.length).toBeGreaterThan(0);
+  await expect.poll(() => heldStatus.length).toBeGreaterThan(0);
   await expect(page.locator('.tab-action').getByRole('status')).toHaveText(/Analyzing \d+ of \d+…/);
   await expect(page.getByRole('button', { name: 'Analyze entire game' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Cancel analysis' })).toHaveCount(0);
+  for (const route of heldStatus) {
+    const match = /\/reviews\/([^/]+)$/.exec(new URL(route.request().url()).pathname);
+    const progress = { job_id: match?.[1] ?? 'mock-batch-1', total: 10, done: 10, failed: 0, cancelled: false, finished: true };
+    await route.fulfill({ json: progress });
+  }
   for (const route of heldEvents) {
     const match = /\/reviews\/([^/]+)\/events/.exec(route.request().url());
     const progress = { job_id: match?.[1] ?? 'mock-batch-1', total: 10, done: 10, failed: 0, cancelled: false, finished: true };
