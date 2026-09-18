@@ -278,6 +278,17 @@ it('appends the positive why only for praise grades', () => {
   expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity, opening: { eco: 'C50', name: 'Italian Game' }, positiveNote: 'Gets out of check.' }))
     .toBe('Nf3 — Italian Game (C50). Book move.');
 });
+it('appends the mate-parry why only for praise grades', () => {
+  const quality = (label: Quality['label']): Quality => ({ label, accuracy: 100, loss: 0 });
+  const rarity: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
+  expect(describeMove({ san: 'g6', quality: quality('Best'), rarity, positiveNote: 'Parries Qxg7#.' }))
+    .toBe('The natural choice. Parries Qxg7#.');
+  expect(describeMove({ san: 'Re5', quality: quality('Good'), rarity, positiveNote: 'Avoids mate in one.' }))
+    .toBe('The natural choice. Avoids mate in one.');
+  // A parrying blunder stays a blunder story, never a defensive story.
+  expect(describeMove({ san: 'g6', quality: quality('Blunder'), rarity, positiveNote: 'Parries Qxg7#.' }))
+    .toBe('An easy mistake to make.');
+});
 it('pairs hard-to-avoid with the material consequence', () => {
   const blunder: Quality = { label: 'Blunder', accuracy: 20, loss: 25 };
   const expected: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };

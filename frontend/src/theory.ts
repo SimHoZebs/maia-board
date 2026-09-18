@@ -1,5 +1,5 @@
 import { Chess, type Square } from 'chess.js';
-import { applyUci, START_FEN } from './domain';
+import { applyUci, uciFromMove, START_FEN } from './domain';
 import { playedMoveForkNote, playedMoveGainNote, type MaiaSide } from './material';
 import { openingAt, type OpeningMatch } from './openings';
 import type { DomainOutcome } from './domain';
@@ -271,6 +271,84 @@ export function enPassantNote(beforeFen: string, playedUci: string): string | nu
   }
 }
 
+// Mate-in-one parry for praise grades ("Parries Qxg7#."). Definition: the
+// played move leaves the opponent with no immediate mating reply, while at
+// least PARRY_MIN_WITNESSES alternatives each allow at least one. The bar of
+// two keeps single-obscure-witness positions quiet: one blunder alternative
+// hanging a mate does not make an ordinary move a parry. The union of all
+// mating reply SANs names the threat when unanimous; mixed threats fall back
+// to the generic sentence. The afterScore gate (no mate for the opponent)
+// keeps dodges that merely delay a forced mate silent — depth beyond M1
+// comes from the engine, never a custom tree. The alternatives scan must be
+// exhaustive (unanimity needs the full union); only the after-scan may
+// early-exit on its first '#'. Mate detection reads the trailing '#' off
+// legal-move SANs (chess.js marks mates there), so each position costs one
+// move-gen instead of a push plus isCheckmate per reply. Never throws: bad
+// FENs, illegal UCIs, and move-gen failures all yield null.
+export const PARRY_MIN_WITNESSES = 2;
+export function parriesMateNote(
+  beforeFen: string,
+  playedUci: string,
+  afterScore: Score | null | undefined,
+  mover: MaiaSide,
+): string | null {
+  if (!afterScore || isMateFor(afterScore, mover === 'white' ? 'black' : 'white')) return null;
+  let before: Chess;
+  try {
+    before = new Chess(beforeFen);
+  } catch {
+    return null;
+  }
+  let after: Chess;
+  try {
+    after = new Chess(beforeFen);
+    applyUci(after, playedUci);
+  } catch {
+    return null;
+  }
+  try {
+    for (const san of after.moves()) {
+      if (typeof san === 'string' && san.endsWith('#')) return null;
+    }
+  } catch {
+    return null;
+  }
+  let alternatives: { from: string; to: string; promotion?: string }[];
+  try {
+    alternatives = before.moves({ verbose: true });
+  } catch {
+    return null;
+  }
+  const threats = new Set<string>();
+  let witnesses = 0;
+  for (const candidate of alternatives) {
+    const uci = uciFromMove(candidate);
+    if (uci === playedUci) continue;
+    let replies: string[];
+    try {
+      const probe = new Chess(beforeFen);
+      applyUci(probe, uci);
+      replies = probe.moves();
+    } catch {
+      continue;
+    }
+    let hangs = false;
+    for (const san of replies) {
+      if (typeof san === 'string' && san.endsWith('#')) {
+        threats.add(san);
+        hangs = true;
+      }
+    }
+    if (hangs) witnesses++;
+  }
+  if (witnesses < PARRY_MIN_WITNESSES) return null;
+  if (threats.size === 1) {
+    const [only] = threats;
+    return `Parries ${only}.`;
+  }
+  return `Avoids mate in one.`;
+}
+
 // The mover started in check, so any legal played move escapes by definition.
 // Reads the before-position only; the after-position's turn belongs to the
 // opponent and says nothing about the mover's king.
@@ -306,6 +384,11 @@ const POSITIVE_CANDIDATES: { name: string; note: (ctx: PositiveContext) => strin
   { name: 'en-passant', note: ({ beforeFen, playedUci }) => enPassantNote(beforeFen, playedUci) },
   { name: 'gain',
     note: ({ beforeFen, afterFen, playedUci, mover }) => playedMoveGainNote(beforeFen, afterFen, playedUci, mover) },
+  // Parry sits below the material and shape notes so dual-truth moves keep
+  // their existing verdicts (a parrying capture stays a gain story), and
+  // above escape as the more specific defensive claim.
+  { name: 'parries-mate',
+    note: ({ beforeFen, playedUci, afterScore, mover }) => parriesMateNote(beforeFen, playedUci, afterScore, mover) },
   { name: 'escape', note: ({ beforeFen }) => escapeNote(beforeFen) },
 ];
 

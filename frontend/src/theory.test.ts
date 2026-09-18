@@ -12,6 +12,7 @@ import {
   matePattern,
   noveltyRef,
   pawnDamageNote,
+  parriesMateNote,
   promotionNote,
   underpromotionAvoidsStalemate,
   verdictInputsForPly,
@@ -262,6 +263,53 @@ describe('positive shape notes', () => {
   });
 });
 
+describe('parriesMateNote', () => {
+  // 17... g6 position: White's Bh6 + Qg4 battery mates on g7 against all
+  // but six Black moves.
+  const base = '4rrk1/ppqn1ppp/1bp4B/8/2pP2Q1/2P2N2/PP3PPP/4RRK1 b - - 3 17';
+  const cp = { type: 'cp' as const, value: -150 };
+
+  it('names the unanimous mating reply the played move denies', () => {
+    expect(parriesMateNote(base, 'g7g6', cp, 'black')).toBe('Parries Qxg7#.');
+  });
+
+  it('falls back to the generic sentence on mixed threats', () => {
+    // Queen on d4 instead of g4: alternatives hang Qxg7# or Qg7#.
+    const mixed = '4rrk1/ppqn1ppp/1bp4B/8/2pQ4/2P2N2/PP3PPP/4RRK1 b - - 3 17';
+    expect(parriesMateNote(mixed, 'e8e5', cp, 'black')).toBe('Avoids mate in one.');
+  });
+
+  it('stays silent when the played move itself allows mate', () => {
+    expect(parriesMateNote(base, 'e8e7', cp, 'black')).toBeNull();
+  });
+
+  it('stays silent in quiet positions with no mating witness', () => {
+    expect(parriesMateNote(START_FEN, 'e2e4', cp, 'white')).toBeNull();
+  });
+
+  it('counts alternatives, not threats: one witness is below the bar', () => {
+    // A single alternative hangs two mates (Qxg7#, Bxg7#) — still one
+    // witness, so the routine parry Rxf7 earns no note.
+    const single = '4rrk1/ppqn1Qpp/1bp4B/8/2pP4/2P2N2/PP3PPP/4RRK1 b - - 3 17';
+    expect(parriesMateNote(single, 'f8f7', cp, 'black')).toBeNull();
+  });
+
+  it('stays silent when the dodge merely delays a forced mate', () => {
+    const mated = { type: 'mate' as const, value: -1, winning_side: 'white' as const };
+    expect(parriesMateNote(base, 'g7g6', mated, 'black')).toBeNull();
+    // Winner falls back to mate-value sign when winning_side is absent.
+    expect(parriesMateNote(base, 'g7g6', { type: 'mate', value: 1 }, 'black')).toBeNull();
+  });
+
+  it('stays silent without a score and on bad data, never throws', () => {
+    expect(parriesMateNote(base, 'g7g6', null, 'black')).toBeNull();
+    expect(parriesMateNote(base, 'g7g6', undefined, 'black')).toBeNull();
+    expect(parriesMateNote('bad', 'g7g6', cp, 'black')).toBeNull();
+    expect(parriesMateNote(START_FEN, 'e2e5', cp, 'white')).toBeNull();
+    expect(parriesMateNote('bad', 'bad', null, 'white')).toBeNull();
+  });
+});
+
 describe('verdictInputsForPly', () => {
   const matches: OpeningMatch[] = [{ ply: 2, eco: 'B12', name: 'Caro-Kann Defense' }];
 
@@ -334,6 +382,41 @@ describe('verdictInputsForPly', () => {
     expect(verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Mistake') })).pawnNote).toBe('Doubles a pawn.');
     expect(verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Inaccuracy') })).pawnNote).toBe('Doubles a pawn.');
     expect(verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Good') })).pawnNote).toBeNull();
+  });
+
+  it('ranks a parrying capture as a gain story, not a parry story', () => {
+    // 18... Bxd4 parries Qxg7# (28 witnesses) and wins a pawn: the
+    // pre-existing gain note keeps its verdict.
+    const cp = { type: 'cp' as const, value: -150 };
+    expect(verdictInputsForPly(baseInputs({
+      beforeFen: '4rrk1/ppqn1ppp/1bp4B/8/2pP2Q1/2P2N2/PP3PPP/4RRK1 b - - 3 17',
+      afterFen: '4rrk1/ppqn1ppp/2p4B/8/2pb2Q1/2P2N2/PP3PPP/4RRK1 w - - 0 18',
+      playedUci: 'b6d4',
+      san: 'Bxd4',
+      ply: 34,
+      quality: quality('Best'),
+      mover: 'black',
+      beforeScore: cp,
+      afterScore: cp,
+    })).positiveNote).toBe('Wins a pawn.');
+  });
+
+  it('ranks the parry above the generic escape out of check', () => {
+    // Qg3 blocks the Qg2+ check and parries Qg7# with no capture and no
+    // fork (the queen pins itself to the file), so the specific defensive
+    // claim wins over "Gets out of check.".
+    const cp = { type: 'cp' as const, value: -150 };
+    expect(verdictInputsForPly(baseInputs({
+      beforeFen: '4rrk1/ppqn1p2/1bp4B/8/2pP4/2P2N2/PP3PQP/4RRK1 b - - 3 17',
+      afterFen: '4rrk1/pp1n1p2/1bp4B/8/2pP4/2P2Nq1/PP3PQP/4RRK1 w - - 4 18',
+      playedUci: 'c7g3',
+      san: 'Qg3',
+      ply: 34,
+      quality: quality('Best'),
+      mover: 'black',
+      beforeScore: cp,
+      afterScore: cp,
+    })).positiveNote).toBe('Parries Qg7#.');
   });
 
   it('explains praise grades with the single strongest why', () => {
