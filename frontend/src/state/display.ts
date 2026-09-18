@@ -1,7 +1,7 @@
 import { normalizeBoardOrientation } from '../domain';
 import { KEYS, readStorage } from '../storage';
 import { normalizeStockfishSettings, STOCKFISH_STORAGE_KEY } from '../stockfishSettings';
-import { defaultArrowSettings, normalizeArrowSettings, sameArrowSettings } from '../arrowSettings';
+import { defaultArrowBasis, defaultArrowSettings, normalizeArrowBasis, normalizeArrowSettings, sameArrowSettings } from '../arrowSettings';
 import { normalizeBestLineWindow } from '../material';
 import type { BadgeLoading } from '../ReviewCharts';
 import type { Action, State } from './types';
@@ -21,7 +21,7 @@ export function normalizeCoordinatesOnSquares(stored: unknown): boolean {
   return stored === false ? false : true;
 }
 
-export type DisplayState = Pick<State, 'stockfish' | 'feedback' | 'badgeLoading' | 'coordinatesOnSquares' | 'boardOrientation' | 'bestLineWindow' | 'arrows' | 'flipped' | 'preview'>;
+export type DisplayState = Pick<State, 'stockfish' | 'feedback' | 'badgeLoading' | 'coordinatesOnSquares' | 'boardOrientation' | 'bestLineWindow' | 'arrows' | 'arrowBasis' | 'flipped' | 'preview'>;
 
 export function initialDisplayState(): DisplayState {
   return {
@@ -32,6 +32,7 @@ export function initialDisplayState(): DisplayState {
     boardOrientation: normalizeBoardOrientation(readStorage<unknown>(KEYS.boardOrientation)),
     bestLineWindow: normalizeBestLineWindow(readStorage<unknown>(KEYS.bestLineWindow)),
     arrows: normalizeArrowSettings(readStorage<unknown>(KEYS.arrows)),
+    arrowBasis: normalizeArrowBasis(readStorage<unknown>(KEYS.arrowBasis)),
     flipped: false,
     preview: null,
   };
@@ -55,6 +56,7 @@ export function reduceDisplay(state: State, action: Action): State | undefined {
       return sameArrowSettings(merged, state.arrows) ? state : { ...state, arrows: merged };
     }
     case 'arrow-settings-reset': return sameArrowSettings(state.arrows, defaultArrowSettings) ? state : { ...state, arrows: defaultArrowSettings };
+    case 'arrow-basis': { const basis = normalizeArrowBasis(action.basis); return state.arrowBasis === basis ? state : { ...state, arrowBasis: basis }; }
     case 'flip': return { ...state, flipped: !state.flipped };
     case 'preview': return { ...state, preview: action.uci };
     default: return undefined;

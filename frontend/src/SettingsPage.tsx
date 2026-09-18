@@ -42,9 +42,9 @@ export function SettingsPage({ state, dispatch }: Props) {
     { value: 'black' as const, label: 'Black' },
   ];
   const arrowRows: { key: ArrowSettingsKey; label: string; hint: string }[] = [
-    { key: 'actual', label: 'Played move', hint: 'White arrow tracing the game continuation' },
-    { key: 'maia', label: 'Maia suggestion', hint: "Maia's top choice from this position" },
-    { key: 'stockfish', label: 'Stockfish best', hint: "Stockfish's top choice from this position" },
+    { key: 'actual', label: 'Played move', hint: 'White arrow tracing the game move' },
+    { key: 'maia', label: 'Maia suggestion', hint: "Display-Elo Maia's top choice" },
+    { key: 'objective', label: 'Maia 2400 suggestion', hint: "Objective top choice from the same position" },
     { key: 'candidate', label: 'Preview', hint: 'Hover or keyboard preview before exploring' },
   ];
   return <section className="engine-settings panel" aria-labelledby="settings-title">
@@ -79,6 +79,22 @@ export function SettingsPage({ state, dispatch }: Props) {
         </div>
       </div>
       <p>Inside squares stay aligned at any board size. Outside matches the classic look.</p>
+    </div>
+    <div className="settings-control">
+      <div className="field field--row">
+        <span className="field-label" id="arrows-basis-label">Arrow basis</span>
+        <div role="radiogroup" aria-labelledby="arrows-basis-label" className="segmented">
+          <label>
+            <input id="arrow-basis-next" type="radio" name="arrow-basis" value="next" checked={state.arrowBasis === 'next'} onChange={() => dispatch({ type: 'arrow-basis', basis: 'next' })} />
+            <span>Next move</span>
+          </label>
+          <label>
+            <input id="arrow-basis-past" type="radio" name="arrow-basis" value="past" checked={state.arrowBasis === 'past'} onChange={() => dispatch({ type: 'arrow-basis', basis: 'past' })} />
+            <span>Past move</span>
+          </label>
+        </div>
+      </div>
+      <p>Next move projects forward from the viewed position. Past move shows the options for the move leading into it, matching the move analysis verdict.</p>
     </div>
     <div className="settings-control">
       <div className="field field--row">

@@ -3,7 +3,7 @@ import type { MaiaColor, MoveRequest, MoveResponse } from '../api';
 import type { Analysis, BoardOrientationSetting, Insight, Mode, Settings, StoredGame } from '../domain';
 import type { OutboxOp } from '../serverGames';
 import type { StockfishSettings } from '../stockfishSettings';
-import type { ArrowSettings, ArrowSettingsKey, ArrowStyle } from '../arrowSettings';
+import type { ArrowBasis, ArrowSettings, ArrowSettingsKey, ArrowStyle } from '../arrowSettings';
 import type { BadgeLoading } from '../ReviewCharts';
 
 type Request = { id: number; mode: 'play'; payload: MoveRequest };
@@ -11,7 +11,7 @@ export type Draft = Pick<Settings, 'eloMaia' | 'model'> & { userColor: 'white' |
 export type PlayDraft = Draft & Pick<Settings, 'temperature'>;
 export type State = {
   mode: Mode; play: StoredGame; saved: StoredGame[];
-  started: boolean; setup: PlayDraft | null; viewedPly: number | null; stockfish: StockfishSettings; feedback: boolean; badgeLoading: BadgeLoading; coordinatesOnSquares: boolean; boardOrientation: BoardOrientationSetting; bestLineWindow: number; arrows: ArrowSettings;
+  started: boolean; setup: PlayDraft | null; viewedPly: number | null; stockfish: StockfishSettings; feedback: boolean; badgeLoading: BadgeLoading; coordinatesOnSquares: boolean; boardOrientation: BoardOrientationSetting; bestLineWindow: number; arrows: ArrowSettings; arrowBasis: ArrowBasis;
   analysis: Analysis; analysisSettings: Draft; analysisLoaded: boolean; importing: boolean; analysisSourceId: string | null;
   inputs: { fen: string; pgn: string }; flipped: boolean; preview: string | null;
   promotion: { from: Square; to: Square } | null;
@@ -27,6 +27,7 @@ export type Action =
   | { type: 'board-orientation'; orientation: BoardOrientationSetting }
   | { type: 'best-line-window'; window: number }
   | { type: 'arrow-settings'; source: ArrowSettingsKey; style: Partial<ArrowStyle> }
+  | { type: 'arrow-basis'; basis: ArrowBasis }
   | { type: 'arrow-settings-reset' }
   | { type: 'new'; id: string; createdAt: string; resolvedColor?: 'white' | 'black' }
   | { type: 'analysis-settings'; settings: Partial<Draft> }

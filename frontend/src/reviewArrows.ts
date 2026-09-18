@@ -3,7 +3,7 @@ import type { Key } from '@lichess-org/chessground/types';
 import { parseKey } from './domain';
 import { buildReviewBrushes, defaultArrowSettings, type ArrowSettings } from './arrowSettings';
 export const reviewBrushes = buildReviewBrushes(defaultArrowSettings);
-export type ArrowSource = 'actual' | 'maia' | 'stockfish';
+export type ArrowSource = 'actual' | 'maia' | 'objective';
 export type ArrowToggles = Record<ArrowSource, boolean>;
 export type SquareBadge = { square: Key; glyph: '💀' | '??' | '?' | '⚑' };
 const validMove = (move: unknown): move is string => typeof move === 'string' && /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(move);
@@ -19,14 +19,14 @@ export function candidatePreviewShape(preview: string | null | undefined): DrawS
   return [{ orig, dest, brush: 'candidate' }];
 }
 export function reviewShapes(moves: Record<ArrowSource, string | null | undefined>, toggles: ArrowToggles, preview?: string | null, badge?: SquareBadge | SquareBadge[] | null, arrows?: ArrowSettings): DrawShape[] {
-  const entries: { move: string; brush: string }[] = (['actual', 'maia', 'stockfish'] as const).filter(source => toggles[source] && validMove(moves[source])).map(source => ({ move: moves[source]!, brush: source }));
+  const entries: { move: string; brush: string }[] = (['actual', 'maia', 'objective'] as const).filter(source => toggles[source] && validMove(moves[source])).map(source => ({ move: moves[source]!, brush: source }));
   if (validMove(preview) && !entries.some(entry => entry.move === preview)) entries.push({ move: preview, brush: 'candidate' });
   // Changing the complete set gives all shapes a fresh hash. Chessground appends
   // new SVG groups; a shared hash suffix preserves widest-first layering after toggles.
   // The arrow style signature forces the same fresh hash when colors/widths
   // change, so a live brushes update repaints instead of hitting the
   // prevSvgHash early-return (brush color/width are not part of the hash).
-  const style = arrows ? (['actual', 'maia', 'stockfish', 'candidate'] as const).map(key => `${key}=${arrows[key].color},${arrows[key].width}`).join('|') : '';
+  const style = arrows ? (['actual', 'maia', 'objective', 'candidate'] as const).map(key => `${key}=${arrows[key].color},${arrows[key].width}`).join('|') : '';
   const signature = `${entries.map(entry => `${entry.brush}:${entry.move}`).join('|')}#${style}`;
   const shapes: DrawShape[] = entries.map(({ move, brush }) => {
     const orig = parseKey(move.slice(0, 2));
