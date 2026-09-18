@@ -208,6 +208,15 @@ export type ObjectivePoint = {
   top: string | null;
   expected: number | null;
 };
+// Ranked candidate entries for one position: the objective list the panel
+// renders. Mover-relative expected score per choice, policy/score order,
+// plus the model identity behind the list for headings and fallback copy.
+export type ObjectiveCandidates = {
+  entries: { uci: string; expected: number }[];
+  modelUsed: string | null;
+  requestedModel: string | null;
+  degraded: boolean;
+};
 // White-relative view of a mover-relative expectation. Callers pass the
 // node's turn; no FEN parsing, no model knowledge.
 export function whiteExpected(turn: 'white' | 'black', moverExpected: number): number {

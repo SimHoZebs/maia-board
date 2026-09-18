@@ -7,7 +7,7 @@ import {
   type ReviewSettings,
 } from '../evaluationStore';
 import type { ReviewCoordinator, SettingsInput } from '../reviewCoordinator';
-import { type Evaluation, type ObjectivePoint } from '../reviewMetrics';
+import { type Evaluation, type ObjectiveCandidates, type ObjectivePoint } from '../reviewMetrics';
 
 // Objective provider: Maia 2400 human-like expectations. Every export here
 // has a same-named twin in ./stockfish.ts; the rest of the system imports
@@ -47,6 +47,22 @@ export function lanePoints(
   _nodes: ReviewNode[],
 ): (ObjectivePoint | undefined)[] {
   return rows.map(response => (response === undefined ? undefined : maiaPoint(response)));
+}
+
+// Ranked candidate list for the panel: the full top_moves with per-choice
+// expectations, in policy order. Undefined while the row is missing (Maia
+// never infers game-over positions — the panel falls back to the outcome).
+export function candidatesFor(
+  row: MoveResponse | undefined,
+  _node: ReviewNode,
+): ObjectiveCandidates | undefined {
+  if (!row) return undefined;
+  return {
+    entries: row.top_moves.map(candidate => ({ uci: candidate.move, expected: maiaExpected(candidate.wdl) })),
+    modelUsed: row.model_used,
+    requestedModel: GRADING_MAIA_SETTINGS.model,
+    degraded: row.degraded,
+  };
 }
 
 export function laneKey(node: ReviewNode, _settingsForNode: (node: ReviewNode) => ReviewSettings): string {

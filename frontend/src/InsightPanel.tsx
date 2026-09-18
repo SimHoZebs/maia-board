@@ -6,7 +6,7 @@ import { Button, CandidateList, CandidateRow, EngineSection } from "./components
 import { Chess } from "chess.js";
 import type { Review } from "./useReview";
 import { describeMove } from "./reviewMetrics";
-import { maiaExpected } from "./objective/maia";
+import { sourceLabel } from "./objective";
 import { bestLinePreview } from "./material";
 import { verdictInputsForPly } from "./theory";
 import { useLineOpenings } from "./openings";
@@ -81,9 +81,13 @@ export function MoveAnalysis({
   // "(played)". At the root, candidates describe the current position.
   const focus = ply - 1;
   const hasMove = focus >= 0;
-  const response = hasMove ? review.maia : review.maiaCurrent;
+  // Candidate lists always show the objective source (the 2400 lane under
+  // the active provider) — never the display Elo. The focus list judges the
+  // displayed move with "(played)" marking; at the root the current list
+  // describes the position.
+  const candidates = hasMove ? review.objectiveCandidates.focus : review.objectiveCandidates.current;
   const node = review.nodes[hasMove ? focus : ply];
-  const insight = response ? { fen: node.fen } : undefined;
+  const insight = candidates ? { fen: node.fen } : undefined;
   const played = hasMove
     ? review.nodes[ply]?.uci ?? undefined
     : undefined;
@@ -171,7 +175,7 @@ export function MoveAnalysis({
       terminalPosition = false;
     }
   }
-  const maiaLoading = !response && !hasError && !terminalPosition && !tooLong;
+  const maiaLoading = !candidates && !node.outcome && !hasError && !terminalPosition && !tooLong;
   // The verdict needs both sides of the move; the foreground lane fetches
   // both, prime/batch backfill the rest. Render as soon as the pair is
   // present regardless of batch progress (progress surfaces separately via
@@ -208,7 +212,7 @@ export function MoveAnalysis({
         dotClass="source-maia"
         title={
           <>
-            Maia {response?.model_used ?? (hasMove ? review.maiaWantedModel : state.analysisSettings.model)} •{" "}
+            {sourceLabel()}{candidates?.modelUsed ? ` · ${candidates.modelUsed}` : ""} •{" "}
             <Rating
               inline
               id="analysis-rating"
@@ -222,7 +226,7 @@ export function MoveAnalysis({
           </>
         }
       >
-        {response?.degraded && <p role="status">Requested {hasMove ? review.maiaWantedModel : state.analysisSettings.model}; using {response.model_used} fallback.</p>}
+        {candidates?.degraded && candidates.modelUsed && candidates.requestedModel && <p role="status">Requested {candidates.requestedModel}; using {candidates.modelUsed} fallback.</p>}
         {review.maiaStale && (
           <p role="status">
             Showing Maia {review.maiaElo}
@@ -236,32 +240,38 @@ export function MoveAnalysis({
             …
           </p>
         )}
-        {response && insight ? (
+        {candidates && insight ? (
           <div id="insight-content">
             <CandidateList>
-              {response.top_moves.slice(0, 5).map((candidate, index) => {
-                const san = candidateSan(insight.fen, candidate.move);
-                const isPlayed = candidate.move === played;
+              {candidates.entries.map((candidate, index) => {
+                const san = candidateSan(insight.fen, candidate.uci);
+                const isPlayed = candidate.uci === played;
                 return (
                   <CandidateRow
-                    key={`${candidate.move}:${index}`}
+                    key={`${candidate.uci}:${index}`}
                     index={index}
                     san={san}
-                    metric={`${Math.round(maiaExpected(candidate.wdl))}%`}
+                    metric={`${Math.round(candidate.expected)}%`}
                     isPlayed={isPlayed}
                     preview={{
                       label: `Explore ${san}${isPlayed ? " (played)" : ""}${hasMove ? " from before this move" : ""}`,
-                      active: !hasMove && state.preview === candidate.move,
+                      active: !hasMove && state.preview === candidate.uci,
                       onPreview: () =>
-                        dispatch({ type: "preview", uci: hasMove ? null : candidate.move }),
+                        dispatch({ type: "preview", uci: hasMove ? null : candidate.uci }),
                       onClear: () => dispatch({ type: "preview", uci: null }),
-                      onSelect: () => exploreFromFocus(candidate.move),
+                      onSelect: () => exploreFromFocus(candidate.uci),
                     }}
                   />
                 );
               })}
             </CandidateList>
           </div>
+        ) : node.outcome ? (
+          <p className="empty-copy" role="status">
+            {node.outcome.kind === 'checkmate'
+              ? `${node.outcome.winner === 'white' ? 'White' : 'Black'} wins`
+              : 'Draw'}
+          </p>
         ) : maiaLoading ? (
           <SkeletonList label="Loading Maia moves" rows={3} />
         ) : (

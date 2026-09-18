@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { Chess } from 'chess.js';
 import { SEARCH_POLICY, reviewMove, whiteWin, type Evaluation } from '../reviewMetrics';
-import { sfPoint } from './stockfish';
+import { candidatesFor, sfPoint } from './stockfish';
 
 const evaluation = (cp: number, best = 'e2e4'): Evaluation => ({
   engine: 'Stockfish 19', search_policy: SEARCH_POLICY, score: { type: 'cp', value: cp },
@@ -54,4 +54,25 @@ it('stockfish-sourced objectives reproduce the legacy pure-engine grades', () =>
     expect(graded.label).toBe(legacy.label);
     expect(graded.loss ?? 0).toBeCloseTo(legacy.loss ?? 0, 9);
   }
+});
+
+it('lists engine lines with mover-relative expectations, terminal rows fall back', () => {
+  const node = { fen: '', turn: 'white' } as never;
+  expect(candidatesFor(undefined, node)).toBeUndefined();
+  const lines = [
+    { move: 'e2e4', score: { type: 'cp' as const, value: 100 }, depth: 14 },
+    { move: 'd2d4', score: { type: 'cp' as const, value: -100 }, depth: 14 },
+  ];
+  const white = candidatesFor({ engine: 'Stockfish 19', search_policy: SEARCH_POLICY, score: lines[0].score,
+    depth: 14, best_move: 'e2e4', lines, terminal: null }, node);
+  expect(white?.entries.map(entry => entry.uci)).toEqual(['e2e4', 'd2d4']);
+  expect(white?.entries[0].expected).toBeGreaterThan(50);
+  expect(white?.entries[1].expected).toBeLessThan(50);
+  expect(white).toMatchObject({ modelUsed: null, requestedModel: null, degraded: false });
+  const blackNode = { fen: '', turn: 'black' } as never;
+  const black = candidatesFor({ engine: 'Stockfish 19', search_policy: SEARCH_POLICY, score: lines[0].score,
+    depth: 14, best_move: 'e2e4', lines, terminal: null }, blackNode);
+  expect(black?.entries[0].expected).toBeCloseTo(100 - white!.entries[0].expected, 9);
+  expect(candidatesFor({ engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 0, terminal: 'draw',
+    best_move: null, lines: [], score: { type: 'cp' as const, value: 0 } }, node)).toBeUndefined();
 });

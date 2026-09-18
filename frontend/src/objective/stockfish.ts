@@ -5,7 +5,7 @@ import {
   type ReviewSettings,
 } from '../evaluationStore';
 import type { ReviewCoordinator, SettingsInput } from '../reviewCoordinator';
-import { whiteWin, type Evaluation, type ObjectivePoint } from '../reviewMetrics';
+import { whiteWin, type Evaluation, type ObjectiveCandidates, type ObjectivePoint } from '../reviewMetrics';
 
 // Objective provider: pure-engine behavior. Every export here twins
 // ./maia.ts name-for-name; the rest of the system imports these names
@@ -45,6 +45,26 @@ export function lanePoints(
   nodes: ReviewNode[],
 ): (ObjectivePoint | undefined)[] {
   return rows.map((evaluation, index) => (evaluation === undefined ? undefined : sfPoint(evaluation, nodes[index].turn)));
+}
+
+// Ranked candidate list for the panel: the engine lines with per-line
+// mover-relative expectations. Terminal rows carry no lines, so the panel
+// falls back to the outcome there — same contract as the Maia twin.
+export function candidatesFor(
+  row: Evaluation | undefined,
+  node: ReviewNode,
+): ObjectiveCandidates | undefined {
+  if (!row || row.terminal || row.lines.length === 0) return undefined;
+  const mover = node.turn;
+  return {
+    entries: row.lines.map(line => ({
+      uci: line.move,
+      expected: mover === 'white' ? whiteWin(line.score) : 100 - whiteWin(line.score),
+    })),
+    modelUsed: null,
+    requestedModel: null,
+    degraded: false,
+  };
 }
 
 // Lane keys are the main Stockfish keys: the objective shares the

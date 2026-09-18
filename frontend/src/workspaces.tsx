@@ -278,7 +278,7 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   // x, so the arrows project y. White draws the played continuation (the
   // board's tile highlight only covers x); red/blue are Maia/Stockfish top
   // choices from here.
-  const arrowMoves = { actual: review.nodes[ply + 1]?.uci ?? undefined, maia: review.maiaCurrent?.top_moves[0]?.move, stockfish: review.current?.best_move };
+  const arrowMoves = { actual: review.nodes[ply + 1]?.uci ?? undefined, maia: review.objective[ply]?.top ?? undefined, stockfish: review.current?.best_move };
   const playedQuality = ready && ply > 0 ? review.qualities[ply - 1] : undefined;
   const playedUci = ready && ply > 0 ? review.nodes[ply]?.uci : undefined;
   const badgeSquare = playedUci === undefined ? undefined : parseKey(playedUci.slice(2, 4));

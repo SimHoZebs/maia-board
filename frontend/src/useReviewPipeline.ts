@@ -3,7 +3,7 @@ import type { MoveResponse } from './api';
 import { buildTimeline, legalPrefixLength, lineKeyFor, START_FEN, type StoredGame, type Timeline, type TimelineRow } from './domain';
 import type { State } from './state/index';
 import { ReviewCoordinator, resolveSettings, reviewKey, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings, type SettingsInput } from './reviewCoordinator';
-import { ensureLane, laneError, laneFailures, laneKey, lanePending, lanePoints, laneRows, primeDescriptor } from './objective';
+import { ensureLane, candidatesFor, laneError, laneFailures, laneKey, lanePending, lanePoints, laneRows, primeDescriptor } from './objective';
 import type { ObjectiveLane } from './qualities';
 import { useLineScope } from './useLineScope';
 import { useLookupRestore } from './useLookupRestore';
@@ -305,10 +305,20 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   // Objective points for the active source. Row reads and point
   // conversion both live in the provider module; provisional Stockfish rows
   // keep first paint fast while coverage below still requires exact rows
-  // independently.
-  const objectivePoints = useMemo(() => lanePoints(
-    laneRows(nodes, { coordinator, sfEvaluations: evaluations }), nodes,
-  ), [nodes, evaluations, version, coordinator]);
+  // independently. Raw rows are retained (not just points) because the
+  // candidate panel renders the full ranked list, which points discard.
+  const objectiveRows = useMemo(() => laneRows(nodes, { coordinator, sfEvaluations: evaluations }),
+    [nodes, evaluations, version, coordinator]);
+  const objectivePoints = useMemo(() => lanePoints(objectiveRows, nodes),
+    [objectiveRows, nodes]);
+  // Candidate lists for the panel: the focus position's list judges the
+  // displayed move (with "(played)" marking), the current position's list
+  // describes the root. Same provider seam as the points above, so the list
+  // always shows the objective source — never the display Elo.
+  const objectiveCandidates = useMemo(() => ({
+    focus: focusNode ? candidatesFor(objectiveRows[focusPly], focusNode) : undefined,
+    current: candidatesFor(objectiveRows[currentPly], currentNode),
+  }), [objectiveRows, focusNode, focusPly, currentNode, currentPly]);
   const objectiveLane: ObjectiveLane = useMemo(() => ({
     points: objectivePoints,
     pending: lanePending(coordinator),
@@ -396,9 +406,6 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   // selectMaiaDisplay discards a note from an abandoned concurrent render.
   priorFocus.current = displayed.entry ?? null;
   const maia = displayed.entry?.result;
-  // Forward candidates only expose the requested key. The focus panel can
-  // retain a same-position previous identity with its explicit stale label.
-  const maiaCurrent = active ? maiaResults[currentPly] : undefined;
   const currentError = active ? coordinator.error('sf', currentNode, currentSettings) : undefined;
   const error = currentError || (active && focusNode ? coordinator.error('sf', focusNode, focusSettings) || coordinator.error('maia', focusNode, focusSettings) : undefined)
     || (active ? coordinator.error('maia', currentNode, currentSettings) : undefined)
@@ -418,16 +425,18 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     // wording; Stockfish evaluations stay for material, mate, and praise.
     objective: objectivePoints,
     objectiveError: (node: ReviewNode | undefined) => laneError(coordinator, node),
+    // Objective candidate lists for the panel: the focus list judges the
+    // displayed move, the current list describes the root. Always the
+    // objective source, never the display Elo.
+    objectiveCandidates,
     // Raw engine grades (Critical/Top/Holds intact) for the verdict's
     // only-move fact. Badges and text read the translated `qualities`; this
     // never reaches display directly.
     engineGrades: computed.qualities,
-    current: evaluations[currentPly], focus: evaluations[focusPly], focusPly, maia, maiaCurrent,
+    current: evaluations[currentPly], focus: evaluations[focusPly], focusPly,
     maiaElo: displayed.entry?.eloMaia ?? focusSettings.eloMaia, maiaModel: maia?.model_used ?? focusSettings.model,
     maiaWantedElo: focusSettings.eloMaia, maiaWantedModel: focusSettings.model,
-    maiaStale: displayed.stale, maiaPending: displayed.pending, maiaLocked: focusIsMaia, maiaDegraded: maia?.degraded ?? false,
-    maiaCurrentModel: maiaCurrent?.model_used, maiaCurrentDegraded: maiaCurrent?.degraded ?? false,
-    maiaCurrentPending: active && coordinator.isPending('maia', currentNode, currentSettings),
+    maiaStale: displayed.stale, maiaPending: displayed.pending, maiaLocked: focusIsMaia,
     gameElo: gameForLine?.settings.eloMaia, error, currentError,
     progress: batch.progress, recordStatus, reviewState, scope, lineKey, start: batch.start,
     retry: () => { coordinator.retry(); batch.retry(); if (prime?.error || gradePrime?.error) restore.retryPrime(); }, tooLong };

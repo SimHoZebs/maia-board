@@ -38,15 +38,37 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
     const extra = second === best ? [] : [{ move: second, prob: .25, wdl: [.2,.3,.5] }];
     return { move: best, top_moves: [{ move: best, prob: .6, wdl: [.2,.3,.5] }, ...extra], wdl: [.2,.3,.5], model_used: payload.model, degraded: false };
   };
+  // Objective (2400) lane: same PGN-following top as the display lane
+  // while the PGN move holds (mover loss < 5), diverging to the first
+  // legal sidestep exactly where the score drops — the same threshold the
+  // grades use, so blunder/mistake coverage follows the `scores` array
+  // without a third fixture axis. The PGN move always stays listed so
+  // "(played)" markers and branch exploration keep working; every entry
+  // carries the position WDL (per-move WDLs are a server detail).
   const gradeValue = (payload: any) => {
     const game = replay(payload.moves, payload.initial_fen);
     const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
     const pgn = bestMove(payload);
-    const top = legal.find(move => move !== pgn) ?? legal[0];
-    const cp = scores[payload.moves.length] ?? 0;
-    const white = 100 / (1 + Math.exp(-0.00368208 * cp));
+    const ply = payload.moves.length;
+    const whiteWin = (cp: number) => 100 / (1 + Math.exp(-0.00368208 * cp));
+    const moverExp = (cp: number) => game.turn() === 'w' ? whiteWin(cp) : 100 - whiteWin(cp);
+    const loss = Math.max(0, moverExp(scores[ply] ?? 0) - moverExp(scores[ply + 1] ?? scores[ply] ?? 0));
+    const cp = scores[ply] ?? 0;
+    const white = whiteWin(cp);
     const win = (game.turn() === 'w' ? white : 100 - white) / 100;
-    return { move: top, top_moves: [{ move: top, prob: .5, wdl: [1 - win, 0, win] }], wdl: [1 - win, 0, win], model_used: '79m', degraded: false };
+    const wdl: [number, number, number] = [1 - win, 0, win];
+    if (loss >= 5) {
+      const top = legal.find(move => move !== pgn) ?? legal[0];
+      // Single-legal-move positions (forced): no second entry, or the
+      // duplicate-move validation rejects the row.
+      const entries = top === pgn
+        ? [{ move: top, prob: .6, wdl }]
+        : [{ move: top, prob: .5, wdl }, { move: pgn, prob: .3, wdl }];
+      return { move: top, top_moves: entries, wdl, model_used: '79m', degraded: false };
+    }
+    const second = legal.find(move => move !== pgn) ?? pgn;
+    const extra = second === pgn ? [] : [{ move: second, prob: .25, wdl }];
+    return { move: pgn, top_moves: [{ move: pgn, prob: .6, wdl }, ...extra], wdl, model_used: '79m', degraded: false };
   };
   const maiaOrGrade = (payload: any) => payload.elo_maia === 2400 ? gradeValue(payload) : maiaValue(payload);
   const sfValue = (payload: any) => {
@@ -168,7 +190,7 @@ test('root identifies requested and actual fallback models', async ({ page }) =>
     return route.fulfill({ json: { move: uci, top_moves: [{ move: uci, prob: .13, wdl: [.2,.3,.5] }], wdl: [.2,.3,.5], model_used: '5m', degraded: true } });
   });
   await page.goto('http://maia.test/analyze?moves=');
-  await expect(page.getByRole('heading', { name: 'Maia 5m • 1600', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Maia 2400 · 5m/ })).toBeVisible();
   await expect(page.getByText('Requested 79m; using 5m fallback.', { exact: true })).toBeVisible();
   expect(app.errors).toEqual([]);
 });
@@ -264,7 +286,7 @@ for (const width of [320, 1440]) {
 
 test('move analysis summarizes the game below the engines and links mistakes from moves to review', async ({ page }, info) => {
   const app = await bootReview(page);
-  await expect(page.getByRole('heading', { name: 'Maia 79m • 1600', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Maia 2400/ })).toBeVisible();
   await expect(page.getByRole('tabpanel', { name: 'Move analysis', exact: true })).toBeVisible();
   await expect(page.locator('.overview-partial')).toContainText('Summary covers reviewed moves only');
   await expect(page.getByRole('region', { name: 'White move quality', exact: true })).toBeVisible();
@@ -385,7 +407,7 @@ for (const width of [1440, 360]) test(`move analysis restores evaluation graph a
 
 test('move analysis graphs leave unreviewed positions as gaps', async ({ page }) => {
   await bootReview(page);
-  await expect(page.getByRole('heading', { name: 'Maia 79m • 1600', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Maia 2400/ })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Evaluation graph', exact: true })).toBeVisible();
   await expect(page.locator('.chart-point i')).toHaveCount(2);
   await expect(page.locator('.chart-line')).toHaveCount(1);
@@ -470,7 +492,7 @@ test('blunder and mistake destinations carry board badges', async ({ page }) => 
 });
 test('server-cached positions skip inference after reload', async ({ page }) => {
   const app = await bootReview(page);
-  await expect(page.getByRole('heading', { name: 'Maia 79m • 1600', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Maia 2400/ })).toBeVisible();
   // Both engines at the before/current pair must finish before reloading:
   // fast+full Stockfish plus display and grading Maia rows.
   await expect.poll(() => app.evaluations.size).toBe(8);
@@ -478,7 +500,7 @@ test('server-cached positions skip inference after reload', async ({ page }) => 
   await page.reload();
   // The loaded line restores from the snapshot with the import panel closed;
   // cached positions resolve without new inference.
-  await expect(page.getByRole('heading', { name: 'Maia 79m • 1600', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Maia 2400/ })).toBeVisible();
   await expect(page.locator('.candidate-list li')).not.toHaveCount(0);
   expect(app.requests).toHaveLength(calls);
   expect(app.errors).toEqual([]);
@@ -559,7 +581,7 @@ test('mixed arrow sources retain their own endpoints', async ({ page }, info) =>
   // Arrows project forward from the viewed position, but the panel judges the
   // displayed move from its before-position: step forward to read predictions.
   await page.locator('#analysis-next').click();
-  await expect(page.getByRole('heading', { name: 'Maia 79m • 1600', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Maia 2400/ })).toBeVisible();
   await expect(page.locator('.insight-panel')).toContainText('Nf3');
   await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
   await page.screenshot({ path: info.outputPath('mixed-arrows.png'), fullPage: true });
@@ -577,7 +599,7 @@ test('current position balance replaces the win-rate sections', async ({ page })
 });
 test('analysis progress replaces the analyze button while running without a cancel option', async ({ page }) => {
   await bootReview(page);
-  await expect(page.getByRole('heading', { name: 'Maia 79m • 1600', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Maia 2400/ })).toBeVisible();
   // Hold the batch event stream AND the status endpoint open: the client
   // reconciles from ground-truth status on mount (not just live ticks), so
   // holding the stream alone no longer keeps the job observably running —
