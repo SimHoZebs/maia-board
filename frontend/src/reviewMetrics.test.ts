@@ -1,7 +1,10 @@
 import { expect, it } from 'vitest';
 import { Chess } from 'chess.js';
-import { classifyLoss, describeMove, effectiveQuality, isMateFor, maiaRarity, moveAccuracy, reviewMove, SEARCH_POLICY, terminalEvaluation, whiteWin, type EngineGrade, type Evaluation, type Quality, type Rarity } from './reviewMetrics';
+import { classifyLoss, describeMove, effectiveQuality, isMateFor, maiaAfterExpected, maiaExpected, maiaRarity, moveAccuracy, reviewMove, SEARCH_POLICY, terminalEvaluation, whiteWin, type EngineGrade, type Evaluation, type MaiaGrading, type Quality, type Rarity } from './reviewMetrics';
 const evaluation = (cp: number): Evaluation => ({ engine: 'Stockfish 19', search_policy: SEARCH_POLICY, score: { type: 'cp', value: cp }, depth: 14, best_move: 'e2e4', lines: [], terminal: null });
+const grading = (top: string, wdl: [number, number, number], afterExpected: number | null): MaiaGrading => ({
+  before: { top_moves: [{ move: top, prob: 0.5 }], wdl, degraded: false }, afterExpected, beforePending: false, afterPending: false,
+});
 it('uses canonical white cp and preserves mate winner independent of distance', () => {
   expect(whiteWin({ type: 'cp', value: 0 })).toBe(50);
   expect(whiteWin({ type: 'cp', value: -100 })).toBeLessThan(50);
@@ -90,6 +93,52 @@ it('reads a missed win that stays alive as Blunder by loss', () => {
   // Played the win: Top.
   expect(reviewMove(before, before, new Chess(), 'g1f3').label).toBe('Top');
 });
+it('reads Maia expected scores mover-relative with terminal synthesis', () => {
+  expect(maiaExpected([0.2, 0.3, 0.5])).toBeCloseTo(65, 9);
+  // Opponent-relative after-WDL: loss_opp + half draws is the mover's share.
+  expect(maiaAfterExpected({ wdl: [0.6, 0.2, 0.2] }, null)).toBeCloseTo(70, 9);
+  expect(maiaAfterExpected(undefined, { kind: 'checkmate', winner: 'white' })).toBe(100);
+  expect(maiaAfterExpected(undefined, { kind: 'draw' })).toBe(50);
+  expect(maiaAfterExpected(undefined, null)).toBeNull();
+});
+it('grades Maia-2400 top play as Top even when Stockfish disagrees', () => {
+  // SF sees a self-destruction (600 -> -1000); 2400s play it and hold.
+  const before = evaluation(600); before.best_move = 'e2e4';
+  const grade = reviewMove(before, evaluation(-1000), new Chess(), 'e2e4', grading('e2e4', [0.1, 0.2, 0.7], 80));
+  expect(grade.label).toBe('Top');
+});
+it('flags Maia-2400 expected-score drops with shared cutoffs', () => {
+  // Flat SF pair (no engine loss) isolates the Maia axis: 80 -> 50.
+  const grade = reviewMove(evaluation(0), evaluation(0), new Chess(), 'd2d4', grading('e2e4', [0.1, 0.2, 0.7], 50));
+  expect(grade.label).toBe('Blunder');
+  expect(grade.loss).toBeCloseTo(30, 9);
+  expect(grade.accuracy).toBe(moveAccuracy(30));
+  const mistake = reviewMove(evaluation(0), evaluation(0), new Chess(), 'd2d4', grading('e2e4', [0.1, 0.2, 0.7], 68));
+  expect(mistake.label).toBe('Mistake');
+  const holds = reviewMove(evaluation(0), evaluation(0), new Chess(), 'd2d4', grading('e2e4', [0.1, 0.2, 0.7], 78));
+  expect(holds.label).toBe('Holds');
+});
+it('caps Stockfish negatives once the 2400 lane settles without finding loss', () => {
+  // SF alone reads Mistake (60 -> -60); Maia holds (loss 2) with another top.
+  const before = evaluation(60); before.best_move = 'g1f3';
+  const grade = reviewMove(before, evaluation(-60), new Chess(), 'e2e4', grading('g1f3', [0.1, 0.2, 0.7], 78));
+  expect(grade.label).toBe('Holds');
+});
+it('holds the spinner while the 2400 lane is pending, falls back when it fails', () => {
+  const blunderSf = reviewMove(evaluation(600), evaluation(-1000), new Chess(), 'd2d4');
+  expect(blunderSf.label).toBe('Blunder');
+  const pending: MaiaGrading = { before: undefined, afterExpected: null, beforePending: true, afterPending: false };
+  expect(reviewMove(evaluation(600), evaluation(-1000), new Chess(), 'd2d4', pending).label).toBe('Unreviewed');
+  const failed: MaiaGrading = { before: undefined, afterExpected: null, beforePending: false, afterPending: false };
+  expect(reviewMove(evaluation(600), evaluation(-1000), new Chess(), 'd2d4', failed).label).toBe('Blunder');
+  const degraded = grading('e2e4', [0.1, 0.2, 0.7], 80);
+  degraded.before = { ...degraded.before!, degraded: true };
+  expect(reviewMove(evaluation(600), evaluation(-1000), new Chess(), 'd2d4', degraded).label).toBe('Blunder');
+});
+it('keeps Critical praise reachable through the 2400 top', () => {
+  const before = evaluation(200); before.lines = [{ move: 'e2e4', score: before.score, depth: 14 }, { move: 'd2d4', score: { type: 'cp', value: 0 }, depth: 14 }];
+  expect(reviewMove(before, before, new Chess(), 'e2e4', grading('e2e4', [0.1, 0.2, 0.7], 80)).label).toBe('Critical');
+});
 it('bands Maia rarity by ratio to the top move, not rank or absolute prob', () => {
   // 13% under a 15% top is the same band as the top itself.
   const close = maia([['e2e4', 0.15], ['d2d4', 0.13]]);
@@ -124,15 +173,15 @@ it('verdicts only the quality-by-rarity synthesis, never the grade', () => {
   expect(describeMove({ san: 'Nxh7+', quality: quality('Excellent'), rarity: rarity('Rare') }))
     .toBe('An exceptional find.');
   expect(describeMove({ san: 'Qh5', quality: quality('Blunder', 25), rarity: rarity('Expected') }))
-    .toBe('An easy mistake to make.');
+    .toBe('A common blunder.');
   expect(describeMove({ san: 'd5', quality: quality('Mistake', 12), rarity: rarity('Uncommon') }))
-    .toBe('A popular sidestep.');
+    .toBe('An uncommon mistake.');
   expect(describeMove({ san: 'Kd2', quality: quality('Blunder', 40), rarity: rarity('Uncommon') }))
-    .toBe('A popular sidestep.');
+    .toBe('An uncommon blunder.');
   expect(describeMove({ san: 'fxg3', quality: quality('Allowed mate'), rarity: rarity('Expected') }))
-    .toBe('An easy mistake to make.');
+    .toBe('A common move that allows mate.');
   expect(describeMove({ san: 'fxg3', quality: quality('Allowed mate'), rarity: rarity('Rare') }))
-    .toBe('An unusual slip.');
+    .toBe('A rare move that allows mate.');
   expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity: rarity('Unknown') })).toBeNull();
   expect(describeMove({ san: 'e4', quality: quality('Forced'), rarity: rarity('Unknown') }))
     .toBe('e4 was the only legal move.');
@@ -150,7 +199,7 @@ it('keeps probabilities in the candidate lists, never in the verdict', () => {
   expect(absent).toBe('A genuine find.');
   expect(absent).not.toMatch(/brilliant|only good|impossible|nobody|Maia|%/i);
   const absentBlunder = describeMove({ san: 'h4', quality, rarity: maiaRarity(maia([['e2e4', .15]]), 'h2h4') });
-  expect(absentBlunder).toBe('Worth a second look.');
+  expect(absentBlunder).toBe('An unlisted blunder.');
   const absentExcellent = describeMove({ san: 'Re8', quality: { ...quality, label: 'Excellent' }, rarity: maiaRarity(maia([['e2e4', .15]]), 'e8e7') });
   expect(absentExcellent).toBe('An exceptional find.');
   const absentGood = describeMove({ san: 'h3', quality: { ...quality, label: 'Good' }, rarity: maiaRarity(maia([['e2e4', .15]]), 'h2h3') });
@@ -209,12 +258,12 @@ it('notes when a mistake was hard to avoid because the best move was rare', () =
     .toBe('Hard to avoid.');
   // Obvious mistake, obvious best move: damning as before.
   expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: expected }))
-    .toBe('An easy mistake to make.');
+    .toBe('A common blunder.');
   // No best-move evidence: standard wording.
   expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected }))
-    .toBe('An easy mistake to make.');
+    .toBe('A common blunder.');
   expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: { label: 'Unknown', r: null, prob: null, topProb: null } }))
-    .toBe('An easy mistake to make.');
+    .toBe('A common blunder.');
   // Overrides every negative standard sentence, not just Expected.
   const uncommon: Rarity = { label: 'Uncommon', r: 0.4, prob: 0.2, topProb: 0.5 };
   expect(describeMove({ san: 'd5', quality: { ...blunder, label: 'Mistake' }, rarity: uncommon, bestRarity: rareBest }))
@@ -231,18 +280,18 @@ it('notes when a mistake was hard to avoid because the best move was rare', () =
     .toBe('Hard to avoid.');
   const shiftedBestListed: Rarity = { label: 'Rare', r: 0.29, prob: 0.06, topProb: 0.207 };
   expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: shiftedBestListed }))
-    .toBe('An easy mistake to make.');
-  // f3-like Uncommon negative stays a sidestep with no percentage attached.
+    .toBe('A common blunder.');
+  // f3-like Uncommon negative stays grade-specific with no percentage attached.
   const f3like: Rarity = { label: 'Uncommon', r: 0.438, prob: 0.149, topProb: 0.34 };
   expect(describeMove({ san: 'f3', quality: { ...blunder, label: 'Mistake' }, rarity: f3like }))
-    .toBe('A popular sidestep.');
+    .toBe('An uncommon mistake.');
 });
 it('appends the material note only for Mistake/Blunder', () => {
   const quality = (label: Quality['label']): Quality => ({ label, accuracy: 20, loss: 15 });
   const rarity: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
   const note = 'This line wins a pawn for Black.';
   expect(describeMove({ san: 'Qh5', quality: quality('Blunder'), rarity, materialNote: note }))
-    .toBe(`An easy mistake to make. ${note}`);
+    .toBe(`A common blunder. ${note}`);
   expect(describeMove({ san: 'd5', quality: quality('Mistake'), rarity, materialNote: note }))
     .toContain(note);
   expect(describeMove({ san: 'd5', quality: quality('Inaccuracy'), rarity, materialNote: note }))
@@ -270,7 +319,7 @@ it('appends the positive why only for praise grades', () => {
   })).toBe('Leaves Caro-Kann Defense book. The natural choice. Wins a pawn.');
   // Negative grades, forced moves, and terminals never take the note.
   expect(describeMove({ san: 'exd5', quality: quality('Blunder'), rarity, positiveNote: 'Wins a pawn.' }))
-    .toBe('An easy mistake to make.');
+    .toBe('A common blunder.');
   expect(describeMove({ san: 'e4', quality: quality('Forced'), rarity, positiveNote: 'Wins a pawn.' }))
     .toBe('e4 was the only legal move.');
   expect(describeMove({ san: 'Qxf7#', quality: quality('Best'), rarity, terminal: 'checkmate', positiveNote: 'Wins a queen.' }))
@@ -287,7 +336,7 @@ it('appends the mate-parry why only for praise grades', () => {
     .toBe('The natural choice. Avoids mate in one.');
   // A parrying blunder stays a blunder story, never a defensive story.
   expect(describeMove({ san: 'g6', quality: quality('Blunder'), rarity, positiveNote: 'Parries Qxg7#.' }))
-    .toBe('An easy mistake to make.');
+    .toBe('A common blunder.');
 });
 it('pairs hard-to-avoid with the material consequence', () => {
   const blunder: Quality = { label: 'Blunder', accuracy: 20, loss: 25 };
@@ -330,7 +379,7 @@ it('prefixes novelty only on the rarity synthesis, never on overrides or quiet v
   const rarity: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
   const novelty = { priorName: 'Caro-Kann Defense', priorEco: 'B12' };
   expect(describeMove({ san: 'd5', quality: quality('Mistake'), rarity, novelty }))
-    .toBe('Leaves Caro-Kann Defense book. An easy mistake to make.');
+    .toBe('Leaves Caro-Kann Defense book. A common mistake.');
   // Overrides carry no prefix; quiet verdicts stay quiet.
   expect(describeMove({ san: 'Qxf7#', quality: quality('Best'), rarity, novelty, terminal: 'checkmate' }))
     .toBe('Qxf7# delivers checkmate.');
@@ -343,13 +392,13 @@ it('falls back to the pawn note when the material window is silent', () => {
   const quality = (label: Quality['label']): Quality => ({ label, accuracy: 20, loss: 15 });
   const rarity: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
   expect(describeMove({ san: 'dxe5', quality: quality('Inaccuracy'), rarity, pawnNote: 'Doubles a pawn.' }))
-    .toBe('An easy mistake to make. Doubles a pawn.');
+    .toBe('A common inaccuracy. Doubles a pawn.');
   // The concrete best line outranks the positional observation.
   expect(describeMove({ san: 'Qh5', quality: quality('Blunder'), rarity, materialNote: 'This line wins a pawn for Black.', pawnNote: 'Doubles a pawn.' }))
-    .toBe('An easy mistake to make. This line wins a pawn for Black.');
+    .toBe('A common blunder. This line wins a pawn for Black.');
   // Praise and allowed mates never take positional notes.
   expect(describeMove({ san: 'Nf3', quality: quality('Good'), rarity, pawnNote: 'Doubles a pawn.' }))
     .toBe('The natural choice.');
   expect(describeMove({ san: 'fxg3', quality: quality('Allowed mate'), rarity, pawnNote: 'Doubles a pawn.' }))
-    .toBe('An easy mistake to make.');
+    .toBe('A common move that allows mate.');
 });

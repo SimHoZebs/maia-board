@@ -34,12 +34,12 @@ export function maiaRarity(maia: Pick<MoveResponse, 'top_moves' | 'degraded'> | 
   return { label: r >= 0.6 ? 'Expected' : r >= 1 / 3 ? 'Uncommon' : 'Rare', r, prob: found.prob, topProb };
 }
 // The verdict carries only the quality × rarity synthesis as a short head
-// ("A sharp find.", "An easy mistake to make."). Grades, scores,
+// ("A sharp find.", "A common mistake."). Grades, scores,
 // probabilities, and best lines already live in the badges, charts, and
 // candidate lists, so restating them here is repetition. Praise
 // (Excellent/Great) meets findability (a critical move nobody's model
 // expects is an exceptional find); negative grades meet popularity (a
-// blunder the model saw coming is an easy mistake). The candidate lists
+// blunder the model saw coming is a common blunder). The candidate lists
 // below carry the Maia percentages; the verdict never repeats them.
 // Praise gating lives in effectiveQuality, not reviewMove (which stays pure
 // engine so memo/cache keys never go stale on Maia changes). It translates
@@ -73,33 +73,48 @@ export function effectiveQuality(grade: EngineGrade | undefined, rarity: Rarity 
   if (!isQualityLabel(grade.label)) throw new Error(`Unknown engine grade: ${String(grade.label)}`);
   return { ...grade, label: grade.label };
 }
+function negativeNoun(quality: Quality): string {
+  return quality.label.toLowerCase();
+}
+// "Allowed mate" can't take a rarity adjective directly ("a common allowed
+// mate" stacks the adjective onto the mate, not the move), so the rarity
+// modifies the move and the mate reads as a relative clause.
+function allowedMateVerdict(rarity: Rarity): string {
+  switch (rarity.label) {
+    case 'Absent': return `An unlisted move that allows mate.`;
+    case 'Expected': return `A common move that allows mate.`;
+    case 'Uncommon': return `An uncommon move that allows mate.`;
+    default: return `A rare move that allows mate.`;
+  }
+}
 function rarityVerdict(quality: Quality, rarity: Rarity | undefined, bestRarity?: Rarity | null): string | null {
   if (!rarity || rarity.label === 'Unknown') return null;
   const praise = quality.label === 'Excellent' || quality.label === 'Great' || quality.label === 'Best';
   const holds = quality.label === 'Good';
+  if (quality.label === 'Allowed mate') return hardToAvoid(bestRarity) ?? allowedMateVerdict(rarity);
   if (rarity.label === 'Absent') {
     if (quality.label === 'Excellent') return `An exceptional find.`;
     if (praise) return `A genuine find.`;
     if (holds) return `An unlisted choice that holds.`;
-    return hardToAvoid(bestRarity) ?? `Worth a second look.`;
+    return hardToAvoid(bestRarity) ?? `An unlisted ${negativeNoun(quality)}.`;
   }
   if (rarity.label === 'Expected') {
     if (praise || holds) return `The natural choice.`;
-    return hardToAvoid(bestRarity) ?? `An easy mistake to make.`;
+    return hardToAvoid(bestRarity) ?? `A common ${negativeNoun(quality)}.`;
   }
   if (rarity.label === 'Uncommon') {
     if (quality.label === 'Excellent') return `An exceptional find.`;
     if (praise) return `A sharp find.`;
     if (holds) return `A meaningful minority that holds.`;
-    return hardToAvoid(bestRarity) ?? `A popular sidestep.`;
+    return hardToAvoid(bestRarity) ?? `An uncommon ${negativeNoun(quality)}.`;
   }
   if (quality.label === 'Excellent') return `An exceptional find.`;
   if (praise) return `A rare find.`;
   if (holds) return `A rarely played choice that holds.`;
-  return hardToAvoid(bestRarity) ?? `An unusual slip.`;
+  return hardToAvoid(bestRarity) ?? `A rare ${negativeNoun(quality)}.`;
 }
 // A mistake whose avoidance was itself a rare find: the best move sat under
-// 5% (Rare) or outside Maia's top choices (Absent), so the slip was hard to
+// 5% (Rare) or outside Maia's top choices (Absent), so the error was hard to
 // avoid. Expected/Uncommon/Unknown best moves leave the standard
 // wording alone. Verdict-only: badges still read pure loss. Both Absent and
 // Rare-tiny share one short sentence; the "This line …" second sentence plus
@@ -180,6 +195,43 @@ export function describeMove(args: VerdictArgs): string | null {
 export function whiteWin(score: Score): number {
   return score.type === 'cp' ? 100 / (1 + Math.exp(-.00368208 * score.value)) : (score.winning_side ?? (score.value > 0 ? 'white' : 'black')) === 'white' ? 100 : 0;
 }
+// Maia-2400 objective axis (Option 1: badges pure 2400, words from the
+// user-Elo Maia). expected() reads a mover-relative WDL triple
+// [loss, draw, win] as an expected score on the shared 0-100 scale, so the
+// existing 20/10/5 cutoffs and the moveAccuracy curve transfer unchanged.
+// Maia WDL compresses extremes relative to Stockfish win%, so identical
+// numbers flag fewer moves — that leniency is the point, not a bug.
+export function maiaExpected(wdl: MoveResponse['wdl']): number {
+  const [loss, draw, win] = wdl;
+  return 100 * (win + 0.5 * draw);
+}
+// Mover-relative expectation after the move. Terminal positions synthesize
+// (a checkmate after your move is always one you delivered; draws split)
+// because Maia never infers game-over positions. Non-terminal reads the
+// opponent-relative WDL: loss_opp + half draws is the mover's share, i.e.
+// 100 - expected_opp.
+export function maiaAfterExpected(after: Pick<MoveResponse, 'wdl'> | undefined, afterOutcome: DomainOutcome | null | undefined): number | null {
+  if (afterOutcome) return afterOutcome.kind === 'checkmate' ? 100 : 50;
+  if (!after) return null;
+  const [loss, draw] = after.wdl;
+  return 100 * (loss + 0.5 * draw);
+}
+// Grading input for one move, assembled by the caller (which owns node
+// lookups and pending keys): the 2400-lane response before the move plus the
+// mover-relative expectation after it. Pending flags hold the spinner while
+// the 2400 lane is in flight so badges never flash an SF grade that Maia
+// then replaces.
+export type MaiaGrading = {
+  before: Pick<MoveResponse, 'top_moves' | 'wdl' | 'degraded'> | undefined;
+  afterExpected: number | null;
+  beforePending: boolean;
+  afterPending: boolean;
+};
+function gradingTop(grading: MaiaGrading): string | null {
+  if (!grading.before || grading.before.degraded) return null;
+  const top = grading.before.top_moves?.[0]?.move;
+  return typeof top === 'string' ? top : null;
+}
 export function moveAccuracy(loss: number): number { return loss === 0 ? 100 : Math.max(0, Math.min(100, 103.1668 * Math.exp(-.04354 * loss) - 3.1669)); }
 export function classifyLoss(loss: number): 'Blunder' | 'Mistake' | 'Inaccuracy' | null { return loss >= 20 ? 'Blunder' : loss >= 10 ? 'Mistake' : loss >= 5 ? 'Inaccuracy' : null; }
 // Mate allowed when avoidable: the mover had no forced mate against them
@@ -193,7 +245,7 @@ export function isMateFor(score: Score, side: 'white' | 'black'): boolean {
   if (score.type !== 'mate') return false;
   return (score.winning_side ?? (score.value > 0 ? 'white' : 'black')) === side;
 }
-export function reviewMove(before: Evaluation | undefined, after: Evaluation | undefined, game: Chess, played: string): EngineGrade {
+export function reviewMove(before: Evaluation | undefined, after: Evaluation | undefined, game: Chess, played: string, grading?: MaiaGrading): EngineGrade {
   if (!before || !after) return { label: 'Unreviewed', accuracy: null, loss: null };
   const legal = game.moves().length;
   if (legal === 1) return { label: 'Forced', accuracy: 100, loss: 0 };
@@ -205,7 +257,42 @@ export function reviewMove(before: Evaluation | undefined, after: Evaluation | u
   const opp = mover === 'white' ? 'black' : 'white';
   if (!best && isMateFor(after.score, opp) && !isMateFor(before.score, opp)) return { label: 'Allowed mate', accuracy: 0, loss };
   const critical = best && loss <= 1 && legal >= 2 && before.score.type === 'cp' && after.score.type === 'cp' && first?.move === played && second?.move !== played && first.score.type === 'cp' && second?.score.type === 'cp' && pov(first.score) - pov(second.score) >= 10;
-  return { label: classifyLoss(loss) ?? (critical ? 'Critical' : best ? 'Top' : 'Holds'), accuracy: moveAccuracy(loss), loss };
+  if (grading !== undefined) return gradedReviewMove(grading, played, { best, critical, loss });
+  return sfGrade({ best, critical, loss, capNegatives: false });
+}
+// Stockfish-only grade path: mate/forced already returned above. Negative
+// labels fire on SF loss; capNegatives (Maia-2400 decided) restricts this to
+// the praise/holds vocabulary so an engine dislike can never surface as a
+// badge once the human objective axis owns negatives.
+function sfGrade(args: { best: boolean; critical: boolean; loss: number; capNegatives: boolean }): EngineGrade {
+  const { best, critical, loss, capNegatives } = args;
+  if (!capNegatives) {
+    const negative = classifyLoss(loss);
+    if (negative) return { label: negative, accuracy: moveAccuracy(loss), loss };
+  }
+  return { label: critical ? 'Critical' : best ? 'Top' : 'Holds', accuracy: moveAccuracy(loss), loss };
+}
+// Maia-2400 objective path (Option 1). Precedence after mate/forced:
+// pending 2400 lane holds the spinner (never flash an SF grade Maia then
+// replaces); a missing-but-settled lane falls back to pure SF so a 2400
+// failure degrades to old behavior instead of blanking badges. Played-top
+// is never negative (the human-optimal move cannot be a human mistake);
+// other moves classify on Maia expected-score loss. Whatever remains reads
+// the SF vocabulary with negatives capped, preserving Critical/Top/Holds
+// for praise gating and material notes.
+function gradedReviewMove(grading: MaiaGrading, played: string, sf: { best: boolean; critical: boolean; loss: number }): EngineGrade {
+  const top = gradingTop(grading);
+  const settled = top !== null && grading.afterExpected !== null;
+  if (!settled) {
+    if (grading.beforePending || grading.afterPending) return { label: 'Unreviewed', accuracy: null, loss: null };
+    return sfGrade({ ...sf, capNegatives: false });
+  }
+  if (played !== top) {
+    const loss = Math.max(0, maiaExpected(grading.before!.wdl) - grading.afterExpected!);
+    const negative = classifyLoss(loss);
+    if (negative) return { label: negative, accuracy: moveAccuracy(loss), loss };
+  }
+  return sfGrade({ ...sf, capNegatives: true });
 }
 // Single terminal source of truth. Winner resolution mirrors whiteWin:
 // explicit winning_side, else mate-value sign. domain.ts outcome() and both
