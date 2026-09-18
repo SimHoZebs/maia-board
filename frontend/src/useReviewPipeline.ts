@@ -406,6 +406,9 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   // selectMaiaDisplay discards a note from an abandoned concurrent render.
   priorFocus.current = displayed.entry ?? null;
   const maia = displayed.entry?.result;
+  // Forward candidates only expose the requested key. The focus panel can
+  // retain a same-position previous identity with its explicit stale label.
+  const maiaCurrent = active ? maiaResults[currentPly] : undefined;
   const currentError = active ? coordinator.error('sf', currentNode, currentSettings) : undefined;
   const error = currentError || (active && focusNode ? coordinator.error('sf', focusNode, focusSettings) || coordinator.error('maia', focusNode, focusSettings) : undefined)
     || (active ? coordinator.error('maia', currentNode, currentSettings) : undefined)
@@ -434,8 +437,12 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     // never reaches display directly.
     engineGrades: computed.qualities,
     current: evaluations[currentPly], focus: evaluations[focusPly], focusPly,
-    maiaElo: displayed.entry?.eloMaia ?? focusSettings.eloMaia, maiaModel: maia?.model_used ?? focusSettings.model,
-    maiaWantedElo: focusSettings.eloMaia, maiaWantedModel: focusSettings.model,
+    // Display responses for the left candidate list (the human-population
+    // view at the selected Elo). The stale-aware focus entry keeps the old
+    // list visible under its banner while the new Elo fetches.
+    maia, maiaCurrent,
+    maiaElo: displayed.entry?.eloMaia ?? focusSettings.eloMaia,
+    maiaWantedElo: focusSettings.eloMaia,
     maiaStale: displayed.stale, maiaPending: displayed.pending, maiaLocked: focusIsMaia,
     gameElo: gameForLine?.settings.eloMaia, error, currentError,
     progress: batch.progress, recordStatus, reviewState, scope, lineKey, start: batch.start,

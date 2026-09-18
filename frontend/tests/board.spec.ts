@@ -509,7 +509,7 @@ test('analysis load, navigation, copy, request history, stale reply and mode reu
     }
   }
   await expect(page.locator('#insight-content')).toBeVisible();
-  await expect(page.getByRole('heading', { name: /Maia3 2400/ })).toBeVisible();
+  await expect(page.locator('section[aria-label="Maia analysis"] h2')).toContainText('Maia');
   await expect(page.locator('#analysis-rating')).toHaveValue('1600');
   await page.locator('#mode-play').click();
   await expect(page.locator('#takeback')).toBeVisible();
@@ -690,27 +690,27 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   await page.locator('#load-analysis').click();
   await expect(page.locator('#analysis-controls')).toHaveCount(0);
   await app.reply(0, 'b8c6', 200, [{ move: 'b8c6', prob: .4, wdl: [0.2, 0.3, 0.5] }, { move: 'g8f6', prob: .15, wdl: [0.2, 0.3, 0.5] }]);
-  await expect(page.locator('section[aria-label="Maia analysis"] .candidate-reading')).toHaveText(['Played, Nc665%', 'Na665%']);
+  await expect(page.locator('section[aria-label="Maia analysis"] .candidate-reading')).toHaveText(['Played, Nc640%', 'Nf615%']);
   await expect(page.locator('.win-hero')).toHaveCount(0);
   await expect(page.locator('section[aria-label="Maia analysis"] .candidate-list')).toContainText('Nc6');
   await expect(page.locator('.balance-track')).toHaveAccessibleName(/estimated White winning chance 65%/);
-  await page.getByRole('button', { name: 'Explore Na6' }).hover();
+  await page.getByRole('button', { name: 'Explore Nf6' }).hover();
   await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(0);
   await piece(page, 'g8', 'black knight');
   await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
   await expect(page.locator('section[aria-label="Maia analysis"] .candidate-list')).toContainText('Nc6');
   await screenshot(page, testInfo.outputPath('analysis-candidates-desktop.png'));
-  await page.getByRole('button', { name: 'Explore Na6' }).click();
-  await piece(page, 'a6', 'black knight');
+  await page.getByRole('button', { name: 'Explore Nf6' }).click();
+  await piece(page, 'f6', 'black knight');
   // Exploring lands on a position whose before-position already has a cached
   // evaluation, so the panel judges the explored move instead of blanking.
-  await expect(page.locator('#insight-content').getByRole('button', { name: 'Explore Na6 (played) from before this move', exact: true })).toBeVisible();
+  await expect(page.locator('#insight-content').getByRole('button', { name: 'Explore Nf6 (played) from before this move', exact: true })).toBeVisible();
   await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(0);
   await move(page, 'f1', 'c4');
   // Either branch move can win the 200ms foreground race. A parked
   // intermediate tip holds the Maia lanes (the fixture holds routes
   // open), so answer held requests until the tip fires.
-  const full = ['e2e4', 'e7e5', 'g1f3', 'b8a6', 'f1c4'];
+  const full = ['e2e4', 'e7e5', 'g1f3', 'g8f6', 'f1c4'];
   const replied = new Set([0]);
   let tip = -1;
   for (let waited = 0; waited < 100 && tip < 0; waited++) {
@@ -722,10 +722,10 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   }
   expect(tip).toBeGreaterThanOrEqual(1);
   expect(replay(app.requests[tip].payload.moves).fen()).toBe(app.requests[tip].payload.fen);
-  await app.reply(tip);
+  await app.reply(tip, 'b8c6');
   // Resolve the focus single too, so the focus Maia list paints at the old
   // identity (priming the stale-while-revalidating display below).
-  const focusMoves = ['e2e4', 'e7e5', 'g1f3', 'b8a6'];
+  const focusMoves = ['e2e4', 'e7e5', 'g1f3', 'g8f6'];
   await expect.poll(() => app.requests.some(r => r.payload.moves.join() === focusMoves.join())).toBe(true);
   const focusIdx = app.requests.findIndex((r, i) => !replied.has(i) && r.payload.moves.join() === focusMoves.join());
   if (focusIdx >= 0) { replied.add(focusIdx); await app.reply(focusIdx); }
@@ -733,9 +733,6 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   // Let the display commit flush before changing the rating.
   await page.waitForTimeout(250);
   await expect(page.locator('#analysis-rating')).toBeVisible();
-  // The candidate list is objective (2400) and must not move with the
-  // reference Elo; record it before the switch to compare after.
-  const listBefore = await page.locator('section[aria-label="Maia analysis"] .candidate-reading').allTextContents();
   await page.locator('#analysis-rating').selectOption('2000');
   // Rating changes keep the previous identity visible with a stale banner
   // while the new Elo fetches. Lane blocking staggers the new-identity
@@ -751,12 +748,13 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   await app.reply(app.requests.findIndex(r => r.payload.elo_maia === 2000));
   await expect.poll(() => app.requests.filter(r => r.payload.elo_maia === 2000)).toHaveLength(2);
   await app.reply(app.requests.map((r, i) => (r.payload.elo_maia === 2000 ? i : -1)).filter(i => i >= 0).at(-1)!);
-  // Objective heading and list hold steady across the reference switch.
+  // The display list follows the reference Elo; the objective heading
+  // holds steady across the switch.
+  await expect(page.locator('section[aria-label="Maia analysis"] h2')).toContainText('Maia');
   await expect(page.getByRole('heading', { name: /Maia3 2400/ })).toBeVisible();
-  await expect(page.locator('section[aria-label="Maia analysis"] .candidate-reading')).toHaveText(listBefore);
   await expect(page.locator('#analysis-rating')).toHaveValue('2000');
   expect(app.requests.some(r => r.payload.elo_maia === 2000 && r.payload.elo_user === 2000)).toBe(true);
-  for (const [id, expected] of [['copy-pgn', '1. e4 e5 2. Nf3 Nc6'], ['copy-explored-pgn', '1. e4 e5 2. Nf3 Na6 3. Bc4']]) {
+  for (const [id, expected] of [['copy-pgn', '1. e4 e5 2. Nf3 Nc6'], ['copy-explored-pgn', '1. e4 e5 2. Nf3 Nf6 3. Bc4']]) {
     await page.locator(`#${id}`).click();
     await expect(page.locator(`#${id}`)).toHaveText(/copied/i);
     await expect.poll(() => copiedTexts(page)).toContain(expected);
@@ -1110,7 +1108,7 @@ for (const width of [320, 390]) {
     const exports = (await page.locator('.analysis-actions').boundingBox())!;
     expect(exports.y).toBeGreaterThanOrEqual(engines.y + engines.height);
     await expect(page.locator('.board-stage .analysis-actions')).toHaveCount(0);
-    await expect(page.getByRole('heading', { name: /Maia/ })).toHaveCount(1);
+    await expect(page.getByRole('heading', { name: /Maia3 2400/ })).toHaveCount(1);
     await expect(page.getByText('Engine moves', { exact: true })).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath(`variation-${width}.png`), fullPage: true });
@@ -1277,7 +1275,7 @@ test('phone touch movement and board exploration', async ({ browser }) => {
   await page.locator('#analysis-pgn').fill('1. e4');
   await page.locator('#load-analysis').tap();
   await app.reply(1, 'e2e4');
-  await page.getByRole('button', { name: 'Explore e4 (played)' }).tap();
+  await page.locator('#insight-content').getByRole('button', { name: 'Explore e4 (played)' }).tap();
   await piece(page, 'e4', 'white pawn');
   await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 2');
   expect(app.errors).toEqual([]);

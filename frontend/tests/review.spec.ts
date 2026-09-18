@@ -191,6 +191,7 @@ test('root shows the fallback notice without model parameters', async ({ page })
   });
   await page.goto('http://maia.test/analyze?moves=');
   await expect(page.getByRole('heading', { name: /Maia3 2400/ })).toBeVisible();
+  await expect(page.locator('section[aria-label="Maia analysis"]').getByText('Maia fallback results.', { exact: true })).toBeVisible();
   await expect(page.getByText('Maia3 fallback results.', { exact: true })).toBeVisible();
   expect(app.errors).toEqual([]);
 });
@@ -573,8 +574,13 @@ test('changed analysis settings gate the missing positions behind a new batch', 
 });
 test('mixed arrow sources retain their own endpoints', async ({ page }, info) => {
   await bootReview(page);
-  await page.route('http://maia.test/move', route => route.fulfill({ json: { move: 'g1f3', top_moves: [{ move: 'g1f3', prob: .6, wdl: [.2,.3,.5] }], wdl: [.2,.3,.5], model_used: '79m', degraded: false } }));
-  await page.route('http://maia.test/evaluate', route => route.fulfill({ json: { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: 'd2d4', score: { type: 'cp', value: 20 }, lines: [{ move: 'd2d4', score: { type: 'cp', value: 20 }, depth: 12 }, { move: 'e2e4', score: { type: 'cp', value: 0 }, depth: 12 }] } }));
+  // Display Maia and objective (2400) lanes share /move: split by elo so the
+  // white actual, red display, and blue objective arrows diverge.
+  await page.route('http://maia.test/move', route => {
+    const body = route.request().postDataJSON();
+    const move = body?.elo_maia === 2400 ? 'd2d4' : 'g1f3';
+    return route.fulfill({ json: { move, top_moves: [{ move, prob: .6, wdl: [.2,.3,.5] }], wdl: [.2,.3,.5], model_used: '79m', degraded: false } });
+  });
   await atStart(page);
   const endpoints = await lines(page).evaluateAll(elements => elements.map(el => `${el.getAttribute('x1')},${el.getAttribute('y1')}:${el.getAttribute('x2')},${el.getAttribute('y2')}`));
   expect(new Set(endpoints).size).toBe(3);
@@ -746,7 +752,7 @@ test('custom arrow colors and widths repaint shafts and heads', async ({ page })
     localStorage.setItem(key, JSON.stringify({
       actual: { color: '#00ff00', width: 64 },
       maia: { color: '#ff00ff', width: 32 },
-      stockfish: { color: '#0000ff', width: 16 },
+      objective: { color: '#0000ff', width: 16 },
       candidate: { color: '#d6b85c', width: 2 },
     }));
   }, KEYS.arrows);
@@ -764,9 +770,43 @@ test('custom arrow colors and widths repaint shafts and heads', async ({ page })
   await page.locator('#mode-settings').click();
   await expect(page.locator('#arrow-maia-color')).toHaveValue('#ff00ff');
   await expect(page.locator('#arrow-actual-width')).toHaveValue('64');
-  await page.locator('#arrow-stockfish-width-number').fill('20');
-  await expect.poll(() => page.evaluate(key => JSON.parse(localStorage.getItem(key)!).stockfish.width, KEYS.arrows)).toBe(20);
+  await page.locator('#arrow-objective-width-number').fill('20');
+  await expect.poll(() => page.evaluate(key => JSON.parse(localStorage.getItem(key)!).objective.width, KEYS.arrows)).toBe(20);
   await page.reload();
-  await expect(page.locator('#arrow-stockfish-width-number')).toHaveValue('20');
+  await expect(page.locator('#arrow-objective-width-number')).toHaveValue('20');
+  expect(app.errors).toEqual([]);
+});
+test('past arrow basis shows prior-move options and persists', async ({ page }) => {
+  const app = await bootReview(page); await atStart(page);
+  const endpoints = () => lines(page).evaluateAll(elements => elements.map(el => `${el.getAttribute('x1')},${el.getAttribute('y1')}:${el.getAttribute('x2')},${el.getAttribute('y2')}`));
+  // Next-move basis at the root projects the first-move options.
+  await expect.poll(async () => (await endpoints()).length).toBe(3);
+  const nextRoot = await endpoints();
+  // Past-move basis at the root has no prior move, so no arrows.
+  await page.locator('#mode-settings').click();
+  await page.locator('div[role="radiogroup"][aria-labelledby="arrows-basis-label"] label', { hasText: 'Past move' }).click();
+  await expect(page.locator('#arrow-basis-past')).toBeChecked();
+  await expect.poll(() => page.evaluate(key => localStorage.getItem(key), 'maia-board.arrow-basis.v1')).toBe('"past"');
+  await page.goBack();
+  await expect(lines(page)).toHaveCount(0);
+  // Step forward: past arrows show the e2e4 options from the before-position,
+  // which differ from the next-move e7e5 projections at the same ply.
+  await page.locator('#analysis-next').click();
+  await expect.poll(async () => (await endpoints()).length).toBe(3);
+  const pastPly1 = await endpoints();
+  await page.evaluate(() => localStorage.setItem('maia-board.arrow-basis.v1', '"next"'));
+  await page.reload();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 5');
+  await expect.poll(async () => (await endpoints()).length).toBe(3);
+  const nextPly1 = await endpoints();
+  // Past ply-1 options all follow the played e2e4 (no loss there), while the
+  // next-move projections at ply 1 include the objective sidestep. Past at
+  // ply 1 matches next at the root: the same e2e4 decision.
+  expect(new Set(pastPly1).size).toBe(1);
+  expect(pastPly1).not.toEqual(nextPly1);
+  expect(pastPly1).toEqual(nextRoot);
+  // Basis setting survives reload.
+  await page.locator('#mode-settings').click();
+  await expect(page.locator('#arrow-basis-next')).toBeChecked();
   expect(app.errors).toEqual([]);
 });

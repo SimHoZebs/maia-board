@@ -81,13 +81,14 @@ export function MoveAnalysis({
   // "(played)". At the root, candidates describe the current position.
   const focus = ply - 1;
   const hasMove = focus >= 0;
-  // Candidate lists always show the objective source (the 2400 lane under
-  // the active provider) — never the display Elo. The focus list judges the
-  // displayed move with "(played)" marking; at the root the current list
-  // describes the position.
-  const candidates = hasMove ? review.objectiveCandidates.focus : review.objectiveCandidates.current;
+  // Two candidate lists: the display Elo's human-population list on the
+  // left, the objective source on the right. Each list judges the displayed
+  // move with "(played)" marking from its before-position; at the root the
+  // current position's lists describe the position.
+  const response = hasMove ? review.maia : review.maiaCurrent;
   const node = review.nodes[hasMove ? focus : ply];
-  const insight = candidates ? { fen: node.fen } : undefined;
+  const candidates = hasMove ? review.objectiveCandidates.focus : review.objectiveCandidates.current;
+  const insight = { fen: node.fen };
   const played = hasMove
     ? review.nodes[ply]?.uci ?? undefined
     : undefined;
@@ -179,7 +180,8 @@ export function MoveAnalysis({
       terminalPosition = false;
     }
   }
-  const maiaLoading = !candidates && !node.outcome && !hasError && !terminalPosition && !tooLong;
+  const displayLoading = !response && !hasError && !terminalPosition && !tooLong;
+  const objectiveLoading = !candidates && !node.outcome && !hasError && !terminalPosition && !tooLong;
   // The verdict needs both sides of the move; the foreground lane fetches
   // both, prime/batch backfill the rest. Render as soon as the pair is
   // present regardless of batch progress (progress surfaces separately via
@@ -216,7 +218,7 @@ export function MoveAnalysis({
         dotClass="source-maia"
         title={
           <>
-            {sourceLabel()} •{" "}
+            Maia •{" "}
             <Rating
               inline
               id="analysis-rating"
@@ -230,14 +232,52 @@ export function MoveAnalysis({
           </>
         }
       >
-        {candidates?.degraded && <p role="status">Maia3 fallback results.</p>}
+        {response?.degraded && <p role="status">Maia fallback results.</p>}
         {review.maiaStale && (
           <p role="status">
             Showing Maia {review.maiaElo} · updating to {review.maiaWantedElo}…
           </p>
         )}
-        {candidates && insight ? (
+        {response ? (
           <div id="insight-content">
+            <CandidateList>
+              {response.top_moves.slice(0, 5).map((candidate, index) => {
+                const san = candidateSan(insight.fen, candidate.move);
+                const isPlayed = candidate.move === played;
+                return (
+                  <CandidateRow
+                    key={`${candidate.move}:${index}`}
+                    index={index}
+                    san={san}
+                    metric={`${Math.round(candidate.prob * 100)}%`}
+                    isPlayed={isPlayed}
+                    preview={{
+                      label: `Explore ${san}${isPlayed ? " (played)" : ""}${hasMove ? " from before this move" : ""}`,
+                      active: !hasMove && state.preview === candidate.move,
+                      onPreview: () =>
+                        dispatch({ type: "preview", uci: hasMove ? null : candidate.move }),
+                      onClear: () => dispatch({ type: "preview", uci: null }),
+                      onSelect: () => exploreFromFocus(candidate.move),
+                    }}
+                  />
+                );
+              })}
+            </CandidateList>
+          </div>
+        ) : displayLoading ? (
+          <SkeletonList label="Loading Maia moves" rows={3} />
+        ) : (
+          <p className="empty-copy">No analysis yet.</p>
+        )}
+      </EngineSection>
+      <EngineSection
+        label={sourceLabel()}
+        dotClass="source-maia"
+        title={<>{sourceLabel()}</>}
+      >
+        {candidates?.degraded && <p role="status">Maia3 fallback results.</p>}
+        {candidates ? (
+          <div>
             <CandidateList>
               {candidates.entries.map((candidate, index) => {
                 const san = candidateSan(insight.fen, candidate.uci);
@@ -268,8 +308,8 @@ export function MoveAnalysis({
               ? `${node.outcome.winner === 'white' ? 'White' : 'Black'} wins`
               : 'Draw'}
           </p>
-        ) : maiaLoading ? (
-          <SkeletonList label="Loading Maia moves" rows={3} />
+        ) : objectiveLoading ? (
+          <SkeletonList label="Loading objective moves" rows={3} />
         ) : (
           <p className="empty-copy">No analysis yet.</p>
         )}
