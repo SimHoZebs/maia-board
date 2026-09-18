@@ -1,8 +1,7 @@
 import { useRef, useState, type Dispatch, type ReactNode } from "react";
-import { candidateSan } from "./domain";
 import type { Action, State } from "./state/index";
 import { Rating } from "./BoardTools";
-import { Button, CandidateList, CandidateRow, EngineSection } from "./components";
+import { Button, EngineCandidateList, EngineSection } from "./components";
 import { Chess } from "chess.js";
 import type { Review } from "./useReview";
 import { describeMove } from "./reviewMetrics";
@@ -243,29 +242,19 @@ export function MoveAnalysis({
         )}
         {response ? (
           <div id="insight-content">
-            <CandidateList>
-              {response.top_moves.slice(0, 5).map((candidate, index) => {
-                const san = candidateSan(insight.fen, candidate.move);
-                const isPlayed = candidate.move === played;
-                return (
-                  <CandidateRow
-                    key={`${candidate.move}:${index}`}
-                    index={index}
-                    san={san}
-                    metric={`${Math.round(candidate.prob * 100)}%`}
-                    isPlayed={isPlayed}
-                    preview={{
-                      label: `Explore ${san}${isPlayed ? " (played)" : ""}${hasMove ? " from before this move" : ""}`,
-                      active: !hasMove && state.preview === candidate.move,
-                      onPreview: () =>
-                        dispatch({ type: "preview", uci: hasMove ? null : candidate.move }),
-                      onClear: () => dispatch({ type: "preview", uci: null }),
-                      onSelect: () => exploreFromFocus(candidate.move),
-                    }}
-                  />
-                );
-              })}
-            </CandidateList>
+            <EngineCandidateList
+              fen={insight.fen}
+              played={played}
+              hasMove={hasMove}
+              previewUci={state.preview}
+              items={response.top_moves.slice(0, 5).map((candidate) => ({
+                uci: candidate.move,
+                metric: `${Math.round(candidate.prob * 100)}%`,
+              }))}
+              onPreview={(uci) => dispatch({ type: "preview", uci })}
+              onClear={() => dispatch({ type: "preview", uci: null })}
+              onSelect={exploreFromFocus}
+            />
           </div>
         ) : displayLoading ? (
           <SkeletonList label="Loading Maia moves" rows={3} />
@@ -295,29 +284,19 @@ export function MoveAnalysis({
         {candidates?.degraded && <p role="status">Maia3 fallback results.</p>}
         {candidates ? (
           <div>
-            <CandidateList>
-              {candidates.entries.map((candidate, index) => {
-                const san = candidateSan(insight.fen, candidate.uci);
-                const isPlayed = candidate.uci === played;
-                return (
-                  <CandidateRow
-                    key={`${candidate.uci}:${index}`}
-                    index={index}
-                    san={san}
-                    metric={`${Math.round(candidate.expected)}%`}
-                    isPlayed={isPlayed}
-                    preview={{
-                      label: `Explore ${san}${isPlayed ? " (played)" : ""}${hasMove ? " from before this move" : ""}`,
-                      active: !hasMove && state.preview === candidate.uci,
-                      onPreview: () =>
-                        dispatch({ type: "preview", uci: hasMove ? null : candidate.uci }),
-                      onClear: () => dispatch({ type: "preview", uci: null }),
-                      onSelect: () => exploreFromFocus(candidate.uci),
-                    }}
-                  />
-                );
-              })}
-            </CandidateList>
+            <EngineCandidateList
+              fen={insight.fen}
+              played={played}
+              hasMove={hasMove}
+              previewUci={state.preview}
+              items={candidates.entries.map((candidate) => ({
+                uci: candidate.uci,
+                metric: `${Math.round(candidate.expected)}%`,
+              }))}
+              onPreview={(uci) => dispatch({ type: "preview", uci })}
+              onClear={() => dispatch({ type: "preview", uci: null })}
+              onSelect={exploreFromFocus}
+            />
           </div>
         ) : node.outcome ? (
           <p className="empty-copy" role="status">

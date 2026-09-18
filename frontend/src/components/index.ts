@@ -4,3 +4,4 @@ export { EngineSection } from './EngineSection';
 export { WinEstimate } from './WinEstimate';
 export { CandidateRow } from './CandidateRow';
 export { CandidateList } from './CandidateList';
+export { EngineCandidateList } from './EngineCandidateList';
