@@ -27,3 +27,11 @@ it('marks allowed-mate destinations with the shared dark-red badge', () => {
   expect(allowedMate).toHaveLength(1);
   expect(allowedMate[0]).toMatchObject({ orig: 'g3', label: { text: '💀', fill: '#7f1d1d' } });
 });
+it('marks the losing king with a flag badge that outranks quality badges', () => {
+  const flag = reviewShapes({ actual: null, maia: null, stockfish: null }, { actual: true, maia: true, stockfish: true }, null, { square: 'e8', glyph: '⚑' });
+  expect(flag).toHaveLength(1);
+  expect(flag[0]).toMatchObject({ orig: 'e8', label: { text: '⚑', fill: '#111827' } });
+  const both = reviewShapes({ actual: null, maia: null, stockfish: null }, { actual: true, maia: true, stockfish: true }, null, [{ square: 'e8', glyph: '⚑' }, { square: 'e8', glyph: '??' }, { square: 'f3', glyph: '??' }]);
+  expect(both.map(shape => shape.orig)).toEqual(['e8', 'f3']);
+  expect(both[0]).toMatchObject({ label: { text: '⚑' } });
+});

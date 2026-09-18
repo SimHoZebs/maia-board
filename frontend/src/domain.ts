@@ -153,6 +153,29 @@ export function storedGameResult(game: StoredGame): string {
   if (isResigned(game)) return `${sideName(oppositeColor(game.settings.userColor))} wins · resignation`;
   return gameResult(replay(game.moves));
 }
+// Losing-king marker for game-over boards: scan the displayed FEN for the
+// given side's king. Invalid FEN or a missing king yields undefined so
+// callers render no badge rather than a wrong one.
+export function kingSquare(fen: string, color: MaiaColor): Key | undefined {
+  let game: Chess;
+  try { game = new Chess(fen); }
+  catch { return undefined; }
+  const target = color === 'white' ? 'w' : 'b';
+  for (const row of game.board()) {
+    for (const square of row) {
+      if (square && square.type === 'k' && square.color === target) return parseKey(square.square);
+    }
+  }
+  return undefined;
+}
+// White-relative expected score (0-100) from a mover-relative Maia WDL
+// triple. The bar, graphs, and score copy read this at the fixed 2400
+// objective reference; move grades read the mover-relative form.
+export function maiaWhiteExpected(fen: string, wdl: MoveResponse['wdl']) {
+  const [loss, draw, win] = wdl;
+  const mover = 100 * (win + 0.5 * draw);
+  return new Chess(fen).turn() === 'w' ? mover : 100 - mover;
+}
 // score_moves evaluates _history_after_move, then invert_wdl restores the choosing side.
 // https://github.com/CSSLab/maia3/blob/1e13597c42d4858b7cfd7cfdae01e297263364b2/maia3/uci.py
 export function absoluteWdl(fen: string, wdl: MoveResponse['wdl']) {

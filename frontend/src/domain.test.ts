@@ -1,6 +1,6 @@
 import { Chess } from 'chess.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { applyUci, buildTimeline, lineRecord, normalizeBoardOrientation, replay, resetTimelinesForTests, resolveBoardOrientation, START_FEN } from './domain';
+import { applyUci, buildTimeline, kingSquare, lineRecord, normalizeBoardOrientation, replay, resetTimelinesForTests, resolveBoardOrientation, START_FEN } from './domain';
 
 afterEach(() => vi.restoreAllMocks());
 describe('bounded canonical timeline', () => {
@@ -94,5 +94,17 @@ describe('board orientation', () => {
     expect(normalizeBoardOrientation('')).toBe('auto');
     expect(normalizeBoardOrientation(null)).toBe('auto');
     expect(normalizeBoardOrientation(undefined)).toBe('auto');
+  });
+});
+describe('losing-king square', () => {
+  it('finds both kings in the starting position', () => {
+    expect(kingSquare(START_FEN, 'white')).toBe('e1');
+    expect(kingSquare(START_FEN, 'black')).toBe('e8');
+  });
+  it('tracks a moved king and rejects invalid input without throwing', () => {
+    const moved = new Chess(START_FEN);
+    moved.move('e2e4');
+    expect(kingSquare(moved.fen(), 'white')).toBe('e1');
+    expect(kingSquare('junk', 'white')).toBeUndefined();
   });
 });

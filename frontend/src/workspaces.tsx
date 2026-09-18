@@ -7,9 +7,9 @@ import { Chess } from 'chess.js';
 import { ChessBoard } from './ChessBoard';
 import { Button, IconButton } from './components';
 import { AnalysisActions, AnalysisControls, PlayControls, type Props } from './Controls';
-import { InsightPanel, MoveNavBar, MovesPanel, StockfishBar } from './ReadPanels';
+import { InsightPanel, MoveNavBar, MovesPanel, MaiaBar } from './ReadPanels';
 import { Dialog } from './Dialog';
-import { analysisLength, gameResult, lineRecord, oppositeColor, parseKey, replay, resolveBoardOrientation, resultTextForTip, sideName, START_FEN, storedGameResult } from './domain';
+import { analysisLength, gameResult, kingSquare, lineRecord, oppositeColor, parseKey, replay, resolveBoardOrientation, resultTextForTip, sideName, START_FEN, storedGameResult } from './domain';
 import type { BoardPosition, BoardTransition } from './ChessBoard';
 import { toGroundColor } from './board-colors';
 import { currentPosition } from './state';
@@ -215,13 +215,24 @@ export function PlayWorkspace({ state, dispatch }: Props) {
   if (over && confirmResign) setConfirmResign(false);
   const winner = resigned ? oppositeColor(settings.userColor) : over && live.isCheckmate() ? oppositeColor(toGroundColor(live.turn())) : null;
   const resultText = resigned ? storedGameResult(state.play) : playLine ? resultTextForTip(playLine.fen, playLine.terminal) : gameResult(live);
+  // Flag on the losing king: resignation marks the player's own king at the
+  // tip; checkmate marks the side to move in the displayed position. Historic
+  // views show no flag so browsing earlier plies never flags a king that had
+  // not yet lost.
+  let loser: 'white' | 'black' | null = null;
+  try {
+    if (resigned && !historic) loser = settings.userColor;
+    else if (ready && game.isCheckmate()) loser = toGroundColor(game.turn());
+  } catch { loser = null; }
+  const loserSquare = loser ? kingSquare(position.fen, loser) : undefined;
+  const playShapes = loserSquare ? reviewShapes({ actual: null, maia: null, stockfish: null }, { actual: true, maia: true, stockfish: true }, null, { square: loserSquare, glyph: '⚑' }) : [];
   const mobileBar = useMobileBar();
   const tools = <><IconButton id="flip-board" label="Flip board" onClick={() => dispatch({ type: 'flip' })}><RotateCw size={16} aria-hidden="true" /></IconButton><IconButton id="takeback" label="Takeback" disabled={!state.play.moves.length || !!resigned} onClick={() => dispatch({ type: 'takeback' })}><Undo2 size={16} aria-hidden="true" /></IconButton>{!over && <IconButton id="resign" label="Resign" onClick={() => setConfirmResign(true)}><Flag size={16} aria-hidden="true" /></IconButton>}{mobileBar && ready && <IconButton id="new-game" label="New game" onClick={() => dispatch({ type: 'setup' })}><Plus size={18} aria-hidden="true" /></IconButton>}</>;
   return <>
     <div className={`workspace${!ready ? ' awaiting' : ''}${over ? ' game-over' : ''}`}>
       <RegionRecorder id="board-stage">
         <BoardShell state={state} dispatch={dispatch} ready={ready} toolbar={ready && mobileBar ? <div className="board-actions board-toolbar" role="toolbar" aria-label="Board actions">{tools}</div> : null}
-          position={position} transition={{ line: state.play.id, ply }} orientation={orientation} enabled={enabled} over={over} withEvaluation={false} boardResetKey={boardResetKey} shapes={[]} evalBar={null} renderStrip={strip}
+          position={position} transition={{ line: state.play.id, ply }} orientation={orientation} enabled={enabled} over={over} withEvaluation={false} boardResetKey={boardResetKey} shapes={playShapes} evalBar={null} renderStrip={strip}
           movesPanel={ready ? <MovesPanel sans={full.sanMoves} ply={ply} initialFen={START_FEN} qualities={moveFeedback.qualities} badgeLoading={state.badgeLoading} onView={ply => dispatch({ type: 'view', ply })} onOriginalView={ply => { dispatch({ type: 'original' }); dispatch({ type: 'view', ply }); }} analysis={false}
             original={undefined} hideNav={mobileBar}
             branchUp={mobileBar} tools={mobileBar ? undefined : tools} bookFlags={playBookFlags} /> : null}
@@ -274,7 +285,14 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   const badgeGlyph: SquareBadge['glyph'] = playedQuality?.label === 'Allowed mate' ? '💀' : playedQuality?.label === 'Blunder' ? '??' : '?';
   const badge = playedQuality && (playedQuality.label === 'Allowed mate' || playedQuality.label === 'Blunder' || playedQuality.label === 'Mistake') && playedUci && badgeSquare !== undefined
     ? { square: badgeSquare, glyph: badgeGlyph } : null;
-  const shapes = ready ? reviewShapes(arrowMoves, { actual: true, maia: true, stockfish: true }, state.preview, badge, state.arrows) : [];
+  // Flag on the mated king when the displayed analysis position is checkmate.
+  // Drawn-outcome positions and quiet middlegames show no flag. The flag leads
+  // so it outranks a quality badge landing on the same square.
+  const matedLoser = position.outcome?.kind === 'checkmate' ? oppositeColor(position.outcome.winner) : null;
+  const matedSquare = matedLoser ? kingSquare(position.fen, matedLoser) : undefined;
+  const flagBadge: SquareBadge | null = matedSquare ? { square: matedSquare, glyph: '⚑' } : null;
+  const badges = flagBadge && badge ? [flagBadge, badge] : flagBadge ?? badge;
+  const shapes = ready ? reviewShapes(arrowMoves, { actual: true, maia: true, stockfish: true }, state.preview, badges, state.arrows) : [];
   const brushes = useMemo(() => buildReviewBrushes(state.arrows), [state.arrows]);
   const boardResetKey = JSON.stringify(['analysis', state.play.id, state.play.moves.length, state.analysis.index, state.analysisSourceId, orientation]);
   const insightResetKey = JSON.stringify([state.analysis.initialFen, state.analysis.moves, state.analysisSourceId]);
@@ -291,7 +309,7 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
       <RegionRecorder id="board-stage">
         <BoardShell state={state} dispatch={dispatch} ready={ready} toolbar={null}
           position={position} transition={{ line: insightResetKey, ply }} orientation={orientation} enabled={enabled} over={false} withEvaluation={ready} boardResetKey={boardResetKey} shapes={shapes} brushes={brushes}
-          evalBar={ready ? <StockfishBar key={`${insightResetKey}|${review.tooLong ? 1 : 0}`} evaluation={review.current} orientation={orientation} failed={!!review.currentError} /> : null}
+          evalBar={ready ? <MaiaBar key={`${insightResetKey}|${review.tooLong ? 1 : 0}`} fen={position.fen} maia={review.gradingMaia[ply]} mate={review.current && review.current.score.type === 'mate' ? review.current.score : null} outcome={position.outcome} orientation={orientation} failed={!!review.gradingError(position)} /> : null}
           renderStrip={strip}
           movesPanel={ready ? <MovesPanel sans={full.sanMoves} ply={ply} initialFen={state.analysis.initialFen} qualities={review.qualities} badgeLoading={state.badgeLoading} onView={ply => dispatch({ type: 'view', ply })} onOriginalView={ply => { dispatch({ type: 'original' }); dispatch({ type: 'view', ply }); }} onAdvance={() => dispatch({ type: 'advance' })} analysis={true}
             original={state.analysis.branchFromPly !== null ? { sans: state.analysis.sanMoves, fromPly: state.analysis.branchFromPly, qualities: review.mainlineQualities, bookFlags: mainlineBookFlags } : undefined}
