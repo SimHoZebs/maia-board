@@ -365,8 +365,8 @@ export function skewerPlayedClaim(facts: MoveFacts, mover: MaiaSide): string | n
   const side = mover === 'white' ? "Black's" : "White's";
   const lead = `${facts.san} skewers ${side} ${joinVictims(['k', skewer.back])}`;
   if (!skewer.defended) return `${lead}.`;
-  if (skewer.net > 0) return `${lead}.`;
-  return `${lead}, but only forces an even exchange.`;
+  // Same as forks: a detected non-winning outcome is not a tactic to name.
+  return skewer.net > 0 ? `${lead}.` : null;
 }
 // Names the pin when the played move itself pins a piece to its king or a
 // major piece: "Bd6 pins Black's knight to the rook." Like the fork there is

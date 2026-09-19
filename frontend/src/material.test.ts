@@ -293,10 +293,10 @@ describe('playedMoveSkewerNote', () => {
       .toBe("Re7+ skewers Black's king and queen.");
   });
 
-  it('qualifies defended back pieces without a winning net', () => {
-    // The knight is guarded (pawn and king): bishop for knight comes out even.
-    expect(playedMoveSkewerNote('8/8/5p2/4n3/3k4/8/8/2B4K w - - 0 1', 'c1b2', 'white'))
-      .toBe("Bb2+ skewers Black's king and knight, but only forces an even exchange.");
+  it('stays silent on detected even exchanges: no skewer to name', () => {
+    // The knight is guarded (pawn and king): bishop for knight comes out
+    // even, so there is no tactic to name.
+    expect(playedMoveSkewerNote('8/8/5p2/4n3/3k4/8/8/2B4K w - - 0 1', 'c1b2', 'white')).toBeNull();
   });
 
   it('lets capturing checkers tell the skewer story, not the gain', () => {
