@@ -325,7 +325,7 @@ it('appends the positive why only for praise grades', () => {
   expect(describeMove({ san: 'Qxf7#', quality: quality('Best'), rarity, terminal: 'checkmate', positiveNote: 'Wins a queen.' }))
     .toBe('Qxf7# delivers checkmate.');
   expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity, opening: { eco: 'C50', name: 'Italian Game' }, positiveNote: 'Gets out of check.' }))
-    .toBe('Nf3 — Italian Game (C50). Book move.');
+    .toBe('Nf3 — Italian Game (C50).');
 });
 it('appends the mate-parry why only for praise grades', () => {
   const quality = (label: Quality['label']): Quality => ({ label, accuracy: 100, loss: 0 });

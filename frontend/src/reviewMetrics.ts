@@ -161,7 +161,7 @@ const STANDALONE_RULES: StandaloneRule[] = [
   { name: 'insufficient', match: facts => facts.terminal === 'insufficient',
     render: facts => `${facts.san} leaves insufficient mating material.` },
   { name: 'book', match: facts => !!facts.opening,
-    render: facts => `${facts.san} — ${facts.opening!.name} (${facts.opening!.eco}). Book move.` },
+    render: facts => `${facts.san} — ${facts.opening!.name} (${facts.opening!.eco}).` },
   { name: 'forced', match: facts => facts.quality?.label === 'Forced',
     render: facts => `${facts.san} was the only legal move.` },
   { name: 'dead-draw', match: facts => !!facts.deadDraw,
