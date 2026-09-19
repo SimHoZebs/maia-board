@@ -67,6 +67,26 @@ export function maiaDisplayParts(topMoves: MoveResponse['top_moves'], baseline?:
   }));
 }
 
+// One baseline for every row in a candidate list: the before-position 2400
+// point when the objective lane has settled it, else the best listed
+// winrate, else null. The signature takes no played move and no orientation:
+// by construction no row can special-case the played move and no viewing
+// side can flip the sign. Deltas stay side-to-move-relative throughout.
+export type DeltaBaseline = { baseline: number | null; kind: 'before' | 'best' | null };
+export function deltaBaseline(beforeExpected: number | null, bestListed: number | null): DeltaBaseline {
+  if (beforeExpected != null) return { baseline: beforeExpected, kind: 'before' };
+  if (bestListed != null) return { baseline: bestListed, kind: 'best' };
+  return { baseline: null, kind: null };
+}
+
+export function deltaColumnTitle(kind: DeltaBaseline['kind']): string {
+  switch (kind) {
+    case 'before': return 'Win-rate delta versus position before move';
+    case 'best': return 'Win-rate change versus 2400 best';
+    default: return 'Win-rate change versus best listed move';
+  }
+}
+
 // Raw provider rows, node-aligned. The fixed 2400 identity lives inside
 // this module; callers never name it. The Stockfish twin reads the passed
 // evaluations instead.

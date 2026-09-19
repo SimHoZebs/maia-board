@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { candidatesFor, fixedElo, formatWinrateDelta, lanePoints, maiaDisplayParts, maiaExpected, maiaPoint, maiaWhiteWdl } from './maia';
+import { candidatesFor, deltaBaseline, deltaColumnTitle, fixedElo, formatWinrateDelta, lanePoints, maiaDisplayParts, maiaExpected, maiaPoint, maiaWhiteWdl } from './maia';
 
 it('reads mover-relative expected scores from WDL triples', () => {
   expect(maiaExpected([0.2, 0.3, 0.5])).toBeCloseTo(65, 9);
@@ -102,4 +102,49 @@ it('prices the display list against the before-position winrate (gain)', () => {
     { prob: '87%', delta: '+37.0%' },
     { prob: '12%', delta: '+33.0%' },
   ]);
+});
+
+it('selects the before point over the best listed winrate', () => {
+  expect(deltaBaseline(53.15, 53.8)).toEqual({ baseline: 53.15, kind: 'before' });
+  expect(deltaBaseline(null, 53.8)).toEqual({ baseline: 53.8, kind: 'best' });
+  expect(deltaBaseline(null, null)).toEqual({ baseline: null, kind: null });
+});
+
+it('titles the column from the baseline source', () => {
+  expect(deltaColumnTitle('before')).toBe('Win-rate delta versus position before move');
+  expect(deltaColumnTitle('best')).toBe('Win-rate change versus 2400 best');
+  expect(deltaColumnTitle(null)).toBe('Win-rate change versus best listed move');
+});
+
+it('wires the panel assembly over real startpos data: top defines the bar', () => {
+  // Live Maia 2400 startpos row: the position triple IS e2e4's triple.
+  const posWdl: [number, number, number] = [0.437, 0.063, 0.5];
+  const topMoves: { move: string; prob: number; wdl: [number, number, number] }[] = [
+    { move: 'e2e4', prob: 0.466, wdl: posWdl },
+    { move: 'd2d4', prob: 0.335, wdl: [0.435, 0.066, 0.499] },
+    { move: 'g1f3', prob: 0.083, wdl: [0.427, 0.07, 0.503] },
+  ];
+  const before = maiaExpected(posWdl);
+  expect(before).toBe(maiaExpected(topMoves[0].wdl));
+  const best = Math.max(...topMoves.map(candidate => maiaExpected(candidate.wdl)));
+  const { baseline, kind } = deltaBaseline(before, best);
+  expect(kind).toBe('before');
+  const parts = maiaDisplayParts(topMoves, baseline);
+  expect(parts[0]).toEqual({ prob: '47%', delta: '0.0%' });
+  expect(parts[2]).toEqual({ prob: '8%', delta: '+0.7%' });
+});
+
+it('keeps deltas side-to-move-relative: Black gains read positive', () => {
+  // Live Maia 2400 row after 1. e4, Black to move: c5 defines 47.0, e5
+  // reaches 48.1 — good for the mover, so positive.
+  const topMoves: { move: string; prob: number; wdl: [number, number, number] }[] = [
+    { move: 'c7c5', prob: 0.378, wdl: [0.5, 0.06, 0.44] },
+    { move: 'e7e5', prob: 0.175, wdl: [0.488, 0.062, 0.45] },
+  ];
+  const before = maiaExpected(topMoves[0].wdl);
+  const { baseline, kind } = deltaBaseline(before, null);
+  expect(kind).toBe('before');
+  const parts = maiaDisplayParts(topMoves, baseline);
+  expect(parts[0]).toEqual({ prob: '38%', delta: '0.0%' });
+  expect(parts[1]).toEqual({ prob: '18%', delta: '+1.1%' });
 });
