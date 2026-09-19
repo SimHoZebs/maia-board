@@ -230,27 +230,6 @@ export function promotionNote(beforeFen: string, playedUci: string): string | nu
   return `Promotes to a ${PROMOTION_NAMES[match[3]]}.`;
 }
 
-// Castling shape from SAN (suffix-tolerant: O-O+ / O-O-O# still match).
-// Replays the UCI so a stale SAN on an inconsistent FEN stays silent; the
-// king's two-square travel proves the shape independently of the label.
-export function castleNote(beforeFen: string, playedUci: string, san: string): string | null {
-  if (typeof san !== 'string') return null;
-  const queenside = san.startsWith('O-O-O');
-  if (!queenside && !san.startsWith('O-O')) return null;
-  try {
-    const game = new Chess(beforeFen);
-    const applied = applyUci(game, playedUci);
-    const travel = `${applied.from}${applied.to}`;
-    const ok = queenside
-      ? travel === 'e1c1' || travel === 'e8c8'
-      : travel === 'e1g1' || travel === 'e8g8';
-    if (!ok) return null;
-  } catch {
-    return null;
-  }
-  return queenside ? 'Castles queenside.' : 'Castles kingside.';
-}
-
 // En-passant capture, read off chess.js move flags. Always wins a pawn, but
 // the mechanism is the rarer fact, so it outranks the generic gain note.
 export function enPassantNote(beforeFen: string, playedUci: string): string | null {
@@ -355,7 +334,7 @@ export function escapeNote(beforeFen: string): string | null {
 // Positive-why candidates for praise grades. Array order IS the rank: the
 // first non-null claim wins. Every tactic claimant reads the same shared
 // MoveFacts (one parse, memoized geometry) instead of replaying the move —
-// cheap O(1) shape notes (promotion, castle, en passant, gain, escape) keep
+// cheap O(1) shape notes (promotion, en passant, gain, escape) keep
 // their own single replays, which cost nothing next to the parry scan.
 // Explicit conflicts, each pair-tested:
 // - skewer-check beats fork: a checking slider that both x-rays the king
@@ -372,7 +351,7 @@ export function escapeNote(beforeFen: string): string | null {
 // sharper fires.
 type PositiveContext = Pick<
   VerdictInputs,
-  'beforeFen' | 'afterFen' | 'playedUci' | 'san' | 'mover' | 'beforeScore' | 'afterScore' | 'isCritical'
+  'beforeFen' | 'afterFen' | 'playedUci' | 'mover' | 'beforeScore' | 'afterScore' | 'isCritical'
 > & { facts: MoveFacts | null };
 const POSITIVE_CANDIDATES: { name: string; note: (ctx: PositiveContext) => string | null }[] = [
   { name: 'forces-mate',
@@ -382,7 +361,6 @@ const POSITIVE_CANDIDATES: { name: string; note: (ctx: PositiveContext) => strin
     } },
   { name: 'only-move', note: ({ isCritical }) => (isCritical ? 'The only move to hold.' : null) },
   { name: 'promotion', note: ({ beforeFen, playedUci }) => promotionNote(beforeFen, playedUci) },
-  { name: 'castle', note: ({ beforeFen, playedUci, san }) => castleNote(beforeFen, playedUci, san) },
   { name: 'skewer', note: ({ facts, mover }) => (facts ? skewerPlayedClaim(facts, mover) : null) },
   { name: 'fork', note: ({ facts, mover }) => (facts ? forkPlayedClaim(facts, mover) : null) },
   { name: 'en-passant', note: ({ beforeFen, playedUci }) => enPassantNote(beforeFen, playedUci) },
@@ -551,7 +529,7 @@ export function verdictInputsForPly(inputs: VerdictInputs): VerdictFacts {
   if (praise && terminal === null && !deadDraw && !underpromotionAvoids && !opening) {
     const { prevUci, prevBeforeFen } = inputs;
     const facts = createMoveFacts({ beforeFen, playedUci, mover, prevBeforeFen, prevUci });
-    const ctx: PositiveContext = { beforeFen, afterFen, playedUci, san, mover, beforeScore, afterScore, isCritical, facts };
+    const ctx: PositiveContext = { beforeFen, afterFen, playedUci, mover, beforeScore, afterScore, isCritical, facts };
     for (const candidate of POSITIVE_CANDIDATES) {
       positiveNote = candidate.note(ctx);
       if (positiveNote) break;

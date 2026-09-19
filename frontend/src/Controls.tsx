@@ -25,6 +25,8 @@ export function PlayControls({ state, dispatch }: Props) {
     </details>
     <label className="feedback-setup" htmlFor="feedback-enabled"><input id="feedback-enabled" type="checkbox" checked={state.feedback} onChange={event => dispatch({ type: 'feedback', enabled: event.target.checked })} /> Evaluate my moves with Stockfish after I play them</label>
     <p>Retrospective only: your move is evaluated after you commit it, never hinted beforehand.</p>
+    <label className="feedback-setup" htmlFor="verdict-enabled"><input id="verdict-enabled" type="checkbox" checked={state.playVerdict} onChange={event => dispatch({ type: 'play-verdict', enabled: event.target.checked })} /> Show move verdict while playing</label>
+    <p>Shows the verdict sentence under the move list once your move is evaluated. Requires move evaluation above.</p>
     <div className="actions"><Button id="start-game" variant="primary" onClick={() => dispatch({ type: 'new', id: newId(), createdAt: new Date().toISOString(), resolvedColor: resolveSide(state.setup!.userColor) })}>{state.started ? 'Start new game' : 'Start game'}</Button>{state.started && <Button onClick={() => dispatch({ type: 'cancel-setup' })}>Cancel</Button>}</div>
   </section>;
   return state.started ? <Dialog title="Start a new game?" onCancel={() => dispatch({ type: 'cancel-setup' })}>{content}</Dialog> : content;

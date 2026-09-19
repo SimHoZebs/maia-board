@@ -25,6 +25,14 @@ describe('feedback settings', () => {
     localStorage.setItem(KEYS.feedback, JSON.stringify(true));
     expect(initialState().feedback).toBe(true);
   });
+  it('defaults play verdict off and round-trips through storage', () => {
+    expect(initialState().playVerdict).toBe(false);
+    const on = reducer(initialState(), { type: 'play-verdict', enabled: true });
+    expect(on.playVerdict).toBe(true);
+    expect(reducer(on, { type: 'play-verdict', enabled: true })).toBe(on);
+    localStorage.setItem(KEYS.playVerdict, JSON.stringify(true));
+    expect(initialState().playVerdict).toBe(true);
+  });
   it('preserves loading indicator settings', () => {
     expect(initialState().badgeLoading).toBe('reel');
     expect(reducer(initialState(), { type: 'badge-loading', loading: 'shimmer' }).badgeLoading).toBe('shimmer');
@@ -67,6 +75,7 @@ describe('timeline-backed move feedback', () => {
     const first = compute(), stats = { reviews: 0 };
     expect(first.qualities[0]).toBeDefined(); expect(first.qualities[1]).toBeUndefined();
     expect(first.qualities[2]).toBeDefined(); expect(first.qualities[3]).toBeUndefined();
+    expect(first.grades).toHaveLength(first.qualities.length);
     const count = timelineBuildsForTests(), second = compute(first.memo, { stats });
     // Raw SF verdicts reuse (zero reviews); the translated display array is
     // fresh per call since Top/Holds translate into new Best/Good objects.

@@ -134,7 +134,7 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
   useEffect(() => {
     let errorMessage = '';
     for (const [key, value] of [
-      [KEYS.settings, state.play.settings], [KEYS.feedback, state.feedback], [KEYS.badgeLoading, state.badgeLoading], [KEYS.coordinatesOnSquares, state.coordinatesOnSquares], [KEYS.boardOrientation, state.boardOrientation], [KEYS.bestLineWindow, state.bestLineWindow], [KEYS.arrows, state.arrows], [KEYS.arrowBasis, state.arrowBasis],
+      [KEYS.settings, state.play.settings], [KEYS.feedback, state.feedback], [KEYS.playVerdict, state.playVerdict], [KEYS.badgeLoading, state.badgeLoading], [KEYS.coordinatesOnSquares, state.coordinatesOnSquares], [KEYS.boardOrientation, state.boardOrientation], [KEYS.bestLineWindow, state.bestLineWindow], [KEYS.arrows, state.arrows], [KEYS.arrowBasis, state.arrowBasis],
       [STOCKFISH_STORAGE_KEY, state.stockfish], [KEYS.analysis, state.inputs],
       [KEYS.snapshot, state.analysisLoaded ? snapshotOf(state.analysis, state.analysisSourceId ?? undefined) : null],
     ] as const) {
@@ -153,7 +153,7 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
       else lastPersisted.current.set(key, serialized);
     }
     sync.setPreferenceError(errorMessage);
-  }, [state.play.settings, state.feedback, state.badgeLoading, state.coordinatesOnSquares, state.boardOrientation, state.bestLineWindow, state.arrows, state.arrowBasis, state.stockfish, state.inputs, state.analysisLoaded, state.analysis, state.analysisSourceId, sync]);
+  }, [state.play.settings, state.feedback, state.playVerdict, state.badgeLoading, state.coordinatesOnSquares, state.boardOrientation, state.bestLineWindow, state.arrows, state.arrowBasis, state.stockfish, state.inputs, state.analysisLoaded, state.analysis, state.analysisSourceId, sync]);
 
   return { state, dispatch, sync, repository };
 }

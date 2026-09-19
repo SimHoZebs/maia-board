@@ -118,9 +118,12 @@ first. The move verdict in `InsightPanel.tsx` reports terminal facts first
 (mate with miniature names, stalemate, repetition, fifty-move), then exact
 book hits, then the quality-by-rarity synthesis with novelty and
 pawn-damage notes for mistakes (`src/theory.ts`), and the single strongest
-why for good moves — fresh mate force, only move to hold, promotion,
-castling, fork, en passant, immediate material gain, or escape from
-check — instead of restating engine grades. Table source, pin, and regeneration are
+  why for good moves — fresh mate force, only move to hold, promotion,
+  fork, en passant, immediate material gain, or escape from
+  check — instead of restating engine grades. `PlayVerdict.tsx` renders the
+  same sentence under the move list in Play when both `feedback` and the
+  `playVerdict` option are on; it grades the user's moves only and has no
+  explore-line button. Table source, pin, and regeneration are
 documented in [backend README](../backend/README.md#game-and-engine-api).
 
 ## Browser checks

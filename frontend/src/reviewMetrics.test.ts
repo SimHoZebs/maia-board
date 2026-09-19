@@ -310,8 +310,8 @@ it('appends the positive why only for praise grades', () => {
   expect(describeMove({ san: 'Nd4', quality: quality('Great'), rarity: rarityOf('Rare'), positiveNote: "Nd4 forks Black's bishop and queen." }))
     .toBe("A rare find. Nd4 forks Black's bishop and queen.");
   expect(describeMove({
-    san: 'O-O', quality: quality('Good'), rarity: rarityOf('Uncommon'), positiveNote: 'Castles kingside.',
-  })).toBe('A meaningful minority that holds. Castles kingside.');
+    san: 'Kd1', quality: quality('Good'), rarity: rarityOf('Uncommon'), positiveNote: 'Gets out of check.',
+  })).toBe('A meaningful minority that holds. Gets out of check.');
   // Novelty still prefixes the synthesis the note appends to.
   expect(describeMove({
     san: 'exd5', quality: quality('Best'), rarity,

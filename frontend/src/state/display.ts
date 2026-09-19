@@ -21,12 +21,13 @@ export function normalizeCoordinatesOnSquares(stored: unknown): boolean {
   return stored === false ? false : true;
 }
 
-export type DisplayState = Pick<State, 'stockfish' | 'feedback' | 'badgeLoading' | 'coordinatesOnSquares' | 'boardOrientation' | 'bestLineWindow' | 'arrows' | 'arrowBasis' | 'flipped' | 'preview'>;
+export type DisplayState = Pick<State, 'stockfish' | 'feedback' | 'playVerdict' | 'badgeLoading' | 'coordinatesOnSquares' | 'boardOrientation' | 'bestLineWindow' | 'arrows' | 'arrowBasis' | 'flipped' | 'preview'>;
 
 export function initialDisplayState(): DisplayState {
   return {
     stockfish: normalizeStockfishSettings(readStorage(STOCKFISH_STORAGE_KEY)),
     feedback: readStorage<boolean>(KEYS.feedback) === true,
+    playVerdict: readStorage<boolean>(KEYS.playVerdict) === true,
     badgeLoading: normalizeBadgeLoading(readStorage<unknown>(KEYS.badgeLoading)),
     coordinatesOnSquares: normalizeCoordinatesOnSquares(readStorage<unknown>(KEYS.coordinatesOnSquares)),
     boardOrientation: normalizeBoardOrientation(readStorage<unknown>(KEYS.boardOrientation)),
@@ -42,6 +43,7 @@ export function reduceDisplay(state: State, action: Action): State | undefined {
   switch (action.type) {
     case 'stockfish-settings': return { ...state, stockfish: normalizeStockfishSettings({ ...state.stockfish, ...action.settings }) };
     case 'feedback': return state.feedback === action.enabled ? state : { ...state, feedback: action.enabled };
+    case 'play-verdict': return state.playVerdict === action.enabled ? state : { ...state, playVerdict: action.enabled };
     case 'badge-loading': return state.badgeLoading === action.loading ? state : { ...state, badgeLoading: action.loading };
     case 'coordinates-on-squares': return state.coordinatesOnSquares === action.enabled ? state : { ...state, coordinatesOnSquares: action.enabled };
     case 'board-orientation': return state.boardOrientation === action.orientation ? state : { ...state, boardOrientation: action.orientation };

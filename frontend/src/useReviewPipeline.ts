@@ -9,7 +9,7 @@ import { useLineScope } from './useLineScope';
 import { useLookupRestore } from './useLookupRestore';
 import { useServerBatch } from './useServerBatch';
 import { computeLineQualities, type UnifiedMemo } from './qualities';
-import { effectiveQuality, maiaRarity, type EngineGrade, type Evaluation, type Quality } from './reviewMetrics';
+import { effectiveQuality, maiaRarity, type EngineGrade, type Evaluation, type ObjectivePoint, type Quality } from './reviewMetrics';
 import { selectMaiaDisplay, type MaiaDisplayEntry } from './maiaDisplay';
 
 // Configuration expressing room differences, not architecture. One pipeline
@@ -73,7 +73,18 @@ export function translateReviewQualities(args: {
   });
 }
 
-export type PlayFeedback = { active: boolean; qualities: (Quality | undefined)[]; error?: string };
+export type PlayFeedback = {
+  active: boolean;
+  qualities: (Quality | undefined)[];
+  error?: string;
+  timeline: Timeline;
+  nodes: ReviewNode[];
+  evaluations: (Evaluation | undefined)[];
+  maiaResults: (MoveResponse | undefined)[];
+  objectivePoints: (ObjectivePoint | undefined)[];
+  engineGrades: (EngineGrade | undefined)[];
+  settings: ReviewSettings;
+};
 export type PlayQualitiesMemo = UnifiedMemo;
 export type PlayQualitiesStats = { reviews: number };
 
@@ -136,7 +147,7 @@ export function computePlayQualities(args: {
   sfLookup: (node: ReviewNode) => Evaluation | undefined; maiaLookup: (node: ReviewNode) => MoveResponse | undefined;
   objective?: ObjectiveLane;
   sfPending: Set<string>; maiaPending: Set<string>; prev: PlayQualitiesMemo | null; stats?: PlayQualitiesStats;
-}): { qualities: (Quality | undefined)[]; memo: PlayQualitiesMemo } {
+}): { qualities: (Quality | undefined)[]; memo: PlayQualitiesMemo; grades: (EngineGrade | undefined)[] } {
   const { gameId, timeline, userColor, settings, sfLookup, maiaLookup, objective, sfPending, maiaPending, prev, stats } = args;
   const nodes = reviewNodes(timeline);
   // Pass 1 stays engine-fact grading (memo-safe: keys never see objective
@@ -165,7 +176,7 @@ export function computePlayQualities(args: {
     }
     return effectiveQuality(grade, maiaRarity(maia, move));
   });
-  return { qualities, memo: sf.memo };
+  return { qualities, memo: sf.memo, grades: sf.qualities };
 }
 
 // Shared restore pair: one wiring for both rooms — the display restore plus
@@ -607,11 +618,15 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   // Objective lane for the active source, built from full-timeline rows so
   // indexes align with the pure grader's internal nodes below.
   const fullNodes = useMemo(() => reviewNodes(timeline), [timeline]);
+  const evaluations = useMemo(() => fullNodes.map(node => coordinator.result('sf', node, settings) as Evaluation | undefined),
+    [fullNodes, settings, version, coordinator]);
+  const maiaResults = useMemo(() => fullNodes.map(node => coordinator.result('maia', node, settings)),
+    [fullNodes, settings, version, coordinator]);
   const lane: ObjectiveLane = useMemo(() => ({
-    points: lanePoints(laneRows(fullNodes, { coordinator, sfEvaluations: fullNodes.map(node => coordinator.result('sf', node, settings)) }), fullNodes),
+    points: lanePoints(laneRows(fullNodes, { coordinator, sfEvaluations: evaluations }), fullNodes),
     pending: lanePending(coordinator),
     keyFor: (node: ReviewNode) => laneKey(node, () => settings),
-  }), [fullNodes, settings, version, coordinator]);
+  }), [fullNodes, evaluations, settings, version, coordinator]);
   // Same effect-free memo cache as the analysis room: synchronous
   // carry-forward, content-keyed so a speculative cache can only cost a
   // recompute.
@@ -629,7 +644,12 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   // there is nothing to prune or cancel beyond the line scope's own abort.
   // Badges settle on the objective lane via computePlayQualities; the
   // coordinator keeps sole ownership of its queues.
-  return { active, qualities: computed?.qualities ?? [], error: sustainedError };
+  return {
+    active, qualities: computed?.qualities ?? [], error: sustainedError,
+    timeline, nodes: fullNodes, evaluations, maiaResults,
+    objectivePoints: lane.points, engineGrades: computed?.grades ?? [],
+    settings,
+  };
 }
 
 type AnalysisResult = ReturnType<typeof useAnalysisRoom>;

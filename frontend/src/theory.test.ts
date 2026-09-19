@@ -3,7 +3,6 @@ import { Chess } from 'chess.js';
 import { buildTimeline } from './domain';
 import { START_FEN } from './domain';
 import {
-  castleNote,
   classifyTerminal,
   enPassantNote,
   escapeNote,
@@ -238,21 +237,14 @@ describe('positive shape notes', () => {
     expect(forcesMateIn(cp, null, 'white')).toBeNull();
   });
 
-  it('names promotions, castling sides, en passant, and escapes', () => {
+  it('names promotions, en passant, and escapes', () => {
     const promoFen = '8/P7/7k/8/8/8/8/7K w - - 0 1';
-    const castleFen = '4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1';
     expect(promotionNote(promoFen, 'a7a8q')).toBe('Promotes to a queen.');
     expect(promotionNote(promoFen, 'a7a8n')).toBe('Promotes to a knight.');
     expect(promotionNote(START_FEN, 'e2e4')).toBeNull();
     // Stale UCI on an inconsistent board stays silent.
     expect(promotionNote(START_FEN, 'a7a8q')).toBeNull();
     expect(promotionNote('bad', 'a7a8q')).toBeNull();
-    expect(castleNote(castleFen, 'e1g1', 'O-O')).toBe('Castles kingside.');
-    expect(castleNote(castleFen, 'e1c1', 'O-O-O+')).toBe('Castles queenside.');
-    expect(castleNote(START_FEN, 'g1f3', 'Nf3')).toBeNull();
-    // Stale SAN on an inconsistent board stays silent.
-    expect(castleNote(START_FEN, 'e2e4', 'O-O')).toBeNull();
-    expect(castleNote(castleFen, 'e1g1', 'O-O-O')).toBeNull();
     expect(enPassantNote('4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1', 'e5d6')).toBe('Takes en passant.');
     expect(enPassantNote(START_FEN, 'e2e4')).toBeNull();
     expect(enPassantNote('bad', 'e2e4')).toBeNull();
@@ -447,7 +439,7 @@ describe('verdictInputsForPly', () => {
       san: 'exd6',
       quality: quality('Best'),
     })).positiveNote).toBe('Takes en passant.');
-    // Shape notes: promotion, castle, fork, escape.
+    // Shape notes: promotion, fork, escape.
     expect(verdictInputsForPly(baseInputs({
       beforeFen: '8/P7/7k/8/8/8/8/7K w - - 0 1',
       afterFen: 'Q6k/8/8/8/8/8/8/7K b - - 0 1',
@@ -461,7 +453,7 @@ describe('verdictInputsForPly', () => {
       playedUci: 'e1g1',
       san: 'O-O',
       quality: quality('Best'),
-    })).positiveNote).toBe('Castles kingside.');
+    })).positiveNote).toBeNull();
     expect(verdictInputsForPly(baseInputs({
       beforeFen: '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1',
       afterFen: '4k3/8/8/8/3n4/1Q6/2B5/4K3 w - - 1 2',

@@ -22,6 +22,7 @@ import { destinations } from './BoardRouter';
 import { RegionRecorder } from './perfCommits';
 import { useLineOpenings } from './openings';
 import { capturedGlyph, capturedLabel, capturesFromLine, materialFromFen, materialLeadFor, type CapturedPiece } from './material';
+import { PlayVerdict } from './PlayVerdict';
 
 function MaterialSummary({ by, captures, lead }: { by: 'white' | 'black'; captures: CapturedPiece[]; lead: number }) {
   if (!captures.length && lead <= 0) return null;
@@ -233,9 +234,9 @@ export function PlayWorkspace({ state, dispatch }: Props) {
       <RegionRecorder id="board-stage">
         <BoardShell state={state} dispatch={dispatch} ready={ready} toolbar={ready && mobileBar ? <div className="board-actions board-toolbar" role="toolbar" aria-label="Board actions">{tools}</div> : null}
           position={position} transition={{ line: state.play.id, ply }} orientation={orientation} enabled={enabled} over={over} withEvaluation={false} boardResetKey={boardResetKey} shapes={playShapes} evalBar={null} renderStrip={strip}
-          movesPanel={ready ? <MovesPanel sans={full.sanMoves} ply={ply} initialFen={START_FEN} qualities={moveFeedback.qualities} badgeLoading={state.badgeLoading} onView={ply => dispatch({ type: 'view', ply })} onOriginalView={ply => { dispatch({ type: 'original' }); dispatch({ type: 'view', ply }); }} analysis={false}
+          movesPanel={ready ? <><MovesPanel sans={full.sanMoves} ply={ply} initialFen={START_FEN} qualities={moveFeedback.qualities} badgeLoading={state.badgeLoading} onView={ply => dispatch({ type: 'view', ply })} onOriginalView={ply => { dispatch({ type: 'original' }); dispatch({ type: 'view', ply }); }} analysis={false}
             original={undefined} hideNav={mobileBar}
-            branchUp={mobileBar} tools={mobileBar ? undefined : tools} bookFlags={playBookFlags} /> : null}
+            branchUp={mobileBar} tools={mobileBar ? undefined : tools} bookFlags={playBookFlags} /><PlayVerdict state={state} feedback={moveFeedback} /></> : null}
           resultOverlay={over ? <div className="game-result" role="status"><div className="result-copy"><span className="result-eyebrow">Game over</span><strong className="result-text">{winner && <span className={`side-dot ${winner}`} aria-hidden="true" />}{resultText}</strong></div><div className="result-actions"><Button variant="primary" onClick={() => dispatch({ type: 'review' })}>Review game</Button><Button id="new-game-again" onClick={() => dispatch({ type: 'setup' })}>New game</Button></div></div> : null} />
       </RegionRecorder>
     </div>
