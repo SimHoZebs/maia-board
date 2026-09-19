@@ -184,6 +184,27 @@ export function secondPoolClause(rarity: Rarity | undefined | null, rarity2400: 
   if (own === 'Expected' || own === 'Uncommon') return 'Stronger players rarely play this.';
   return 'Rare at every level.';
 }
+// Exact-agreement fusion: when both pools shun the move under the same word
+// (Rare/Rare, Absent/Absent), the head and the every-level clause merge into
+// one sentence ("A blunder rare at every level."). Mixed pools keep both
+// sentences — no single rarity word fits a disagreement. Null unless the
+// second-pool rule already fired (same grades, same clause), so priority
+// against material/pawn notes is unchanged: describeMove only consults this
+// on a second-pool win.
+function fuseEveryLevel(
+  quality: Quality | undefined,
+  rarity: Rarity | undefined | null,
+  rarity2400: Rarity | undefined | null,
+): string | null {
+  if (!quality || !rarity || !rarity2400) return null;
+  const label = quality.label;
+  if (label !== 'Blunder' && label !== 'Mistake' && label !== 'Inaccuracy') return null;
+  const noun = negativeNoun(quality);
+  const article = noun === 'inaccuracy' ? 'An' : 'A';
+  if (rarity.label === 'Rare' && rarity2400.label === 'Rare') return `${article} ${noun} rare at every level.`;
+  if (rarity.label === 'Absent' && rarity2400.label === 'Absent') return `${article} ${noun} unlisted at every level.`;
+  return null;
+}
 // Decision list for the move verdict. Array order IS the priority: the
 // first matching rule wins, so reordering rules reorders the verdict. Each
 // rule owns its match and its wording together — add a condition by adding
@@ -288,13 +309,28 @@ const NOTE_RULES: NoteRule[] = [
 export function describeMove(args: VerdictArgs): string | null {
   const standalone = STANDALONE_RULES.find(rule => rule.match(args));
   if (standalone) return standalone.render(args);
-  const { quality, rarity, bestRarity, novelty } = args;
+  const { quality, rarity, bestRarity, novelty, rarity2400 } = args;
   if (!quality || quality.label === 'Unreviewed') return null;
   const base = rarityVerdict(quality, rarity, bestRarity);
   if (!base) return null;
   const head = novelty ? `Leaves ${novelty.priorName} book. ${base}` : base;
-  const note = NOTE_RULES.find(rule => rule.match(args));
-  return note ? `${head} ${note.render(args)}` : head;
+  const noteRule = NOTE_RULES.find(rule => rule.match(args));
+  if (noteRule?.name === 'second-pool') {
+    const fused = fuseEveryLevel(quality, rarity, rarity2400);
+    if (fused) return novelty ? `Leaves ${novelty.priorName} book. ${fused}` : fused;
+  }
+  return noteRule ? `${head} ${noteRule.render(args)}` : head;
+}
+// Rule-trace seam for the verdict lab: names the winning standalone and
+// note rules without rendering. Mirrors describeMove's priority exactly
+// (first match wins); synthesis-branch notes only apply when a head exists.
+export function matchedRuleNames(args: VerdictArgs): { standalone: string | null; note: string | null } {
+  const standalone = STANDALONE_RULES.find(rule => rule.match(args));
+  if (standalone) return { standalone: standalone.name, note: null };
+  const { quality, rarity, bestRarity } = args;
+  if (!quality || quality.label === 'Unreviewed') return { standalone: null, note: null };
+  if (!rarityVerdict(quality, rarity, bestRarity)) return { standalone: null, note: null };
+  return { standalone: null, note: NOTE_RULES.find(rule => rule.match(args))?.name ?? null };
 }
 export function whiteWin(score: Score): number {
   return score.type === 'cp' ? 100 / (1 + Math.exp(-.00368208 * score.value)) : (score.winning_side ?? (score.value > 0 ? 'white' : 'black')) === 'white' ? 100 : 0;

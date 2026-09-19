@@ -378,10 +378,21 @@ it('appends second-pool sociology after the material consequence, never before i
   // Material consequence keeps priority; sociology follows it.
   expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, rarity2400: rare2400, materialNote: note }))
     .toBe(`A common blunder. ${note}`);
-  // Rare-everywhere composes with the rare head.
+  // Rare-everywhere fuses with the rare head into one sentence.
   const rare: Rarity = { label: 'Rare', r: 0.2, prob: 0.08, topProb: 0.4 };
   expect(describeMove({ san: 'h4', quality: blunder, rarity: rare, rarity2400: rare2400 }))
+    .toBe('A blunder rare at every level.');
+  // Exact agreement fuses; mixed pools keep both sentences.
+  const absent: Rarity = { label: 'Absent', r: null, prob: null, topProb: 0.4 };
+  const absent2400: Rarity = { label: 'Absent', r: null, prob: null, topProb: 0.4 };
+  expect(describeMove({ san: 'h4', quality: blunder, rarity: absent, rarity2400: absent2400 }))
+    .toBe('A blunder unlisted at every level.');
+  expect(describeMove({ san: 'h4', quality: blunder, rarity: absent, rarity2400: rare2400 }))
+    .toBe('An unlisted blunder. Rare at every level.');
+  expect(describeMove({ san: 'h4', quality: blunder, rarity: rare, rarity2400: absent2400 }))
     .toBe('A rare blunder. Rare at every level.');
+  expect(describeMove({ san: 'd5', quality: { ...blunder, label: 'Inaccuracy' }, rarity: rare, rarity2400: rare2400 }))
+    .toBe('An inaccuracy rare at every level.');
   // Agreement cells read exactly as before (no 2400 sentence).
   expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, rarity2400: expected }))
     .toBe('A common blunder.');
