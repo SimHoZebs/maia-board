@@ -45,7 +45,6 @@
 .segmented input:checked + span { color: #e6f0d5; background: #414b35; }
 .segmented input:focus-visible + span { outline: 2px solid #d2dfbd; outline-offset: -2px; }
 .settings-control .field span { font-size: 12px; color: var(--muted); }
-.settings-control output { color: var(--accent); font-variant-numeric: tabular-nums; }
 .engine-settings input[type=number] { width: 120px; }
 .engine-settings input[type=range] { width: 100%; accent-color: var(--accent); }
 /* Review-arrow rows: label above, color + thickness + value on one wrap row. */
@@ -54,7 +53,21 @@
 .arrow-inputs input[type=color] { width: 40px; height: 32px; padding: 2px; border: 1px solid var(--line); border-radius: 6px; background: transparent; }
 .arrow-inputs input[type=range] { flex: 1; min-width: 140px; }
 .arrow-inputs input[type=number] { width: 72px; }
-.arrow-inputs output { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .settings-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 16px; }
 .settings-footer span { color: var(--muted); font-size: 12px; }
+/* Live decorative previews: mirror the committed value, never carry meaning
+   alone (controls already name every value accessibly). */
+.setting-preview { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+/* Consolidated display preview: one live demo board (king + pawn) carrying
+   the real review arrows. Fixed small size so it never pushes layout. */
+.display-preview { align-items: flex-start; }
+.display-preview-board { flex: none; width: 208px; height: 208px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.display-preview-board > div { width: 100%; height: 100%; }
+/* Slice window: clips a 4x4 region out of the 2x board. One display square is
+   25% of the window, so offsets track the demo action per orientation. */
+.display-slice-window { flex: none; width: 208px; height: 208px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; position: relative; }
+.display-slice-inner { position: absolute; width: 200%; height: 200%; }
+.display-slice-inner.slice-white { left: -75%; top: -100%; }
+.display-slice-inner.slice-black { left: -50%; top: 0; }
+.display-slice-inner .display-preview-board { width: 100%; height: 100%; border: none; border-radius: 0; overflow: visible; }
 @media (max-width: 480px) { .engine-settings { margin: 12px 0; } .settings-footer { align-items: flex-start; flex-direction: column; } }

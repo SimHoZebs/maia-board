@@ -1,7 +1,8 @@
 import { Button } from './components';
 import type { Props } from './Controls';
 import { defaultStockfishSettings } from './stockfishSettings';
-import { ARROW_WIDTH_MAX, ARROW_WIDTH_MIN, type ArrowSettingsKey } from './arrowSettings';
+import { ARROW_WIDTH_MIN, ARROW_WIDTH_MAX, type ArrowSettingsKey } from './arrowSettings';
+import { DisplayBoardPreview } from './DisplayPreviewBoard';
 import { QualityBadge, type BadgeLoading } from './ReviewCharts';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import './settings.css';
@@ -42,14 +43,15 @@ export function SettingsPage({ state, dispatch }: Props) {
     { value: 'black' as const, label: 'Black' },
   ];
   const arrowRows: { key: ArrowSettingsKey; label: string; hint: string }[] = [
-    { key: 'actual', label: 'Played move', hint: 'White arrow tracing the game move' },
-    { key: 'maia', label: 'Maia suggestion', hint: "Display-Elo Maia's top choice" },
-    { key: 'objective', label: 'Maia 2400 suggestion', hint: "Objective top choice from the same position" },
-    { key: 'candidate', label: 'Preview', hint: 'Hover or keyboard preview before exploring' },
+    { key: 'actual', label: 'Played move', hint: 'The game move' },
+    { key: 'maia', label: 'Maia suggestion', hint: 'Display-Elo top choice' },
+    { key: 'objective', label: 'Maia 2400 suggestion', hint: 'Maia 2400 top choice' },
+    { key: 'candidate', label: 'Preview', hint: 'Hover/keyboard preview' },
   ];
   return <section className="engine-settings panel" aria-labelledby="settings-title">
     <p className="settings-eyebrow">BOARD</p>
     <h2 className="settings-subhead">Display</h2>
+    <DisplayBoardPreview orientation={state.boardOrientation} coordinatesOnSquares={state.coordinatesOnSquares} basis={state.arrowBasis} arrows={state.arrows} />
     <div className="settings-control">
       <div className="field field--row">
         <span className="field-label" id="board-orientation-label">Board orientation</span>
@@ -62,7 +64,7 @@ export function SettingsPage({ state, dispatch }: Props) {
           ))}
         </div>
       </div>
-      <p>Auto puts your side at the bottom in play, and the reviewed side (or starting side) at the bottom in analysis. White or Black fixes that side to the bottom.</p>
+      <p>Auto follows your side. White or Black pins that side down.</p>
     </div>
     <div className="settings-control">
       <div className="field field--row">
@@ -78,7 +80,7 @@ export function SettingsPage({ state, dispatch }: Props) {
           </label>
         </div>
       </div>
-      <p>Inside squares stay aligned at any board size. Outside matches the classic look.</p>
+      <p>Inside stays aligned at any size. Outside is the classic look.</p>
     </div>
     <div className="settings-control">
       <div className="field field--row">
@@ -94,14 +96,13 @@ export function SettingsPage({ state, dispatch }: Props) {
           </label>
         </div>
       </div>
-      <p>Next move projects forward from the viewed position. Past move shows the options for the move leading into it, matching the move analysis verdict.</p>
+      <p>Next looks forward from here. Past shows the move that led here.</p>
     </div>
     <div className="settings-control">
       <div className="field field--row">
         <span className="field-label" id="arrows-label">Review arrows</span>
         <Button onClick={() => dispatch({ type: 'arrow-settings-reset' })}>Reset arrow defaults</Button>
       </div>
-      <p>Color and thickness per arrow. Thickness {ARROW_WIDTH_MIN}–{ARROW_WIDTH_MAX}; {ARROW_WIDTH_MAX} fills a full square.</p>
       {arrowRows.map(row => {
         const style = state.arrows[row.key];
         return <div className="field arrow-row" key={row.key}>
@@ -110,7 +111,7 @@ export function SettingsPage({ state, dispatch }: Props) {
             <input id={`arrow-${row.key}-color`} type="color" value={style.color} onChange={e => dispatch({ type: 'arrow-settings', source: row.key, style: { color: e.target.value } })} aria-label={`${row.label} color`} />
             <input id={`arrow-${row.key}-width`} type="range" min={ARROW_WIDTH_MIN} max={ARROW_WIDTH_MAX} step={1} value={style.width} onChange={e => dispatch({ type: 'arrow-settings', source: row.key, style: { width: e.target.valueAsNumber } })} aria-label={`${row.label} thickness`} />
             <NumberSetting id={`arrow-${row.key}-width-number`} label={`${row.label} thickness value`} min={ARROW_WIDTH_MIN} max={ARROW_WIDTH_MAX} step={1} value={style.width} onChange={width => dispatch({ type: 'arrow-settings', source: row.key, style: { width } })} />
-            <output aria-label={`${row.label} thickness as share of a square`}>{Math.round(style.width / ARROW_WIDTH_MAX * 100)}% of a square</output>
+            <span>units · 64 = a square</span>
           </div>
         </div>;
       })}
@@ -148,7 +149,7 @@ export function SettingsPage({ state, dispatch }: Props) {
           ))}
         </div>
       </div>
-      <p>Compare up to five alternatives. More lines share the available search time.</p>
+      <p>More lines split the same search time.</p>
     </div>
     <div className="settings-control">
       <div className="field field--row">
@@ -156,13 +157,13 @@ export function SettingsPage({ state, dispatch }: Props) {
         <NumberSetting id="best-line-window" label="Best-line window plies" min={1} max={5} step={1} value={state.bestLineWindow} onChange={window => dispatch({ type: 'best-line-window', window })} />
         <span>plies of the top line</span>
       </div>
-      <p>How far down the best line the verdict reads for material and tactics. Longer windows catch slower wins; the line stays clickable.</p>
+      <p>How far down the top line the verdict reads. Longer catches slower wins.</p>
     </div>
-    <footer className="settings-footer"><span>Saved automatically in this browser</span><Button onClick={() => update(defaultStockfishSettings)}>Reset defaults</Button></footer>
+    <footer className="settings-footer"><Button onClick={() => update(defaultStockfishSettings)}>Reset defaults</Button></footer>
     <p className="settings-eyebrow">EXPERIMENTAL</p>
     <h2 className="settings-subhead">Interface experiments</h2>
     <div className="settings-control">
-      <span className="field" id="badge-loading-label">Pending evaluation badges <span>How move badges look while Stockfish is thinking</span></span>
+      <span className="field" id="badge-loading-label">Pending evaluation badges</span>
       <div className="badge-carousel" role="group" aria-labelledby="badge-loading-label">
         <button type="button" className="badge-nav" disabled={badgeIndex === 0} onClick={() => dispatch({ type: 'badge-loading', loading: badgeOptions[badgeIndex - 1].value })} aria-label={`Show ${badgeOptions[Math.max(0, badgeIndex - 1)].label}`}><ChevronLeft size={18} aria-hidden="true" /></button>
         <div className="badge-viewport">
