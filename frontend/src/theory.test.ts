@@ -11,6 +11,7 @@ import {
   matePattern,
   noveltyRef,
   pawnDamageNote,
+  pawnDamageNoteSkippingBest,
   parriesMateNote,
   promotionNote,
   underpromotionAvoidsStalemate,
@@ -219,6 +220,60 @@ describe('pawnDamageNote', () => {
   });
 });
 
+describe('pawnDamageNoteSkippingBest', () => {
+  const doubledBefore = 'rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2';
+  const doubledAfter = 'rnbqkbnr/pppp1ppp/8/3PP3/8/8/PPP1PPPP/RNBQKBNR b KQkq - 0 2';
+
+  it('stays silent when the played move is the best move', () => {
+    expect(pawnDamageNoteSkippingBest(doubledBefore, doubledAfter, 'white', 'd4e5', 'd4e5')).toBeNull();
+  });
+
+  it('keeps the note when the best is a quiet alternative', () => {
+    // g1f3 is legal from the doubled position and touches no pawns.
+    expect(pawnDamageNoteSkippingBest(doubledBefore, doubledAfter, 'white', 'd4e5', 'g1f3')).toBe('Doubles a pawn.');
+  });
+
+  it('stays silent when a different best move incurs the same doubling', () => {
+    // Both captures double one file and isolate three pawns.
+    const before = '4k3/8/8/2p1p3/3P4/8/2P1P3/4K3 w - - 0 1';
+    const afterDxc5 = new Chess(before);
+    afterDxc5.move({ from: 'd4', to: 'c5' });
+    expect(pawnDamageNote(before, afterDxc5.fen(), 'white')).toBe('Doubles a pawn. Isolates pawns.');
+    expect(pawnDamageNoteSkippingBest(before, afterDxc5.fen(), 'white', 'd4c5', 'd4e5')).toBeNull();
+  });
+
+  it('stays silent when a different best move incurs the same isolation', () => {
+    const before = '4k3/8/8/8/8/2p5/PP1PP3/4K3 w - - 0 1';
+    const afterBxc3 = new Chess(before);
+    afterBxc3.move({ from: 'b2', to: 'c3' });
+    expect(pawnDamageNote(before, afterBxc3.fen(), 'white')).toBe('Isolates a pawn.');
+    expect(pawnDamageNoteSkippingBest(before, afterBxc3.fen(), 'white', 'b2c3', 'd2c3')).toBeNull();
+  });
+
+  it('keeps only the excess damage beyond the forced damage, part-wise', () => {
+    // bxc3 doubles and isolates; dxc3 doubles only. The doubling is forced,
+    // the isolation is distinctive to the played move.
+    const before = '4k3/8/8/8/8/2p5/PPPP4/4K3 w - - 0 1';
+    const afterBxc3 = new Chess(before);
+    afterBxc3.move({ from: 'b2', to: 'c3' });
+    expect(pawnDamageNote(before, afterBxc3.fen(), 'white')).toBe('Doubles a pawn. Isolates a pawn.');
+    expect(pawnDamageNoteSkippingBest(before, afterBxc3.fen(), 'white', 'b2c3', 'd2c3')).toBe('Isolates a pawn.');
+    // The reverse: dxc3 doubles, bxc3 doubles too, so nothing distinctive.
+    const afterDxc3 = new Chess(before);
+    afterDxc3.move({ from: 'd2', to: 'c3' });
+    expect(pawnDamageNote(before, afterDxc3.fen(), 'white')).toBe('Doubles a pawn.');
+    expect(pawnDamageNoteSkippingBest(before, afterDxc3.fen(), 'white', 'd2c3', 'b2c3')).toBeNull();
+  });
+
+  it('keeps the note without best data, on illegal best moves, and on bad FENs', () => {
+    expect(pawnDamageNoteSkippingBest(doubledBefore, doubledAfter, 'white', 'd4e5', null)).toBe('Doubles a pawn.');
+    expect(pawnDamageNoteSkippingBest(doubledBefore, doubledAfter, 'white', 'd4e5', undefined)).toBe('Doubles a pawn.');
+    expect(pawnDamageNoteSkippingBest(doubledBefore, doubledAfter, 'white', 'd4e5', 'e2e9')).toBe('Doubles a pawn.');
+    expect(pawnDamageNoteSkippingBest('bad', doubledAfter, 'white', 'd4e5', 'g1f3')).toBeNull();
+    expect(pawnDamageNoteSkippingBest(START_FEN, START_FEN, 'white', 'e2e4', 'd2d4')).toBeNull();
+  });
+});
+
 describe('positive shape notes', () => {
   it('reads fresh mate forces, never accelerations or unevaluated pairs', () => {
     const cp = { type: 'cp' as const, value: 100 };
@@ -374,6 +429,36 @@ describe('verdictInputsForPly', () => {
     expect(verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Mistake') })).pawnNote).toBe('Doubles a pawn.');
     expect(verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Inaccuracy') })).pawnNote).toBe('Doubles a pawn.');
     expect(verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Good') })).pawnNote).toBeNull();
+  });
+
+  it('suppresses pawn notes when the played move is the best or the best shares the damage', () => {
+    const doubled = {
+      beforeFen: 'rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2',
+      afterFen: 'rnbqkbnr/pppp1ppp/8/3PP3/8/8/PPP1PPPP/RNBQKBNR b KQkq - 0 2',
+      playedUci: 'd4e5',
+      san: 'dxe5',
+    };
+    // Played IS the best: no blame note even on a damage grade.
+    expect(
+      verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Mistake'), bestUci: 'd4e5' })).pawnNote,
+    ).toBeNull();
+    // Quiet best alternative: the note stays.
+    expect(
+      verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Mistake'), bestUci: 'g1f3' })).pawnNote,
+    ).toBe('Doubles a pawn.');
+    // Different best that doubles the same way: forced damage stays silent.
+    const forcedBefore = '4k3/8/8/2p1p3/3P4/8/2P1P3/4K3 w - - 0 1';
+    const forcedGame = new Chess(forcedBefore);
+    forcedGame.move({ from: 'd4', to: 'c5' });
+    const forced = {
+      beforeFen: forcedBefore,
+      playedUci: 'd4c5',
+      san: 'dxc5',
+      afterFen: forcedGame.fen(),
+    };
+    expect(
+      verdictInputsForPly(baseInputs({ ...forced, quality: quality('Mistake'), bestUci: 'd4e5' })).pawnNote,
+    ).toBeNull();
   });
 
   it('ranks a parrying capture as a gain story, not a parry story', () => {

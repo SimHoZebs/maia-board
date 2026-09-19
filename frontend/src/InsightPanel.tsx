@@ -121,6 +121,15 @@ export function MoveAnalysis({
       state.bestLineWindow,
     ) : null;
   const materialNote = bestLine?.note ?? null;
+  // Best move for pawn-note suppression: the highest-winrate objective
+  // candidate when listed (max expected), else the grading best (objective
+  // top else Stockfish best_move). "Doubles a pawn" reads as blame, so it
+  // stays silent when the played move IS the best or the best incurs the
+  // same structure damage.
+  const winrateBest = candidates?.entries.length
+    ? candidates.entries.reduce((a, b) => (b.expected > a.expected ? b : a)).uci
+    : undefined;
+  const bestUci = winrateBest ?? review.objective[focus]?.top ?? evaluation?.best_move ?? null;
   // Theory facts (terminal classification, dead draws, novelties, pawn
   // damage, positive whys) derive from the timeline rows, so branches
   // resolve through their own history. verdictInputsForPly owns fact gates;
@@ -144,6 +153,7 @@ export function MoveAnalysis({
       mover: review.nodes[focus].turn === 'white' ? 'white' : 'black',
       bestRarity: review.bestRarities?.[focus],
       materialNote,
+      bestUci,
       beforeScore: evaluation?.score ?? null,
       afterScore: afterEvaluation?.score ?? null,
       isCritical: review.engineGrades?.[focus]?.label === 'Critical',

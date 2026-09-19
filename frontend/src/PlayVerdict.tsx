@@ -59,6 +59,11 @@ export function PlayVerdict({ state, feedback }: { state: State; feedback: PlayF
     mover,
     bestRarity,
     materialNote,
+    // Highest-winrate proxy for pawn-note suppression (no candidate list in
+    // play room): objective top else Stockfish best. "Doubles a pawn" stays
+    // silent when the played move IS the best or the best incurs the same
+    // damage.
+    bestUci: best ?? null,
     beforeScore: evaluation?.score ?? null,
     afterScore: afterEvaluation?.score ?? null,
     isCritical: feedback.engineGrades[focus]?.label === 'Critical',

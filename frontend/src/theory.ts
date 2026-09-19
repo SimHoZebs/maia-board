@@ -395,10 +395,11 @@ function pawnFileCounts(fen: string, color: 'w' | 'b'): number[] | null {
   return counts;
 }
 
-// New pawn-structure damage from this move, observed on the mover's own
-// pawns: newly doubled files and newly isolated pawns. Observation only —
-// no 'no compensation' claim, which a board scan cannot prove.
-export function pawnDamageNote(beforeFen: string, afterFen: string, mover: MaiaSide): string | null {
+// Newly added pawn-structure damage from before→after, observed on the
+// mover's own pawns: newly doubled files and newly isolated pawns. Null on
+// bad FENs. Counts may be negative when a move removes damage; callers only
+// report positive values.
+function newPawnDamage(beforeFen: string, afterFen: string, mover: MaiaSide): { doubled: number; isolated: number } | null {
   const color = mover === 'white' ? 'w' : 'b';
   const before = pawnFileCounts(beforeFen, color);
   const after = pawnFileCounts(afterFen, color);
@@ -411,11 +412,61 @@ export function pawnDamageNote(beforeFen: string, afterFen: string, mover: MaiaS
     });
     return total;
   };
+  return { doubled: doubled(after) - doubled(before), isolated: isolated(after) - isolated(before) };
+}
+
+// New pawn-structure damage from this move, observed on the mover's own
+// pawns: newly doubled files and newly isolated pawns. Observation only —
+// no 'no compensation' claim, which a board scan cannot prove.
+export function pawnDamageNote(beforeFen: string, afterFen: string, mover: MaiaSide): string | null {
+  const damage = newPawnDamage(beforeFen, afterFen, mover);
+  if (!damage) return null;
   const parts: string[] = [];
-  const newlyDoubled = doubled(after) - doubled(before);
-  const newlyIsolated = isolated(after) - isolated(before);
-  if (newlyDoubled > 0) parts.push(newlyDoubled === 1 ? 'Doubles a pawn.' : 'Doubles pawns.');
-  if (newlyIsolated > 0) parts.push(newlyIsolated === 1 ? 'Isolates a pawn.' : 'Isolates pawns.');
+  if (damage.doubled > 0) parts.push(damage.doubled === 1 ? 'Doubles a pawn.' : 'Doubles pawns.');
+  if (damage.isolated > 0) parts.push(damage.isolated === 1 ? 'Isolates a pawn.' : 'Isolates pawns.');
+  return parts.length ? parts.join(' ') : null;
+}
+
+// Pawn note with best-move suppression. "Doubles a pawn" reads as blame, so
+// it stays silent when the damage is not distinctive to the played move:
+// - the played move IS the best (highest-winrate) move, or
+// - the best move, played from the same before-position, incurs the same
+//   damage (forced structure damage).
+// Comparison is part-wise on excess damage: doubling is reported only when
+// the played move doubles more files than the best does, isolates only when
+// it isolates more pawns. Wording reflects the excess beyond the forced
+// damage. Bad FENs, illegal best UCIs, and missing best data keep the played
+// note (no suppression without evidence). Never throws.
+export function pawnDamageNoteSkippingBest(
+  beforeFen: string,
+  afterFen: string,
+  mover: MaiaSide,
+  playedUci: string,
+  bestUci: string | null | undefined,
+): string | null {
+  const played = newPawnDamage(beforeFen, afterFen, mover);
+  if (!played) return null;
+  if (played.doubled <= 0 && played.isolated <= 0) return null;
+  if (!bestUci) return pawnDamageNote(beforeFen, afterFen, mover);
+  if (playedUci === bestUci) return null;
+  let bestAfterFen: string | null = null;
+  try {
+    const game = new Chess(beforeFen);
+    applyUci(game, bestUci);
+    bestAfterFen = game.fen();
+  } catch {
+    return pawnDamageNote(beforeFen, afterFen, mover);
+  }
+  if (!bestAfterFen) return pawnDamageNote(beforeFen, afterFen, mover);
+  const best = newPawnDamage(beforeFen, bestAfterFen, mover);
+  if (!best) return pawnDamageNote(beforeFen, afterFen, mover);
+  const forcedDoubled = Math.max(0, best.doubled);
+  const forcedIsolated = Math.max(0, best.isolated);
+  const excessDoubled = played.doubled - forcedDoubled;
+  const excessIsolated = played.isolated - forcedIsolated;
+  const parts: string[] = [];
+  if (excessDoubled > 0) parts.push(excessDoubled === 1 ? 'Doubles a pawn.' : 'Doubles pawns.');
+  if (excessIsolated > 0) parts.push(excessIsolated === 1 ? 'Isolates a pawn.' : 'Isolates pawns.');
   return parts.length ? parts.join(' ') : null;
 }
 
@@ -441,6 +492,13 @@ export type VerdictInputs = {
   // translation. The translated Quality alone cannot recover it: Critical +
   // Expected and Top both display as Best.
   isCritical?: boolean | null;
+  // Highest-winrate move from the same before-position (objective candidate
+  // with max expected winrate when available, else the grading best:
+  // objective top else Stockfish best_move). Feeds pawn-note suppression:
+  // "Doubles a pawn" reads as blame, so it stays silent when the played move
+  // IS the best or the best incurs the same structure damage. Null/undefined
+  // disables suppression only.
+  bestUci?: string | null;
   // Previous ply for recapture-as-exchange framing (Option A plumbing: the
   // UCI that led into beforeFen plus the FEN before it). Null at the game
   // start or off-timeline; the exchange claimant stays silent without both.
@@ -474,7 +532,9 @@ export type VerdictFacts = {
 // Encodes every gate: before/after selection, terminal-first priority
 // inputs, novelty suppression (terminal, dead draw, Forced, Allowed mate,
 // Unreviewed, unknown rarity), the pawn-note fallback (only
-// Blunder/Mistake/Inaccuracy with no material note and no terminal), and the
+// Blunder/Mistake/Inaccuracy with no material note and no terminal, plus
+// best-move suppression: silent when the played move is the best or the best
+// incurs the same structure damage), and the
 // positive-note why (only Best/Great/Excellent/Good with no terminal, dead
 // draw, underpromotion, or book hit). bestRarity and materialNote pass
 // through untouched.
@@ -518,7 +578,7 @@ export function verdictInputsForPly(inputs: VerdictInputs): VerdictFacts {
   const novelty = suppressNovelty ? null : noveltyRef(openingMatches, bookFlags, ply, initialFen);
   const pawnNote =
     !terminal && !materialNote && (label === 'Blunder' || label === 'Mistake' || label === 'Inaccuracy')
-      ? pawnDamageNote(beforeFen, afterFen, mover)
+      ? pawnDamageNoteSkippingBest(beforeFen, afterFen, mover, playedUci, inputs.bestUci)
       : null;
   // Positive why: the first non-null POSITIVE_CANDIDATES entry wins (see
   // its rank/conflict comment for the ordering). Facts are built once here
