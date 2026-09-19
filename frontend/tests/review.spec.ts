@@ -150,6 +150,10 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
     const filename = path.startsWith('/assets/') ? path.slice(1) : 'index.html';
     await route.fulfill({ body: await readFile(resolve('dist-browser', filename)), contentType: filename.endsWith('.js') ? 'text/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html' });
   });
+  // Fresh contexts default to past arrows; seed next so this fixture keeps
+  // exercising next-mode rendering (the unit test pins the past default,
+  // and the basis test below covers both modes explicitly).
+  await page.addInitScript(() => localStorage.setItem('maia-board.arrow-basis.v1', '"next"'));
   await page.goto('http://maia.test/analyze');
   await page.locator('#analysis-pgn').fill(pgn);   await page.locator('#load-analysis').click();
   return { requests, errors, evaluations, batches };

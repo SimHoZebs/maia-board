@@ -18,10 +18,10 @@ export const defaultArrowSettings: ArrowSettings = {
   objective: { color: '#3b82f6', width: 4 },
   candidate: { color: '#d6b85c', width: 2 },
 };
-export const defaultArrowBasis: ArrowBasis = 'next';
+export const defaultArrowBasis: ArrowBasis = 'past';
 
 export function normalizeArrowBasis(value: unknown): ArrowBasis {
-  return value === 'past' ? 'past' : 'next';
+  return value === 'next' ? 'next' : 'past';
 }
 
 const HEX_6 = /^#[0-9a-fA-F]{6}$/;

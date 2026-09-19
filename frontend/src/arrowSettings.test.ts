@@ -17,10 +17,10 @@ describe('arrow settings', () => {
       objective: { color: '#3b82f6', width: 4 },
       candidate: { color: '#d6b85c', width: 2 },
     });
-    expect(defaultArrowBasis).toBe('next');
+    expect(defaultArrowBasis).toBe('past');
     expect(normalizeArrowBasis('past')).toBe('past');
     expect(normalizeArrowBasis('next')).toBe('next');
-    expect(normalizeArrowBasis('junk')).toBe('next');
+    expect(normalizeArrowBasis('junk')).toBe('past');
     expect(ARROW_WIDTH_MIN).toBe(1);
     expect(ARROW_WIDTH_MAX).toBe(64);
     expect(reviewBrushes.actual).toMatchObject({ color: '#ffffff', opacity: 0.45, lineWidth: 12 });
@@ -67,7 +67,7 @@ describe('arrow settings', () => {
   });
   it('merges single-source edits, resets, and restores persisted arrows', () => {
     expect(initialState().arrows).toBe(defaultArrowSettings);
-    expect(initialState().arrowBasis).toBe('next');
+    expect(initialState().arrowBasis).toBe('past');
     const based = reducer(initialState(), { type: 'arrow-basis', basis: 'past' });
     expect(based.arrowBasis).toBe('past');
     expect(reducer(based, { type: 'arrow-basis', basis: 'past' })).toBe(based);
