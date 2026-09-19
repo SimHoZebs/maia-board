@@ -1,7 +1,10 @@
 // Race the complete operation, including body consumption. Abort-ignoring fetch
 // implementations cannot retain a scheduler slot after cancellation/deadline.
 import { isRecord } from './guards';
-export async function withDeadline<T>(run: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal, timeout = 150_000): Promise<T> {
+// Shared engine deadline: play replies and analysis fetches share one stall
+// policy, with play passing tighter numbers at the call site when needed.
+export const ENGINE_DEADLINE_MS = 150_000;
+export async function withDeadline<T>(run: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal, timeout = ENGINE_DEADLINE_MS): Promise<T> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let cancel: () => void = () => undefined;
@@ -60,7 +63,7 @@ export async function postJson(
 // JSON read. Preserves superseded/503 codes for callers; only
 // engine_busy 503s retry here. Wire format unchanged.
 export async function fetchJsonWithBusyRetry(
-  fetcher: typeof fetch, input: RequestInfo | URL, init: RequestInit, signal?: AbortSignal, timeout = 150_000,
+  fetcher: typeof fetch, input: RequestInfo | URL, init: RequestInit, signal?: AbortSignal, timeout = ENGINE_DEADLINE_MS,
 ): Promise<{ response: Response; body: unknown }> {
   return withDeadline(async transportSignal => {
     const response = await retryBusy(fetcher, input, init, transportSignal);
