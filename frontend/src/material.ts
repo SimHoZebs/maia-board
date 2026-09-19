@@ -84,6 +84,19 @@ export function capturedLabel(by: MaiaSide, pieces: readonly CapturedPiece[], le
   return lead > 0 ? `${side} ${taken}, up ${lead} pawn${lead === 1 ? '' : 's'}` : `${side} ${taken}`;
 }
 
+// Piece taken by the played move itself (the far side of a
+// boundary-crossing exchange), for non-promoting captures only. Null for
+// quiet moves, promotions (queening adds up to +8 with no capture, owned by
+// the promotion story), and bad data. Lets the best-line window below count
+// the mover's own take before claiming a fresh loss.
+export function playedCapture(beforeFen: string, playedUci: string): CapturedPiece | null {
+  if (typeof playedUci !== 'string' || playedUci.length === 5) return null;
+  try {
+    const piece = applyUci(new Chess(beforeFen), playedUci).captured?.toLowerCase();
+    if (!piece || !isCapturedPiece(piece)) return null;
+    return piece;
+  } catch { return null; }
+}
 // Best-line material consequence over the next WINDOW plies of a Stockfish
 // rank-1 PV rooted at afterFen (the position after the played mistake).
 // Returns a bounded second-sentence note or null when there is nothing
@@ -98,6 +111,10 @@ export function capturedLabel(by: MaiaSide, pieces: readonly CapturedPiece[], le
 //   reference: "This line" always renders alongside its clickable PV, so the
 //   window needs no "in the next N" suffix and no net figure — the SAN line
 //   shows exactly which moves are claimed.
+// - Boundary-crossing trades count the played take: the window starts after
+//   the played capture, so an even-or-better trade (Bxe7/Rxe7) goes quiet
+//   and a remaining net loss names the played take in the composition
+//   ("loses a knight for a pawn"). Proven tactic falls keep their claim.
 // - When the punishing reply forks two pieces and the window shows the
 //   cheaper one falling, the note names the tactic instead ("Nd4 forks
 //   White's bishop and queen, losing the bishop."). Exclusivity: the fork
@@ -127,10 +144,10 @@ function piecesText(pieces: CapturedPiece[]): string {
   if (parts.length <= 1) return parts[0] ?? '';
   return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 }
-export function bestLineMaterialNote(afterFen: string, pv: readonly string[] | undefined, mover: MaiaSide, windowPlies: number = DEFAULT_BEST_LINE_WINDOW): string | null {
+export function bestLineMaterialNote(afterFen: string, pv: readonly string[] | undefined, mover: MaiaSide, windowPlies: number = DEFAULT_BEST_LINE_WINDOW, playedTake: CapturedPiece | null = null): string | null {
   const analyzed = analyzeBestLineWindow(afterFen, pv, mover, windowPlies);
   if (!analyzed) return null;
-  return noteFromAnalysis(afterFen, analyzed, mover);
+  return noteFromAnalysis(afterFen, analyzed, mover, playedTake);
 }
 
 // Clickable PV for the verdict: the validated window slice the note
@@ -140,12 +157,12 @@ export function bestLineMaterialNote(afterFen: string, pv: readonly string[] | u
 // offer a branch. The caller spawns these ucis as a branch rooted at
 // afterFen, landing on its first move so the punishment is on the board.
 export type BestLinePreview = { ucis: string[]; sans: string[]; text: string; note: string };
-export function bestLinePreview(afterFen: string, pv: readonly string[] | undefined, mover: MaiaSide, windowPlies: number = DEFAULT_BEST_LINE_WINDOW): BestLinePreview | null {
+export function bestLinePreview(afterFen: string, pv: readonly string[] | undefined, mover: MaiaSide, windowPlies: number = DEFAULT_BEST_LINE_WINDOW, playedTake: CapturedPiece | null = null): BestLinePreview | null {
   const analyzed = analyzeBestLineWindow(afterFen, pv, mover, windowPlies);
   if (!analyzed) return null;
   // Even non-tactic windows carry a clickable line but no claim: the note
   // owns silence, and the preview stays in agreement with it.
-  const note = noteFromAnalysis(afterFen, analyzed, mover);
+  const note = noteFromAnalysis(afterFen, analyzed, mover, playedTake);
   if (!note) return null;
   const sans = sansFromWindow(afterFen, analyzed.ucis);
   if (!sans) return null;
@@ -153,11 +170,29 @@ export function bestLinePreview(afterFen: string, pv: readonly string[] | undefi
 }
 
 type BestLineAnalysis = { ucis: string[]; oppCaptures: CapturedPiece[]; moverCaptures: CapturedPiece[]; oppSide: string; evenExchange: boolean };
-function noteFromAnalysis(afterFen: string, analyzed: BestLineAnalysis, mover: MaiaSide): string | null {
+function noteFromAnalysis(afterFen: string, analyzed: BestLineAnalysis, mover: MaiaSide, playedTake: CapturedPiece | null = null): string | null {
   // Even exchanges stay silent in the generic composition (no newsworthy
   // swing) but still reach the tactic layer, which names proven even
   // fork/skewer swaps. Null propagates: preview and note stay in agreement.
-  return tacticNote(afterFen, analyzed, mover) ?? (analyzed.evenExchange ? null : genericNote(analyzed));
+  // Boundary-crossing trades count the played take: the window starts after
+  // the played capture, so a lone recapture of equal or lesser value
+  // (Bxe7/Rxe7: bishop for knight) is a trade, not a fresh loss, and goes
+  // quiet. A remaining net loss is named honestly with the played take in
+  // the composition ("loses a knight for a pawn"): the take is the reviewed
+  // move itself, already on the board, while the PV button shows the reply.
+  // Proven tactic falls keep their claim: the named piece really falls to
+  // the fork/skewer inside the window.
+  const tactic = tacticNote(afterFen, analyzed, mover);
+  if (tactic) return tactic;
+  if (analyzed.evenExchange) return null;
+  if (playedTake != null) {
+    const combined = { ...analyzed, moverCaptures: [playedTake, ...analyzed.moverCaptures] };
+    const valueOf = (pieces: CapturedPiece[]): number =>
+      pieces.reduce((sum, piece) => sum + PIECE_VALUES[piece], 0);
+    if (valueOf(combined.moverCaptures) - valueOf(combined.oppCaptures) >= 0) return null;
+    return genericNote(combined);
+  }
+  return genericNote(analyzed);
 }
 function genericNote(analyzed: BestLineAnalysis): string {
   const oppText = piecesText(sortCaptured(analyzed.oppCaptures));

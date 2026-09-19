@@ -8,7 +8,7 @@ import type { Review } from "./useReview";
 import { describeMove } from "./reviewMetrics";
 import { fixedElo, sourceLabel } from "./objective";
 import { formatWinrateDelta, maiaDisplayParts } from "./objective/maia";
-import { bestLinePreview } from "./material";
+import { bestLinePreview, playedCapture } from "./material";
 import { verdictInputsForPly } from "./theory";
 import { useLineOpenings } from "./openings";
 import { ReviewIssues, ReviewSummary } from "./ReviewOverview";
@@ -119,6 +119,7 @@ export function MoveAnalysis({
       afterEvaluation?.lines[0]?.pv,
       review.nodes[focus].turn === 'white' ? 'white' : 'black',
       state.bestLineWindow,
+      playedCapture(review.nodes[focus].fen, played),
     ) : null;
   const materialNote = bestLine?.note ?? null;
   // Best move for pawn-note suppression: the highest-winrate objective

@@ -1,6 +1,6 @@
 import type { State } from './state/index';
 import { START_FEN } from './domain';
-import { bestLinePreview } from './material';
+import { bestLinePreview, playedCapture } from './material';
 import { useLineOpenings } from './openings';
 import { describeMove, maiaRarity } from './reviewMetrics';
 import { verdictInputsForPly } from './theory';
@@ -41,7 +41,7 @@ export function PlayVerdict({ state, feedback }: { state: State; feedback: PlayF
     && (quality.label === 'Mistake' || quality.label === 'Blunder')
     && evaluation?.score.type === 'cp' && afterEvaluation?.score.type === 'cp'
     && !evaluation.terminal && !afterEvaluation.terminal
-    ? bestLinePreview(afterNode.fen, afterEvaluation?.lines[0]?.pv, mover, state.bestLineWindow)?.note ?? null
+    ? bestLinePreview(afterNode.fen, afterEvaluation?.lines[0]?.pv, mover, state.bestLineWindow, playedCapture(beforeNode.fen, played))?.note ?? null
     : null;
   const facts = verdictInputsForPly({
     beforeFen: beforeNode.fen,

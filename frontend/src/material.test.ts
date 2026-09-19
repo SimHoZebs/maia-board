@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BEST_LINE_WINDOW_MAX, bestLineMaterialNote, bestLinePreview, capturesFromLine, capturedLabel, DEFAULT_BEST_LINE_WINDOW, fusePinWithMate, fusePinWithMaterial, materialFromFen, materialLeadFor, normalizeBestLineWindow, playedMoveExchangeNote, playedMoveForkNote, playedMoveGainNote, playedMovePinNote, playedMoveSkewerNote, sortCaptured } from './material';
+import { BEST_LINE_WINDOW_MAX, bestLineMaterialNote, bestLinePreview, capturesFromLine, capturedLabel, DEFAULT_BEST_LINE_WINDOW, fusePinWithMate, fusePinWithMaterial, materialFromFen, materialLeadFor, normalizeBestLineWindow, playedCapture, playedMoveExchangeNote, playedMoveForkNote, playedMoveGainNote, playedMovePinNote, playedMoveSkewerNote, sortCaptured } from './material';
 import { START_FEN } from './domain';
 
 describe('material', () => {
@@ -385,6 +385,42 @@ describe('fusePinConcessions', () => {
   it('fuses pins with mate', () => {
     expect(fusePinWithMate("Bd6 pins Black's knight to the rook."))
       .toBe("Bd6 pins Black's knight to the rook, but allows mate.");
+  });
+});
+describe('boundaryCrossingTrades', () => {
+  const bxe7After = '4rrk1/pp1bB1pp/2n1pp2/3p4/qP1P4/P2B1NP1/2P3PP/R2QR1K1 b - - 0 16';
+  it('reads the played take, not just the window', () => {
+    expect(playedCapture('4rrk1/pp1bn1pp/2nBpp2/3p4/qP1P4/P2B1NP1/2P3PP/R2QR1K1 w - - 3 16', 'd6e7')).toBe('n');
+    expect(playedCapture(START_FEN, 'e2e4')).toBeNull();
+    expect(playedCapture('8/P7/7k/8/8/8/8/7K w - - 0 1', 'a7a8q')).toBeNull();
+    expect(playedCapture('bad', 'e2e4')).toBeNull();
+  });
+
+  it('omits the Bxe7 even trade instead of claiming a fresh bishop loss', () => {
+    // Without the boundary take the lone recapture reads as a fresh win.
+    expect(bestLineMaterialNote(bxe7After, ['e8e7'], 'white'))
+      .toBe('This line wins a bishop for Black.');
+    // Counting the knight just taken (Bxe7/Rxe7) makes it an even trade.
+    expect(bestLineMaterialNote(bxe7After, ['e8e7'], 'white', DEFAULT_BEST_LINE_WINDOW, 'n')).toBeNull();
+    expect(bestLinePreview(bxe7After, ['e8e7'], 'white', DEFAULT_BEST_LINE_WINDOW, 'n')).toBeNull();
+  });
+
+  it('names the net loss honestly across the boundary', () => {
+    const after = '4k3/8/4p3/3N4/8/8/8/4K3 b - - 0 1';
+    expect(bestLineMaterialNote(after, ['e6d5'], 'white'))
+      .toBe('This line wins a knight for Black.');
+    // Pawn taken on the move, knight lost in reply: down a knight for a pawn.
+    expect(bestLineMaterialNote(after, ['e6d5'], 'white', DEFAULT_BEST_LINE_WINDOW, 'p'))
+      .toBe('This line loses a knight for a pawn.');
+    expect(bestLinePreview(after, ['e6d5'], 'white', DEFAULT_BEST_LINE_WINDOW, 'p')?.note)
+      .toBe('This line loses a knight for a pawn.');
+  });
+
+  it('keeps proven tactic falls even with a boundary take', () => {
+    const forkFen = '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1';
+    const pv = ['f5d4', 'b3c3', 'd4c2'];
+    expect(bestLineMaterialNote(forkFen, pv, 'white', DEFAULT_BEST_LINE_WINDOW, 'b'))
+      .toBe("Nd4 forks White's bishop and queen, but only forces an even exchange.");
   });
 });
 describe('playedMoveExchangeNote', () => {
