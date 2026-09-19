@@ -103,6 +103,10 @@ history, engine revision, and applicable settings. Legacy client cache coordinat
 do not determine this identity; the legacy table is dropped when the store opens
 and its misses recompute through the engine endpoints. Evaluation writes are
 server-owned, and corrupt results are recomputed by the engine endpoints.
+Cache rows stay per-model by design: Stockfish and Maia shapes, validators,
+and settings differ, so one combined row would bust the Stockfish half on a
+Maia rating change. Composition stays request-time over per-model reads;
+no combined row is ever stored.
 
 `POST /evaluations/lookup` accepts `{requests: [...]}` with at most 1024 requests
 and a 4 MiB body. Each entry supplies `engine: "sf" | "maia"`, `fen`, `initial_fen`,
@@ -119,6 +123,11 @@ The frontend validates the reported policy and settings, then slices displayed
 candidates without relabelling their original search. Legacy cache-repair PUTs are
 rejected; malformed lookup values remain misses until an engine endpoint recomputes
 them. Maia identity includes both ratings and the pinned upstream model revision.
+
+Within the batch lane, submits share fairly by rotation (A,B,A,B) with dual
+admission caps (misses per engine + unfinished jobs, 429 wait-once). This is
+fairness-without-auth for self-host scaling to family/friends; priority
+lanes (Play > Focus > Batch) stay regardless.
 
 ## Maia worker lifecycle
 

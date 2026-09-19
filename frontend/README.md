@@ -47,9 +47,14 @@ backend URL to proxy `/move`, `/move/analysis`, `/evaluate`, `/evaluations`, `/g
   (best move + mover-relative expected score), never from engine responses
   directly. `src/objective/maia.ts` and `src/objective/stockfish.ts` expose
   identical provider functions; `src/objective/index.ts` re-exports the
-  active one, so switching sources is a one-line import flip with no call
-  site changes. Current-position candidates and previous-move grading refer
-  to different positions.
+   active one, so switching sources is a one-line import flip with no call
+   site changes. Current-position candidates and previous-move grading refer
+   to different positions.
+- Two Maia lanes are load-bearing: game-level Maia (findability — "was it
+  rare for this player," feeds rarity + candidate lists at game settings)
+  and grading Maia 2400 (objective truth — "would 2400 consider it best").
+  Praise needs both; Stockfish keeps mate scores + rank-1 PV for material
+  preview only.
 
 ### Chess timeline and evaluation
 
@@ -76,6 +81,10 @@ and 4 MiB each. Missing or invalid rows remain misses. Restoration does not star
 whole-line inference; foreground analysis and the explicit batch action generate
 results. Terminal scoring comes from the timeline's recorded outcomes through
 `outcomeEvaluation.ts`. Engine inference is limited to 256 plies.
+Batch progress rides the browser's native EventSource as a pure optimization;
+the status endpoint is the ground truth. Status + prime refetch on mount,
+focus, visibility-visible, online, and stream error is what survives
+backgrounding — a broken stream only costs speed.
 
 The server owns cache writes and repair. The frontend validates Stockfish's actual
 search policy before displaying a compatible result and limits displayed candidates
