@@ -133,7 +133,7 @@ export function ObjectiveBar({
     : `${description} · estimated White winning chance ${Math.round(percent)}%${statusSuffix}`;
   return (
     <section
-      className={`maia-balance orientation-${orientation}${pending ? " pending" : ""}${loading ? " loading" : ""}`}
+      className={`eval-balance orientation-${orientation}${pending ? " pending" : ""}${loading ? " loading" : ""}`}
       aria-label="Position evaluation"
       aria-busy={loading || undefined}
     >

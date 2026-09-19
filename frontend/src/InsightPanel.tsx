@@ -217,7 +217,7 @@ export function MoveAnalysis({
       <EngineSection
         label="Maia analysis"
         titleId="insight-title"
-        dotClass="source-maia"
+        dotClass="source-display"
         title={
           <>
             Maia •{" "}
@@ -264,7 +264,7 @@ export function MoveAnalysis({
       </EngineSection>
       <EngineSection
         label={sourceLabel()}
-        dotClass="source-maia"
+        dotClass="source-objective"
         title={
           <>
             Maia •{" "}
