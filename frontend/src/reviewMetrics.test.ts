@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { Chess } from 'chess.js';
-import { classifyLoss, describeMove, effectiveQuality, isMateFor, maiaRarity, moveAccuracy, outcomeExpected, reviewMove, SEARCH_POLICY, terminalEvaluation, whiteExpected, whiteWin, type EngineGrade, type Evaluation, type ObjectiveGrade, type Quality, type Rarity } from './reviewMetrics';
+import { alienUpgrade, ALIEN_MIN_GAP, classifyLoss, describeMove, effectiveQuality, isMateFor, isTinyRare, maiaRarity, moveAccuracy, outcomeExpected, reviewMove, secondPoolClause, sfTopGap, SEARCH_POLICY, terminalEvaluation, whiteExpected, whiteWin, type EngineGrade, type Evaluation, type ObjectiveGrade, type Quality, type Rarity } from './reviewMetrics';
 import { maiaExpected } from './objective/maia';
 const evaluation = (cp: number): Evaluation => ({ engine: 'Stockfish 19', search_policy: SEARCH_POLICY, score: { type: 'cp', value: cp }, depth: 14, best_move: 'e2e4', lines: [], terminal: null });
 const grading = (top: string | null, wdl: [number, number, number], afterExpected: number | null): ObjectiveGrade => ({
@@ -139,6 +139,62 @@ it('keeps Critical praise reachable through the 2400 top', () => {
   const before = evaluation(200); before.lines = [{ move: 'e2e4', score: before.score, depth: 14 }, { move: 'd2d4', score: { type: 'cp', value: 0 }, depth: 14 }];
   expect(reviewMove(before, before, new Chess(), 'e2e4', grading('e2e4', [0.1, 0.2, 0.7], 80)).label).toBe('Critical');
 });
+it('upgrades only tiny-at-both-Elos Excellent finds with a decisive gap to Alien', () => {
+  const excellent: Quality = { label: 'Excellent', accuracy: 100, loss: 0 };
+  const tiny: Rarity = { label: 'Rare', r: 0.1, prob: 0.03, topProb: 0.3 };
+  const absent: Rarity = { label: 'Absent', r: null, prob: null, topProb: 0.4 };
+  const expected: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
+  const unknown: Rarity = { label: 'Unknown', r: null, prob: null, topProb: null };
+  expect(ALIEN_MIN_GAP).toBe(30);
+  expect(isTinyRare(tiny)).toBe(true);
+  expect(isTinyRare(absent)).toBe(true);
+  expect(isTinyRare(expected)).toBe(false);
+  expect(isTinyRare(unknown)).toBe(false);
+  expect(isTinyRare(undefined)).toBe(false);
+  expect(alienUpgrade(excellent, tiny, tiny, 35)).toEqual({ label: 'Alien', accuracy: 100, loss: 0 });
+  expect(alienUpgrade(excellent, absent, absent, 80)?.label).toBe('Alien');
+  // Every missing leg blocks the upgrade; other lanes keep prior behavior.
+  expect(alienUpgrade({ ...excellent, label: 'Great' }, tiny, tiny, 80)?.label).toBe('Great');
+  expect(alienUpgrade(excellent, expected, tiny, 80)?.label).toBe('Excellent');
+  expect(alienUpgrade(excellent, tiny, expected, 80)?.label).toBe('Excellent');
+  expect(alienUpgrade(excellent, tiny, unknown, 80)?.label).toBe('Excellent');
+  expect(alienUpgrade(excellent, tiny, undefined, 80)?.label).toBe('Excellent');
+  expect(alienUpgrade(excellent, tiny, tiny, 29)?.label).toBe('Excellent');
+  expect(alienUpgrade(excellent, tiny, tiny, null)?.label).toBe('Excellent');
+  expect(alienUpgrade(undefined, tiny, tiny, 80)).toBeUndefined();
+});
+it('measures the Stockfish top gap mover-relatively over cp lines only', () => {
+  const lines = (a: number, b: number) => [{ score: { type: 'cp' as const, value: a } }, { score: { type: 'cp' as const, value: b } }];
+  const gap = sfTopGap(lines(600, -600), 'white');
+  expect(gap).toBeGreaterThanOrEqual(ALIEN_MIN_GAP);
+  // Black-mover mirror with best-first ordering still reads positive.
+  expect(sfTopGap(lines(-600, 600), 'black')).toBeCloseTo(gap!, 9);
+  // Small gaps, mate lines, and short lines carry no decisive gap.
+  expect(sfTopGap(lines(200, 0), 'white')).toBeLessThan(ALIEN_MIN_GAP);
+  expect(sfTopGap([{ score: { type: 'cp' as const, value: 200 } }], 'white')).toBeNull();
+  expect(sfTopGap([{ score: { type: 'mate' as const, value: 3 } }, { score: { type: 'cp' as const, value: 0 } }], 'white')).toBeNull();
+  expect(sfTopGap(undefined, 'white')).toBeNull();
+});
+it('tiers praise sentences across both Elo lanes and Stockfish agreement', () => {
+  const quality = (label: Quality['label']): Quality => ({ label, accuracy: 100, loss: 0 });
+  const tiny: Rarity = { label: 'Rare', r: 0.1, prob: 0.03, topProb: 0.3 };
+  // Alien head stays short; the only-move note carries the engine fact.
+  expect(describeMove({ san: 'Nxh7+', quality: quality('Alien'), rarity: tiny }))
+    .toBe('An alien find. Stockfish sees nothing else that holds.');
+  // Blind spot: praised at own Elo and tiny at 2400.
+  expect(describeMove({ san: 'Re8', quality: quality('Excellent'), rarity: tiny, rarity2400: tiny }))
+    .toBe('An exceptional find. Even 2400s rarely play this.');
+  expect(describeMove({ san: 'Re8', quality: quality('Great'), rarity: { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 }, rarity2400: tiny }))
+    .toBe('The natural choice. Even 2400s rarely play this.');
+  // Validated: SF-top Best that is tiny in both pools outranks blind-spot.
+  expect(describeMove({ san: 'd5', quality: quality('Best'), rarity: tiny, rarity2400: tiny, isTop: true }))
+    .toBe('A rare find. Stockfish agrees it is best.');
+  // Without the 2400 lane or Top fact the sentences stay as before.
+  expect(describeMove({ san: 'Re8', quality: quality('Excellent'), rarity: tiny }))
+    .toBe('An exceptional find.');
+  expect(describeMove({ san: 'Nxh7+', quality: quality('Best'), rarity: tiny, isTop: true }))
+    .toBe('A rare find.');
+});
 it('bands Maia rarity by ratio to the top move, not rank or absolute prob', () => {
   // 13% under a 15% top is the same band as the top itself.
   const close = maia([['e2e4', 0.15], ['d2d4', 0.13]]);
@@ -253,9 +309,9 @@ it('notes when a mistake was hard to avoid because the best move was rare', () =
   // number. The concrete consequence lives in the "This line …" second
   // sentence plus its clickable PV.
   expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: rareBest }))
-    .toBe('Hard to avoid.');
+    .toBe('Hard to avoid at your level.');
   expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: absentBest }))
-    .toBe('Hard to avoid.');
+    .toBe('Hard to avoid at your level.');
   // Obvious mistake, obvious best move: damning as before.
   expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: expected }))
     .toBe('A common blunder.');
@@ -267,7 +323,7 @@ it('notes when a mistake was hard to avoid because the best move was rare', () =
   // Overrides every negative standard sentence, not just Expected.
   const uncommon: Rarity = { label: 'Uncommon', r: 0.4, prob: 0.2, topProb: 0.5 };
   expect(describeMove({ san: 'd5', quality: { ...blunder, label: 'Mistake' }, rarity: uncommon, bestRarity: rareBest }))
-    .toBe('Hard to avoid.');
+    .toBe('Hard to avoid at your level.');
   // Praise and holds never read the best-move axis.
   expect(describeMove({ san: 'Nf3', quality: { ...blunder, label: 'Best' }, rarity: expected, bestRarity: rareBest }))
     .toBe('The natural choice.');
@@ -277,7 +333,7 @@ it('notes when a mistake was hard to avoid because the best move was rare', () =
   // and forgives; the same ratio at prob >= 5% stays standard wording.
   const shiftedBestTiny: Rarity = { label: 'Rare', r: 0.29, prob: 0.04, topProb: 0.138 };
   expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: shiftedBestTiny }))
-    .toBe('Hard to avoid.');
+    .toBe('Hard to avoid at your level.');
   const shiftedBestListed: Rarity = { label: 'Rare', r: 0.29, prob: 0.06, topProb: 0.207 };
   expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, bestRarity: shiftedBestListed }))
     .toBe('A common blunder.');
@@ -285,6 +341,62 @@ it('notes when a mistake was hard to avoid because the best move was rare', () =
   const f3like: Rarity = { label: 'Uncommon', r: 0.438, prob: 0.149, topProb: 0.34 };
   expect(describeMove({ san: 'f3', quality: { ...blunder, label: 'Mistake' }, rarity: f3like }))
     .toBe('An uncommon mistake.');
+});
+it('names the 2400 pool only on contradiction, never on agreement', () => {
+  const r = (label: Rarity['label']): Rarity => ({ label, r: 0.2, prob: 0.1, topProb: 0.5 });
+  const unknown: Rarity = { label: 'Unknown', r: null, prob: null, topProb: null };
+  // Agreement and mild differences stay silent; Unknown disables either side.
+  expect(secondPoolClause(r('Expected'), r('Expected'))).toBeNull();
+  expect(secondPoolClause(r('Uncommon'), r('Uncommon'))).toBeNull();
+  expect(secondPoolClause(r('Expected'), r('Uncommon'))).toBeNull();
+  expect(secondPoolClause(r('Uncommon'), r('Uncommon'))).toBeNull();
+  expect(secondPoolClause(r('Expected'), unknown)).toBeNull();
+  expect(secondPoolClause(unknown, r('Rare'))).toBeNull();
+  expect(secondPoolClause(undefined, r('Rare'))).toBeNull();
+  // Popular here, shunned upstairs.
+  expect(secondPoolClause(r('Expected'), r('Rare'))).toBe('Stronger players rarely play this.');
+  expect(secondPoolClause(r('Expected'), r('Absent'))).toBe('Stronger players rarely play this.');
+  expect(secondPoolClause(r('Uncommon'), r('Absent'))).toBe('Stronger players rarely play this.');
+  // Unpopular here, standard upstairs.
+  expect(secondPoolClause(r('Uncommon'), r('Expected'))).toBe('Stronger players play this regularly.');
+  expect(secondPoolClause(r('Rare'), r('Expected'))).toBe('Stronger players play this regularly.');
+  expect(secondPoolClause(r('Absent'), r('Expected'))).toBe('Stronger players play this regularly.');
+  // Shunned everywhere.
+  expect(secondPoolClause(r('Rare'), r('Rare'))).toBe('Rare at every level.');
+  expect(secondPoolClause(r('Rare'), r('Absent'))).toBe('Rare at every level.');
+  expect(secondPoolClause(r('Absent'), r('Rare'))).toBe('Rare at every level.');
+  expect(secondPoolClause(r('Absent'), r('Absent'))).toBe('Unlisted at every level.');
+});
+it('appends second-pool sociology after the material consequence, never before it', () => {
+  const blunder: Quality = { label: 'Blunder', accuracy: 20, loss: 25 };
+  const expected: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
+  const rare2400: Rarity = { label: 'Rare', r: 0.1, prob: 0.03, topProb: 0.3 };
+  const note = 'This line loses a knight and a pawn for a bishop.';
+  // Pool habit without a material note.
+  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, rarity2400: rare2400 }))
+    .toBe('A common blunder. Stronger players rarely play this.');
+  // Material consequence keeps priority; sociology follows it.
+  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, rarity2400: rare2400, materialNote: note }))
+    .toBe(`A common blunder. ${note}`);
+  // Rare-everywhere composes with the rare head.
+  const rare: Rarity = { label: 'Rare', r: 0.2, prob: 0.08, topProb: 0.4 };
+  expect(describeMove({ san: 'h4', quality: blunder, rarity: rare, rarity2400: rare2400 }))
+    .toBe('A rare blunder. Rare at every level.');
+  // Agreement cells read exactly as before (no 2400 sentence).
+  expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, rarity2400: expected }))
+    .toBe('A common blunder.');
+});
+it('bright-spots praise that is rare here but standard upstairs', () => {
+  const quality = (label: Quality['label']): Quality => ({ label, accuracy: 100, loss: 0 });
+  const rare: Rarity = { label: 'Rare', r: 0.2, prob: 0.08, topProb: 0.4 };
+  const expected: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
+  expect(describeMove({ san: 'd5', quality: quality('Best'), rarity: rare, rarity2400: expected }))
+    .toBe('A rare find. Stronger players play this regularly.');
+  // Natural everywhere stays a single sentence; Holds stays quiet by design.
+  expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity: expected, rarity2400: expected }))
+    .toBe('The natural choice.');
+  expect(describeMove({ san: 'h3', quality: quality('Good'), rarity: rare, rarity2400: expected }))
+    .toBe('A rarely played choice that holds.');
 });
 it('appends the material note only for Mistake/Blunder', () => {
   const quality = (label: Quality['label']): Quality => ({ label, accuracy: 20, loss: 15 });
@@ -345,7 +457,7 @@ it('pairs hard-to-avoid with the material consequence', () => {
   expect(describeMove({
     san: 'Qf3', quality: blunder, rarity: expected, bestRarity: absentBest,
     materialNote: 'This line loses a knight and a pawn for a bishop.',
-  })).toBe('Hard to avoid. This line loses a knight and a pawn for a bishop.');
+  })).toBe('Hard to avoid at your level. This line loses a knight and a pawn for a bishop.');
 });
 it('ranks terminal facts above book names, grades, and theory notes', () => {
   const quality = (label: Quality['label']): Quality => ({ label, accuracy: 20, loss: 15 });

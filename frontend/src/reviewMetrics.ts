@@ -6,7 +6,7 @@ export const SEARCH_POLICY = 'sf19-n100k-ms750-mpv2-t4-h128-v3';
 export const REVIEW_METHOD = 'maia-board-review-v1';
 export type Score = { type: 'cp' | 'mate'; value: number; winning_side?: 'white' | 'black' };
 export type Evaluation = { engine: 'Stockfish 19'; search_policy: string; depth: number; terminal: null | 'white_win' | 'black_win' | 'draw'; best_move: string | null; score: Score; lines: { move: string; score: Score; depth: number; pv?: string[] }[] };
-export type Quality = { label: 'Forced' | 'Allowed mate' | 'Blunder' | 'Mistake' | 'Inaccuracy' | 'Excellent' | 'Great' | 'Best' | 'Good' | 'Unreviewed'; accuracy: number | null; loss: number | null };
+export type Quality = { label: 'Forced' | 'Allowed mate' | 'Blunder' | 'Mistake' | 'Inaccuracy' | 'Excellent' | 'Great' | 'Best' | 'Good' | 'Alien' | 'Unreviewed'; accuracy: number | null; loss: number | null };
 // Engine facts (Stockfish only — no praise, no difficulty). reviewMove speaks
 // this vocabulary; the display layer translates it once via
 // effectiveQuality, so an engine-Critical is never mistaken for a displayed
@@ -49,14 +49,21 @@ export function maiaRarity(maia: Pick<MoveResponse, 'top_moves' | 'degraded'> | 
 //   Maia top itself sits under 5% (r=1 there, not a find).
 // - Critical + Uncommon/Rare at >=5% → Great (!).
 // - Critical + Expected/Unknown → Best; Top → Best; Holds → Good.
+// - Excellent + tiny-at-own-Elo + tiny-at-2400 + decisive SF gap → Alien,
+//   via alienUpgrade after this translation (it needs the 2400 rarity and
+//   the SF top gap, which live outside the grade+rarity pair).
 // Unknown is transient/error only — callers hold the spinner while either
 // engine is pending, and SF-settled non-critical moves complete without Maia
 // (fast path), so the cap never flickers a settled badge.
 export const EXCELLENT_MAX_PROB = 0.05;
+// Decisive-only-move gap for Alien, in mover-relative whiteWin points.
+// Critical needs >= 10 (the engine's only good move); Alien needs >= 30
+// (nothing else holds).
+export const ALIEN_MIN_GAP = 30;
 // Display labels: the engine-fact labels Critical/Top/Holds never reach the
 // badge. The predicate proves the fallthrough below only carries shared
 // labels instead of asserting the translation.
-const QUALITY_LABELS: readonly Quality['label'][] = ['Forced', 'Allowed mate', 'Blunder', 'Mistake', 'Inaccuracy', 'Excellent', 'Great', 'Best', 'Good', 'Unreviewed'];
+const QUALITY_LABELS: readonly Quality['label'][] = ['Forced', 'Allowed mate', 'Blunder', 'Mistake', 'Inaccuracy', 'Excellent', 'Great', 'Best', 'Good', 'Alien', 'Unreviewed'];
 function isQualityLabel(value: unknown): value is Quality['label'] {
   return QUALITY_LABELS.some(label => label === value);
 }
@@ -72,6 +79,33 @@ export function effectiveQuality(grade: EngineGrade | undefined, rarity: Rarity 
   if (grade.label === 'Holds') return { ...grade, label: 'Good' };
   if (!isQualityLabel(grade.label)) throw new Error(`Unknown engine grade: ${String(grade.label)}`);
   return { ...grade, label: grade.label };
+}
+// Praise-rarity leg shared by both Elo lanes: Absent, or Rare with an
+// absolute share under EXCELLENT_MAX_PROB. Unknown (missing/degraded data)
+// never qualifies — absent evidence is not evidence of a find.
+export function isTinyRare(rarity: Rarity | undefined | null): boolean {
+  if (!rarity) return false;
+  if (rarity.label === 'Absent') return true;
+  return rarity.label === 'Rare' && rarity.prob != null && rarity.prob < EXCELLENT_MAX_PROB;
+}
+// Mover-relative gap between Stockfish's top two lines, in whiteWin points.
+// Null unless both lines are cp scores (mate lines and single-line positions
+// carry no comparable gap). Turn is the mover's color at the before-position.
+export function sfTopGap(lines: { score: Score }[] | undefined, turn: 'white' | 'black'): number | null {
+  const [first, second] = lines ?? [];
+  if (!first || !second || first.score.type !== 'cp' || second.score.type !== 'cp') return null;
+  const pov = (score: Score) => turn === 'white' ? whiteWin(score) : 100 - whiteWin(score);
+  return pov(first.score) - pov(second.score);
+}
+// Peak praise upgrade, applied after effectiveQuality in lanes that carry
+// both rarities and the SF gap: an Excellent-leg find (tiny at the player's
+// own Elo) that is also tiny at 2400 with a decisive engine gap. Everything
+// else passes through untouched, so lanes without 2400 data keep current
+// behavior exactly.
+export function alienUpgrade(quality: Quality | undefined, rarity: Rarity | undefined | null, rarity2400: Rarity | undefined | null, gap: number | null): Quality | undefined {
+  if (quality?.label !== 'Excellent' || !isTinyRare(rarity) || !isTinyRare(rarity2400)) return quality;
+  if (gap == null || gap < ALIEN_MIN_GAP) return quality;
+  return { ...quality, label: 'Alien' };
 }
 function negativeNoun(quality: Quality): string {
   return quality.label.toLowerCase();
@@ -92,6 +126,7 @@ function rarityVerdict(quality: Quality, rarity: Rarity | undefined, bestRarity?
   const praise = quality.label === 'Excellent' || quality.label === 'Great' || quality.label === 'Best';
   const holds = quality.label === 'Good';
   if (quality.label === 'Allowed mate') return hardToAvoid(bestRarity) ?? allowedMateVerdict(rarity);
+  if (quality.label === 'Alien') return `An alien find.`;
   if (rarity.label === 'Absent') {
     if (quality.label === 'Excellent') return `An exceptional find.`;
     if (praise) return `A genuine find.`;
@@ -113,17 +148,40 @@ function rarityVerdict(quality: Quality, rarity: Rarity | undefined, bestRarity?
   if (holds) return `A rarely played choice that holds.`;
   return hardToAvoid(bestRarity) ?? `A rare ${negativeNoun(quality)}.`;
 }
-// A mistake whose avoidance was itself a rare find: the best move sat under
-// 5% (Rare) or outside Maia's top choices (Absent), so the error was hard to
-// avoid. Expected/Uncommon/Unknown best moves leave the standard
-// wording alone. Verdict-only: badges still read pure loss. Both Absent and
-// Rare-tiny share one short sentence; the "This line …" second sentence plus
-// its clickable PV carries the concrete consequence.
+// A mistake whose avoidance was itself a rare find at the player's own
+// level: the best move sat under 5% (Rare) or outside Maia's top choices
+// (Absent), so the error was hard to avoid. Qualified to the player's pool:
+// with a second (2400) rarity lane in play, the bare phrase would read as
+// universal — the "anyone" upgrade lives in the planned best2400Rarity fact.
+// Expected/Uncommon/Unknown best moves leave the standard wording alone.
+// Verdict-only: badges still read pure loss. Both Absent and Rare-tiny share
+// one short sentence; the "This line …" second sentence plus its clickable
+// PV carries the concrete consequence.
 function hardToAvoid(bestRarity: Rarity | null | undefined): string | null {
   if (!bestRarity || bestRarity.label === 'Expected' || bestRarity.label === 'Uncommon' || bestRarity.label === 'Unknown') return null;
-  if (bestRarity.label === 'Absent') return `Hard to avoid.`;
+  if (bestRarity.label === 'Absent') return `Hard to avoid at your level.`;
   if (bestRarity.prob == null || bestRarity.prob >= EXCELLENT_MAX_PROB) return null;
-  return `Hard to avoid.`;
+  return `Hard to avoid at your level.`;
+}
+// Shared upstairs-regularly sentence (second-pool note for negatives,
+// bright-spot note for praise): one literal, two rules.
+const UPSTAIRS_REGULAR = 'Stronger players play this regularly.';
+// Second-pool clause for the played move: what the 2400 lane says about a
+// move already described by the own-pool head. Agreement needs no words
+// (common/common, uncommon/uncommon stay silent); only contradiction or
+// dramatic extension earns a note. Unknown on either side disables it —
+// absent evidence is not evidence.
+export function secondPoolClause(rarity: Rarity | undefined | null, rarity2400: Rarity | undefined | null): string | null {
+  if (!rarity || !rarity2400 || rarity.label === 'Unknown' || rarity2400.label === 'Unknown') return null;
+  const own = rarity.label, up = rarity2400.label;
+  if (up === 'Expected') {
+    if (own === 'Expected') return null;
+    return UPSTAIRS_REGULAR;
+  }
+  if (up === 'Uncommon') return null;
+  if (own === 'Absent' && up === 'Absent') return 'Unlisted at every level.';
+  if (own === 'Expected' || own === 'Uncommon') return 'Stronger players rarely play this.';
+  return 'Rare at every level.';
 }
 // Decision list for the move verdict. Array order IS the priority: the
 // first matching rule wins, so reordering rules reorders the verdict. Each
@@ -142,9 +200,14 @@ function hardToAvoid(bestRarity: Rarity | null | undefined): string | null {
 // candidates. Neither note ever rescues a quiet verdict: notes append to
 // the rarity synthesis only.
 export type OpeningRef = { eco: string; name: string };
-export type VerdictArgs = { san: string; quality?: Quality | undefined; rarity?: Rarity | undefined; opening?: OpeningRef | null; bestRarity?: Rarity | null; materialNote?: string | null; terminal?: TerminalKind | null; matePatternName?: string | null; deadDraw?: boolean; underpromotionAvoids?: boolean; novelty?: NoveltyRef | null; pawnNote?: string | null; positiveNote?: string | null };
+export type VerdictArgs = { san: string; quality?: Quality | undefined; rarity?: Rarity | undefined; opening?: OpeningRef | null; bestRarity?: Rarity | null; materialNote?: string | null; terminal?: TerminalKind | null; matePatternName?: string | null; deadDraw?: boolean; underpromotionAvoids?: boolean; novelty?: NoveltyRef | null; pawnNote?: string | null; positiveNote?: string | null;
+  // Cross-Elo praise tiers: rarity of the played move at 2400 (from the
+  // objective lane; null when that lane is missing/degraded) and whether the
+  // raw engine grade was Top (played == Stockfish best with a small gap —
+  // translated Quality alone cannot recover it, same as isCritical).
+  rarity2400?: Rarity | null; isTop?: boolean | null };
 export function isPraiseLabel(label: Quality['label'] | undefined): boolean {
-  return label === 'Best' || label === 'Great' || label === 'Excellent' || label === 'Good';
+  return label === 'Best' || label === 'Great' || label === 'Excellent' || label === 'Good' || label === 'Alien';
 }
 type StandaloneRule = { name: string; match: (facts: VerdictArgs) => boolean; render: (facts: VerdictArgs) => string };
 const STANDALONE_RULES: StandaloneRule[] = [
@@ -178,6 +241,26 @@ const NOTE_RULES: NoteRule[] = [
     render: facts => facts.materialNote! },
   { name: 'pawn', match: facts => !!facts.pawnNote && (facts.quality?.label === 'Blunder' || facts.quality?.label === 'Mistake' || facts.quality?.label === 'Inaccuracy'),
     render: facts => facts.pawnNote! },
+  // Second-pool sociology for the inaccuracy family: the consequence notes
+  // above stay first (what happened outranks who plays it). Fires only on
+  // contradiction/extension — agreement stays silent per secondPoolClause.
+  { name: 'second-pool', match: facts => (facts.quality?.label === 'Blunder' || facts.quality?.label === 'Mistake' || facts.quality?.label === 'Inaccuracy')
+      && secondPoolClause(facts.rarity, facts.rarity2400) != null,
+    render: facts => secondPoolClause(facts.rarity, facts.rarity2400)! },
+  // Praise-tier notes, ordered most-specific first (first match wins, so
+  // they outrank the generic positive why below — tier evidence is rarer
+  // and more specific than a tactical motif).
+  { name: 'only-move', match: facts => facts.quality?.label === 'Alien',
+    render: () => `Stockfish sees nothing else that holds.` },
+  { name: 'validated', match: facts => facts.quality?.label === 'Best' && facts.isTop === true && isTinyRare(facts.rarity) && isTinyRare(facts.rarity2400),
+    render: () => `Stockfish agrees it is best.` },
+  { name: 'blind-spot', match: facts => (facts.quality?.label === 'Excellent' || facts.quality?.label === 'Great' || facts.quality?.label === 'Best') && isTinyRare(facts.rarity2400),
+    render: () => `Even 2400s rarely play this.` },
+  // Bright-spot mirror: praised at own Elo and standard upstairs — the
+  // level-up moment. Holds stays quiet by design (no praise for holding).
+  { name: 'bright-spot', match: facts => (facts.quality?.label === 'Excellent' || facts.quality?.label === 'Great' || facts.quality?.label === 'Best')
+      && !!facts.rarity && facts.rarity.label !== 'Expected' && facts.rarity2400?.label === 'Expected',
+    render: () => UPSTAIRS_REGULAR },
   { name: 'positive', match: facts => !!facts.positiveNote && isPraiseLabel(facts.quality?.label),
     render: facts => facts.positiveNote! },
 ];
