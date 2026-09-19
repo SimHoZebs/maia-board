@@ -4,7 +4,7 @@ import type { Quality } from './reviewMetrics';
 export const issueLabels = ['Inaccuracy', 'Mistake', 'Blunder', 'Allowed mate'] as const;
 type IssueLabel = typeof issueLabels[number];
 // Compact chip row order: praise first, then neutral, then errors.
-export const countLabels = ['Excellent', 'Great', 'Best', 'Good', 'Forced', 'Inaccuracy', 'Mistake', 'Blunder', 'Allowed mate'] as const;
+export const countLabels = ['Alien', 'Excellent', 'Great', 'Best', 'Good', 'Forced', 'Inaccuracy', 'Mistake', 'Blunder', 'Allowed mate'] as const;
 export type CountLabel = typeof countLabels[number];
 export type ReviewSide = 'white' | 'black';
 export type SideSummary = {
@@ -28,7 +28,7 @@ export function summarizeReview(nodes: readonly Pick<ReviewNode, 'turn' | 'ply' 
   const sides: SideSummary[] = (['white', 'black'] as const).map(color => ({
     color, total: 0, reviewed: 0, accuracy: null,
     issues: { Inaccuracy: 0, Mistake: 0, Blunder: 0, 'Allowed mate': 0 },
-    counts: { Excellent: 0, Great: 0, Best: 0, Good: 0, Forced: 0, Inaccuracy: 0, Mistake: 0, Blunder: 0, 'Allowed mate': 0 },
+    counts: { Alien: 0, Excellent: 0, Great: 0, Best: 0, Good: 0, Forced: 0, Inaccuracy: 0, Mistake: 0, Blunder: 0, 'Allowed mate': 0 },
   }));
   const scores = { white: 0, black: 0 };
   const issues: ReviewIssue[] = [];

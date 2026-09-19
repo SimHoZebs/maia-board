@@ -5,7 +5,7 @@ import { sourceLabel } from './objective';
 import { scoreValueText, whiteExpected, type Quality } from './reviewMetrics';
 import type { ReviewSide } from './reviewSummary';
 
-export const qualityGlyphs = { Forced: 'F', 'Allowed mate': '💀', Blunder: '??', Mistake: '?', Inaccuracy: '?!', Excellent: '!!', Great: '!', Best: 'B', Good: 'G' } as const;
+export const qualityGlyphs = { Forced: 'F', 'Allowed mate': '💀', Blunder: '??', Mistake: '?', Inaccuracy: '?!', Excellent: '!!', Great: '!', Best: 'B', Good: 'G', Alien: '👽' } as const;
 // Labels double as CSS hooks, so multi-word verdicts slug to a single token:
 // "Allowed mate" -> "allowed-mate" (quality-allowed-mate, chart-dot-allowed-mate).
 export const qualitySlug = (label: string) => label.toLowerCase().replace(/\s+/g, '-');

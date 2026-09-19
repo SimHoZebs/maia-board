@@ -333,7 +333,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .chart-point i { position: absolute; left: 18px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); transform: translateY(-50%); }
 .chart-point span { position: absolute; bottom: 4px; left: 0; right: 0; font-size: 10px; color: var(--muted); }
 .quality { display: inline-flex; min-width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 4px; background: #454746; color: #eee !important; font-size: 11px; font-weight: 750; vertical-align: middle; }
-.quality-blunder { background: #a63c3c; }.quality-allowed-mate { background: #7f1d1d; }.quality-mistake { background: #985920; }.quality-inaccuracy { background: #7c691e; }.quality-excellent { background: #38bdf8; color: #082f49 !important; }.quality-great { background: #286b89; }.quality-best, .quality-good { background: #496336; }
+.quality-blunder { background: #a63c3c; }.quality-allowed-mate { background: #7f1d1d; }.quality-mistake { background: #985920; }.quality-inaccuracy { background: #7c691e; }.quality-excellent { background: #38bdf8; color: #082f49 !important; }.quality-great { background: #286b89; }.quality-best, .quality-good { background: #496336; }.quality-alien { background: #8b5cf6; color: #eee !important; }
 .quality-placeholder { visibility: hidden; background: transparent; }
 /* Slot-reel loading state for QualityBadge: a strip of every verdict spins
    behind the badge window while evaluations settle. The strip repeats 3x so
@@ -342,7 +342,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .quality-slot-window { display: block; height: 22px; width: 100%; overflow: hidden; }
 .quality-slot-strip { display: flex; flex-direction: column; animation: quality-reel 2.4s linear infinite; }
 .quality-slot-cell { display: inline-flex; align-items: center; justify-content: center; height: 22px; min-width: 22px; font-size: 11px; font-weight: 750; }
-@keyframes quality-reel { from { transform: translateY(0); } to { transform: translateY(calc(-22px * 9)); } }
+@keyframes quality-reel { from { transform: translateY(0); } to { transform: translateY(calc(-22px * 10)); } }
 @media (prefers-reduced-motion: reduce) {
   .quality-slot-strip { animation: none; transform: translateY(calc(-22px * 2)); }
 }

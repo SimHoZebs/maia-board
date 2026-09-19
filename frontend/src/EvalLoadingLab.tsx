@@ -11,6 +11,7 @@ const FACES = [
   { label: "Mistake", glyph: "?", cls: "quality-mistake" },
   { label: "Blunder", glyph: "??", cls: "quality-blunder" },
   { label: "Allowed mate", glyph: "💀", cls: "quality-allowed-mate" },
+  { label: "Alien", glyph: "👽", cls: "quality-alien" },
   { label: "Forced", glyph: "F", cls: "quality-forced" },
 ] as const;
 
