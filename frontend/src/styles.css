@@ -167,7 +167,15 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .rank { font-size: 12px; color: var(--muted); width: 12px; }
 .candidate-reading { display: flex; justify-content: space-between; align-items: center; flex: 1; gap: 10px; min-width: 0; min-height: 32px; background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 5px 6px; }
 .candidate-list li.played .candidate-reading { background: #414b35; border-color: #899d6b; }
-.candidate-list .metric { color: var(--accent); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.candidate-list .metric { color: var(--accent); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 5ch; text-align: right; }
+.candidate-list .metrics { display: flex; align-items: baseline; gap: 10px; }
+.candidate-list .delta { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 6ch; text-align: right; }
+/* Icon row over the numeric columns: same row structure as data rows so each
+   icon sits exactly above its column. Compact (no row padding) so it lives
+   in the space the heading used to reserve. */
+.candidate-header .candidate-reading { min-height: 0; padding: 1px 6px; }
+.candidate-header .metric, .candidate-header .delta { display: inline-flex; justify-content: flex-end; }
+.candidate-header svg { display: block; }
 .candidate-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .skeleton-list { display: grid; margin: 0; padding: 0; }
 .skeleton-row { display: flex; gap: 6px; align-items: center; border-bottom: 1px solid var(--line); padding: 4px 0; min-height: 41px; }
@@ -183,7 +191,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .verdict-line { min-height: 0; min-width: 0; padding: 2px 6px; font-size: 13px; font-weight: 600; background: transparent; border-color: var(--line); border-radius: 4px; color: inherit; white-space: nowrap; }
 .verdict-line:hover:not(:disabled) { background: #3b3d3d; text-decoration: underline; }
 .engine-duo > section { min-width: 0; }
-.engine-duo h2 { margin: 0 0 6px; line-height: 1.35; min-height: 2lh; }
+.engine-duo h2 { margin: 0 0 2px; line-height: 1.35; }
 .engine-duo .model-context { line-height: 1.4; min-height: 2lh; }
 .engine-duo h3 { margin: 14px 0 6px; font-size: 13px; }
 .engine-duo .win-hero strong { line-height: 1.2; }
@@ -286,6 +294,9 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
   .candidate-list li { gap: 4px; }
   .candidate-reading { padding: 6px; gap: 6px; }
   .candidate-list .metric { font-size: 12px; }
+  .candidate-list .metrics { gap: 8px; }
+  .candidate-list .delta { font-size: 12px; }
+  .candidate-header .candidate-reading { padding: 0 6px; }
   .rank { width: 10px; }
   .entry { margin: 24px auto; }
   .panel { padding: 18px; }

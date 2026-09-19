@@ -1,4 +1,5 @@
 import { useRef, useState, type Dispatch, type ReactNode } from "react";
+import { TrendingDown, Users } from "lucide-react";
 import type { Action, State } from "./state/index";
 import { Rating } from "./BoardTools";
 import { Button, EngineCandidateList, EngineSection } from "./components";
@@ -6,6 +7,7 @@ import { Chess } from "chess.js";
 import type { Review } from "./useReview";
 import { describeMove } from "./reviewMetrics";
 import { fixedElo, sourceLabel } from "./objective";
+import { formatWinrateDelta, maiaDisplayParts } from "./objective/maia";
 import { bestLinePreview } from "./material";
 import { verdictInputsForPly } from "./theory";
 import { useLineOpenings } from "./openings";
@@ -190,6 +192,24 @@ export function MoveAnalysis({
   // ReviewActionButton); skeleton only while a side is missing.
   const verdictLoading =
     hasMove && !!played && !verdict && !hasError && !tooLong && (!evaluation || !afterEvaluation);
+  // Display list values: policy share plus winrate delta vs the best listed
+  // winrate. Computed on the sliced list so the delta baseline matches exactly
+  // what is rendered.
+  const displayListed = response?.top_moves.slice(0, 5) ?? [];
+  const displayParts = maiaDisplayParts(displayListed);
+  // One header set for both Maia lanes: play probability (Users) plus
+  // win-rate change vs best (TrendingDown). The objective lane only gets it
+  // when the provider supplies probabilities (Maia policy share); a lane
+  // without them (Stockfish lines) keeps its single absolute-value column.
+  const maiaListHeaders = {
+    metric: <span title="Share of human play at this rating"><Users size={13} aria-hidden="true" /></span>,
+    delta: <span title="Win-rate change versus best listed move"><TrendingDown size={13} aria-hidden="true" /></span>,
+    label: "Probability of play, win-rate change versus best listed move",
+  };
+  const objectiveEntries = candidates?.entries ?? [];
+  const objectiveHasProb = objectiveEntries.length > 0
+    && objectiveEntries.every(candidate => typeof candidate.prob === 'number' && Number.isFinite(candidate.prob));
+  const objectiveBest = objectiveHasProb ? Math.max(...objectiveEntries.map(candidate => candidate.expected)) : 0;
   return (
     <>
       {!hasMove && <p className="move-verdict" role="status">Current position — explore a candidate or step forward to review a move.</p>}
@@ -247,10 +267,12 @@ export function MoveAnalysis({
               played={played}
               hasMove={hasMove}
               previewUci={state.preview}
-              items={response.top_moves.slice(0, 5).map((candidate) => ({
+              items={displayListed.map((candidate, index) => ({
                 uci: candidate.move,
-                metric: `${Math.round(candidate.prob * 100)}%`,
+                metric: displayParts[index].prob,
+                delta: displayParts[index].delta,
               }))}
+              headers={maiaListHeaders}
               onPreview={(uci) => dispatch({ type: "preview", uci })}
               onClear={() => dispatch({ type: "preview", uci: null })}
               onSelect={exploreFromFocus}
@@ -289,10 +311,17 @@ export function MoveAnalysis({
               played={played}
               hasMove={hasMove}
               previewUci={state.preview}
-              items={candidates.entries.map((candidate) => ({
-                uci: candidate.uci,
-                metric: `${Math.round(candidate.expected)}%`,
-              }))}
+              items={objectiveEntries.map((candidate) => (objectiveHasProb
+                ? {
+                  uci: candidate.uci,
+                  metric: `${Math.round(candidate.prob! * 100)}%`,
+                  delta: formatWinrateDelta(candidate.expected - objectiveBest),
+                }
+                : { uci: candidate.uci, metric: `${Math.round(candidate.expected)}%` }))}
+              headers={objectiveHasProb ? maiaListHeaders : {
+                metric: <span title="Expected win rate for the side to move"><TrendingDown size={13} aria-hidden="true" /></span>,
+                label: "Expected win rate for the side to move",
+              }}
               onPreview={(uci) => dispatch({ type: "preview", uci })}
               onClear={() => dispatch({ type: "preview", uci: null })}
               onSelect={exploreFromFocus}

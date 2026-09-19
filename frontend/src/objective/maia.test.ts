@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { candidatesFor, fixedElo, maiaExpected, maiaPoint } from './maia';
+import { candidatesFor, fixedElo, formatWinrateDelta, maiaDisplayParts, maiaExpected, maiaPoint } from './maia';
 
 it('reads mover-relative expected scores from WDL triples', () => {
   expect(maiaExpected([0.2, 0.3, 0.5])).toBeCloseTo(65, 9);
@@ -30,12 +30,44 @@ it('lists ranked candidates with per-choice expectations', () => {
     wdl: [0.2, 0.3, 0.5], model_used: '79m', degraded: false,
   }, node);
   expect(list?.entries).toEqual([
-    { uci: 'e2e4', expected: 65 },
-    { uci: 'd2d4', expected: 35 },
+    { uci: 'e2e4', expected: 65, prob: 0.5 },
+    { uci: 'd2d4', expected: 35, prob: 0.3 },
   ]);
   expect(list).toMatchObject({ degraded: false });
 });
 
 it('pins the panel dropdown to 2400', () => {
   expect(fixedElo()).toBe(2400);
+});
+
+it('formats winrate deltas with one decimal and a zero guard', () => {
+  expect(formatWinrateDelta(0)).toBe('0.0%');
+  expect(formatWinrateDelta(-0.04)).toBe('0.0%');
+  expect(formatWinrateDelta(-2.34)).toBe('-2.3%');
+  expect(formatWinrateDelta(1.25)).toBe('+1.3%');
+});
+
+it('renders display parts as prob plus delta vs best winrate', () => {
+  expect(maiaDisplayParts([])).toEqual([]);
+  const parts = maiaDisplayParts([
+    { move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] },
+    { move: 'd2d4', prob: 0.3, wdl: [0.5, 0.3, 0.2] },
+  ]);
+  // 65 vs 35 expected: best reads 0.0%, the other -30.0%.
+  expect(parts).toEqual([
+    { prob: '50%', delta: '0.0%' },
+    { prob: '30%', delta: '-30.0%' },
+  ]);
+});
+
+it('baselines the delta on the best winrate, not policy order', () => {
+  const parts = maiaDisplayParts([
+    { move: 'e2e4', prob: 0.5, wdl: [0.5, 0.3, 0.2] },
+    { move: 'd2d4', prob: 0.3, wdl: [0.2, 0.3, 0.5] },
+  ]);
+  // Policy top loses 30 points to the better winrate below it.
+  expect(parts).toEqual([
+    { prob: '50%', delta: '-30.0%' },
+    { prob: '30%', delta: '0.0%' },
+  ]);
 });

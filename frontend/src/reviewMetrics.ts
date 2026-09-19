@@ -211,8 +211,11 @@ export type ObjectivePoint = {
 // Ranked candidate entries for one position: the objective list the panel
 // renders. Mover-relative expected score per choice, policy/score order,
 // plus the model identity behind the list for headings and fallback copy.
+// `prob` is the lane's play probability when the provider has one (Maia
+// policy share); lanes without one (Stockfish lines) omit it and the panel
+// falls back to the single absolute value.
 export type ObjectiveCandidates = {
-  entries: { uci: string; expected: number }[];
+  entries: { uci: string; expected: number; prob?: number | null }[];
   degraded: boolean;
 };
 // White-relative view of a mover-relative expectation. Callers pass the

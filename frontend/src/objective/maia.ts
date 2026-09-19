@@ -31,6 +31,26 @@ export function maiaExpected(wdl: MoveResponse['wdl']): number {
   return 100 * (win + 0.5 * draw);
 }
 
+// Display values for the Maia analysis list: policy share plus winrate delta
+// vs the best listed winrate, in percentage points. The best winrate reads
+// 0.0%; everything else is <= 0. One decimal keeps sub-point gaps visible
+// where integer rounding would collapse them to 0. Rendered as two separate
+// columns (prob + delta), never a combined string.
+export function formatWinrateDelta(delta: number): string {
+  if (Math.abs(delta) < 0.05) return '0.0%';
+  const rounded = (Math.sign(delta) * Math.round(Math.abs(delta) * 10) / 10).toFixed(1);
+  return delta > 0 ? `+${rounded}%` : `${rounded}%`;
+}
+
+export function maiaDisplayParts(topMoves: MoveResponse['top_moves']): { prob: string; delta: string }[] {
+  if (topMoves.length === 0) return [];
+  const best = Math.max(...topMoves.map(candidate => maiaExpected(candidate.wdl)));
+  return topMoves.map(candidate => ({
+    prob: `${Math.round(candidate.prob * 100)}%`,
+    delta: formatWinrateDelta(maiaExpected(candidate.wdl) - best),
+  }));
+}
+
 // Raw provider rows, node-aligned. The fixed 2400 identity lives inside
 // this module; callers never name it. The Stockfish twin reads the passed
 // evaluations instead.
@@ -52,13 +72,15 @@ export function lanePoints(
 // Ranked candidate list for the panel: the full top_moves with per-choice
 // expectations, in policy order. Undefined while the row is missing (Maia
 // never infers game-over positions — the panel falls back to the outcome).
+// The policy share rides along so the panel can mirror the display columns
+// (prob% + winrate delta) instead of absolute values only.
 export function candidatesFor(
   row: MoveResponse | undefined,
   _node: ReviewNode,
 ): ObjectiveCandidates | undefined {
   if (!row) return undefined;
   return {
-    entries: row.top_moves.map(candidate => ({ uci: candidate.move, expected: maiaExpected(candidate.wdl) })),
+    entries: row.top_moves.map(candidate => ({ uci: candidate.move, expected: maiaExpected(candidate.wdl), prob: candidate.prob })),
     degraded: row.degraded,
   };
 }
