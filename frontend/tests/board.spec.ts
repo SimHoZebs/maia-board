@@ -69,7 +69,9 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
       // Objective lane (fixed Maia 2400) auto-fulfills: these specs
       // choreograph the display lane by holding its routes open, so the
       // objective list settles in the background and bars, badges, and the
-      // panel never block on it here.
+      // panel never block on it here. Fulfilled rows are filed into the
+      // lookup cache, mirroring the backend: remounts restore instead of
+      // re-inferring (the Back/Forward test pins the no-repeat direction).
       if (payload.elo_maia === 2400) {
         // Tops follow the main test line while legal so markers and
         // branches read naturally, else the first legal move; always
@@ -80,7 +82,9 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
         const best = (preferred && legal.includes(preferred)) ? preferred : legal[0];
         const second = legal.find(m => m !== best) ?? best;
         const extra = second === best ? [] : [{ move: second, prob: 0.25, wdl: [0.2, 0.3, 0.5] }];
-        await route.fulfill({ json: { move: best, top_moves: [{ move: best, prob: 0.6, wdl: [0.2, 0.3, 0.5] }, ...extra], wdl: [0.2, 0.3, 0.5], model_used: payload.model, degraded: false } });
+        const value = { move: best, top_moves: [{ move: best, prob: 0.6, wdl: [0.2, 0.3, 0.5] }, ...extra], wdl: [0.2, 0.3, 0.5], model_used: payload.model, degraded: false };
+        cache.set('maia', payload, value);
+        await route.fulfill({ json: value });
         return;
       }
       requests.push({ route, payload: route.request().postDataJSON() }); return;
@@ -89,7 +93,9 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
       const payload = route.request().postDataJSON();
       const game = replay(payload.moves, payload.initial_fen);
       const moves = game.moves({ verbose: true }).slice(0, 2).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
-      await route.fulfill({ json: { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 14, terminal: null, best_move: moves[0] ?? null, score: { type: 'cp', value: 20 }, lines: moves.map(move => ({ move, score: { type: 'cp', value: 20 }, depth: 14 })) } }); return;
+      const value = { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 14, terminal: null, best_move: moves[0] ?? null, score: { type: 'cp', value: 20 }, lines: moves.map(move => ({ move, score: { type: 'cp', value: 20 }, depth: 14 })) };
+      cache.set('sf', payload, value);
+      await route.fulfill({ json: value }); return;
     }
     if (path === '/games' || path.startsWith('/games/')) {
       const method = route.request().method();
@@ -244,7 +250,7 @@ test('direct play resumes once; Back/Forward preserves game viewing and analysis
   expect(app.errors).toEqual([]);
 });
 
-test('Back retires pending analysis; Forward does not repeat it or resume play twice', async ({ page }) => {
+test('Back retires pending analysis; remounts refetch retired rows once and never resume play twice', async ({ page }) => {
   const app = await boot(page, { [KEYS.current]: record(['e2e4']) }, false, '/analyze');
   await page.locator('#mode-play').click();
   await expect.poll(() => app.requests.length).toBe(1);
@@ -269,7 +275,11 @@ test('Back retires pending analysis; Forward does not repeat it or resume play t
   await page.goForward();
   await expect(page).toHaveURL('http://maia.test/play');
   await piece(page, 'c5', 'black pawn');
-  expect(app.requests).toHaveLength(3);
+  // The retired display row was discarded on scope abort (late results never
+  // land), so the analysis remount refetches it once via the cached-instant
+  // bypass before restore could fill it. Against the backend that refetch is
+  // a cache hit, not fresh inference — and play itself never refetches.
+  expect(app.requests).toHaveLength(4);
   expect(app.errors).toEqual([]);
 });
 
@@ -690,10 +700,13 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   await page.locator('#load-analysis').click();
   await expect(page.locator('#analysis-controls')).toHaveCount(0);
   await app.reply(0, 'b8c6', 200, [{ move: 'b8c6', prob: .4, wdl: [0.2, 0.3, 0.5] }, { move: 'g8f6', prob: .15, wdl: [0.2, 0.3, 0.5] }]);
-  await expect(page.locator('section[aria-label="Maia analysis"] .candidate-reading')).toHaveText(['Played, Nc640%', 'Nf615%']);
+  // Header row shares .candidate-reading, so scope to data rows; both
+  // candidates share one winrate, hence identical 0.0% deltas.
+  await expect(page.locator('section[aria-label="Maia analysis"] li:not(.candidate-header) .candidate-reading')).toHaveText(['Played, Nc640%0.0%', 'Nf615%0.0%']);
   await expect(page.locator('.win-hero')).toHaveCount(0);
   await expect(page.locator('section[aria-label="Maia analysis"] .candidate-list')).toContainText('Nc6');
-  await expect(page.locator('.balance-track')).toHaveAccessibleName(/estimated White winning chance 65%/);
+  await expect(page.locator('.balance-track')).toHaveAccessibleName(/White 50%.*Draw 30%.*Black 20%.*estimated White winning chance 65%/);
+  await expect(page.locator('.balance-score')).toHaveText('W 50% · D 30% · B 20%');
   await page.getByRole('button', { name: 'Explore Nf6' }).hover();
   await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(0);
   await piece(page, 'g8', 'black knight');

@@ -31,11 +31,23 @@ export function maiaExpected(wdl: MoveResponse['wdl']): number {
   return 100 * (win + 0.5 * draw);
 }
 
+// White-relative WDL percentages (0-100) from a mover-relative triple
+// [loss, draw, win]. Turn decides which side the win/loss belong to; draws
+// are side-neutral. The bar renders these three segments; expected score
+// stays win + draw/2 for grading.
+export function maiaWhiteWdl(wdl: MoveResponse['wdl'], turn: 'white' | 'black'): { white: number; draw: number; black: number } {
+  const [loss, draw, win] = wdl;
+  return turn === 'white'
+    ? { white: win * 100, draw: draw * 100, black: loss * 100 }
+    : { white: loss * 100, draw: draw * 100, black: win * 100 };
+}
 // Display values for the Maia analysis list: policy share plus winrate delta
-// vs the best listed winrate, in percentage points. The best winrate reads
-// 0.0%; everything else is <= 0. One decimal keeps sub-point gaps visible
-// where integer rounding would collapse them to 0. Rendered as two separate
-// columns (prob + delta), never a combined string.
+// vs the best listed winrate, in percentage points. The winrates arrive
+// evaluated at 2400-vs-2400 (display lane) or 2400 throughout (objective
+// lane); the delta baseline is the best listed move in the same response.
+// The best winrate reads 0.0%; everything else is <= 0. One decimal keeps
+// sub-point gaps visible where integer rounding would collapse them to 0.
+// Rendered as two separate columns (prob + delta), never a combined string.
 export function formatWinrateDelta(delta: number): string {
   if (Math.abs(delta) < 0.05) return '0.0%';
   const rounded = (Math.sign(delta) * Math.round(Math.abs(delta) * 10) / 10).toFixed(1);
@@ -61,12 +73,18 @@ export function laneRows(
   return nodes.map(node => ctx.coordinator.result('maia', node, GRADING_MAIA_SETTINGS));
 }
 
-// Node-aligned objective points.
+// Node-aligned objective points. The white-relative WDL rides along for the
+// eval bar (three segments + percentages); grading still reads only
+// top/expected.
 export function lanePoints(
   rows: (MoveResponse | undefined)[],
-  _nodes: ReviewNode[],
+  nodes: ReviewNode[],
 ): (ObjectivePoint | undefined)[] {
-  return rows.map(response => (response === undefined ? undefined : maiaPoint(response)));
+  return rows.map((response, index) => {
+    if (response === undefined) return undefined;
+    const point = maiaPoint(response);
+    return { ...point, wdl: maiaWhiteWdl(response.wdl, nodes[index].turn) };
+  });
 }
 
 // Ranked candidate list for the panel: the full top_moves with per-choice

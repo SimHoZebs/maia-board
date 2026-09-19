@@ -204,9 +204,15 @@ export function whiteWin(score: Score): number {
 // curve below operate on these numbers only and never know the source.
 // consequence: switching providers changes which fetches feed the points,
 // never the grading math.
+export type ObjectiveWdl = {
+  white: number;
+  draw: number;
+  black: number;
+};
 export type ObjectivePoint = {
   top: string | null;
   expected: number | null;
+  wdl?: ObjectiveWdl | null;
 };
 // Ranked candidate entries for one position: the objective list the panel
 // renders. Mover-relative expected score per choice, policy/score order,

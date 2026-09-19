@@ -103,7 +103,11 @@ for (const width of [360, 1440]) test(`engine settings and Play temperature at $
   await page.getByRole('button', { name: 'Starting position', exact: true }).click();
   await page.locator('#load-analysis').click();
   await expect.poll(() => requests.some(r => r.path === '/evaluate')).toBe(true);
-  const sf = requests.find(r => r.path === '/evaluate')!;
+  // Fast-then-refine fires the MPV1 fast request first; the custom settings
+  // ride the full refine that follows, so assert on that flight, not the
+  // first one.
+  await expect.poll(() => requests.some(r => r.path === '/evaluate' && r.body.settings?.lines === 5)).toBe(true);
+  const sf = requests.filter(r => r.path === '/evaluate').find(r => r.body.settings?.lines === 5)!;
   expect(sf.body.settings).toEqual({ time_ms: 2000, lines: 5, depth: 18 });
   await expect.poll(() => requests.filter(r => r.path === '/move/analysis').length).toBeGreaterThan(0);
   expect(requests.filter(r => r.path === '/move/analysis').at(-1)!.body).not.toHaveProperty('temperature');

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { candidatesFor, fixedElo, formatWinrateDelta, maiaDisplayParts, maiaExpected, maiaPoint } from './maia';
+import { candidatesFor, fixedElo, formatWinrateDelta, lanePoints, maiaDisplayParts, maiaExpected, maiaPoint, maiaWhiteWdl } from './maia';
 
 it('reads mover-relative expected scores from WDL triples', () => {
   expect(maiaExpected([0.2, 0.3, 0.5])).toBeCloseTo(65, 9);
@@ -7,6 +7,22 @@ it('reads mover-relative expected scores from WDL triples', () => {
   expect(maiaExpected([1, 0, 0])).toBe(0);
 });
 
+it('converts mover-relative WDL triples to white-relative percentages', () => {
+  expect(maiaWhiteWdl([0.2, 0.3, 0.5], 'white')).toEqual({ white: 50, draw: 30, black: 20 });
+  expect(maiaWhiteWdl([0.2, 0.3, 0.5], 'black')).toEqual({ white: 20, draw: 30, black: 50 });
+});
+
+it('carries the white-relative WDL on lane points for the eval bar', () => {
+  const nodes = [{ turn: 'white' }, { turn: 'black' }] as never;
+  const rows = [
+    { top_moves: [{ move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], degraded: false },
+    { top_moves: [{ move: 'e7e5', prob: 0.5, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], degraded: false },
+  ] as never;
+  const points = lanePoints(rows, nodes);
+  expect(points[0]).toMatchObject({ expected: 65, wdl: { white: 50, draw: 30, black: 20 } });
+  expect(points[1]).toMatchObject({ expected: 65, wdl: { white: 20, draw: 30, black: 50 } });
+  expect(lanePoints([undefined] as never, nodes)).toEqual([undefined]);
+});
 it('names the objective top only from clean responses', () => {
   expect(maiaPoint(undefined)).toEqual({ top: null, expected: null });
   expect(maiaPoint({ top_moves: [{ move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], degraded: false }))

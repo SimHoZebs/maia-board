@@ -34,3 +34,32 @@ it('pins forced mates and terminal outcomes over the expectation', () => {
   );
   expect(mated).toContain('Black wins');
 });
+
+it('shows white, draw, and black percentages from the WDL triple', () => {
+  const html = renderToStaticMarkup(
+    createElement(ObjectiveBar, {
+      turn: 'white', expected: 60, wdl: { white: 45, draw: 30, black: 25 }, orientation: 'white',
+    }),
+  );
+  expect(html).toContain('W 45%');
+  expect(html).toContain('D 30%');
+  expect(html).toContain('B 25%');
+  expect(html).toContain('White 45%');
+  expect(html).toContain('Draw 30%');
+  expect(html).toContain('Black 25%');
+  expect(html).toContain('estimated White winning chance 60%');
+  expect(html).toContain('balance-draw');
+  expect(html).toContain('height:45%');
+  expect(html).toContain('height:30%');
+});
+
+it('shows both sides without a draw segment when no WDL is available', () => {
+  const html = renderToStaticMarkup(
+    createElement(ObjectiveBar, { turn: 'white', expected: 65, orientation: 'white' }),
+  );
+  expect(html).toContain('W 65%');
+  expect(html).toContain('B 35%');
+  expect(html).toContain('White 65%');
+  expect(html).toContain('Black 35%');
+  expect(html).not.toContain('balance-draw');
+});

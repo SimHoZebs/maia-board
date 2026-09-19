@@ -39,12 +39,17 @@ export function laneRows(
   return ctx.sfEvaluations;
 }
 
-// Node-aligned objective points.
+// Node-aligned objective points. Stockfish rows carry no WDL triple, so the
+// bar falls back to the single expected value (white/black only, no draw
+// segment). The null keeps the shape identical to the Maia twin.
 export function lanePoints(
   rows: (Evaluation | undefined)[],
   nodes: ReviewNode[],
 ): (ObjectivePoint | undefined)[] {
-  return rows.map((evaluation, index) => (evaluation === undefined ? undefined : sfPoint(evaluation, nodes[index].turn)));
+  return rows.map((evaluation, index) => {
+    if (evaluation === undefined) return undefined;
+    return { ...sfPoint(evaluation, nodes[index].turn), wdl: null };
+  });
 }
 
 // Ranked candidate list for the panel: the engine lines with per-line

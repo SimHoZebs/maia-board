@@ -183,7 +183,7 @@ test('standalone FEN shows current candidates and clears correct-frame previews'
 
 test('root shows the fallback notice without model parameters', async ({ page }) => {
   const app = await bootReview(page);
-  await page.route('http://maia.test/move*', route => {
+  await page.route('http://maia.test/move**', route => {
     const body = route.request().postDataJSON();
     const move = replay(body.moves, body.initial_fen).moves({ verbose: true })[0];
     const uci = `${move.from}${move.to}${move.promotion ?? ''}`;
@@ -237,7 +237,7 @@ test('whole game completes independently of viewing and updates the position bal
   // Book chips would occupy the badge boxes on this all-book line (see
   // badge-loading.spec.ts): the fixture names nothing so verdicts render.
   const app = await bootReview(page, '1. e4 e5 2. Nf3 Nc6', [20,20,200,-700,-680]);
-  await expect(page.locator('.balance-score')).toHaveText('8%');
+  await expect(page.locator('.balance-score')).toHaveText('W 8% · D 0% · B 92%');
   // The charts shell mounts pre-analysis (lines stay empty until verdicts
   // settle); only the hero must stay absent before the review runs.
   await expect(page.locator('.win-hero')).toHaveCount(0);
@@ -256,8 +256,8 @@ test('whole game completes independently of viewing and updates the position bal
   const settled = inferred();
   await page.locator('.move-cell').nth(2).click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
-  await expect(page.locator('.balance-score')).toHaveText('7%');
-  await expect(page.locator('.balance-track')).toHaveAccessibleName(/estimated White winning chance 7%/);
+  await expect(page.locator('.balance-score')).toHaveText('W 7% · D 0% · B 93%');
+  await expect(page.locator('.balance-track')).toHaveAccessibleName(/White 7%.*Draw 0%.*Black 93%.*estimated White winning chance 7%/);
   await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
   await page.screenshot({ path: info.outputPath('completed-review.png'), fullPage: true });
   expect(app.errors).toEqual([]);
@@ -304,7 +304,7 @@ test('move analysis summarizes the game below the engines and links mistakes fro
   await expect(page.getByRole('tab', { name: 'Move analysis', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
   await expect(page.locator('#insight-content').getByRole('button', { name: 'Explore Nf3 (played) from before this move', exact: true })).toBeVisible();
-  await expect(page.locator('.balance-score')).toHaveText('7%');
+  await expect(page.locator('.balance-score')).toHaveText('W 7% · D 0% · B 93%');
   expect(app.errors).toEqual([]);
 });
 
@@ -401,7 +401,7 @@ for (const width of [1440, 360]) test(`move analysis restores evaluation graph a
   await page.locator('.chart-point').nth(4).click();
   await expect(page.getByRole('tab', { name: 'Move analysis', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
-  await expect(page.locator('.balance-score')).toHaveText('8%');
+  await expect(page.locator('.balance-score')).toHaveText('W 8% · D 0% · B 92%');
   await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/2… Nc6/);
   expect(app.errors).toEqual([]);
 });
@@ -476,7 +476,7 @@ test('unlisted played moves have no fallback below either prediction list', asyn
 
 test('checkmate fills the bar for the winning side', async ({ page }) => {
   await bootReview(page, '1. f3 e5 2. g4 Qh4#');
-  await expect(page.locator('.balance-track')).toHaveAccessibleName('Black wins · estimated White winning chance 0%');
+  await expect(page.locator('.balance-track')).toHaveAccessibleName('Black wins · White 0% · Draw 0% · Black 100% · estimated White winning chance 0%');
   await expect(page.locator('.balance-white')).toHaveCSS('height', '0px');
 });
 
@@ -576,7 +576,7 @@ test('mixed arrow sources retain their own endpoints', async ({ page }, info) =>
   await bootReview(page);
   // Display Maia and objective (2400) lanes share /move/analysis: split by elo so the
   // white actual, red display, and blue objective arrows diverge.
-  await page.route('http://maia.test/move*', route => {
+  await page.route('http://maia.test/move**', route => {
     const body = route.request().postDataJSON();
     const move = body?.elo_maia === 2400 ? 'd2d4' : 'g1f3';
     return route.fulfill({ json: { move, top_moves: [{ move, prob: .6, wdl: [.2,.3,.5] }], wdl: [.2,.3,.5], model_used: '79m', degraded: false } });
@@ -594,7 +594,7 @@ test('mixed arrow sources retain their own endpoints', async ({ page }, info) =>
 });
 test('current position balance replaces the win-rate sections', async ({ page }) => {
   await bootReview(page);
-  await expect(page.locator('.balance-score')).toHaveText('8%');
+  await expect(page.locator('.balance-score')).toHaveText('W 8% · D 0% · B 92%');
   // The evaluation graph lives in Move analysis now, so the section
   // renders before any review — the foreground pair settles one segment
   // immediately (dot coverage is asserted in the gaps test below).
@@ -686,7 +686,7 @@ test('evaluation bar follows rendered board dimensions on resize and fractional 
 
 test('terminal repetition skips Maia and keeps the local draw result', async ({ page }) => {
   const app = await bootReview(page, '1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. Ng1 Ng8');
-  await expect(page.locator('.balance-track')).toHaveAccessibleName('Draw · estimated White winning chance 50%');
+  await expect(page.locator('.balance-track')).toHaveAccessibleName('Draw · White 0% · Draw 100% · Black 0% · estimated White winning chance 50%');
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Cancel analysis' })).toHaveCount(0);
   expect(app.requests.some(request => request.moves.length === 8)).toBe(false);
@@ -712,7 +712,7 @@ test('explored branches keep the original line badges', async ({ page }) => {
   // Branch from the root via the second Maia candidate.
   await page.locator('#analysis-first').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 5');
-  const candidates = page.locator('section[aria-label="Maia analysis"] .candidate-reading');
+  const candidates = page.locator('section[aria-label="Maia analysis"] li:not(.candidate-header) .candidate-reading');
   await expect(candidates).toHaveCount(2);
   await candidates.nth(1).click();
   await expect(page.locator('.original-move')).toHaveCount(4);

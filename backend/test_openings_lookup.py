@@ -63,8 +63,10 @@ class LookupSyntheticTest(unittest.TestCase):
         self.assertEqual(lookup({"moves": []}, self.table), {"matches": [], "book_flags": []})
 
     def test_custom_start_never_matches_but_still_replays(self):
+        # Position after 1.e4 e5 2.Nf3 Nc6: the e-pawn already stands on e4,
+        # so the legal replay continuation is the bishop move, not e2e4.
         request = {"initial_fen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
-                   "moves": ["e2e4"]}
+                   "moves": ["f1c4"]}
         self.assertEqual(lookup(request, self.table), {"matches": [], "book_flags": [False]})
 
     def test_illegal_move_rejects(self):
@@ -101,8 +103,12 @@ class LookupRealBookTest(unittest.TestCase):
     def test_transpositions_converge(self):
         first = lookup({"moves": ["g1f3", "d7d5", "d2d4"]}, self.table)
         second = lookup({"moves": ["d2d4", "d7d5", "g1f3"]}, self.table)
+        # Per-ply intermediates legitimately differ (1.Nf3 names Zukertort,
+        # 1.d4 names Queen's Pawn); convergence means the final position —
+        # what the client displays — agrees.
         self.assertTrue(first["matches"])
-        self.assertEqual(first["matches"], second["matches"])
+        self.assertTrue(second["matches"])
+        self.assertEqual(first["matches"][-1], second["matches"][-1])
 
 
 if __name__ == "__main__":
