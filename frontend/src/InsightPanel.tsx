@@ -5,7 +5,7 @@ import { Rating } from "./BoardTools";
 import { Button, EngineCandidateList, EngineSection } from "./components";
 import { Chess } from "chess.js";
 import type { Review } from "./useReview";
-import { describeMove, outcomeExpected } from "./reviewMetrics";
+import { describeMove } from "./reviewMetrics";
 import { fixedElo, sourceLabel } from "./objective";
 import { formatWinrateDelta, maiaDisplayParts } from "./objective/maia";
 import { bestLinePreview, playedCapture } from "./material";
@@ -206,30 +206,22 @@ export function MoveAnalysis({
   const verdictLoading =
     hasMove && !!played && !verdict && !hasError && !tooLong && (!evaluation || !afterEvaluation);
   // Display list values: policy share at the selected Elo plus winrate gain
-  // from 2400's perspective. The played row (when present in the top 5) uses
-  // the true temporal delta: after-position 2400 point (opponent-relative,
-  // so inverted, or the terminal outcome) minus the before-position 2400
-  // point — the same before/after the grades read. Hypothetical rows have no
-  // after-position, so they use the within-row child value minus the before
-  // point (no opponent reply yet). Without an objective point yet everything
-  // falls back to the best listed winrate.
+  // from 2400's perspective. Every row uses the same single-row math: the
+  // candidate's calculated child WDL minus the position's own WDL (the
+  // response top, which is the policy-top child's WDL by construction).
+  // The policy-top row therefore always reads 0.0% — it defines the bar.
+  // Rows above zero outscored the position; rows below cost winrate versus
+  // staying with the model's top choice. Without an objective point yet
+  // everything falls back to the best listed winrate.
   const beforePly = hasMove ? focus : ply;
   const beforeExpected = review.objective[beforePly]?.expected ?? null;
-  const afterPoint = hasMove ? review.objective[ply] : undefined;
-  const afterMoverExpected = hasMove
-    ? (outcomeExpected(review.nodes[ply]?.outcome) ?? (afterPoint?.expected != null ? 100 - afterPoint.expected : null))
-    : null;
-  const playedGain = hasMove && beforeExpected != null && afterMoverExpected != null
-    ? afterMoverExpected - beforeExpected : null;
   const displayListed = response?.top_moves.slice(0, 5) ?? [];
   const objectiveEntries = candidates?.entries ?? [];
   const objectiveHasProb = objectiveEntries.length > 0
     && objectiveEntries.every(candidate => typeof candidate.prob === 'number' && Number.isFinite(candidate.prob));
   const objectiveBest = objectiveHasProb ? Math.max(...objectiveEntries.map(candidate => candidate.expected)) : 0;
   const baseline = beforeExpected ?? (objectiveHasProb ? objectiveBest : null);
-  const displayParts = maiaDisplayParts(displayListed, baseline).map((part, index) => (
-    playedGain != null && hasMove && displayListed[index]?.move === played
-      ? { ...part, delta: formatWinrateDelta(playedGain) } : part));
+  const displayParts = maiaDisplayParts(displayListed, baseline);
   // One header set for both Maia lanes: play probability (Users) plus
   // win-rate gain vs the before position (TrendingDown). The display lane
   // carries low-Elo policy with 2400 values; the objective lane is 2400
@@ -351,8 +343,7 @@ export function MoveAnalysis({
                 ? {
                   uci: candidate.uci,
                   metric: `${Math.round(candidate.prob! * 100)}%`,
-                  delta: formatWinrateDelta(hasMove && playedGain != null && candidate.uci === played
-                    ? playedGain : candidate.expected - (beforeExpected ?? objectiveBest)),
+                  delta: formatWinrateDelta(candidate.expected - (beforeExpected ?? objectiveBest)),
                 }
                 : { uci: candidate.uci, metric: `${Math.round(candidate.expected)}%` }))}
               headers={objectiveHasProb ? maiaListHeaders : {
