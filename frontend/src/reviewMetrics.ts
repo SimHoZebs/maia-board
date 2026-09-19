@@ -217,7 +217,7 @@ export function isPraiseLabel(label: Quality['label'] | undefined): boolean {
 type StandaloneRule = { name: string; match: (facts: VerdictArgs) => boolean; render: (facts: VerdictArgs) => string };
 const STANDALONE_RULES: StandaloneRule[] = [
   { name: 'checkmate', match: facts => facts.terminal === 'checkmate',
-    render: facts => facts.matePatternName ? `${facts.san} delivers ${facts.matePatternName}.` : `${facts.san} delivers checkmate.` },
+    render: facts => facts.matePatternName ? `${facts.matePatternName}.` : `Checkmate.` },
   { name: 'stalemate-repetition', match: facts => facts.terminal === 'stalemate' || facts.terminal === 'repetition',
     render: facts => {
       const negative = facts.quality?.label === 'Blunder' || facts.quality?.label === 'Mistake' || facts.quality?.label === 'Inaccuracy';
@@ -231,7 +231,7 @@ const STANDALONE_RULES: StandaloneRule[] = [
   { name: 'book', match: facts => !!facts.opening,
     render: facts => `${facts.san} — ${facts.opening!.name} (${facts.opening!.eco}).` },
   { name: 'forced', match: facts => facts.quality?.label === 'Forced',
-    render: facts => `${facts.san} was the only legal move.` },
+    render: () => `The only legal move.` },
   { name: 'dead-draw', match: facts => !!facts.deadDraw,
     render: facts => `${facts.san} — known theoretical draw.` },
   { name: 'underpromotion', match: facts => !!facts.underpromotionAvoids,

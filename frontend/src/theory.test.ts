@@ -580,7 +580,7 @@ describe('verdictInputsForPly', () => {
       quality: quality('Best'),
       prevBeforeFen: '4k3/8/8/8/3n4/2Q5/2B5/4K3 b - - 2 2',
       prevUci: 'd4c2',
-    })).positiveNote).toBe('Takes the knight back, but only forces an even exchange.');
+    })).positiveNote).toBe('Takes the knight back.');
     // Winning recapture names the net instead.
     expect(verdictInputsForPly(baseInputs({
       beforeFen: '4k3/8/8/4n3/3P4/8/8/4K3 w - - 0 2',

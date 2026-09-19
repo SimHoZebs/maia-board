@@ -401,14 +401,14 @@ export function fusePinWithMate(pinClaim: string): string {
   return `${lead}, but allows mate.`;
 }
 // Names a same-square recapture as the exchange it is, instead of a fresh
-// win: even ("Takes the knight back, but only forces an even exchange."),
-// winning ("Wins a knight for a pawn."). Losing recaptures stay silent.
-// v1 requires the two takes to share a square and looks one ply back only.
+// win: even ("Takes the knight back."), winning ("Wins a knight for a
+// pawn."). Losing recaptures stay silent. v1 requires the two takes to share
+// a square and looks one ply back only.
 export function playedMoveExchangeNote(thisPiece: CapturedPiece, prevPiece: CapturedPiece): string | null {
   const net = PIECE_VALUES[thisPiece] - PIECE_VALUES[prevPiece];
   if (net < 0) return null;
   if (net > 0) return `Wins ${PIECE_ARTICLE[thisPiece]} for ${PIECE_ARTICLE[prevPiece]}.`;
-  return `Takes the ${PIECE_NAMES[thisPiece]} back, but only forces an even exchange.`;
+  return `Takes the ${PIECE_NAMES[thisPiece]} back.`;
 }
 export function exchangePlayedClaim(facts: MoveFacts): string | null {
   const recapture = facts.recapture();

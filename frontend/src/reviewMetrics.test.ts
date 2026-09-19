@@ -240,7 +240,7 @@ it('verdicts only the quality-by-rarity synthesis, never the grade', () => {
     .toBe('A rare move that allows mate.');
   expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity: rarity('Unknown') })).toBeNull();
   expect(describeMove({ san: 'e4', quality: quality('Forced'), rarity: rarity('Unknown') }))
-    .toBe('e4 was the only legal move.');
+    .toBe('The only legal move.');
   expect(describeMove({ san: 'e4', quality: quality('Unreviewed'), rarity: rarity('Unknown') })).toBeNull();
   expect(describeMove({ san: 'e4', quality: undefined, rarity: undefined })).toBeNull();
 });
@@ -446,7 +446,7 @@ it('names pin-allowed-mate as a standalone, below terminals and book', () => {
   expect(describeMove({
     san: 'Bd6', quality: quality('Allowed mate'), rarity, pinClaim: pin,
     terminal: 'checkmate',
-  })).toBe('Bd6 delivers checkmate.');
+  })).toBe('Checkmate.');
   expect(describeMove({
     san: 'Bd6', quality: quality('Allowed mate'), rarity, pinClaim: pin,
     opening: { eco: 'C50', name: 'Italian Game' },
@@ -472,9 +472,9 @@ it('appends the positive why only for praise grades', () => {
   expect(describeMove({ san: 'exd5', quality: quality('Blunder'), rarity, positiveNote: 'Wins a pawn.' }))
     .toBe('A common blunder.');
   expect(describeMove({ san: 'e4', quality: quality('Forced'), rarity, positiveNote: 'Wins a pawn.' }))
-    .toBe('e4 was the only legal move.');
+    .toBe('The only legal move.');
   expect(describeMove({ san: 'Qxf7#', quality: quality('Best'), rarity, terminal: 'checkmate', positiveNote: 'Wins a queen.' }))
-    .toBe('Qxf7# delivers checkmate.');
+    .toBe('Checkmate.');
   expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity, opening: { eco: 'C50', name: 'Italian Game' }, positiveNote: 'Gets out of check.' }))
     .toBe('Nf3 — Italian Game (C50).');
 });
@@ -504,9 +504,9 @@ it('ranks terminal facts above book names, grades, and theory notes', () => {
   const book = { eco: 'C50', name: 'Italian Game' };
   // A mating move that collides with a book hit still reports the mate.
   expect(describeMove({ san: 'Qxf7#', quality: quality('Best'), rarity, opening: book, terminal: 'checkmate', matePatternName: "Scholar's mate" }))
-    .toBe("Qxf7# delivers Scholar's mate.");
+    .toBe("Scholar's mate.");
   expect(describeMove({ san: 'Qxf7#', quality: quality('Best'), rarity, opening: book, terminal: 'checkmate' }))
-    .toBe('Qxf7# delivers checkmate.');
+    .toBe('Checkmate.');
   expect(describeMove({ san: 'Kf6', quality: quality('Blunder'), rarity, terminal: 'stalemate', pawnNote: 'Doubles a pawn.' }))
     .toBe('Kf6 allows stalemate.');
   expect(describeMove({ san: 'Rf3+', quality: quality('Good'), rarity, terminal: 'repetition' }))
@@ -519,7 +519,7 @@ it('reports known draws and pointed underpromotions above the synthesis', () => 
   const quality = (label: Quality['label']): Quality => ({ label, accuracy: 20, loss: 15 });
   const rarity: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
   expect(describeMove({ san: 'Nb3', quality: quality('Forced'), rarity, deadDraw: true }))
-    .toBe('Nb3 was the only legal move.');
+    .toBe('The only legal move.');
   expect(describeMove({ san: 'Nb3', quality: quality('Blunder'), rarity, deadDraw: true }))
     .toBe('Nb3 — known theoretical draw.');
   expect(describeMove({ san: 'a8=N+', quality: quality('Good'), rarity, underpromotionAvoids: true }))
@@ -533,9 +533,9 @@ it('prefixes novelty only on the rarity synthesis, never on overrides or quiet v
     .toBe('Leaves Caro-Kann Defense book. A common mistake.');
   // Overrides carry no prefix; quiet verdicts stay quiet.
   expect(describeMove({ san: 'Qxf7#', quality: quality('Best'), rarity, novelty, terminal: 'checkmate' }))
-    .toBe('Qxf7# delivers checkmate.');
+    .toBe('Checkmate.');
   expect(describeMove({ san: 'e4', quality: quality('Forced'), rarity, novelty }))
-    .toBe('e4 was the only legal move.');
+    .toBe('The only legal move.');
   expect(describeMove({ san: 'd5', quality: quality('Mistake'), rarity: { label: 'Unknown', r: null, prob: null, topProb: null }, novelty }))
     .toBeNull();
 });

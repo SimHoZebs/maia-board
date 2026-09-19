@@ -426,7 +426,7 @@ describe('boundaryCrossingTrades', () => {
 describe('playedMoveExchangeNote', () => {
   it('frames even recaptures as exchanges, not wins', () => {
     expect(playedMoveExchangeNote('n', 'b'))
-      .toBe('Takes the knight back, but only forces an even exchange.');
+      .toBe('Takes the knight back.');
   });
 
   it('names winning recaptures with the net', () => {
