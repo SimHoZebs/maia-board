@@ -139,7 +139,6 @@ Compose and Komodo configuration belong to that repository.
 | `backend/maia3_worker.py` | Adapter to the pinned upstream Maia3 model API |
 | `backend/stockfish_worker.py` | History-aware position validation and native Stockfish search |
 | `backend/Dockerfile` | Combined build, pinned engine inputs and runtime dependencies |
-| `.github/workflows/ci.yml` | Automated checks |
 | `deployment/README.md` | Pointer to separately owned hosting configuration |
 
 The [frontend architecture](frontend/README.md#state-boundaries) describes timeline,
