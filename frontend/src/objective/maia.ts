@@ -42,9 +42,11 @@ export function maiaWhiteWdl(wdl: MoveResponse['wdl'], turn: 'white' | 'black'):
     : { white: loss * 100, draw: draw * 100, black: win * 100 };
 }
 // Display values for the Maia analysis list: policy share plus winrate delta
-// vs the best listed winrate, in percentage points. The winrates arrive
+// vs a single 2400 baseline. The caller passes the objective (2400) best
+// winrate so every row answers from 2400's perspective; without one the
+// delta falls back to the best listed winrate. The winrates arrive
 // evaluated at 2400-vs-2400 (display lane) or 2400 throughout (objective
-// lane); the delta baseline is the best listed move in the same response.
+// lane); the delta baseline is the caller's baseline, never the list max.
 // The best winrate reads 0.0%; everything else is <= 0. One decimal keeps
 // sub-point gaps visible where integer rounding would collapse them to 0.
 // Rendered as two separate columns (prob + delta), never a combined string.
@@ -54,9 +56,9 @@ export function formatWinrateDelta(delta: number): string {
   return delta > 0 ? `+${rounded}%` : `${rounded}%`;
 }
 
-export function maiaDisplayParts(topMoves: MoveResponse['top_moves']): { prob: string; delta: string }[] {
+export function maiaDisplayParts(topMoves: MoveResponse['top_moves'], baseline?: number | null): { prob: string; delta: string }[] {
   if (topMoves.length === 0) return [];
-  const best = Math.max(...topMoves.map(candidate => maiaExpected(candidate.wdl)));
+  const best = baseline ?? Math.max(...topMoves.map(candidate => maiaExpected(candidate.wdl)));
   return topMoves.map(candidate => ({
     prob: `${Math.round(candidate.prob * 100)}%`,
     delta: formatWinrateDelta(maiaExpected(candidate.wdl) - best),

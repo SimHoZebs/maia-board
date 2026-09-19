@@ -87,3 +87,18 @@ it('baselines the delta on the best winrate, not policy order', () => {
     { prob: '30%', delta: '0.0%' },
   ]);
 });
+
+it('prices the display list against the 2400 best, not its own max', () => {
+  // 1400-popular Rg7 leads its own list at 55, but 2400 prefers Re6 at 60.
+  const parts = maiaDisplayParts(
+    [
+      { move: 'g7g7', prob: 0.04, wdl: [0.3, 0.3, 0.4] },
+      { move: 'f3f3', prob: 0.09, wdl: [0.6, 0.2, 0.2] },
+    ],
+    60,
+  );
+  expect(parts).toEqual([
+    { prob: '4%', delta: '-5.0%' },
+    { prob: '9%', delta: '-30.0%' },
+  ]);
+});
