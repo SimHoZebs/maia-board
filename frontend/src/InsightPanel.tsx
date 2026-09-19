@@ -7,7 +7,7 @@ import { Chess } from "chess.js";
 import type { Review } from "./useReview";
 import { describeMove } from "./reviewMetrics";
 import { fixedElo, sourceLabel } from "./objective";
-import { formatWinrateDelta, maiaDisplayParts } from "./objective/maia";
+import { formatWinrateDelta, maiaDisplayParts, maiaExpected } from "./objective/maia";
 import { bestLinePreview, playedCapture } from "./material";
 import { verdictInputsForPly } from "./theory";
 import { useLineOpenings } from "./openings";
@@ -205,14 +205,13 @@ export function MoveAnalysis({
   // ReviewActionButton); skeleton only while a side is missing.
   const verdictLoading =
     hasMove && !!played && !verdict && !hasError && !tooLong && (!evaluation || !afterEvaluation);
-  // Display list values: policy share at the selected Elo plus winrate gain
-  // from 2400's perspective. Every row uses the same single-row math: the
-  // candidate's calculated child WDL minus the position's own WDL (the
-  // response top, which is the policy-top child's WDL by construction).
-  // The policy-top row therefore always reads 0.0% — it defines the bar.
-  // Rows above zero outscored the position; rows below cost winrate versus
-  // staying with the model's top choice. Without an objective point yet
-  // everything falls back to the best listed winrate.
+  // Display list values: policy share at the selected Elo plus winrate delta
+  // from 2400's perspective. The baseline is the played move's own
+  // calculated child WDL: every other row reads "this candidate's WDL minus
+  // what you actually played's WDL". The played row therefore always reads
+  // 0.0% — it is the ruler, not a judgment. When nothing is played yet
+  // (root) or the played move is unlisted, the baseline falls back to the
+  // before-position point, then the best listed winrate.
   const beforePly = hasMove ? focus : ply;
   const beforeExpected = review.objective[beforePly]?.expected ?? null;
   const displayListed = response?.top_moves.slice(0, 5) ?? [];
@@ -220,17 +219,24 @@ export function MoveAnalysis({
   const objectiveHasProb = objectiveEntries.length > 0
     && objectiveEntries.every(candidate => typeof candidate.prob === 'number' && Number.isFinite(candidate.prob));
   const objectiveBest = objectiveHasProb ? Math.max(...objectiveEntries.map(candidate => candidate.expected)) : 0;
-  const baseline = beforeExpected ?? (objectiveHasProb ? objectiveBest : null);
-  const displayParts = maiaDisplayParts(displayListed, baseline);
+  const fallback = beforeExpected ?? (objectiveHasProb ? objectiveBest : null);
+  const playedDisplay = hasMove ? displayListed.find(candidate => candidate.move === played) : undefined;
+  const displayBaseline = (playedDisplay ? maiaExpected(playedDisplay.wdl) : null) ?? fallback;
+  // Deltas stay side-to-move-relative (both ends of the subtraction are the
+  // mover's 2400 expectations), so positive always favors whoever's move is
+  // on screen — no board-orientation flip.
+  const displayParts = maiaDisplayParts(displayListed, displayBaseline);
+  const playedBaseline = hasMove ? objectiveEntries.find(candidate => candidate.uci === played)?.expected ?? null : null;
+  const objectiveBaseline = playedBaseline ?? fallback;
   // One header set for both Maia lanes: play probability (Users) plus
   // win-rate gain vs the before position (TrendingDown). The display lane
   // carries low-Elo policy with 2400 values; the objective lane is 2400
   // throughout. The objective lane only gets it
   // when the provider supplies probabilities (Maia policy share); a lane
   // without them (Stockfish lines) keeps its single absolute-value column.
-  const deltaTitle = beforeExpected != null
-    ? "Win-rate gain versus position before move"
-    : baseline != null
+  const deltaTitle = displayBaseline != null && hasMove && playedDisplay
+    ? "Win-rate delta versus played move"
+    : fallback != null
       ? "Win-rate change versus 2400 best"
       : "Win-rate change versus best listed move";
   const maiaListHeaders = {
@@ -343,7 +349,7 @@ export function MoveAnalysis({
                 ? {
                   uci: candidate.uci,
                   metric: `${Math.round(candidate.prob! * 100)}%`,
-                  delta: formatWinrateDelta(candidate.expected - (beforeExpected ?? objectiveBest)),
+                  delta: formatWinrateDelta(candidate.expected - (objectiveBaseline ?? objectiveBest)),
                 }
                 : { uci: candidate.uci, metric: `${Math.round(candidate.expected)}%` }))}
               headers={objectiveHasProb ? maiaListHeaders : {

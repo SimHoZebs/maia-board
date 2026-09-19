@@ -48,7 +48,8 @@ export function maiaWhiteWdl(wdl: MoveResponse['wdl'], turn: 'white' | 'black'):
 // listed winrate (rank within the list). The winrates arrive
 // evaluated at 2400-vs-2400 (display lane) or 2400 throughout (objective
 // lane); the delta baseline is the caller's baseline, never the list max.
-// Gains read positive, losses negative. One decimal keeps
+// Deltas are side-to-move-relative: positive always favors whoever's move
+// is being viewed. One decimal keeps
 // sub-point gaps visible where integer rounding would collapse them to 0.
 // Rendered as two separate columns (prob + delta), never a combined string.
 export function formatWinrateDelta(delta: number): string {
