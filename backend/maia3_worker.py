@@ -48,12 +48,109 @@ def position(request):
         raise InvalidRequest("invalid_position", "position or history is invalid") from error
 
 
+def split_score_moves(engine, policy_self, policy_oppo, value_self, value_oppo):
+    """Policy ordering at (policy_self, policy_oppo), WDL values at (value_self, value_oppo).
+
+    Mirrors pinned upstream Maia3UCIEngine.score_moves (rev 1e13597): policy
+    forward at the current position, then a batched value forward over the
+    top-5 child positions with Elos swapped (child side-to-move is the
+    opponent). Same forwards, different Elo tensors — no extra positions.
+    """
+    if getattr(engine, "model", None) is not None:
+        return _torch_split_score_moves(engine, policy_self, policy_oppo, value_self, value_oppo)
+    # Test/mock engines without a torch model: two score_moves calls joined
+    # by UCI. Production FakeEngine sets return the same move set for both
+    # Elos, so the join is complete; real missing coverage raises loudly.
+    selected, policy_moves = engine.score_moves()
+    if not policy_moves:
+        raise RuntimeError("engine returned no candidates")
+    order = [item["move"].uci() for item in policy_moves]
+    policy_by_uci = {item["move"].uci(): float(item["policy"]) for item in policy_moves}
+    engine.cmd_setoption(f"setoption name SelfElo value {value_self}")
+    engine.cmd_setoption(f"setoption name OppoElo value {value_oppo}")
+    _, value_moves = engine.score_moves()
+    wdl_by_uci = {item["move"].uci(): item["wdl"] for item in value_moves}
+    missing = [uci for uci in order if uci not in wdl_by_uci]
+    if missing:
+        raise RuntimeError("engine returned incomplete split candidates")
+    # Restore policy Elos so the next request starts from a known state
+    # (every request resets them anyway) and keep the policy-phase selection.
+    engine.cmd_setoption(f"setoption name SelfElo value {policy_self}")
+    engine.cmd_setoption(f"setoption name OppoElo value {policy_oppo}")
+    joined = [{"move": policy_moves[i]["move"], "policy": policy_by_uci[uci], "wdl": wdl_by_uci[uci]}
+              for i, uci in enumerate(order)]
+    return selected, joined
+
+
+def _torch_split_score_moves(engine, policy_self, policy_oppo, value_self, value_oppo):
+    """Exact split using the live torch model (production path)."""
+    import torch
+    from torch.amp import autocast
+
+    from maia3.uci import invert_wdl, sample_from_logits, wdl_from_value_logits
+
+    from maia3.dataset import get_legal_moves_mask
+
+    board = engine.board
+    if board.is_game_over():
+        return None, []
+    legal_mask = get_legal_moves_mask(board, engine.all_moves_dict)
+    if not bool(legal_mask.any()):
+        return None, []
+    tokens = engine._tokens_from_history(engine.history)
+    tokens = tokens.unsqueeze(0).to(engine.cfg.device)
+    policy_self_t = torch.tensor([policy_self], dtype=torch.long, device=engine.cfg.device)
+    policy_oppo_t = torch.tensor([policy_oppo], dtype=torch.long, device=engine.cfg.device)
+    use_amp = bool(getattr(engine.cfg, "use_amp", False)) and str(getattr(engine.cfg, "device", "cpu")).startswith("cuda")
+    with torch.no_grad():
+        with autocast("cuda", enabled=use_amp):
+            logits_move, _, _ = engine.model(tokens, policy_self_t, policy_oppo_t)
+        logits = logits_move[0].float()
+        mask = legal_mask.to(engine.cfg.device)
+        logits = logits.masked_fill(~mask, float("-inf"))
+        idx = sample_from_logits(logits, engine.temperature, engine.top_p)
+        move = engine._move_from_index(idx)
+        probs = torch.softmax(logits, dim=-1)
+        top_count = min(int(engine.multipv), int(legal_mask.sum().item()))
+        top_probs, top_idxs = torch.topk(probs, k=top_count)
+        top_moves = []
+        for prob, top_idx in zip(top_probs.tolist(), top_idxs.tolist()):
+            top_move = engine._move_from_index(top_idx)
+            if top_move is not None:
+                top_moves.append({"move": top_move, "policy": prob, "wdl": (0, 1000, 0)})
+        if top_moves:
+            # Log value Elos through the same option channel before the value phase.
+            engine.cmd_setoption(f"setoption name SelfElo value {value_self}")
+            engine.cmd_setoption(f"setoption name OppoElo value {value_oppo}")
+            candidate_tokens = torch.stack([
+                engine._tokens_from_history(engine._history_after_move(item["move"]))
+                for item in top_moves
+            ]).to(engine.cfg.device)
+            candidate_self_elos = torch.full((len(top_moves),), value_oppo, dtype=torch.long, device=engine.cfg.device)
+            candidate_oppo_elos = torch.full((len(top_moves),), value_self, dtype=torch.long, device=engine.cfg.device)
+            with autocast("cuda", enabled=use_amp):
+                _, candidate_value_logits, _ = engine.model(candidate_tokens, candidate_self_elos, candidate_oppo_elos)
+            for item, value_logits in zip(top_moves, candidate_value_logits):
+                item["wdl"] = invert_wdl(wdl_from_value_logits(value_logits))
+            # Restore policy Elos so subsequent calls start from a known state
+            # (every request resets them anyway).
+            engine.cmd_setoption(f"setoption name SelfElo value {policy_self}")
+            engine.cmd_setoption(f"setoption name OppoElo value {policy_oppo}")
+    return move, top_moves
+
+
 def predict(engine, request):
-    if not isinstance(request, dict) or set(request) - {"fen", "moves", "initial_fen", "self_elo", "oppo_elo", "temperature"}:
+    if not isinstance(request, dict) or set(request) - {"fen", "moves", "initial_fen", "self_elo", "oppo_elo", "value_self_elo", "value_oppo_elo", "temperature"}:
         raise InvalidRequest("invalid_position", "invalid request shape")
     board, command = position(request)
     for key in ("self_elo", "oppo_elo"):
         value = request.get(key)
+        if type(value) is not int or not 0 <= value <= 5000:
+            raise InvalidRequest("invalid_position", "invalid Elo")
+    policy_self, policy_oppo = request["self_elo"], request["oppo_elo"]
+    value_self = request.get("value_self_elo", policy_self)
+    value_oppo = request.get("value_oppo_elo", policy_oppo)
+    for value in (value_self, value_oppo):
         if type(value) is not int or not 0 <= value <= 5000:
             raise InvalidRequest("invalid_position", "invalid Elo")
     temperature = request.get("temperature", 0)
@@ -62,12 +159,15 @@ def predict(engine, request):
     if board.is_game_over():
         raise InvalidRequest("game_over", "position has no playable moves")
     # Preserve the pinned engine's option parsing and full history rebuilding.
-    engine.cmd_setoption(f"setoption name SelfElo value {request['self_elo']}")
-    engine.cmd_setoption(f"setoption name OppoElo value {request['oppo_elo']}")
+    engine.cmd_setoption(f"setoption name SelfElo value {policy_self}")
+    engine.cmd_setoption(f"setoption name OppoElo value {policy_oppo}")
     engine.cmd_setoption("setoption name MultiPV value 5")
     engine.cmd_setoption(f"setoption name Temperature value {temperature}")
     engine.cmd_position(command)
-    move, top_moves = engine.score_moves()
+    if value_self == policy_self and value_oppo == policy_oppo:
+        move, top_moves = engine.score_moves()
+    else:
+        move, top_moves = split_score_moves(engine, policy_self, policy_oppo, value_self, value_oppo)
     if move is None or move not in board.legal_moves:
         raise RuntimeError("engine returned invalid selected move")
     candidates = []

@@ -270,6 +270,32 @@ func TestCorruptV2ValuesMissThenRecomputeAndOverwrite(t *testing.T) {
 		}
 	}
 }
+func TestMaiaSplitIdentityIsolatesAndDedups(t *testing.T) {
+	v2400 := 2400
+	legacy := EngineRequest{FEN: startFEN, SelfElo: 800, OppoElo: 800}
+	split := EngineRequest{FEN: startFEN, SelfElo: 800, OppoElo: 800, ValueSelfElo: &v2400, ValueOppoElo: &v2400}
+	equal := EngineRequest{FEN: startFEN, SelfElo: 2400, OppoElo: 2400, ValueSelfElo: &v2400, ValueOppoElo: &v2400}
+	grading := EngineRequest{FEN: startFEN, SelfElo: 2400, OppoElo: 2400}
+	legacyHash, legacyKey := maiaIdentity(legacy, "79m").coordinates()
+	splitHash, splitKey := maiaIdentity(split, "79m").coordinates()
+	equalHash, equalKey := maiaIdentity(equal, "79m").coordinates()
+	gradingHash, gradingKey := maiaIdentity(grading, "79m").coordinates()
+	if splitHash == legacyHash || splitKey == legacyKey {
+		t.Fatal("split row collides with legacy X/X row")
+	}
+	if !strings.Contains(splitKey, `"value_rev":2`) {
+		t.Fatalf("split identity must bump value_rev: %s", splitKey)
+	}
+	if equalHash != gradingHash || equalKey != gradingKey {
+		t.Fatal("explicit equal value Elos must dedup with omitted values")
+	}
+	// Half-specified split fills the other half from policy.
+	half := EngineRequest{FEN: startFEN, SelfElo: 800, OppoElo: 800, ValueSelfElo: &v2400}
+	_, halfKey := maiaIdentity(half, "79m").coordinates()
+	if !strings.Contains(halfKey, `"value_self_elo":2400`) || !strings.Contains(halfKey, `"value_oppo_elo":800`) {
+		t.Fatalf("half split must fill oppo from policy: %s", halfKey)
+	}
+}
 func TestMaiaIdentityVersionsCandidateWDLShape(t *testing.T) {
 	r := EngineRequest{FEN: startFEN, SelfElo: 1600, OppoElo: 1600}
 	_, key := maiaIdentity(r, "79m").coordinates()

@@ -64,7 +64,9 @@ func resolveMaiaQuery(query lookupRequest) (EngineRequest, string, *requestError
 		color = "black"
 	}
 	req, model, err := validateMoveRequest(moveRequest{FEN: query.FEN, InitialFEN: query.InitialFEN,
-		Moves: query.Moves, EloMaia: query.EloMaia, EloUser: query.EloUser, Model: query.Model, MaiaColor: color})
+		Moves: query.Moves, EloMaia: query.EloMaia, EloUser: query.EloUser,
+		ValueEloMaia: query.ValueEloMaia, ValueEloUser: query.ValueEloUser,
+		Model: query.Model, MaiaColor: color})
 	if err != nil {
 		message := "position or move history is invalid"
 		if reqErr, ok := errors.AsType[*requestError](err); ok {

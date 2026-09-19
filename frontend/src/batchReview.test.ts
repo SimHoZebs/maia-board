@@ -42,6 +42,23 @@ describe('buildBatchItems', () => {
     expect(same).toHaveLength(6);
     expect(new Set(same.map(item => item.key)).size).toBe(6);
   });
+  it('sends display policy-X with 2400 values and dedups explicit-equal 2400', () => {
+    const grading = { eloMaia: 2400, eloUser: 2400, model: '79m' as const };
+    const display800 = { eloMaia: 800, eloUser: 800, valueEloMaia: 2400, valueEloUser: 2400, model: '79m' as const,
+      stockfish: defaultStockfishSettings };
+    const built = buildBatchItems(nodes, display800, ['sf', 'maia'], grading);
+    const displayReq = built.find(item => item.engine === 'maia' && (item.request as { elo_maia: number }).elo_maia === 800)?.request;
+    expect(displayReq).toMatchObject({ engine: 'maia', elo_maia: 800, elo_user: 800, value_elo_maia: 2400, value_elo_user: 2400 });
+    // Display 800 split keys must not collide with grading 2400 keys.
+    const keys = new Set(built.map(item => item.key));
+    expect(keys.size).toBe(built.length);
+    // Explicit-equal 2400 display settings collapse onto the grading identity.
+    const display2400 = { eloMaia: 2400, eloUser: 2400, valueEloMaia: 2400, valueEloUser: 2400, model: '79m' as const,
+      stockfish: defaultStockfishSettings };
+    const collapsed = buildBatchItems(nodes, display2400, ['sf', 'maia'], grading);
+    expect(collapsed).toHaveLength(6);
+    expect(new Set(collapsed.map(item => item.key)).size).toBe(6);
+  });
 });
 
 describe('submitBatch', () => {

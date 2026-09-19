@@ -15,7 +15,12 @@ export type ReviewNode = TimelineRow & { timeline: Timeline; initialFen: string 
 export function reviewNodes(timeline: Timeline): ReviewNode[] {
   return timeline.rows.map(row => Object.freeze({ ...row, timeline, initialFen: timeline.initialFen }));
 }
-export type ReviewSettings = { eloMaia: number; eloUser: number; model: MaiaModel; stockfish?: StockfishSettings };
+export type ReviewSettings = { eloMaia: number; eloUser: number; model: MaiaModel; stockfish?: StockfishSettings;
+  // Split evaluation: policy ordering at (eloMaia, eloUser), candidate WDL
+  // values at (valueEloMaia, valueEloUser). Omitted (or equal to policy)
+  // means legacy symmetric evaluation. The analysis display lane sets both
+  // to 2400 so low-Elo move lists carry 2400-vs-2400 winrates.
+  valueEloMaia?: number; valueEloUser?: number };
 export type Engine = 'sf' | 'maia';
 // Objective grading lane: Maia 2400/2400 on the strong model. This is the
 // "Stockfish seat" for retrospective grades (Option 1): negative labels
@@ -61,8 +66,23 @@ type Result = Evaluation | MoveResponse;
 function prefixOf(node: ReviewNode): string[] {
   return node.timeline.moves.slice(0, node.ply);
 }
+// Normalized split coordinates: explicit value Elos equal to policy Elos
+// collapse to omitted so 2400 display rows dedup with the grading lane and
+// legacy keys keep hitting. Mirrors backend maiaIdentity normalization.
+export function splitValueElos(settings: ReviewSettings): { valueEloMaia?: number; valueEloUser?: number } {
+  const policyMaia = clampMaiaElo(settings.eloMaia), policyUser = clampMaiaElo(settings.eloUser);
+  const valueMaia = settings.valueEloMaia === undefined ? undefined : clampMaiaElo(settings.valueEloMaia);
+  const valueUser = settings.valueEloUser === undefined ? undefined : clampMaiaElo(settings.valueEloUser);
+  return {
+    ...(valueMaia !== undefined && valueMaia !== policyMaia ? { valueEloMaia: valueMaia } : {}),
+    ...(valueUser !== undefined && valueUser !== policyUser ? { valueEloUser: valueUser } : {}),
+  };
+}
 export function settingsHash(engine: Engine, settings: ReviewSettings): string {
-  return engine === 'sf' ? stockfishPolicy(settings.stockfish) : JSON.stringify([clampMaiaElo(settings.eloMaia), clampMaiaElo(settings.eloUser), settings.model]);
+  if (engine === 'sf') return stockfishPolicy(settings.stockfish);
+  const split = splitValueElos(settings);
+  return JSON.stringify([clampMaiaElo(settings.eloMaia), clampMaiaElo(settings.eloUser), settings.model,
+    ...(split.valueEloMaia !== undefined || split.valueEloUser !== undefined ? [split.valueEloMaia ?? null, split.valueEloUser ?? null] : [])]);
 }
 export function stablePositionKey(node: ReviewNode): string {
   return posId(node.initialFen, prefixOf(node));
@@ -79,9 +99,15 @@ export function reviewKey(engine: Engine, node: ReviewNode, settings: ReviewSett
 // ignores it for identity, so a future backend can resolve by hash alone,
 // dropping the O(n^2) prefix bytes on long games.
 export function evaluationRequest(engine: Engine, node: ReviewNode, settings: ReviewSettings) {
+  if (engine === 'sf') {
+    return { engine, fen: node.fen, initial_fen: node.initialFen, moves: prefixOf(node), pos_hash: stablePositionKey(node),
+      ...(settings.stockfish ? { settings: settings.stockfish } : {}) };
+  }
+  const split = splitValueElos(settings);
   return { engine, fen: node.fen, initial_fen: node.initialFen, moves: prefixOf(node), pos_hash: stablePositionKey(node),
-    ...(engine === 'sf' ? { ...(settings.stockfish ? { settings: settings.stockfish } : {}) }
-      : { elo_maia: clampMaiaElo(settings.eloMaia), elo_user: clampMaiaElo(settings.eloUser), model: settings.model }) };
+    elo_maia: clampMaiaElo(settings.eloMaia), elo_user: clampMaiaElo(settings.eloUser), model: settings.model,
+    ...(split.valueEloMaia !== undefined ? { value_elo_maia: split.valueEloMaia } : {}),
+    ...(split.valueEloUser !== undefined ? { value_elo_user: split.valueEloUser } : {}) };
 }
 
 const uci = /^[a-h][1-8][a-h][1-8][qrbn]?$/;

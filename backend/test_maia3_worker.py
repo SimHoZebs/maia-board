@@ -16,9 +16,20 @@ class FakeEngine:
         self.positions = []
         self.sample = sample
         self.seen = []
+        self.self_elo = 1750
+        self.oppo_elo = 1320
 
     def cmd_setoption(self, line):
         self.options.append(line)
+        try:
+            name, _, value = line.split("name", 1)[1].strip().partition("value")
+            name, value = name.strip().lower(), value.strip()
+            if name == "selfelo":
+                self.self_elo = int(value)
+            elif name == "oppoelo":
+                self.oppo_elo = int(value)
+        except (IndexError, ValueError):
+            pass
 
     def cmd_position(self, line):
         self.positions.append(line)
@@ -30,14 +41,23 @@ class FakeEngine:
     def score_moves(self):
         self.seen.append((self.board.fen(), [m.uci() for m in self.board.move_stack]))
         legal = list(self.board.legal_moves)
-        candidates = [dict(move=m, policy=p, wdl=(600, 250, 150))
+        # Elo-dependent WDL so split tests can tell policy Elos from value Elos:
+        # win encodes current SelfElo, draw fixed, loss remainder.
+        win = min(750, self.self_elo // 5)
+        wdl = (win, 250, 1000 - win - 250)
+        candidates = [dict(move=m, policy=p, wdl=wdl)
                       for m, p in zip(legal[:5], [.4, .25, .15, .1, .05])]
         return legal[-1] if self.sample else legal[0], candidates
 
 
-def request(fen=chess.STARTING_FEN, moves=None, initial="", temperature=0):
-    return dict(fen=fen, moves=moves or [], initial_fen=initial,
-                self_elo=1750, oppo_elo=1320, temperature=temperature)
+def request(fen=chess.STARTING_FEN, moves=None, initial="", temperature=0, value_self_elo=None, value_oppo_elo=None):
+    payload = dict(fen=fen, moves=moves or [], initial_fen=initial,
+                   self_elo=1750, oppo_elo=1320, temperature=temperature)
+    if value_self_elo is not None:
+        payload["value_self_elo"] = value_self_elo
+    if value_oppo_elo is not None:
+        payload["value_oppo_elo"] = value_oppo_elo
+    return payload
 
 
 class MaiaAdapterTests(unittest.TestCase):
@@ -60,7 +80,8 @@ class MaiaAdapterTests(unittest.TestCase):
         engine = FakeEngine(sample=True)
         sampled = worker.predict(engine, request(temperature=.7))["result"]
         self.assertNotIn(sampled["move"], [c["move"] for c in sampled["candidates"]])
-        self.assertEqual(sampled["wdl"], [.15, .25, .6])
+        # FakeEngine encodes SelfElo 1750 as win 350: stored [loss, draw, win].
+        self.assertEqual(sampled["wdl"], [.4, .25, .35])
         self.assertEqual([c["policy"] for c in sampled["candidates"]], [.4, .25, .15, .1, .05])
         engine.sample = False
         deterministic = worker.predict(engine, request())["result"]
@@ -139,6 +160,42 @@ class MaiaAdapterTests(unittest.TestCase):
         engine.score_moves = score
         result = worker.predict(engine, request())["result"]
         self.assertNotIn(result["move"], [item["move"] for item in result["candidates"]])
+
+    def test_split_uses_policy_ordering_with_value_wdl(self):
+        engine = FakeEngine()
+        result = worker.predict(engine, request(value_self_elo=2400, value_oppo_elo=2400))["result"]
+        # Policy ordering/probs from SelfElo 1750, WDL from value SelfElo 2400 (win 480).
+        self.assertEqual([c["policy"] for c in result["candidates"]], [.4, .25, .15, .1, .05])
+        self.assertEqual(result["wdl"], [.27, .25, .48])
+        for candidate in result["candidates"]:
+            self.assertEqual(candidate["wdl"], [.27, .25, .48])
+        self.assertIn("setoption name SelfElo value 2400", engine.options)
+        self.assertIn("setoption name SelfElo value 1750", engine.options)
+
+    def test_split_defaults_to_policy_elos_when_omitted(self):
+        engine = FakeEngine()
+        result = worker.predict(engine, request())["result"]
+        self.assertEqual(result["wdl"], [.4, .25, .35])
+
+    def test_split_rejects_invalid_value_elo(self):
+        for payload in [request(value_self_elo=-1), request(value_oppo_elo=5001),
+                        request(value_self_elo="2400"), request(value_self_elo=2400.0)]:
+            with self.assertRaises(worker.InvalidRequest):
+                worker.predict(FakeEngine(), payload)
+
+    def test_split_missing_value_coverage_raises(self):
+        engine = FakeEngine()
+        original = engine.score_moves
+        calls = {"n": 0}
+        def score():
+            calls["n"] += 1
+            move, items = original()
+            if calls["n"] == 2:
+                items = items[:3]
+            return move, items
+        engine.score_moves = score
+        with self.assertRaises(RuntimeError):
+            worker.predict(engine, request(value_self_elo=2400, value_oppo_elo=2400))
 
 
 if __name__ == "__main__":

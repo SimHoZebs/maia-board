@@ -198,13 +198,15 @@ export function MoveAnalysis({
   const displayListed = response?.top_moves.slice(0, 5) ?? [];
   const displayParts = maiaDisplayParts(displayListed);
   // One header set for both Maia lanes: play probability (Users) plus
-  // win-rate change vs best (TrendingDown). The objective lane only gets it
+  // win-rate change vs best (TrendingDown), both deltas evaluated at Maia
+  // 2400 (the display lane carries low-Elo policy with 2400 values; the
+  // objective lane is 2400 throughout). The objective lane only gets it
   // when the provider supplies probabilities (Maia policy share); a lane
   // without them (Stockfish lines) keeps its single absolute-value column.
   const maiaListHeaders = {
     metric: <span title="Share of human play at this rating"><Users size={13} aria-hidden="true" /></span>,
-    delta: <span title="Win-rate change versus best listed move"><TrendingDown size={13} aria-hidden="true" /></span>,
-    label: "Probability of play, win-rate change versus best listed move",
+    delta: <span title="Win-rate change versus best listed move, evaluated at Maia 2400"><TrendingDown size={13} aria-hidden="true" /></span>,
+    label: "Probability of play, win-rate change versus best listed move evaluated at Maia 2400",
   };
   const objectiveEntries = candidates?.entries ?? [];
   const objectiveHasProb = objectiveEntries.length > 0

@@ -293,7 +293,10 @@ export class ReviewCoordinator {
     // never the play lane — it fires alongside the live reply every move
     // and queues behind it instead of superseding it.
     return requestMaiaAnalysis({ fen: request.fen, moves: request.moves, initial_fen: request.initial_fen,
-      elo_maia: clampMaiaElo(job.settings.eloMaia), elo_user: clampMaiaElo(job.settings.eloUser), model: job.settings.model, maia_color: job.node.turn }, this.fetcher, signal);
+      elo_maia: clampMaiaElo(job.settings.eloMaia), elo_user: clampMaiaElo(job.settings.eloUser),
+      ...('value_elo_maia' in request ? { value_elo_maia: (request as { value_elo_maia: number }).value_elo_maia } : {}),
+      ...('value_elo_user' in request ? { value_elo_user: (request as { value_elo_user: number }).value_elo_user } : {}),
+      model: job.settings.model, maia_color: job.node.turn }, this.fetcher, signal);
   }
   // Play /move flight with play's tighter parameters: latest-wins (a newer
   // play move supersedes the in-flight one; the superseded reply is dropped

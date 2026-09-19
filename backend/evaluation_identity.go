@@ -29,11 +29,13 @@ type evaluationIdentity struct {
 	Policy     string             `json:"policy,omitempty"`
 	SelfElo    int                `json:"self_elo,omitempty"`
 	OppoElo    int                `json:"oppo_elo,omitempty"`
+	ValueSelfElo *int             `json:"value_self_elo,omitempty"`
+	ValueOppoElo *int             `json:"value_oppo_elo,omitempty"`
 	Model      string             `json:"model,omitempty"`
-	// ValueRev versions the Maia value shape only (per-candidate WDL
-	// arrived in v1). Old Maia rows miss by key instead of failing
-	// validation on read; Stockfish rows never set it, so their keys —
-	// and cache — are untouched.
+	// ValueRev versions the Maia value shape (per-candidate WDL arrived in
+	// v1; split policy/value Elos arrive in v2). Old Maia rows miss by key
+	// instead of failing validation on read; Stockfish rows never set it,
+	// so their keys — and cache — are untouched.
 	ValueRev int `json:"value_rev,omitempty"`
 }
 
@@ -55,7 +57,27 @@ func sfIdentity(r evaluationRequest) evaluationIdentity {
 
 func maiaIdentity(r EngineRequest, model string) evaluationIdentity {
 	i := baseIdentity("maia", r.FEN, r.InitialFEN, r.Moves)
-	i.Revision, i.SelfElo, i.OppoElo, i.Model, i.ValueRev = maiaRevision, r.SelfElo, r.OppoElo, model, 1
+	i.Revision, i.SelfElo, i.OppoElo, i.Model = maiaRevision, r.SelfElo, r.OppoElo, model
+	// Split rows (value Elos differing from policy Elos) get ValueRev 2 and
+	// explicit value coordinates; equal-or-omitted values normalize to the
+	// legacy ValueRev-1 key so 2400/2400 display rows dedup with the grading
+	// lane and existing cache rows keep hitting.
+	if (r.ValueSelfElo != nil && *r.ValueSelfElo != r.SelfElo) ||
+		(r.ValueOppoElo != nil && *r.ValueOppoElo != r.OppoElo) {
+		i.ValueSelfElo, i.ValueOppoElo, i.ValueRev = r.ValueSelfElo, r.ValueOppoElo, 2
+		// Fill the unspecified half from policy so the key is complete even
+		// when only one value Elo was supplied (worker defaults the same way).
+		if i.ValueSelfElo == nil {
+			v := r.SelfElo
+			i.ValueSelfElo = &v
+		}
+		if i.ValueOppoElo == nil {
+			v := r.OppoElo
+			i.ValueOppoElo = &v
+		}
+	} else {
+		i.ValueRev = 1
+	}
 	return i
 }
 
@@ -349,15 +371,17 @@ func (s *server) cachedMaia(r EngineRequest, model string) (*moveResponse, bool)
 }
 
 type lookupRequest struct {
-	Engine     string             `json:"engine"`
-	FEN        string             `json:"fen"`
-	InitialFEN string             `json:"initial_fen"`
-	Moves      []string           `json:"moves"`
-	PosHash    string             `json:"pos_hash,omitempty"`
-	Settings   *stockfishSettings `json:"settings,omitempty"`
-	EloMaia    *int               `json:"elo_maia,omitempty"`
-	EloUser    *int               `json:"elo_user,omitempty"`
-	Model      string             `json:"model,omitempty"`
+	Engine       string             `json:"engine"`
+	FEN          string             `json:"fen"`
+	InitialFEN   string             `json:"initial_fen"`
+	Moves        []string           `json:"moves"`
+	PosHash      string             `json:"pos_hash,omitempty"`
+	Settings     *stockfishSettings `json:"settings,omitempty"`
+	EloMaia      *int               `json:"elo_maia,omitempty"`
+	EloUser      *int               `json:"elo_user,omitempty"`
+	ValueEloMaia *int               `json:"value_elo_maia,omitempty"`
+	ValueEloUser *int               `json:"value_elo_user,omitempty"`
+	Model        string             `json:"model,omitempty"`
 }
 type lookupResult struct {
 	Index          int                `json:"index"`

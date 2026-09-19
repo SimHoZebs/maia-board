@@ -18,12 +18,14 @@ var uciMovePattern = regexp.MustCompile(`^[a-h][1-8][a-h][1-8][qrbn]?$`)
 var epSquarePattern = regexp.MustCompile(`^[a-h][36]$`)
 
 type moveRequest struct {
-	FEN         string   `json:"fen"`
-	Moves       []string `json:"moves"`
-	EloMaia     *int     `json:"elo_maia"`
-	EloUser     *int     `json:"elo_user"`
-	Model       string   `json:"model"`
-	MaiaColor   string   `json:"maia_color"`
+	FEN          string   `json:"fen"`
+	Moves        []string `json:"moves"`
+	EloMaia      *int     `json:"elo_maia"`
+	EloUser      *int     `json:"elo_user"`
+	ValueEloMaia *int     `json:"value_elo_maia,omitempty"`
+	ValueEloUser *int     `json:"value_elo_user,omitempty"`
+	Model        string   `json:"model"`
+	MaiaColor    string   `json:"maia_color"`
 	InitialFEN  string   `json:"initial_fen,omitempty"`
 	Temperature float64  `json:"temperature,omitempty"`
 	// Accepted for older clients; cache identity is derived by the server.
@@ -231,6 +233,11 @@ func validateMoveRequest(request moveRequest) (EngineRequest, string, error) {
 	if err := validateElo(request.EloMaia, request.EloUser); err != nil {
 		return EngineRequest{}, "", err
 	}
+	for _, elo := range []*int{request.ValueEloMaia, request.ValueEloUser} {
+		if elo != nil && (*elo < 0 || *elo > 5000) {
+			return EngineRequest{}, "", &requestError{Code: "invalid_elo", Message: "Elo values must be between 0 and 5000"}
+		}
+	}
 	model := request.Model
 	if model == "" {
 		model = "79m"
@@ -262,12 +269,14 @@ func validateMoveRequest(request moveRequest) (EngineRequest, string, error) {
 		}
 	}
 	return EngineRequest{
-		FEN:         fen,
-		Moves:       request.Moves,
-		InitialFEN:  initialFEN,
-		SelfElo:     *request.EloMaia,
-		OppoElo:     *request.EloUser,
-		Temperature: request.Temperature,
+		FEN:          fen,
+		Moves:        request.Moves,
+		InitialFEN:   initialFEN,
+		SelfElo:      *request.EloMaia,
+		OppoElo:      *request.EloUser,
+		ValueSelfElo: request.ValueEloMaia,
+		ValueOppoElo: request.ValueEloUser,
+		Temperature:  request.Temperature,
 	}, model, nil
 }
 

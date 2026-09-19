@@ -9,6 +9,8 @@ export type MoveRequest = {
   moves: string[];
   elo_maia: number;
   elo_user: number;
+  value_elo_maia?: number;
+  value_elo_user?: number;
   model: MaiaModel;
   maia_color: MaiaColor;
   initial_fen?: string;

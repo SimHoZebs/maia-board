@@ -51,12 +51,14 @@ func syncWait(prio Priority) time.Duration {
 }
 
 type EngineRequest struct {
-	FEN         string   `json:"fen"`
-	Moves       []string `json:"moves"`
-	InitialFEN  string   `json:"initial_fen"`
-	SelfElo     int      `json:"self_elo"`
-	OppoElo     int      `json:"oppo_elo"`
-	Temperature float64  `json:"temperature"`
+	FEN          string   `json:"fen"`
+	Moves        []string `json:"moves"`
+	InitialFEN   string   `json:"initial_fen"`
+	SelfElo      int      `json:"self_elo"`
+	OppoElo      int      `json:"oppo_elo"`
+	ValueSelfElo *int     `json:"value_self_elo,omitempty"`
+	ValueOppoElo *int     `json:"value_oppo_elo,omitempty"`
+	Temperature  float64  `json:"temperature"`
 }
 type Candidate struct {
 	Move   string     `json:"move"`

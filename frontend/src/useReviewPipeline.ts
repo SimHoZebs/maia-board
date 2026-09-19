@@ -233,16 +233,24 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   const timeline = useMemo(() => buildTimeline(state.analysis.initialFen, moves), [lineKey]);
   const nodes = useMemo(() => reviewNodes(timeline), [timeline]);
   const settingsKey = JSON.stringify([state.analysisSettings.eloMaia, state.analysisSettings.model, state.stockfish]);
-  const settings: ReviewSettings = useMemo(() => ({ eloMaia: state.analysisSettings.eloMaia, eloUser: state.analysisSettings.eloMaia, model: state.analysisSettings.model, stockfish: state.stockfish }), [settingsKey]);
+  // Display lane: policy at the selected Elo, values at 2400-vs-2400 so the
+  // left move list shows what X would play with 2400-level winrates.
+  // settingsHash/evaluationRequest normalize explicit-equal values away, so
+  // a 2400 selection dedups with the grading lane.
+  const settings: ReviewSettings = useMemo(() => ({ eloMaia: state.analysisSettings.eloMaia, eloUser: state.analysisSettings.eloMaia,
+    valueEloMaia: 2400, valueEloUser: 2400, model: state.analysisSettings.model, stockfish: state.stockfish }), [settingsKey]);
   const mainLine = state.analysis.branchFromPly === null;
   const ownGame = state.analysis.ownGame && mainLine;
   const gameForLine = ownGame ? gameIdentityFor(state.analysisSourceId, state.saved, state.play) : null;
   const pinnedKey = gameForLine ? JSON.stringify([gameForLine.settings.eloMaia, gameForLine.settings.eloUser, gameForLine.settings.model, gameForLine.settings.userColor]) : '';
   const userColor = gameForLine?.settings.userColor;
-  // On own-game mainlines, Maia positions retain the saved game identity.
-  // User positions and explored branches use adjustable analysis settings.
+  // On own-game mainlines, Maia positions retain the saved game identity for
+  // policy (what was actually played) but share the 2400 value anchor so all
+  // displayed winrates stay comparable. User positions and explored branches
+  // use adjustable analysis settings.
   const settingsForNode = useMemo(() => {
-    const pinned = gameForLine ? { eloMaia: gameForLine.settings.eloMaia, eloUser: gameForLine.settings.eloUser, model: gameForLine.settings.model, stockfish: state.stockfish } : null;
+    const pinned = gameForLine ? { eloMaia: gameForLine.settings.eloMaia, eloUser: gameForLine.settings.eloUser,
+      valueEloMaia: 2400, valueEloUser: 2400, model: gameForLine.settings.model, stockfish: state.stockfish } : null;
     return (node: ReviewNode): ReviewSettings => pinned && userColor && isMaiaPosition(node, userColor, ownGame) ? pinned : settings;
   }, [settings, pinnedKey, userColor, ownGame]);
   // Mainline game identity for the continuation pass, gated on the line
@@ -254,7 +262,8 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   const mainPinnedKey = mainGameForLine ? JSON.stringify([mainGameForLine.settings.eloMaia, mainGameForLine.settings.eloUser, mainGameForLine.settings.model, mainGameForLine.settings.userColor]) : '';
   const mainUserColor = mainGameForLine?.settings.userColor;
   const mainlineSettingsForNode = useMemo(() => {
-    const pinned = mainGameForLine ? { eloMaia: mainGameForLine.settings.eloMaia, eloUser: mainGameForLine.settings.eloUser, model: mainGameForLine.settings.model, stockfish: state.stockfish } : null;
+    const pinned = mainGameForLine ? { eloMaia: mainGameForLine.settings.eloMaia, eloUser: mainGameForLine.settings.eloUser,
+      valueEloMaia: 2400, valueEloUser: 2400, model: mainGameForLine.settings.model, stockfish: state.stockfish } : null;
     const mainOwnGame = state.analysis.ownGame;
     return (node: ReviewNode): ReviewSettings => pinned && mainUserColor && isMaiaPosition(node, mainUserColor, mainOwnGame) ? pinned : settings;
   }, [settings, mainPinnedKey, mainUserColor, state.analysis.ownGame]);

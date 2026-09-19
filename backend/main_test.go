@@ -33,6 +33,41 @@ func TestValidateMoveRequest(t *testing.T) {
 	}
 }
 
+func TestValidateMoveRequestValueElos(t *testing.T) {
+	maiaElo, userElo, valueMaia, valueUser := 800, 800, 2400, 2400
+	request := moveRequest{
+		FEN:          startFEN,
+		Moves:        []string{},
+		EloMaia:      &maiaElo,
+		EloUser:      &userElo,
+		ValueEloMaia: &valueMaia,
+		ValueEloUser: &valueUser,
+		Model:        "79m",
+		MaiaColor:    "white",
+	}
+	engineRequest, _, err := validateMoveRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if engineRequest.ValueSelfElo == nil || *engineRequest.ValueSelfElo != 2400 ||
+		engineRequest.ValueOppoElo == nil || *engineRequest.ValueOppoElo != 2400 {
+		t.Fatalf("value Elos not mapped: %+v", engineRequest)
+	}
+	outOfRange := 5001
+	if _, _, err := validateMoveRequest(moveRequest{FEN: startFEN, EloMaia: &maiaElo, EloUser: &userElo,
+		ValueEloMaia: &outOfRange, Model: "79m", MaiaColor: "white"}); err == nil {
+		t.Fatal("out-of-range value Elo accepted")
+	}
+	// Omitted value Elos stay nil (worker defaults to policy Elos).
+	plain, _, err := validateMoveRequest(moveRequest{FEN: startFEN, EloMaia: &maiaElo, EloUser: &userElo, Model: "79m", MaiaColor: "white"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.ValueSelfElo != nil || plain.ValueOppoElo != nil {
+		t.Fatalf("omitted value Elos must stay nil: %+v", plain)
+	}
+}
+
 type prioRecorder struct {
 	result EngineResult
 	prios  []Priority
