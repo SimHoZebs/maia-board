@@ -126,14 +126,16 @@ export function ObjectiveBar({
   const wdlChanged = (displayWdl?.white ?? null) !== (lastWdl?.white ?? null)
     || (displayWdl?.draw ?? null) !== (lastWdl?.draw ?? null)
     || (displayWdl?.black ?? null) !== (lastWdl?.black ?? null);
-  if (display && (display.percent !== last?.percent || display.score !== last?.score || wdlChanged)) setLast(display);
+  const tagsChanged = (display?.whiteText ?? null) !== (last?.whiteText ?? null)
+    || (display?.blackText ?? null) !== (last?.blackText ?? null)
+    || (display?.drawText ?? null) !== (last?.drawText ?? null);
+  if (display && (display.percent !== last?.percent || tagsChanged || wdlChanged)) setLast(display);
   const shown = display ?? last;
   const percent = shown ? shown.percent : 50;
   const whitePct = shown?.wdl ? shown.wdl.white : percent;
   const drawPct = shown?.wdl ? shown.wdl.draw : 0;
   const whiteTween = useTweenedPercent(whitePct);
   const drawTween = useTweenedPercent(drawPct);
-  const score = shown ? shown.score : "—";
   const pending = !display;
   // A failed fetch is not loading: drop the pulse so the bar never spins
   // forever on the old value. Retry clears the failure upstream and the pulse
@@ -150,6 +152,15 @@ export function ObjectiveBar({
   const drawStyle = orientation === "white"
     ? { height: `${drawTween}%`, bottom: `${whiteTween}%` }
     : { height: `${drawTween}%`, top: `${whiteTween}%` };
+  // Per-segment tags: draw centered on its segment, White/Black pinned near
+  // their own ends. Zero segments show no tag (mate/draw terminals keep
+  // their text on the winning side instead of a percentage).
+  const whiteTag = shown?.whiteText ?? null;
+  const blackTag = shown?.blackText ?? null;
+  const drawTag = shown?.drawText != null && drawTween > 0.05 ? shown.drawText : null;
+  const drawTagStyle = orientation === "white"
+    ? { bottom: `${whiteTween + drawTween / 2}%` }
+    : { top: `${whiteTween + drawTween / 2}%` };
   return (
     <section
       className={`eval-balance orientation-${orientation}${pending ? " pending" : ""}${loading ? " loading" : ""}`}
@@ -164,9 +175,15 @@ export function ObjectiveBar({
       >
         <div className="balance-white" style={{ height: `${whiteTween}%` }} />
         {drawTween > 0.05 && <div className="balance-draw" style={drawStyle} />}
-        <strong className="balance-score" aria-hidden="true">
-          {score}
-        </strong>
+        {!shown ? (
+          <strong className="balance-tag balance-pending-tag" aria-hidden="true">—</strong>
+        ) : (
+          <>
+            {whiteTag != null && <strong className="balance-tag balance-white-tag" aria-hidden="true">{whiteTag}</strong>}
+            {drawTag != null && <strong className="balance-tag balance-draw-tag" aria-hidden="true" style={drawTagStyle}>{drawTag}</strong>}
+            {blackTag != null && <strong className="balance-tag balance-black-tag" aria-hidden="true">{blackTag}</strong>}
+          </>
+        )}
       </div>
     </section>
   );
@@ -176,22 +193,35 @@ function objectiveReading(turn: 'white' | 'black', expected: number | null | und
   if (outcome?.kind === "checkmate") {
     const white = outcome.winner === "white";
     const triple = white ? { white: 100, draw: 0, black: 0 } : { white: 0, draw: 0, black: 100 };
-    return { percent: white ? 100 : 0, wdl: triple, score: white ? "+M0" : "-M0", description: white ? "White wins" : "Black wins" };
+    const text = white ? "+M0" : "-M0";
+    return { percent: white ? 100 : 0, wdl: triple, whiteText: white ? text : null, blackText: white ? null : text, drawText: null, description: white ? "White wins" : "Black wins" };
   }
-  if (outcome) return { percent: 50, wdl: { white: 0, draw: 100, black: 0 }, score: "Draw", description: "Draw" };
+  if (outcome) return { percent: 50, wdl: { white: 0, draw: 100, black: 0 }, whiteText: null, blackText: null, drawText: "Draw", description: "Draw" };
   if (mate) {
     const white = (mate.winning_side ?? (mate.value > 0 ? "white" : "black")) === "white";
     const text = scoreValueText(mate);
     const triple = white ? { white: 100, draw: 0, black: 0 } : { white: 0, draw: 0, black: 100 };
-    return { percent: white ? 100 : 0, wdl: triple, score: text, description: `${text} · White perspective` };
+    return { percent: white ? 100 : 0, wdl: triple, whiteText: white ? text : null, blackText: white ? null : text, drawText: null, description: `${text} · White perspective` };
   }
   if (expected == null) return undefined;
   if (wdl) {
     const percent = wdl.white + wdl.draw / 2;
     const text = `W ${Math.round(wdl.white)}% · D ${Math.round(wdl.draw)}% · B ${Math.round(wdl.black)}%`;
-    return { percent, wdl, score: text, description: `${text} · White perspective · ${sourceLabel()}` };
+    return {
+      percent, wdl,
+      whiteText: wdl.white > 0.05 ? `${Math.round(wdl.white)}%` : null,
+      blackText: wdl.black > 0.05 ? `${Math.round(wdl.black)}%` : null,
+      drawText: wdl.draw > 0.05 ? `${Math.round(wdl.draw)}%` : null,
+      description: `${text} · White perspective · ${sourceLabel()}`,
+    };
   }
   const percent = whiteExpected(turn, expected);
   const text = `W ${Math.round(percent)}% · B ${Math.round(100 - percent)}%`;
-  return { percent, wdl: null, score: text, description: `${text} · White perspective · ${sourceLabel()}` };
+  return {
+    percent, wdl: null,
+    whiteText: percent > 0.05 ? `${Math.round(percent)}%` : null,
+    blackText: 100 - percent > 0.05 ? `${Math.round(100 - percent)}%` : null,
+    drawText: null,
+    description: `${text} · White perspective · ${sourceLabel()}`,
+  };
 }

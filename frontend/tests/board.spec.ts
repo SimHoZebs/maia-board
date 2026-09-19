@@ -706,7 +706,9 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   await expect(page.locator('.win-hero')).toHaveCount(0);
   await expect(page.locator('section[aria-label="Maia analysis"] .candidate-list')).toContainText('Nc6');
   await expect(page.locator('.balance-track')).toHaveAccessibleName(/White 50%.*Draw 30%.*Black 20%.*estimated White winning chance 65%/);
-  await expect(page.locator('.balance-score')).toHaveText('W 50% · D 30% · B 20%');
+  await expect(page.locator('.balance-white-tag')).toHaveText('50%');
+  await expect(page.locator('.balance-draw-tag')).toHaveText('30%');
+  await expect(page.locator('.balance-black-tag')).toHaveText('20%');
   await page.getByRole('button', { name: 'Explore Nf6' }).hover();
   await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(0);
   await piece(page, 'g8', 'black knight');

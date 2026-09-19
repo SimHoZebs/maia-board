@@ -237,7 +237,9 @@ test('whole game completes independently of viewing and updates the position bal
   // Book chips would occupy the badge boxes on this all-book line (see
   // badge-loading.spec.ts): the fixture names nothing so verdicts render.
   const app = await bootReview(page, '1. e4 e5 2. Nf3 Nc6', [20,20,200,-700,-680]);
-  await expect(page.locator('.balance-score')).toHaveText('W 8% · D 0% · B 92%');
+  await expect(page.locator('.balance-white-tag')).toHaveText('8%');
+  await expect(page.locator('.balance-black-tag')).toHaveText('92%');
+  await expect(page.locator('.balance-draw-tag')).toHaveCount(0);
   // The charts shell mounts pre-analysis (lines stay empty until verdicts
   // settle); only the hero must stay absent before the review runs.
   await expect(page.locator('.win-hero')).toHaveCount(0);
@@ -256,7 +258,9 @@ test('whole game completes independently of viewing and updates the position bal
   const settled = inferred();
   await page.locator('.move-cell').nth(2).click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
-  await expect(page.locator('.balance-score')).toHaveText('W 7% · D 0% · B 93%');
+  await expect(page.locator('.balance-white-tag')).toHaveText('7%');
+  await expect(page.locator('.balance-black-tag')).toHaveText('93%');
+  await expect(page.locator('.balance-draw-tag')).toHaveCount(0);
   await expect(page.locator('.balance-track')).toHaveAccessibleName(/White 7%.*Draw 0%.*Black 93%.*estimated White winning chance 7%/);
   await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
   await page.screenshot({ path: info.outputPath('completed-review.png'), fullPage: true });
@@ -304,7 +308,9 @@ test('move analysis summarizes the game below the engines and links mistakes fro
   await expect(page.getByRole('tab', { name: 'Move analysis', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
   await expect(page.locator('#insight-content').getByRole('button', { name: 'Explore Nf3 (played) from before this move', exact: true })).toBeVisible();
-  await expect(page.locator('.balance-score')).toHaveText('W 7% · D 0% · B 93%');
+  await expect(page.locator('.balance-white-tag')).toHaveText('7%');
+  await expect(page.locator('.balance-black-tag')).toHaveText('93%');
+  await expect(page.locator('.balance-draw-tag')).toHaveCount(0);
   expect(app.errors).toEqual([]);
 });
 
@@ -401,7 +407,9 @@ for (const width of [1440, 360]) test(`move analysis restores evaluation graph a
   await page.locator('.chart-point').nth(4).click();
   await expect(page.getByRole('tab', { name: 'Move analysis', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
-  await expect(page.locator('.balance-score')).toHaveText('W 8% · D 0% · B 92%');
+  await expect(page.locator('.balance-white-tag')).toHaveText('8%');
+  await expect(page.locator('.balance-black-tag')).toHaveText('92%');
+  await expect(page.locator('.balance-draw-tag')).toHaveCount(0);
   await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/2… Nc6/);
   expect(app.errors).toEqual([]);
 });
@@ -594,7 +602,9 @@ test('mixed arrow sources retain their own endpoints', async ({ page }, info) =>
 });
 test('current position balance replaces the win-rate sections', async ({ page }) => {
   await bootReview(page);
-  await expect(page.locator('.balance-score')).toHaveText('W 8% · D 0% · B 92%');
+  await expect(page.locator('.balance-white-tag')).toHaveText('8%');
+  await expect(page.locator('.balance-black-tag')).toHaveText('92%');
+  await expect(page.locator('.balance-draw-tag')).toHaveCount(0);
   // The evaluation graph lives in Move analysis now, so the section
   // renders before any review — the foreground pair settles one segment
   // immediately (dot coverage is asserted in the gaps test below).
