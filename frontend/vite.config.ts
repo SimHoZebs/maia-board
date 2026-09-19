@@ -30,7 +30,7 @@ export default defineConfig(({ mode }) => {
   // proxies game, engine, and book API calls at the backend, so a local
   // frontend runs against real data and cached evaluations prime faithfully.
   const apiProxy: Record<string, string> = process.env.MAIA_API_TARGET
-    ? { '/move': process.env.MAIA_API_TARGET, '/evaluate': process.env.MAIA_API_TARGET, '/evaluations': process.env.MAIA_API_TARGET, '/games': process.env.MAIA_API_TARGET, '/openings': process.env.MAIA_API_TARGET }
+    ? { '/move/analysis': process.env.MAIA_API_TARGET, '/move': process.env.MAIA_API_TARGET, '/evaluate': process.env.MAIA_API_TARGET, '/evaluations': process.env.MAIA_API_TARGET, '/games': process.env.MAIA_API_TARGET, '/openings': process.env.MAIA_API_TARGET }
     : {};
   return {
     build: {

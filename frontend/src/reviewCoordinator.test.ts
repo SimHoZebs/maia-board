@@ -422,9 +422,9 @@ describe('fast-then-refine', () => {
     const resolvers = new Map<string, () => void>();
     const fetcher = vi.fn<typeof fetch>(async (url, init) => {
       const body = JSON.parse(requestBodyText(init));
-      const key = url === '/move' ? `maia:${body.elo_maia}:${body.moves.length}` : `sf:${body.moves.length}`;
+      const key = url === '/move/analysis' ? `maia:${body.elo_maia}:${body.moves.length}` : `sf:${body.moves.length}`;
       started.push(key);
-      if (url === '/move') {
+      if (url === '/move/analysis') {
         await new Promise<void>(resolve => resolvers.set(key, resolve));
         return jsonResponse(maiaFixture(body.fen, body.model));
       }

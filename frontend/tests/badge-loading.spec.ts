@@ -37,7 +37,7 @@ async function bootHistory(page: Page, pgn: string, primeMs: number) {
       } });
       return;
     }
-    if (path === '/move') {
+    if (path === '/move' || path === '/move/analysis') {
       const payload = route.request().postDataJSON();
       const game = replay(payload.moves, payload.initial_fen);
       const best = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`)[0];

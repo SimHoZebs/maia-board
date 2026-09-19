@@ -485,7 +485,9 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   // Eagerness (play): foreground fetch on move. Latest-wins per engine: a
   // newer move replaces queued older work, and the server batch is out of
   // this path entirely — no per-ply submit, no cancel/resubmit churn, no 409
-  // races with ourselves.
+  // races with ourselves. Play (POST /move → Play lane) and Maia analysis
+  // (POST /move/analysis → Focus lane) queue on the shared slot with Play
+  // priority instead of superseding each other.
   useEffect(() => {
     if (!active || tooLong || !pair.sfNodes.length) return;
     coordinator.ensure(pair.sfNodes, settings, { priority: true, engines: ['sf'], signal: scope.signal });

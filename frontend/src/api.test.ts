@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { MaiaApiError, parseMoveResponse, readableApiError, requestMove } from './api';
+import { MaiaApiError, parseMoveResponse, readableApiError, requestMaiaAnalysis, requestMove } from './api';
 import { START_FEN } from './domain';
 import { maiaFixture } from './evaluationTestFixtures';
 import { requestBodyText } from './testUtils';
@@ -54,7 +54,7 @@ describe('requestMove', () => {
     expect(error.code).toBe('server_unreachable');
   });
 
-  it('never sends the priority lane header (endpoint-implied)', async () => {
+  it('routes play and analysis to their own endpoints without a lane header', async () => {
     const body = JSON.stringify({
       move: 'e2e4',
       top_moves: [{ move: 'e2e4', prob: 0.6, wdl: [0.2, 0.3, 0.5] }],
@@ -63,13 +63,15 @@ describe('requestMove', () => {
       degraded: false,
     });
     const fetchImpl = vi.fn().mockImplementation(async () => new Response(body));
-    await requestMove(payload, fetchImpl, undefined, { priority: 'play' });
+    // Live replies ride the Play lane (POST /move); retrospective analysis
+    // rides Focus (POST /move/analysis), so the two queue by endpoint.
+    await requestMove({ ...payload, temperature: 1 }, fetchImpl);
     expect(fetchImpl).toHaveBeenCalledWith('/move', expect.objectContaining({
       headers: expect.not.objectContaining({ 'X-Priority': expect.anything() }),
     }));
     fetchImpl.mockClear();
-    await requestMove(payload, fetchImpl);
-    expect(fetchImpl).toHaveBeenCalledWith('/move', expect.objectContaining({
+    await requestMaiaAnalysis(payload, fetchImpl);
+    expect(fetchImpl).toHaveBeenCalledWith('/move/analysis', expect.objectContaining({
       headers: expect.not.objectContaining({ 'X-Priority': expect.anything() }),
     }));
   });

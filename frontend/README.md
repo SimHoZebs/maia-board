@@ -21,7 +21,7 @@ npm run build:bundle
 
 `npm run build` combines the last two commands. `npm run dev` starts Vite;
 `npm run preview` serves a built bundle. Set `MAIA_API_TARGET` to an existing
-backend URL to proxy `/move`, `/evaluate`, `/evaluations`, `/games`, and `/openings`.
+backend URL to proxy `/move`, `/move/analysis`, `/evaluate`, `/evaluations`, `/games`, and `/openings`.
 `MAIA_BUILD_DIR` overrides the build destination (default `dist`).
 
 ## State boundaries

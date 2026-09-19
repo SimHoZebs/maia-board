@@ -33,6 +33,44 @@ func TestValidateMoveRequest(t *testing.T) {
 	}
 }
 
+type prioRecorder struct {
+	result EngineResult
+	prios  []Priority
+}
+
+func (f *prioRecorder) predict(_ context.Context, _ context.Context, prio Priority, _ uint64, _ EngineRequest) (EngineResult, func(), error) {
+	f.prios = append(f.prios, prio)
+	return f.result, nil, nil
+}
+func (f *prioRecorder) snapshot() WorkerStatus { return WorkerStatus{} }
+
+func TestMoveEndpointsAdmitOnSeparateLanes(t *testing.T) {
+	// /move (live replies) admits on Play, /move/analysis (retrospective
+	// analysis) on Focus, so a play move and its analysis queue instead of
+	// superseding each other on the shared slot.
+	wdl := [3]float64{0.2, 0.3, 0.5}
+	rec := &prioRecorder{result: EngineResult{Move: "e2e4",
+		Candidates: []Candidate{{Move: "e2e4", Policy: 0.6, WDL: wdl}}, WDL: wdl}}
+	s := &server{pool: NewEnginePool(rec, rec), store: testStore(t)}
+	post := func(handler func(http.ResponseWriter, *http.Request), eloUser string) *httptest.ResponseRecorder {
+		body := `{"fen":"` + startFEN + `","moves":[],"elo_maia":1600,"elo_user":` + eloUser + `,"model":"79m","maia_color":"white"}`
+		w := httptest.NewRecorder()
+		handler(w, httptest.NewRequest(http.MethodPost, "/move", strings.NewReader(body)))
+		return w
+	}
+	// Distinct Elo per call so the second request misses the cache the
+	// first call wrote and actually reaches admission.
+	if w := post(s.move, "1600"); w.Code != http.StatusOK {
+		t.Fatalf("play move: %d %s", w.Code, w.Body)
+	}
+	if w := post(s.moveAnalysis, "1601"); w.Code != http.StatusOK {
+		t.Fatalf("move analysis: %d %s", w.Code, w.Body)
+	}
+	if len(rec.prios) != 2 || rec.prios[0] != PriorityPlay || rec.prios[1] != PriorityFocus {
+		t.Fatalf("lanes = %v, want [Play Focus]", rec.prios)
+	}
+}
+
 func TestMoveHandlerPersistsAfterClientStopsWaiting(t *testing.T) {
 	for _, tc := range []struct {
 		name                                 string

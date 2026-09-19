@@ -61,8 +61,12 @@ type Grant struct {
 }
 
 // Scheduler orders admission to a single-slot engine across three FIFO lanes.
-// Lane derives from the endpoint (/move→Play, /evaluate→Focus, /reviews→Batch);
-// the X-Priority header is ignored (legacy clients may still send it).
+// Lane derives from the endpoint (/move→Play, /move/analysis→Focus,
+// /evaluate→Focus, /reviews→Batch); the X-Priority header is ignored
+// (legacy clients may still send it). The /move vs /move/analysis split is
+// intentional: a live reply and its analysis fire together every move, and
+// same-lane arrivals supersede instead of queueing, so merging them would
+// 409 the live reply.
 // It owns ordering and cancellation only; execution stays with the caller
 // (Worker.predict / Evaluator.run), which keeps its own timeouts and process
 // lifecycle. The zero value is unusable; use NewScheduler.

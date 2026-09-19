@@ -68,7 +68,7 @@ async function bootGames(page: Page, seed: Record<string, unknown> = {}, offline
       }
       return;
     }
-    if (url.pathname === '/move') {
+    if (url.pathname === '/move' || url.pathname === '/move/analysis') {
       const payload = route.request().postDataJSON();
       await route.fulfill({ json: { move: 'e7e5', top_moves: [{ move: 'e7e5', prob: .6, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], model_used: payload.model, degraded: false } });
       return;
@@ -90,7 +90,7 @@ async function clickSquare(page: Page, key: string) {
 test('live play shows a fallback notice when the worker degrades', async ({ page }) => {
   const app = await bootGames(page, { 'maia-board.migrated-games.v1': true });
   let requestedModel: unknown;
-  await page.route('http://maia.test/move', async route => {
+  await page.route('http://maia.test/move*', async route => {
     requestedModel = route.request().postDataJSON().model;
     await route.fulfill({ json: { move: 'e7e5', top_moves: [{ move: 'e7e5', prob: .6, wdl: [.2, .3, .5] }], wdl: [.2, .3, .5], model_used: '5m', degraded: true } });
   });

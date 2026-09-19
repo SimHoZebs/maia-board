@@ -28,8 +28,8 @@ const (
 	maxUnfinishedJobs = 8
 )
 
-// Single executor: one resolve + execute path for /move, /evaluate, and
-// /reviews entries. Lookup reuses resolve read-only (no admission, no store).
+// Single executor: one resolve + execute path for /move, /move/analysis,
+// /evaluate, and /reviews entries. Lookup reuses resolve read-only (no admission, no store).
 // Live callers pass strictBatch=false (forgiving: 79M→5M degraded fallback is
 // served but never cached); batch entries pass strictBatch=true (per-index
 // failure so live can retry). Both engines keep one timeout policy each

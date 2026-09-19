@@ -88,6 +88,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", app.healthz)
 	mux.HandleFunc("/move", app.move)
+	mux.HandleFunc("/move/analysis", app.moveAnalysis)
 	mux.HandleFunc("/evaluate", app.evaluate)
 	mux.HandleFunc("/games", app.games)
 	mux.HandleFunc("/games/", app.gameByID)
@@ -153,15 +154,36 @@ func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, code, map[string]any{"status": status, "models": models})
 }
 
-func (s *server) move(w http.ResponseWriter, r *http.Request) {
+// /move serves live game replies; /move/analysis serves retrospective Maia
+// analysis with the same payload shape. Separate endpoints keep the
+// endpoint-implied lane mapping exact (Play vs Focus). This split is
+// load-bearing, not cosmetic: every user move fires a live reply plus its
+// move feedback concurrently, and one depth-1 latest-wins lane would
+// supersede the queued waiter and surface 409 on the live reply. Keep play
+// and analysis on separate lanes (Play queues ahead of Focus) — do not merge.
+func (s *server) move(w http.ResponseWriter, r *http.Request) { s.serveMove(w, r, PriorityPlay) }
+func (s *server) moveAnalysis(w http.ResponseWriter, r *http.Request) {
+	s.serveMove(w, r, PriorityFocus)
+}
+
+// serveMove runs one Maia inference through the shared executor. The lane
+// is endpoint-implied: /move → Play (live game replies, latency-critical),
+// /move/analysis → Focus (retrospective analysis). Lanes queue on the shared
+// slot with Play priority instead of superseding each other; same-lane
+// arrivals stay latest-wins.
+func (s *server) serveMove(w http.ResponseWriter, r *http.Request, prio Priority) {
 	started := time.Now()
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	w = rec
 	var request moveRequest
 	model, degraded := "", false
+	lane := "play"
+	if prio == PriorityFocus {
+		lane = "focus"
+	}
 	defer func() {
-		log.Printf("move status=%d plies=%d model=%s degraded=%t duration_ms=%d",
-			rec.status, len(request.Moves), model, degraded, time.Since(started).Milliseconds())
+		log.Printf("move status=%d lane=%s plies=%d model=%s degraded=%t duration_ms=%d",
+			rec.status, lane, len(request.Moves), model, degraded, time.Since(started).Milliseconds())
 	}()
 	request, ok := decodeSingle[moveRequest](w, r, 64*1024)
 	if !ok {
@@ -178,13 +200,11 @@ func (s *server) move(w http.ResponseWriter, r *http.Request) {
 	}
 	model = validated
 
-	// /move is a size-1 batch through the shared executor (lane Play;
-	// any X-Priority header from older clients is ignored). waitCtx dequeues
-	// on disconnect; execCtx stays detached so a granted op still validates
-	// and persists after the client goes away.
+	// waitCtx dequeues on disconnect; execCtx stays detached so a granted op
+	// still validates and persists after the client goes away.
 	useCache := request.Temperature == 0
 	execCtx := context.WithoutCancel(r.Context())
-	response, hit, predictErr := s.executeMaia(r.Context(), execCtx, PriorityPlay, 0, engineRequest, model, false)
+	response, hit, predictErr := s.executeMaia(r.Context(), execCtx, prio, 0, engineRequest, model, false)
 	if predictErr != nil {
 		mapEngineError(w, predictErr, sanitizeError(predictErr.Error()))
 		return
@@ -312,7 +332,7 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 // statusRecorder captures the response status so handlers can log one
 // per-request timing line (method/path/status/duration) for analysis
-// slowdown diagnosis. Interactive analysis issues one /move + one /evaluate
+// slowdown diagnosis. Interactive analysis issues one /move/analysis + one /evaluate
 // per examined position; whole-game batches instead emit one review-batch
 // entry line per position from the drain loop, so `docker logs` (Komodo)
 // shows the per-ply latency curve either way: a second-half cliff points

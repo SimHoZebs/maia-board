@@ -184,9 +184,9 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
       await route.fulfill({ json: { matches: [], book_flags: Array.isArray(moves) ? moves.map(() => false) : [] } });
       return;
     }
-    if (path === '/move' || path === '/evaluate') {
+    if (path === '/move' || path === '/move/analysis' || path === '/evaluate') {
       const payload = route.request().postDataJSON();
-      const engine = path === '/move' ? 'maia' : 'sf';
+      const engine = path === '/evaluate' ? 'sf' : 'maia';
       const hit = evaluations.get(engine, payload);
       const wallStart = Date.now();
       if (hit) {

@@ -33,7 +33,7 @@ func decodeSingle[T any](w http.ResponseWriter, r *http.Request, maxBytes int64)
 }
 
 // mapEngineError owns the engine-error-to-HTTP mapping shared by the live
-// inference endpoints (/move, /evaluate). Statuses and codes are preserved;
+// inference endpoints (/move, /move/analysis, /evaluate). Statuses and codes are preserved;
 // busy/superseded/validation messages are unified to neutral wording
 // (previously per-engine). The engine-unavailable fallback stays per-endpoint:
 // /move sanitizes the underlying error while /evaluate keeps its fixed

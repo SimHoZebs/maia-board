@@ -41,6 +41,11 @@ Sampling can select a move outside the displayed candidates. `model_used` and
 `degraded` identify fallback from 79M to 5M. Busy responses return 503; a failed
 79M operation can fall back to 5M, while an explicit 5M request uses only that model.
 
+`POST /move/analysis` accepts the same payload for retrospective Maia analysis
+(deterministic; omit `temperature`). It admits on the Focus lane while `/move`
+admits on Play, so a live reply and its move feedback queue instead of
+superseding each other.
+
 `POST /evaluate` performs a Stockfish search. Its settings, score perspective,
 history validation, limits, and process cleanup are documented in
 [`STOCKFISH.md`](STOCKFISH.md). Errors use `{code, message}`. `/healthz` supplies
@@ -87,7 +92,7 @@ Games and the current-game marker persist independently of evaluation rows.
 Schema migrations run when the store opens. Browser pending writes are managed
 by the frontend's persistence layer.
 
-`POST /move` and `POST /evaluate` can reuse stored evaluations before starting
+`POST /move`, `POST /move/analysis`, and `POST /evaluate` can reuse stored evaluations before starting
 inference. `X-Eval-Cache` distinguishes `hit` and `miss`. Only deterministic Maia
 requests participate; sampled play moves and degraded fallback responses are not
 persisted as deterministic analysis. Invalid cached results fall through to engine
@@ -136,7 +141,7 @@ continues to own its slot until the reply is drained. A hard timeout or protocol
 failure kills and reaps the worker process group before releasing admission.
 Successful operations preserve the warm process for the next request.
 
-The `/move` HTTP handler waits with client cancellation detached from that bounded
+The `/move` and `/move/analysis` HTTP handlers wait with client cancellation detached from that bounded
 worker operation. A disconnected client therefore leaves the handler waiting long
 enough to validate and persist a successful deterministic result under its canonical
 cache identity. The worker's caller API still supports cancellation of an individual

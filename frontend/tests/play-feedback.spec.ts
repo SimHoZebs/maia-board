@@ -5,8 +5,8 @@ import { Chess } from 'chess.js';
 import { KEYS } from '../src/storage';
 import { stockfishPolicy } from '../src/stockfishSettings';
 
-// Play grades through the foreground Focus lane (single /evaluate per new
-// endpoint, single /move for the mover) plus the read-only bulk prime. The
+// Play grades through the foreground lanes (single /evaluate per new
+// endpoint, single /move/analysis for the mover) plus the read-only bulk prime. The
 // whole-line server batch is out of this path: any POST /reviews during
 // these specs is a regression — fail it on contact.
 type Behavior = { evaluateFailuresRemaining: number; evaluateAlwaysFail?: boolean; lookup?: 'miss' | 'incremental' };
@@ -72,7 +72,7 @@ async function bootPlay(page: Page, behavior: Behavior) {
       }
       await route.fulfill({ json: sfEvaluation(payload.fen, payload.settings) }); return;
     }
-    if (path === '/move') {
+    if (path === '/move' || path === '/move/analysis') {
       const payload = route.request().postDataJSON();
       // Play replies carry a temperature; foreground Maia evals do not.
       (payload.temperature !== undefined ? hits.playMoves : hits.maiaEvals).push(payload);

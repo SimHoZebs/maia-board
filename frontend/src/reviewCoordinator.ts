@@ -1,4 +1,4 @@
-import { MaiaApiError, requestMove, type MoveRequest, type MoveResponse } from './api';
+import { MaiaApiError, requestMaiaAnalysis, requestMove, type MoveRequest, type MoveResponse } from './api';
 import { clampMaiaElo } from './BoardTools';
 import type { Evaluation } from './reviewMetrics';
 import { EvaluationStore, evaluationStore, evaluationRequest, fastReviewSettings, fetchEvaluation, reviewKey, resolveSettings, stablePositionKey,
@@ -289,7 +289,10 @@ export class ReviewCoordinator {
   private async execute(job: Job, signal: AbortSignal): Promise<Evaluation | MoveResponse> {
     if (job.engine === 'sf') return fetchEvaluation(job.node, signal, this.fetcher, job.settings.stockfish);
     const request = evaluationRequest('maia', job.node, job.settings);
-    return requestMove({ fen: request.fen, moves: request.moves, initial_fen: request.initial_fen,
+    // Retrospective analysis rides the Focus lane (POST /move/analysis),
+    // never the play lane — it fires alongside the live reply every move
+    // and queues behind it instead of superseding it.
+    return requestMaiaAnalysis({ fen: request.fen, moves: request.moves, initial_fen: request.initial_fen,
       elo_maia: clampMaiaElo(job.settings.eloMaia), elo_user: clampMaiaElo(job.settings.eloUser), model: job.settings.model, maia_color: job.node.turn }, this.fetcher, signal);
   }
   // Play /move flight with play's tighter parameters: latest-wins (a newer
@@ -299,12 +302,14 @@ export class ReviewCoordinator {
   // transport deadline — no bespoke stall timer at the call site. Replies
   // are never cached: play payloads carry per-game sampling settings
   // (temperature, colors), so they must not settle content-keyed review rows.
+  // Analysis never touches this path (POST /move/analysis → Focus), so a
+  // live reply is only ever superseded by a newer live reply.
   async playMove(payload: MoveRequest): Promise<MoveResponse & { cached?: boolean }> {
     this.playFlight?.abort();
     const controller = new AbortController();
     this.playFlight = controller;
     try {
-      return await requestMove(payload, this.fetcher, controller.signal, { priority: 'play' });
+      return await requestMove(payload, this.fetcher, controller.signal);
     } finally {
       if (this.playFlight === controller) this.playFlight = null;
     }

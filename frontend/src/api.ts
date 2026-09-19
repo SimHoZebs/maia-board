@@ -152,15 +152,31 @@ export function parseErrorCode(value: unknown): ApiErrorCode {
   return isApiErrorCode(value.code) ? value.code : 'unknown';
 }
 
-export type RequestPriority = 'play' | 'focus';
-
-export async function requestMove(payload: MoveRequest, fetchImpl: FetchLike = fetch, signal?: AbortSignal, _opts?: { priority?: RequestPriority }): Promise<MoveResponse & { cached?: boolean }> {
-  // Lane is endpoint-implied (POST /move → Play): no X-Priority header.
+export async function requestMove(payload: MoveRequest, fetchImpl: FetchLike = fetch, signal?: AbortSignal): Promise<MoveResponse & { cached?: boolean }> {
+  // Lane is endpoint-implied: POST /move → Play (live game replies).
   // superseded/503 codes flow through unchanged via the shared helper.
+  // Do not send analysis here: sharing one depth-1 latest-wins lane would
+  // supersede the queued live reply every move — analysis has its own
+  // endpoint below.
+  return postMaia('/move', payload, fetchImpl, signal);
+}
+
+export type MaiaAnalysisRequest = Omit<MoveRequest, 'temperature'>;
+
+export async function requestMaiaAnalysis(payload: MaiaAnalysisRequest, fetchImpl: FetchLike = fetch, signal?: AbortSignal): Promise<MoveResponse & { cached?: boolean }> {
+  // Lane is endpoint-implied: POST /move/analysis → Focus (retrospective
+  // analysis). Same payload shape as /move minus sampling. The split is
+  // load-bearing: analysis fires alongside the live reply every move, so it
+  // queues behind the reply on Focus instead of superseding it on Play —
+  // do not route analysis through requestMove.
+  return postMaia('/move/analysis', payload, fetchImpl, signal);
+}
+
+async function postMaia(path: '/move' | '/move/analysis', payload: MoveRequest | MaiaAnalysisRequest, fetchImpl: FetchLike, signal?: AbortSignal): Promise<MoveResponse & { cached?: boolean }> {
   let response: Response;
   let body: unknown;
   try {
-    ({ response, body } = await fetchJsonWithBusyRetry(fetchImpl, '/move', {
+    ({ response, body } = await fetchJsonWithBusyRetry(fetchImpl, path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

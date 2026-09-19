@@ -123,9 +123,9 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
       await route.fulfill({ json: progress });
       return;
     }
-    if (path === '/move' || path === '/evaluate') {
+    if (path === '/move' || path === '/move/analysis' || path === '/evaluate') {
       const payload = route.request().postDataJSON(); requests.push({ engine: path, ...payload });
-      const engine = path === '/move' ? 'maia' : 'sf';
+      const engine = path === '/evaluate' ? 'sf' : 'maia';
       // Read-through emulation: serve a matching stored row, else compute
       // live and file it, mirroring the backend contract.
       const hit = cache.get(engine, payload);
@@ -133,7 +133,7 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
         await route.fulfill({ json: hit.value, headers: { 'X-Eval-Cache': 'hit' } });
         return;
       }
-      const value = path === '/move' ? maiaOrGrade(payload) : sfValue(payload);
+      const value = path === '/evaluate' ? sfValue(payload) : maiaOrGrade(payload);
       cache.set(engine, payload, value);
       await route.fulfill({ json: value }); return;
     }
@@ -183,7 +183,7 @@ test('standalone FEN shows current candidates and clears correct-frame previews'
 
 test('root shows the fallback notice without model parameters', async ({ page }) => {
   const app = await bootReview(page);
-  await page.route('http://maia.test/move', route => {
+  await page.route('http://maia.test/move*', route => {
     const body = route.request().postDataJSON();
     const move = replay(body.moves, body.initial_fen).moves({ verbose: true })[0];
     const uci = `${move.from}${move.to}${move.promotion ?? ''}`;
@@ -231,7 +231,7 @@ test('automatic review shows real overlapping SVG arrows', async ({ page }, info
   await page.screenshot({ path: info.outputPath('coincident-arrows.png'), fullPage: true });
   expect(app.errors).toEqual([]);
   // Display + grading lanes each fetch the root once in the foreground.
-  expect(app.requests.filter(request => request.engine === '/move' && request.moves.length === 0)).toHaveLength(2);
+  expect(app.requests.filter(request => (request.engine === '/move' || request.engine === '/move/analysis') && request.moves.length === 0)).toHaveLength(2);
 });
 test('whole game completes independently of viewing and updates the position balance', async ({ page }, info) => {
   // Book chips would occupy the badge boxes on this all-book line (see
@@ -510,7 +510,7 @@ test('completed analysis restores automatically across reload without inference'
   const app = await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
-  const inferred = () => app.requests.filter(request => request.engine === '/move' || request.engine === '/evaluate').length;
+  const inferred = () => app.requests.filter(request => request.engine === '/move' || request.engine === '/move/analysis' || request.engine === '/evaluate').length;
   // Settle first: foreground prime trails the instant-mock batch by design
   // (priority-lane delay), so a synchronous request count here would race
   // it. Rendered candidates prove values landed; the count below only needs
@@ -574,9 +574,9 @@ test('changed analysis settings gate the missing positions behind a new batch', 
 });
 test('mixed arrow sources retain their own endpoints', async ({ page }, info) => {
   await bootReview(page);
-  // Display Maia and objective (2400) lanes share /move: split by elo so the
+  // Display Maia and objective (2400) lanes share /move/analysis: split by elo so the
   // white actual, red display, and blue objective arrows diverge.
-  await page.route('http://maia.test/move', route => {
+  await page.route('http://maia.test/move*', route => {
     const body = route.request().postDataJSON();
     const move = body?.elo_maia === 2400 ? 'd2d4' : 'g1f3';
     return route.fulfill({ json: { move, top_moves: [{ move, prob: .6, wdl: [.2,.3,.5] }], wdl: [.2,.3,.5], model_used: '79m', degraded: false } });

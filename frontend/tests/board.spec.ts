@@ -64,7 +64,7 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
       await route.fulfill({ json: { matches: [], book_flags: Array.isArray(moves) ? moves.map(() => false) : [] } });
       return;
     }
-    if (path === '/move') {
+    if (path === '/move' || path === '/move/analysis') {
       const payload = route.request().postDataJSON();
       // Objective lane (fixed Maia 2400) auto-fulfills: these specs
       // choreograph the display lane by holding its routes open, so the

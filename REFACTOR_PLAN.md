@@ -4,7 +4,7 @@
 LAN-first self-hosted Play vs Maia + Analyze (Maia + Stockfish) + History. Single container. Server owns ordering, identity, persistence. Browser owns rendering + what it still needs.
 
 ## 1. Scheduler: 3 lanes, endpoint-implied — AGREED
-`POST /move` → Play, `POST /evaluate` → Focus, `POST /reviews` → Batch. No `X-Priority` header. One slot per engine, non-preemptive, grant order Play > Focus > Batch. Play depth 1 latest-wins, Focus depth 1 latest-wins, Batch FIFO per jobID. Dedup-by-hash across lanes, empty key never dedups. `superseded` = replaced (don't retry), `503 + Retry-After` = overload, `409 batch_busy + runningJobId` = single-active background. Batch drain yields to interactive between entries.
+`POST /move` → Play, `POST /move/analysis` → Focus, `POST /evaluate` → Focus, `POST /reviews` → Batch. No `X-Priority` header. One slot per engine, non-preemptive, grant order Play > Focus > Batch. Play depth 1 latest-wins, Focus depth 1 latest-wins, Batch FIFO per jobID. Dedup-by-hash across lanes, empty key never dedups. `superseded` = replaced (don't retry), `503 + Retry-After` = overload, `409 batch_busy + runningJobId` = single-active background. Batch drain yields to interactive between entries.
 
 ## 2. Abort scopes — AGREED
 Scope `{ lineKey, gameId? }`. Line change/unmount aborts foreground controller (disconnect → server drops ticket) + `DELETE /reviews/:jobId` on scope match. Game delete cancels its jobs, drops pending UI, keeps settled cache. Branch collapse = line change. Backgrounding never aborts batch. Delete `clearForeground/suspend/JOB_STALL_MS` paths.
