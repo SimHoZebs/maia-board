@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createMoveFacts } from './moveFacts';
+import { START_FEN } from './domain';
 
 // Fact layer: one parse per position, memoized geometry. These tests pin the
 // facts the wording layer reads, independently of any verdict copy.
@@ -59,6 +60,61 @@ describe('createMoveFacts', () => {
     });
     expect(capture?.fork()).toBeNull();
     expect(createMoveFacts({ beforeFen: '8/P7/7k/8/8/8/8/7K w - - 0 1', playedUci: 'a7a8q', mover: 'white' })?.fork() ?? null).toBeNull();
+  });
+
+  it('detects the Bd6 relative pin to the rook', () => {
+    const facts = createMoveFacts({
+      beforeFen: 'r4rk1/pp1bn1pp/2n1pp2/3p4/qP1P1B2/P2B1NP1/2P3PP/R2QR1K1 w - - 1 15',
+      playedUci: 'f4d6',
+      mover: 'white',
+    });
+    expect(facts?.san).toBe('Bd6');
+    expect(facts?.pin()).toMatchObject({
+      front: 'n',
+      frontSquare: 'e7',
+      back: 'r',
+      backSquare: 'f8',
+      pinnerType: 'b',
+      hanging: false,
+    });
+  });
+
+  it('detects absolute pins to the king', () => {
+    const facts = createMoveFacts({
+      beforeFen: '4k3/8/2n5/8/2B5/8/8/4K3 w - - 0 1',
+      playedUci: 'c4b5',
+      mover: 'white',
+    });
+    expect(facts?.pin()).toMatchObject({
+      front: 'n',
+      frontSquare: 'c6',
+      back: 'k',
+      backSquare: 'e8',
+      pinnerType: 'b',
+      hanging: false,
+    });
+  });
+
+  it('flags hanging pinners the victim simply takes', () => {
+    const facts = createMoveFacts({
+      beforeFen: '4k3/8/p1n5/8/2B5/8/8/4K3 w - - 0 1',
+      playedUci: 'c4b5',
+      mover: 'white',
+    });
+    expect(facts?.pin()).toMatchObject({ front: 'n', back: 'k', hanging: true });
+  });
+
+  it('stays silent on captures, promotions, non-sliders, and quiet moves', () => {
+    const capture = createMoveFacts({
+      beforeFen: 'rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+      playedUci: 'e4d5',
+      mover: 'white',
+    });
+    expect(capture?.pin()).toBeNull();
+    expect(createMoveFacts({ beforeFen: '8/P7/7k/8/8/8/8/7K w - - 0 1', playedUci: 'a7a8q', mover: 'white' })?.pin() ?? null).toBeNull();
+    const knight = createMoveFacts({ beforeFen: '4k3/8/8/8/8/3n4/8/3Q3K b - - 0 1', playedUci: 'd3f2', mover: 'black' });
+    expect(knight?.pin()).toBeNull();
+    expect(createMoveFacts({ beforeFen: START_FEN, playedUci: 'e2e4', mover: 'white' })?.pin() ?? null).toBeNull();
   });
 
   it('detects checking skewers through the king', () => {

@@ -626,6 +626,57 @@ describe('verdictInputsForPly', () => {
     expect(verdictInputsForPly(baseInputs({ quality: quality('Unreviewed') })).positiveNote).toBeNull();
   });
 
+  it('ranks pin pressure below en passant and above fresh gains', () => {
+    const pin = {
+      beforeFen: 'r4rk1/pp1bn1pp/2n1pp2/3p4/qP1P1B2/P2B1NP1/2P3PP/R2QR1K1 w - - 1 15',
+      afterFen: 'r4rk1/pp1bn1pp/2nBpp2/3p4/qP1P4/P2B1NP1/2P3PP/R2QR1K1 b - - 2 15',
+      playedUci: 'f4d6',
+      san: 'Bd6',
+      mover: 'white' as const,
+    };
+    expect(verdictInputsForPly(baseInputs({ ...pin, quality: quality('Best') })).positiveNote)
+      .toBe("Bd6 pins Black's knight to the rook.");
+    // Hanging pinners earn no story.
+    expect(verdictInputsForPly(baseInputs({
+      beforeFen: '4k3/8/p1n5/8/2B5/8/8/4K3 w - - 0 1',
+      afterFen: '4k3/8/p1n5/1B6/8/8/8/4K3 b - - 1 1',
+      playedUci: 'c4b5',
+      san: 'Bb5',
+      mover: 'white' as const,
+      quality: quality('Best'),
+    })).positiveNote).toBeNull();
+  });
+
+  it('carries pin pressure only with a proven reply or mate, never alone', () => {
+    const pin = {
+      beforeFen: 'r4rk1/pp1bn1pp/2n1pp2/3p4/qP1P1B2/P2B1NP1/2P3PP/R2QR1K1 w - - 1 15',
+      afterFen: 'r4rk1/pp1bn1pp/2nBpp2/3p4/qP1P4/P2B1NP1/2P3PP/R2QR1K1 b - - 2 15',
+      playedUci: 'f4d6',
+      san: 'Bd6',
+      mover: 'white' as const,
+    };
+    const materialNote = 'This line wins a bishop for Black.';
+    expect(verdictInputsForPly(baseInputs({ ...pin, quality: quality('Blunder'), materialNote })).pinClaim)
+      .toBe("Bd6 pins Black's knight to the rook.");
+    expect(verdictInputsForPly(baseInputs({ ...pin, quality: quality('Mistake'), materialNote })).pinClaim)
+      .toBe("Bd6 pins Black's knight to the rook.");
+    // Quiet negatives: no material window, no pin — pawn fallback owns blame.
+    expect(verdictInputsForPly(baseInputs({ ...pin, quality: quality('Blunder') })).pinClaim).toBeNull();
+    // Inaccuracy never carries a material window, so never a pin either.
+    expect(verdictInputsForPly(baseInputs({ ...pin, quality: quality('Inaccuracy'), materialNote })).pinClaim).toBeNull();
+    // Allowed mate carries the pin for the standalone fusion.
+    expect(verdictInputsForPly(baseInputs({ ...pin, quality: quality('Allowed mate') })).pinClaim)
+      .toBe("Bd6 pins Black's knight to the rook.");
+    // Standalone overrides outrank the pin.
+    expect(verdictInputsForPly(baseInputs({
+      ...pin, quality: quality('Blunder'), materialNote,
+      afterOutcome: { kind: 'checkmate' as const, winner: 'white' as const },
+    })).pinClaim).toBeNull();
+    expect(verdictInputsForPly(baseInputs({
+      ...pin, quality: quality('Blunder'), materialNote, opening: { eco: 'C50', name: 'Italian Game' },
+    })).pinClaim).toBeNull();
+  });
+
   it('reads branch timelines without re-walking the base line', () => {
     const base = buildTimeline(START_FEN, ['e2e4', 'e7e5']);
     const branch = buildTimeline(START_FEN, ['e2e4', 'e7e5', 'g1f3']);

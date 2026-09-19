@@ -1,6 +1,6 @@
 import { Chess, type Square } from 'chess.js';
 import { applyUci, findKingSquare, uciFromMove, START_FEN } from './domain';
-import { exchangePlayedClaim, forkPlayedClaim, playedMoveGainNote, skewerPlayedClaim, type MaiaSide } from './material';
+import { exchangePlayedClaim, forkPlayedClaim, pinPlayedClaim, playedMoveGainNote, skewerPlayedClaim, type MaiaSide } from './material';
 import { createMoveFacts, type MoveFacts } from './moveFacts';
 import { openingAt, type OpeningMatch } from './openings';
 import type { DomainOutcome } from './domain';
@@ -342,6 +342,9 @@ export function escapeNote(beforeFen: string): string | null {
 //   double attack.
 // - recapture-exchange beats bare gain: a same-square take-take is an
 //   exchange (even or winning), never a fresh win.
+// - en passant beats pin beats gain: the guaranteed pawn mechanism outranks
+//   mere pressure, and pin pressure outranks a fresh win the same way fork
+//   does.
 // Each entry owns one fact; add a why by adding one entry plus its conflict
 // lines. Fork claims only the attack, never the fall — unlike the best-line
 // fork, no window proves a capture. En passant outranks the generic gain it
@@ -364,6 +367,7 @@ const POSITIVE_CANDIDATES: { name: string; note: (ctx: PositiveContext) => strin
   { name: 'skewer', note: ({ facts, mover }) => (facts ? skewerPlayedClaim(facts, mover) : null) },
   { name: 'fork', note: ({ facts, mover }) => (facts ? forkPlayedClaim(facts, mover) : null) },
   { name: 'en-passant', note: ({ beforeFen, playedUci }) => enPassantNote(beforeFen, playedUci) },
+  { name: 'pin', note: ({ facts, mover }) => (facts ? pinPlayedClaim(facts, mover) : null) },
   { name: 'gain',
     note: ({ facts, beforeFen, afterFen, playedUci, mover }) =>
       (facts ? exchangePlayedClaim(facts) : null) ?? playedMoveGainNote(beforeFen, afterFen, playedUci, mover) },
@@ -492,6 +496,13 @@ export type VerdictInputs = {
   // translation. The translated Quality alone cannot recover it: Critical +
   // Expected and Top both display as Best.
   isCritical?: boolean | null;
+  // Raw engine fact (reviewMove label === 'Top'): played == Stockfish best
+  // with a small gap. Feeds the validated-find note for rare-at-both-Elos
+  // Best moves that never reach Critical.
+  isTop?: boolean | null;
+  // Played-move rarity at 2400 (objective lane policy). Feeds the blind-spot
+  // and validated notes; null/Unknown disables those notes only.
+  rarity2400?: Rarity | null;
   // Highest-winrate move from the same before-position (objective candidate
   // with max expected winrate when available, else the grading best:
   // objective top else Stockfish best_move). Feeds pawn-note suppression:
@@ -516,6 +527,8 @@ export type VerdictFacts = {
   rarity: Rarity | undefined;
   opening: OpeningRef | null;
   bestRarity?: Rarity | null;
+  rarity2400?: Rarity | null;
+  isTop?: boolean | null;
   materialNote?: string | null;
   terminal: TerminalKind | null;
   matePatternName: string | null;
@@ -526,6 +539,12 @@ export type VerdictFacts = {
   // Why a good move was good, for praise grades only. Single strongest fact
   // wins; describeMove appends it after the rarity synthesis.
   positiveNote: string | null;
+  // Raw pin pressure for the negative concessive path (Blunder/Mistake with
+  // a material note, Allowed mate). Null on praise grades (the pin already
+  // rides inside positiveNote), on quiet negatives with no proven reply, and
+  // under every standalone override. describeMove fuses it with the
+  // opponent's reply; it never renders alone on a negative.
+  pinClaim: string | null;
 };
 
 // Pure wiring from timeline rows and panel state to describeMove args.
@@ -536,8 +555,9 @@ export type VerdictFacts = {
 // best-move suppression: silent when the played move is the best or the best
 // incurs the same structure damage), and the
 // positive-note why (only Best/Great/Excellent/Good with no terminal, dead
-// draw, underpromotion, or book hit). bestRarity and materialNote pass
-// through untouched.
+// draw, underpromotion, or book hit) plus the concessive pinClaim (only
+// Blunder/Mistake with a material note, plus Allowed mate, same overrides).
+// bestRarity and materialNote pass through untouched.
 export function verdictInputsForPly(inputs: VerdictInputs): VerdictFacts {
   const {
     beforeFen,
@@ -554,6 +574,8 @@ export function verdictInputsForPly(inputs: VerdictInputs): VerdictFacts {
     initialFen,
     mover,
     bestRarity,
+    rarity2400,
+    isTop,
     materialNote,
     beforeScore,
     afterScore,
@@ -582,7 +604,7 @@ export function verdictInputsForPly(inputs: VerdictInputs): VerdictFacts {
       : null;
   // Positive why: the first non-null POSITIVE_CANDIDATES entry wins (see
   // its rank/conflict comment for the ordering). Facts are built once here
-  // and shared by the skewer, fork, and exchange claimants. Gated to praise
+  // and shared by the skewer, fork, pin, and exchange claimants. Gated to praise
   // grades with no terminal, dead draw, underpromotion, or book hit.
   const praise = isPraiseLabel(label);
   let positiveNote: string | null = null;
@@ -595,12 +617,29 @@ export function verdictInputsForPly(inputs: VerdictInputs): VerdictFacts {
       if (positiveNote) break;
     }
   }
+  // Concessive pin pressure for negatives: real tactic, lost position. Gated
+  // to Blunder/Mistake with a proven material reply plus Allowed mate, with
+  // no terminal, dead draw, underpromotion, or book hit (every standalone
+  // override outranks the pin). Quiet negatives with no material note stay
+  // silent — naming the pin would imply it was bad or hide the real cause.
+  // Inaccuracy never carries a material note, so it never earns a pin.
+  let pinClaim: string | null = null;
+  const needsPin =
+    terminal === null && !deadDraw && !underpromotionAvoids && !opening &&
+    ((label === 'Blunder' || label === 'Mistake') && !!materialNote || label === 'Allowed mate');
+  if (needsPin) {
+    const { prevUci, prevBeforeFen } = inputs;
+    const facts = createMoveFacts({ beforeFen, playedUci, mover, prevBeforeFen, prevUci });
+    pinClaim = facts ? pinPlayedClaim(facts, mover) : null;
+  }
   return {
     san,
     quality,
     rarity,
     opening,
     bestRarity,
+    rarity2400,
+    isTop,
     materialNote,
     terminal,
     matePatternName,
@@ -609,5 +648,6 @@ export function verdictInputsForPly(inputs: VerdictInputs): VerdictFacts {
     novelty,
     pawnNote,
     positiveNote,
+    pinClaim,
   };
 }

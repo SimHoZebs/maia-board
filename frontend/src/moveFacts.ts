@@ -4,7 +4,7 @@ import type { CapturedPiece, MaiaSide } from './material';
 
 // Shared move facts for the verdict tactic layer. One parse per position:
 // the played move is applied once up front, and the expensive geometry
-// (fork/skewer scans: move-gen plus attack sets) is computed lazily and
+// (fork/skewer/pin scans: move-gen plus attack sets) is computed lazily and
 // memoized behind getters, so every claimant reads the same facts without
 // replaying the move. Cheap O(board) derivations (material swing) stay with
 // their callers in material.ts — sharing them would buy nothing.
@@ -63,6 +63,18 @@ export type SkewerFacts = {
   hanging: boolean;
 };
 
+export type PinFacts = {
+  front: Exclude<ForkVictim, 'k'>;
+  frontSquare: Square;
+  back: 'k' | 'q' | 'r';
+  backSquare: Square;
+  pinnerType: 'r' | 'b' | 'q';
+  // The victim side legally captures the pinner right now while the pinner
+  // is undefended. Same pin-aware capture leg as fork/skewer hanging: a
+  // hanging pinner refutes the tactic outright — claimants suppress on true.
+  hanging: boolean;
+};
+
 export type RecaptureFacts = {
   prevPiece: CapturedPiece;
   thisPiece: CapturedPiece;
@@ -85,6 +97,7 @@ export type MoveFacts = {
   givesCheck: boolean;
   fork: () => ForkFacts | null;
   skewer: () => SkewerFacts | null;
+  pin: () => PinFacts | null;
   recapture: () => RecaptureFacts | null;
 };
 
@@ -221,6 +234,76 @@ function buildSkewerFacts(postMoveGame: Chess, to: Square, victimColor: 'w' | 'b
   };
 }
 
+// Pin geometry: the moved slider sits on a ray whose first enemy contact is
+// a capturable non-pawn piece (the front) and whose second enemy contact is
+// the king or a major piece (the back) — the front shields the back, so it
+// cannot move off the ray without exposing the higher value behind it.
+// Own pieces block; pawns and kings never count as fronts (pawn pins are
+// noise, a king front is a check owned by the skewer story). Null when no
+// ray qualifies or the position is unreadable. Like the fork there is no
+// fall clause downstream: a relative pin still lets the front move (Ne7
+// keeps Nc8/Ng6/Nf5), so the note names only the pressure.
+const PIN_BACK_RANK: Record<PinFacts['back'], number> = { k: 0, q: 1, r: 2 };
+function detectPinRay(postMoveGame: Chess, to: Square, pinnerType: 'r' | 'b' | 'q', victimColor: 'w' | 'b'): { front: Exclude<ForkVictim, 'k'>; frontSquare: Square; back: 'k' | 'q' | 'r'; backSquare: Square } | null {
+  let board: ReturnType<Chess['board']>;
+  try { board = postMoveGame.board(); } catch { return null; }
+  const at = (square: Square) => {
+    const file = square.charCodeAt(0) - 97;
+    const rank = square.charCodeAt(1) - 49;
+    return board[7 - rank][file];
+  };
+  const file = to.charCodeAt(0) - 97;
+  const rank = to.charCodeAt(1) - 49;
+  const dirs = pinnerType === 'r' ? ROOK_DIRS : pinnerType === 'b' ? BISHOP_DIRS : [...ROOK_DIRS, ...BISHOP_DIRS];
+  let best: { front: Exclude<ForkVictim, 'k'>; frontSquare: Square; back: 'k' | 'q' | 'r'; backSquare: Square } | null = null;
+  for (const [df, dr] of dirs) {
+    let front: { piece: Exclude<ForkVictim, 'k'>; square: Square } | null = null;
+    for (let step = 1; step < 8; step++) {
+      const square = squareAt(file + df * step, rank + dr * step);
+      if (!square) break;
+      let occupant: ReturnType<typeof at>;
+      try { occupant = at(square); } catch { return null; }
+      if (!occupant) continue;
+      if (occupant.color !== victimColor) break;
+      if (!front) {
+        const piece = occupant.type.toLowerCase();
+        if (!isForkVictim(piece)) break;
+        front = { piece, square };
+        continue;
+      }
+      const back = occupant.type.toLowerCase();
+      if (back !== 'k' && back !== 'q' && back !== 'r') break;
+      const candidate = { front: front.piece, frontSquare: front.square, back: back as 'k' | 'q' | 'r', backSquare: square };
+      if (!best || PIN_BACK_RANK[candidate.back] < PIN_BACK_RANK[best.back]) {
+        best = candidate;
+        if (best.back === 'k') return best;
+      }
+      break;
+    }
+  }
+  return best;
+}
+
+function buildPinFacts(postMoveGame: Chess, to: Square, victimColor: 'w' | 'b', beneficiaryColor: 'w' | 'b', moverPiece: string): PinFacts | null {
+  if (moverPiece !== 'r' && moverPiece !== 'b' && moverPiece !== 'q') return null;
+  const ray = detectPinRay(postMoveGame, to, moverPiece, victimColor);
+  if (!ray) return null;
+  const pinnerDefenders = rawAttackers(postMoveGame, to, beneficiaryColor);
+  if (pinnerDefenders === null) return null;
+  let takesPinner: boolean;
+  try {
+    takesPinner = postMoveGame.moves({ verbose: true }).some(move => move.to === to);
+  } catch { return null; }
+  return {
+    front: ray.front,
+    frontSquare: ray.frontSquare,
+    back: ray.back,
+    backSquare: ray.backSquare,
+    pinnerType: moverPiece,
+    hanging: takesPinner && pinnerDefenders.length === 0,
+  };
+}
+
 const isCapturedPiece = (piece: string): piece is CapturedPiece =>
   piece === 'p' || piece === 'n' || piece === 'b' || piece === 'r' || piece === 'q';
 
@@ -278,6 +361,7 @@ export function createMoveFacts(args: {
   };
   let forkCache: ForkFacts | null | undefined;
   let skewerCache: SkewerFacts | null | undefined;
+  let pinCache: PinFacts | null | undefined;
   return {
     mover,
     from,
@@ -305,6 +389,18 @@ export function createMoveFacts(args: {
       const game = freshPostMove();
       skewerCache = game ? buildSkewerFacts(game, to, victimColor, beneficiaryColor, moverPiece, givesCheck, promotion) : null;
       return skewerCache;
+    },
+    pin: () => {
+      if (pinCache !== undefined) return pinCache;
+      // An opening capture is never pin pressure: the taken piece sat on
+      // the pinner square itself, and the gain/exchange story owns captures.
+      if (captured || promotion) {
+        pinCache = null;
+        return pinCache;
+      }
+      const game = freshPostMove();
+      pinCache = game ? buildPinFacts(game, to, victimColor, beneficiaryColor, moverPiece) : null;
+      return pinCache;
     },
     recapture: () => {
       if (!captured || !prevBeforeFen || !prevUci) return null;

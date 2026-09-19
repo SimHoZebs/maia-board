@@ -413,6 +413,45 @@ it('appends the material note only for Mistake/Blunder', () => {
   expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity, materialNote: note }))
     .not.toContain('This line');
 });
+it('fuses concessive pins with proven replies, never alone on negatives', () => {
+  const quality = (label: Quality['label']): Quality => ({ label, accuracy: 20, loss: 15 });
+  const rarity: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
+  const pin = "Bd6 pins Black's knight to the rook.";
+  const note = 'This line wins a bishop for Black.';
+  expect(describeMove({ san: 'Bd6', quality: quality('Blunder'), rarity, materialNote: note, pinClaim: pin }))
+    .toBe(`A common blunder. Bd6 pins Black's knight to the rook, but this line wins a bishop for Black.`);
+  expect(describeMove({ san: 'Bd6', quality: quality('Mistake'), rarity, materialNote: note, pinClaim: pin }))
+    .toContain('but this line wins a bishop for Black.');
+  // Tactic SAN leads stay verbatim after but.
+  expect(describeMove({
+    san: 'Bd6', quality: quality('Blunder'), rarity,
+    materialNote: "Nd4 forks White's bishop and queen, losing the bishop.", pinClaim: pin,
+  })).toContain("but Nd4 forks White's bishop and queen, losing the bishop.");
+  // Quiet pins with no proven reply stay silent — no misleading tactic.
+  expect(describeMove({ san: 'Bd6', quality: quality('Blunder'), rarity, pinClaim: pin }))
+    .toBe('A common blunder.');
+  expect(describeMove({ san: 'Bd6', quality: quality('Inaccuracy'), rarity, materialNote: note, pinClaim: pin }))
+    .not.toContain('pins');
+});
+it('names pin-allowed-mate as a standalone, below terminals and book', () => {
+  const quality = (label: Quality['label']): Quality => ({ label, accuracy: 0, loss: 2 });
+  const rarity: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
+  const pin = "Bd6 pins Black's knight to the rook.";
+  expect(describeMove({ san: 'Bd6', quality: quality('Allowed mate'), rarity, pinClaim: pin }))
+    .toBe("Bd6 pins Black's knight to the rook, but allows mate.");
+  const rareBest: Rarity = { label: 'Absent', r: null, prob: null, topProb: 0.4 };
+  expect(describeMove({ san: 'Bd6', quality: quality('Allowed mate'), rarity, bestRarity: rareBest, pinClaim: pin }))
+    .toBe(`Hard to avoid at your level. Bd6 pins Black's knight to the rook, but allows mate.`);
+  // Terminals and book keep priority over the pin.
+  expect(describeMove({
+    san: 'Bd6', quality: quality('Allowed mate'), rarity, pinClaim: pin,
+    terminal: 'checkmate',
+  })).toBe('Bd6 delivers checkmate.');
+  expect(describeMove({
+    san: 'Bd6', quality: quality('Allowed mate'), rarity, pinClaim: pin,
+    opening: { eco: 'C50', name: 'Italian Game' },
+  })).toBe('Bd6 — Italian Game (C50).');
+});
 it('appends the positive why only for praise grades', () => {
   const quality = (label: Quality['label']): Quality => ({ label, accuracy: 100, loss: 0 });
   const rarityOf = (label: Rarity['label']): Rarity => ({ label, r: 1, prob: 0.4, topProb: 0.4 });

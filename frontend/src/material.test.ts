@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BEST_LINE_WINDOW_MAX, bestLineMaterialNote, bestLinePreview, capturesFromLine, capturedLabel, DEFAULT_BEST_LINE_WINDOW, materialFromFen, materialLeadFor, normalizeBestLineWindow, playedMoveExchangeNote, playedMoveForkNote, playedMoveGainNote, playedMoveSkewerNote, sortCaptured } from './material';
+import { BEST_LINE_WINDOW_MAX, bestLineMaterialNote, bestLinePreview, capturesFromLine, capturedLabel, DEFAULT_BEST_LINE_WINDOW, fusePinWithMate, fusePinWithMaterial, materialFromFen, materialLeadFor, normalizeBestLineWindow, playedMoveExchangeNote, playedMoveForkNote, playedMoveGainNote, playedMovePinNote, playedMoveSkewerNote, sortCaptured } from './material';
 import { START_FEN } from './domain';
 
 describe('material', () => {
@@ -339,6 +339,54 @@ describe('bestLineSkewerNote', () => {
   });
 });
 
+describe('playedMovePinNote', () => {
+  const pinBefore = 'r4rk1/pp1bn1pp/2n1pp2/3p4/qP1P1B2/P2B1NP1/2P3PP/R2QR1K1 w - - 1 15';
+  it('names a relative pin to the rook without claiming the fall', () => {
+    expect(playedMovePinNote(pinBefore, 'f4d6', 'white'))
+      .toBe("Bd6 pins Black's knight to the rook.");
+  });
+
+  it('names absolute pins to the king', () => {
+    expect(playedMovePinNote('4k3/8/2n5/8/2B5/8/8/4K3 w - - 0 1', 'c4b5', 'white'))
+      .toBe("Bb5 pins Black's knight to the king.");
+  });
+
+  it('suppresses hanging pinners', () => {
+    expect(playedMovePinNote('4k3/8/p1n5/8/2B5/8/8/4K3 w - - 0 1', 'c4b5', 'white')).toBeNull();
+  });
+
+  it('rejects captures, promotions, non-sliders, quiet moves, and bad data', () => {
+    expect(playedMovePinNote(
+      'rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+      'e4d5',
+      'white',
+    )).toBeNull();
+    expect(playedMovePinNote('8/P7/7k/8/8/8/8/7K w - - 0 1', 'a7a8q', 'white')).toBeNull();
+    expect(playedMovePinNote(START_FEN, 'e2e4', 'white')).toBeNull();
+    expect(playedMovePinNote('bad', 'e2e4', 'white')).toBeNull();
+  });
+});
+
+describe('fusePinConcessions', () => {
+  it('fuses pins with generic lines by lowercasing This', () => {
+    expect(fusePinWithMaterial(
+      "Bd6 pins Black's knight to the rook.",
+      'This line wins a bishop for Black.',
+    )).toBe("Bd6 pins Black's knight to the rook, but this line wins a bishop for Black.");
+  });
+
+  it('keeps tactic SAN leads verbatim after but', () => {
+    expect(fusePinWithMaterial(
+      "Bd6 pins Black's knight to the rook.",
+      "Nd4 forks White's bishop and queen, losing the bishop.",
+    )).toBe("Bd6 pins Black's knight to the rook, but Nd4 forks White's bishop and queen, losing the bishop.");
+  });
+
+  it('fuses pins with mate', () => {
+    expect(fusePinWithMate("Bd6 pins Black's knight to the rook."))
+      .toBe("Bd6 pins Black's knight to the rook, but allows mate.");
+  });
+});
 describe('playedMoveExchangeNote', () => {
   it('frames even recaptures as exchanges, not wins', () => {
     expect(playedMoveExchangeNote('n', 'b'))

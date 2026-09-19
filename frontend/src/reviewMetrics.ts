@@ -2,6 +2,7 @@ import type { Chess } from 'chess.js';
 import type { MoveResponse } from './api';
 import type { DomainOutcome } from './domain';
 import type { NoveltyRef, TerminalKind } from './theory';
+import { fusePinWithMate, fusePinWithMaterial } from './material';
 export const SEARCH_POLICY = 'sf19-n100k-ms750-mpv2-t4-h128-v3';
 export const REVIEW_METHOD = 'maia-board-review-v1';
 export type Score = { type: 'cp' | 'mate'; value: number; winning_side?: 'white' | 'black' };
@@ -197,10 +198,14 @@ export function secondPoolClause(rarity: Rarity | undefined | null, rarity2400: 
 // material window is silent (Blunder/Mistake/Inaccuracy only). positiveNote
 // is the mirror for praise grades (Best/Great/Excellent/Good only): the
 // single strongest why, picked by theory.ts from its own ordered
-// candidates. Neither note ever rescues a quiet verdict: notes append to
-// the rarity synthesis only.
+// candidates. pinClaim is raw pin pressure for the concessive path
+// (Blunder/Mistake with a material note, Allowed mate): describeMove fuses
+// it with the opponent's reply, and it never renders alone on a negative.
+// Neither note ever rescues a quiet verdict: notes append to
+// the rarity synthesis only, except pin-allowed-mate which replaces the
+// synthesis the way other specific facts outrank sociology.
 export type OpeningRef = { eco: string; name: string };
-export type VerdictArgs = { san: string; quality?: Quality | undefined; rarity?: Rarity | undefined; opening?: OpeningRef | null; bestRarity?: Rarity | null; materialNote?: string | null; terminal?: TerminalKind | null; matePatternName?: string | null; deadDraw?: boolean; underpromotionAvoids?: boolean; novelty?: NoveltyRef | null; pawnNote?: string | null; positiveNote?: string | null;
+export type VerdictArgs = { san: string; quality?: Quality | undefined; rarity?: Rarity | undefined; opening?: OpeningRef | null; bestRarity?: Rarity | null; materialNote?: string | null; terminal?: TerminalKind | null; matePatternName?: string | null; deadDraw?: boolean; underpromotionAvoids?: boolean; novelty?: NoveltyRef | null; pawnNote?: string | null; positiveNote?: string | null; pinClaim?: string | null;
   // Cross-Elo praise tiers: rarity of the played move at 2400 (from the
   // objective lane; null when that lane is missing/degraded) and whether the
   // raw engine grade was Top (played == Stockfish best with a small gap —
@@ -231,12 +236,28 @@ const STANDALONE_RULES: StandaloneRule[] = [
     render: facts => `${facts.san} — known theoretical draw.` },
   { name: 'underpromotion', match: facts => !!facts.underpromotionAvoids,
     render: facts => `${facts.san} underpromotes to avoid stalemate.` },
+  // Concessive pin on a mate-allowing move: the tactic is real but the game
+  // is over, so it replaces the rarity sociology the way terminals do. The
+  // best-move rarity axis survives as a prefix — "Hard to avoid" explains
+  // the miss, "common/rare" would just repeat "allows mate".
+  { name: 'pin-allowed-mate', match: facts => facts.quality?.label === 'Allowed mate' && !!facts.pinClaim,
+    render: facts => {
+      const hard = hardToAvoid(facts.bestRarity);
+      const fused = fusePinWithMate(facts.pinClaim!);
+      return hard ? `${hard} ${fused}` : fused;
+    } },
 ];
 // Second-sentence rules for the synthesis branch. First match wins; the
 // grade sets are disjoint (negative notes vs praise notes), so order among
 // them only documents intent.
 type NoteRule = { name: string; match: (facts: VerdictArgs) => boolean; render: (facts: VerdictArgs) => string };
 const NOTE_RULES: NoteRule[] = [
+  // Concessive pin with a proven reply: real pressure, still lost. Outranks
+  // the plain material note it fuses; quiet pins with no material window
+  // never reach here (theory leaves pinClaim null), so positional mistakes
+  // keep the pawn fallback or the bare head instead of a misleading tactic.
+  { name: 'pin-material', match: facts => !!facts.pinClaim && !!facts.materialNote && (facts.quality?.label === 'Mistake' || facts.quality?.label === 'Blunder'),
+    render: facts => fusePinWithMaterial(facts.pinClaim!, facts.materialNote!) },
   { name: 'material', match: facts => !!facts.materialNote && (facts.quality?.label === 'Mistake' || facts.quality?.label === 'Blunder'),
     render: facts => facts.materialNote! },
   { name: 'pawn', match: facts => !!facts.pawnNote && (facts.quality?.label === 'Blunder' || facts.quality?.label === 'Mistake' || facts.quality?.label === 'Inaccuracy'),

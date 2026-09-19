@@ -1,6 +1,6 @@
 import { Chess, type Square } from 'chess.js';
 import { applyUci } from './domain';
-import { createMoveFacts, TACTIC_VALUES, type ForkFacts, type ForkVictim, type MoveFacts, type SkewerFacts } from './moveFacts';
+import { createMoveFacts, TACTIC_VALUES, type ForkFacts, type ForkVictim, type MoveFacts, type PinFacts, type SkewerFacts } from './moveFacts';
 
 export type CapturedPiece = 'p' | 'n' | 'b' | 'r' | 'q';
 export type MaiaSide = 'white' | 'black';
@@ -332,6 +332,38 @@ export function skewerPlayedClaim(facts: MoveFacts, mover: MaiaSide): string | n
   if (!skewer.defended) return `${lead}.`;
   if (skewer.net > 0) return `${lead}.`;
   return `${lead}, but only forces an even exchange.`;
+}
+// Names the pin when the played move itself pins a piece to its king or a
+// major piece: "Bd6 pins Black's knight to the rook." Like the fork there is
+// no fall clause — a relative pin still lets the front move, so the note
+// names only the pressure. A hanging pinner refutes the tactic outright (the
+// victim simply takes it), so the note yields to the next positive
+// candidate. Same tight gates (moved slider only, no pawns, no opening
+// capture, no promotions). The caller gates on praise grades; the negative
+// concessive path reuses the same claim through pinClaim. Never throws.
+export function playedMovePinNote(beforeFen: string, playedUci: string, mover: MaiaSide): string | null {
+  const facts = createMoveFacts({ beforeFen, playedUci, mover });
+  if (!facts) return null;
+  return pinPlayedClaim(facts, mover);
+}
+export function pinPlayedClaim(facts: MoveFacts, mover: MaiaSide): string | null {
+  const pin = facts.pin();
+  if (!pin || pin.hanging) return null;
+  const side = mover === 'white' ? "Black's" : "White's";
+  return `${facts.san} pins ${side} ${FORK_NOUNS[pin.front]} to the ${FORK_NOUNS[pin.back]}.`;
+}
+// Concessive fusion for negative grades: the pin is real but the position is
+// still lost, so it reads as the first clause and the opponent's reply as
+// the second. The material note keeps its exact referent ("this line" still
+// points at the clickable PV; tactic SAN leads stay verbatim).
+export function fusePinWithMaterial(pinClaim: string, materialNote: string): string {
+  const lead = pinClaim.endsWith('.') ? pinClaim.slice(0, -1) : pinClaim;
+  const tail = materialNote.startsWith('This ') ? `this ${materialNote.slice(5)}` : materialNote;
+  return `${lead}, but ${tail}`;
+}
+export function fusePinWithMate(pinClaim: string): string {
+  const lead = pinClaim.endsWith('.') ? pinClaim.slice(0, -1) : pinClaim;
+  return `${lead}, but allows mate.`;
 }
 // Names a same-square recapture as the exchange it is, instead of a fresh
 // win: even ("Takes the knight back, but only forces an even exchange."),
