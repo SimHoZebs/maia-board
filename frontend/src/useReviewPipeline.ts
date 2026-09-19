@@ -9,7 +9,7 @@ import { useLineScope } from './useLineScope';
 import { useLookupRestore } from './useLookupRestore';
 import { useServerBatch } from './useServerBatch';
 import { computeLineQualities, type UnifiedMemo } from './qualities';
-import { effectiveQuality, maiaRarity, type EngineGrade, type Evaluation, type ObjectivePoint, type Quality } from './reviewMetrics';
+import { alienUpgrade, effectiveQuality, maiaRarity, sfTopGap, type EngineGrade, type Evaluation, type ObjectivePoint, type Quality, type Rarity } from './reviewMetrics';
 import { selectMaiaDisplay, type MaiaDisplayEntry } from './maiaDisplay';
 
 // Configuration expressing room differences, not architecture. One pipeline
@@ -58,18 +58,26 @@ export function translateReviewQualities(args: {
   grades: (EngineGrade | undefined)[]; nodes: ReviewNode[]; maiaResults: (MoveResponse | undefined)[];
   rarities: (ReturnType<typeof maiaRarity> | undefined)[]; settingsForNode: (node: ReviewNode) => ReviewSettings;
   isMaiaPending: (node: ReviewNode, settings: ReviewSettings) => boolean;
+  // Peak-praise inputs for the Alien upgrade (analysis room only): the
+  // played move's rarity at 2400 plus the mover-relative SF top gap per ply.
+  // Omitted → pre-Alien behavior exactly (Play room, existing tests).
+  alien?: { rarity2400: (Rarity | undefined)[]; sfGap: (number | null)[] };
 }): (Quality | undefined)[] {
-  const { grades, nodes, maiaResults, rarities, settingsForNode, isMaiaPending } = args;
+  const { grades, nodes, maiaResults, rarities, settingsForNode, isMaiaPending, alien } = args;
   return grades.map((grade, ply) => {
-    if (grade?.label !== 'Critical') return effectiveQuality(grade, undefined);
-    const node = nodes[ply];
-    const maia = maiaResults[ply];
-    if (!maia) {
-      return node && isMaiaPending(node, settingsForNode(node))
-        ? { label: 'Unreviewed' as const, accuracy: null, loss: null }
-        : effectiveQuality(grade, { label: 'Unknown', r: null, prob: null, topProb: null });
-    }
-    return effectiveQuality(grade, rarities[ply]);
+    const base = (() => {
+      if (grade?.label !== 'Critical') return effectiveQuality(grade, undefined);
+      const node = nodes[ply];
+      const maia = maiaResults[ply];
+      if (!maia) {
+        return node && isMaiaPending(node, settingsForNode(node))
+          ? { label: 'Unreviewed' as const, accuracy: null, loss: null }
+          : effectiveQuality(grade, { label: 'Unknown', r: null, prob: null, topProb: null });
+      }
+      return effectiveQuality(grade, rarities[ply]);
+    })();
+    if (!alien || base?.label !== 'Excellent') return base;
+    return alienUpgrade(base, rarities[ply], alien.rarity2400[ply], alien.sfGap[ply] ?? null);
   });
 }
 
@@ -355,6 +363,16 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     return result;
   }, [timeline, nodes, evaluations, settingsForNode, objectiveLane, version, coordinator]);
   const rarities = useMemo(() => timeline.moves.map((move, ply) => maiaRarity(maiaResults[ply], move)), [timeline, maiaResults]);
+  // Played-move rarity at 2400 (objective lane policy): the second praise
+  // axis. Missing/degraded objective rows yield undefined → Unknown downstream,
+  // which never qualifies for tiers (absent evidence is not evidence).
+  const rarity2400 = useMemo(() => timeline.moves.map((move, ply) => {
+    const row = objectiveRows[ply];
+    return row ? maiaRarity(row, move) : undefined;
+  }), [timeline, objectiveRows]);
+  // Mover-relative Stockfish top gap per ply, for the Alien upgrade only.
+  const sfGap = useMemo(() => nodes.map((node, ply) => sfTopGap(evaluations[ply]?.lines, node.turn)),
+    [nodes, evaluations]);
   // Best-move rarity per ply: for mistakes, avoidance difficulty is the
   // rarity of the move they had to find, not the one they played. UCI-level
   // only (no SAN plumbing — the engine candidate list already names it), so
@@ -368,8 +386,9 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   // (The translated array is fresh per call; raw memo reuse underneath is
   // what avoids recompute.)
   const qualities = useMemo(() => translateReviewQualities({ grades: computed.qualities, nodes, maiaResults, rarities,
-    settingsForNode, isMaiaPending: (node, settings) => coordinator.isPending('maia', node, settings) }),
-  [computed.qualities, rarities, maiaResults, nodes, settingsForNode, version, coordinator]);
+    settingsForNode, isMaiaPending: (node, settings) => coordinator.isPending('maia', node, settings),
+    alien: { rarity2400, sfGap } }),
+  [computed.qualities, rarities, rarity2400, sfGap, maiaResults, nodes, settingsForNode, version, coordinator]);
   const bestRarities = useMemo(() => timeline.moves.map((_move, ply) => {
     // Avoidance difficulty is the findability of the objective best move
     // at the displayed (user) level, not the engine best.
@@ -389,10 +408,14 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     const mainNodes = reviewNodes(mainTimeline);
     const mainSf = mainNodes.map(node => coordinator.provisionalSfResult(node, mainlineSettingsForNode(node)));
     const mainMaiaResults = mainNodes.map(node => coordinator.result('maia', node, mainlineSettingsForNode(node)));
-    const mainPoints = lanePoints(
-      laneRows(mainNodes, { coordinator, sfEvaluations: mainSf }), mainNodes,
-    );
+    const mainObjectiveRows = laneRows(mainNodes, { coordinator, sfEvaluations: mainSf });
+    const mainPoints = lanePoints(mainObjectiveRows, mainNodes);
     const mainRarities = mainTimeline.moves.map((move, ply) => maiaRarity(mainMaiaResults[ply], move));
+    const mainRarity2400 = mainTimeline.moves.map((move, ply) => {
+      const row = mainObjectiveRows[ply];
+      return row ? maiaRarity(row, move) : undefined;
+    });
+    const mainSfGap = mainNodes.map((node, ply) => sfTopGap(mainSf[ply]?.lines, node.turn));
     const mainGrades = computeReviewQualities({ line: mainTimeline, nodes: mainNodes, evaluations: mainSf,
       settingsForNode: mainlineSettingsForNode, pending: coordinator.sfPendingKeys(), prev: null,
       objective: {
@@ -401,7 +424,8 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
         keyFor: (node: ReviewNode) => laneKey(node, mainlineSettingsForNode),
       } });
     return translateReviewQualities({ grades: mainGrades.qualities, nodes: mainNodes, maiaResults: mainMaiaResults,
-      rarities: mainRarities, settingsForNode: mainlineSettingsForNode, isMaiaPending: (node, settings) => coordinator.isPending('maia', node, settings) });
+      rarities: mainRarities, settingsForNode: mainlineSettingsForNode, isMaiaPending: (node, settings) => coordinator.isPending('maia', node, settings),
+      alien: { rarity2400: mainRarity2400, sfGap: mainSfGap } });
   }, [state.analysis.branchFromPly, state.analysis.moves, state.analysis.initialFen, mainlineSettingsForNode, version, coordinator]);
   // Coverage is completeness (badges + sentences), not badge readiness:
   // badges fast-path, but progress stays partial until both Maia lanes land
@@ -441,7 +465,7 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     : batchComplete || coverageComplete ? 'complete'
     : !prime || prime.key !== primeKey || !laneReady || !coverage ? 'loading'
     : 'partial';
-  return { timeline, nodes, evaluations, qualities, rarities, bestRarities, mainlineQualities, coverage,
+  return { timeline, nodes, evaluations, qualities, rarities, rarity2400, bestRarities, mainlineQualities, coverage,
     // Objective lane (provider points per position): the bar, graphs, and
     // score copy read this; move grades already derive from it. The
     // display-Maia results above stay on the selected Elo for rarity and

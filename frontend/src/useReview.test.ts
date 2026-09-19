@@ -5,8 +5,10 @@ import { laneKey, lanePoints } from './objective/maia';
 import type { ObjectiveLane } from './qualities';
 import type { MoveResponse } from './api';
 import { defaultStockfishSettings } from './stockfishSettings';
-import { computeReviewQualities, gameIdentityFor, isMaiaPosition } from './useReview';
+import { computeReviewQualities, gameIdentityFor, isMaiaPosition, translateReviewQualities } from './useReview';
 import { sfFixture } from './evaluationTestFixtures';
+import type { EngineGrade } from './reviewMetrics';
+import type { Rarity } from './reviewMetrics';
 
 const settings: ReviewSettings = { eloMaia: 1600, eloUser: 1600, model: '79m' };
 it('a different board or played move invalidates a verdict even when evaluation objects are shared', () => {
@@ -30,6 +32,22 @@ it('pins Maia settings only on its own-game mainline positions with moves availa
   expect(isMaiaPosition({ turn: 'white', outcome: null }, 'white', false)).toBe(false);
   expect(isMaiaPosition({ turn: 'black', outcome: { kind: 'draw' } }, 'white', true)).toBe(false);
   expect(isMaiaPosition({ turn: 'black', outcome: null }, 'white', false)).toBe(false);
+});
+it('upgrades Excellent to Alien only with tiny 2400 rarity and a decisive gap', () => {
+  const critical: EngineGrade = { label: 'Critical', accuracy: 100, loss: 0 };
+  const node = { turn: 'white' } as never;
+  const tiny: Rarity = { label: 'Rare', r: 0.075, prob: 0.03, topProb: 0.4 };
+  const expected: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
+  const base = { grades: [critical], nodes: [node], maiaResults: [{} as never], rarities: [tiny],
+    settingsForNode: () => settings, isMaiaPending: () => false as boolean };
+  expect(translateReviewQualities(base)[0]?.label).toBe('Excellent');
+  const alien = { rarity2400: [tiny] as (Rarity | undefined)[], sfGap: [35] };
+  expect(translateReviewQualities({ ...base, alien })[0]?.label).toBe('Alien');
+  expect(translateReviewQualities({ ...base, alien: { rarity2400: [expected], sfGap: [80] } })[0]?.label).toBe('Excellent');
+  expect(translateReviewQualities({ ...base, alien: { rarity2400: [tiny], sfGap: [20] } })[0]?.label).toBe('Excellent');
+  expect(translateReviewQualities({ ...base, alien: { rarity2400: [], sfGap: [] } })[0]?.label).toBe('Excellent');
+  // Non-Critical grades never upgrade, even with full Alien evidence.
+  expect(translateReviewQualities({ ...base, grades: [{ ...critical, label: 'Top' }], alien })[0]?.label).toBe('Best');
 });
 it('resolves the same game identity for branched views and mainline passes', () => {
   // The continuation pass gates on the line's own-game flag while the view

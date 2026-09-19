@@ -153,11 +153,13 @@ export function MoveAnalysis({
       initialFen: state.analysis.initialFen,
       mover: review.nodes[focus].turn === 'white' ? 'white' : 'black',
       bestRarity: review.bestRarities?.[focus],
+      rarity2400: review.rarity2400?.[focus],
       materialNote,
       bestUci,
       beforeScore: evaluation?.score ?? null,
       afterScore: afterEvaluation?.score ?? null,
       isCritical: review.engineGrades?.[focus]?.label === 'Critical',
+      isTop: review.engineGrades?.[focus]?.label === 'Top',
       // Previous ply for recapture-as-exchange framing: the UCI arriving at
       // the before-position plus the FEN before it. Null at the game start.
       prevUci: focus >= 1 ? (review.nodes[focus]?.uci || null) : null,
