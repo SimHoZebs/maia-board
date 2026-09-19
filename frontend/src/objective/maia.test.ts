@@ -63,7 +63,7 @@ it('formats winrate deltas with one decimal and a zero guard', () => {
   expect(formatWinrateDelta(1.25)).toBe('+1.3%');
 });
 
-it('renders display parts as prob plus delta vs best winrate', () => {
+it('falls back to delta vs best winrate without a baseline', () => {
   expect(maiaDisplayParts([])).toEqual([]);
   const parts = maiaDisplayParts([
     { move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] },
@@ -76,7 +76,7 @@ it('renders display parts as prob plus delta vs best winrate', () => {
   ]);
 });
 
-it('baselines the delta on the best winrate, not policy order', () => {
+it('falls back to the best winrate, not policy order', () => {
   const parts = maiaDisplayParts([
     { move: 'e2e4', prob: 0.5, wdl: [0.5, 0.3, 0.2] },
     { move: 'd2d4', prob: 0.3, wdl: [0.2, 0.3, 0.5] },
@@ -88,17 +88,18 @@ it('baselines the delta on the best winrate, not policy order', () => {
   ]);
 });
 
-it('prices the display list against the 2400 best, not its own max', () => {
-  // 1400-popular Rg7 leads its own list at 55, but 2400 prefers Re6 at 60.
+it('prices the display list against the before-position winrate (gain)', () => {
+  // Before-position 2400 winrate is 33; candidates at 70 and 66 read as
+  // gains of +37 and +33 for the side to move.
   const parts = maiaDisplayParts(
     [
-      { move: 'g7g7', prob: 0.04, wdl: [0.3, 0.3, 0.4] },
-      { move: 'f3f3', prob: 0.09, wdl: [0.6, 0.2, 0.2] },
+      { move: 'f6f7', prob: 0.87, wdl: [0.14, 0.32, 0.54] },
+      { move: 'e7e6', prob: 0.12, wdl: [0.18, 0.32, 0.5] },
     ],
-    60,
+    33,
   );
   expect(parts).toEqual([
-    { prob: '4%', delta: '-5.0%' },
-    { prob: '9%', delta: '-30.0%' },
+    { prob: '87%', delta: '+37.0%' },
+    { prob: '12%', delta: '+33.0%' },
   ]);
 });

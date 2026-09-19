@@ -205,27 +205,32 @@ export function MoveAnalysis({
   // ReviewActionButton); skeleton only while a side is missing.
   const verdictLoading =
     hasMove && !!played && !verdict && !hasError && !tooLong && (!evaluation || !afterEvaluation);
-  // Display list values: policy share at the selected Elo plus winrate delta
+  // Display list values: policy share at the selected Elo plus winrate gain
   // from 2400's perspective. The delta baseline is the objective (2400)
-  // best winrate, so a 1400-popular move is priced against what stronger
-  // players prefer — never against its own list's max. Without an
-  // objective row yet it falls back to the best listed winrate.
+  // before-position winrate, so each row answers "how much does playing this
+  // change my 2400 winrate versus the position before the move" — never
+  // candidate-vs-best rank. Without an objective point yet it falls back to
+  // the best listed winrate.
+  const beforePly = hasMove ? focus : ply;
+  const beforeExpected = review.objective[beforePly]?.expected ?? null;
   const displayListed = response?.top_moves.slice(0, 5) ?? [];
   const objectiveEntries = candidates?.entries ?? [];
   const objectiveHasProb = objectiveEntries.length > 0
     && objectiveEntries.every(candidate => typeof candidate.prob === 'number' && Number.isFinite(candidate.prob));
   const objectiveBest = objectiveHasProb ? Math.max(...objectiveEntries.map(candidate => candidate.expected)) : 0;
-  const baseline2400 = objectiveHasProb ? objectiveBest : null;
-  const displayParts = maiaDisplayParts(displayListed, baseline2400);
+  const baseline = beforeExpected ?? (objectiveHasProb ? objectiveBest : null);
+  const displayParts = maiaDisplayParts(displayListed, baseline);
   // One header set for both Maia lanes: play probability (Users) plus
-  // win-rate change vs the 2400 best (TrendingDown). The display lane
+  // win-rate gain vs the before position (TrendingDown). The display lane
   // carries low-Elo policy with 2400 values; the objective lane is 2400
   // throughout. The objective lane only gets it
   // when the provider supplies probabilities (Maia policy share); a lane
   // without them (Stockfish lines) keeps its single absolute-value column.
-  const deltaTitle = baseline2400 != null
-    ? "Win-rate change versus 2400 best"
-    : "Win-rate change versus best listed move";
+  const deltaTitle = beforeExpected != null
+    ? "Win-rate gain versus position before move"
+    : baseline != null
+      ? "Win-rate change versus 2400 best"
+      : "Win-rate change versus best listed move";
   const maiaListHeaders = {
     metric: <span title="Share of human play at this rating"><Users size={13} aria-hidden="true" /></span>,
     delta: <span title={deltaTitle}><TrendingDown size={13} aria-hidden="true" /></span>,
@@ -336,7 +341,7 @@ export function MoveAnalysis({
                 ? {
                   uci: candidate.uci,
                   metric: `${Math.round(candidate.prob! * 100)}%`,
-                  delta: formatWinrateDelta(candidate.expected - objectiveBest),
+                  delta: formatWinrateDelta(candidate.expected - (beforeExpected ?? objectiveBest)),
                 }
                 : { uci: candidate.uci, metric: `${Math.round(candidate.expected)}%` }))}
               headers={objectiveHasProb ? maiaListHeaders : {
