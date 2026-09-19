@@ -111,7 +111,6 @@ export function SettingsPage({ state, dispatch }: Props) {
             <input id={`arrow-${row.key}-color`} type="color" value={style.color} onChange={e => dispatch({ type: 'arrow-settings', source: row.key, style: { color: e.target.value } })} aria-label={`${row.label} color`} />
             <input id={`arrow-${row.key}-width`} type="range" min={ARROW_WIDTH_MIN} max={ARROW_WIDTH_MAX} step={1} value={style.width} onChange={e => dispatch({ type: 'arrow-settings', source: row.key, style: { width: e.target.valueAsNumber } })} aria-label={`${row.label} thickness`} />
             <NumberSetting id={`arrow-${row.key}-width-number`} label={`${row.label} thickness value`} min={ARROW_WIDTH_MIN} max={ARROW_WIDTH_MAX} step={1} value={style.width} onChange={width => dispatch({ type: 'arrow-settings', source: row.key, style: { width } })} />
-            <span>units · 64 = a square</span>
           </div>
         </div>;
       })}
