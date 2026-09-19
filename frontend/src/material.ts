@@ -323,12 +323,13 @@ export function playedMoveGainNote(beforeFen: string, afterFen: string, playedUc
 // Names the tactic when the played move itself forks two pieces: "Nd4 forks
 // White's bishop and queen." Unlike tacticNote there is no "losing the …"
 // clause — the fall of a piece is a future claim the immediate board cannot
-// prove. Contested forks (cheapest victim defended, no winning net) qualify
-// instead of overclaiming: "…, but only forces an even exchange." A hanging
-// forker refutes the tactic outright (the victim simply takes it), so the
-// note yields to the next positive candidate. Same tight gates (moved piece
-// only, no pawns, no opening capture, no promotions). The caller gates on
-// praise grades. Never throws.
+// prove. A detected non-winning outcome is not a fork at all: an even
+// exchange (or worse) means there is no tactic to name, so contested forks
+// stay silent instead of qualifying. A hanging forker refutes the tactic
+// outright (the victim simply takes it), so the note yields to the next
+// positive candidate. Same tight gates (moved piece only, no pawns, no
+// opening capture, no promotions). The caller gates on praise grades.
+// Never throws.
 export function playedMoveForkNote(beforeFen: string, playedUci: string, mover: MaiaSide): string | null {
   const facts = createMoveFacts({ beforeFen, playedUci, mover });
   if (!facts) return null;
@@ -339,10 +340,9 @@ export function forkPlayedClaim(facts: MoveFacts, mover: MaiaSide): string | nul
   if (!fork || fork.hanging) return null;
   const side = mover === 'white' ? "Black's" : "White's";
   const lead = `${facts.san} forks ${side} ${joinVictims(fork.victims)}`;
-  // Royal tempo and free or winning victims stay unqualified; contested
-  // forks name the pressure without claiming a win.
+  // Royal tempo and free or winning victims stay unqualified.
   if (fork.hasKing || !fork.cheapestDefended) return `${lead}.`;
-  if (fork.net !== null && fork.net > 0) return `${lead}.`;
+  if (fork.net !== null) return fork.net > 0 ? `${lead}.` : null;
   return `${lead}, but only forces an even exchange.`;
 }
 // Names a checking skewer: a slider checks the king through to a piece

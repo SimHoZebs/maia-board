@@ -539,6 +539,8 @@ describe('verdictInputsForPly', () => {
       san: 'O-O',
       quality: quality('Best'),
     })).positiveNote).toBeNull();
+    // A contested fork is no fork at all: Nd4 hits bishop and queen but the
+    // detected outcome is only an even exchange, so the claim stays silent.
     expect(verdictInputsForPly(baseInputs({
       beforeFen: '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1',
       afterFen: '4k3/8/8/8/3n4/1Q6/2B5/4K3 w - - 1 2',
@@ -546,7 +548,7 @@ describe('verdictInputsForPly', () => {
       san: 'Nd4',
       quality: quality('Best'),
       mover: 'black',
-    })).positiveNote).toBe("Nd4 forks White's bishop and queen, but only forces an even exchange.");
+    })).positiveNote).toBeNull();
     expect(verdictInputsForPly(baseInputs({
       beforeFen: '8/2qk4/8/2B5/8/8/5K2/4R3 w - - 0 1',
       afterFen: '8/2qkR3/8/2B5/8/8/5K2/8 b - - 1 1',

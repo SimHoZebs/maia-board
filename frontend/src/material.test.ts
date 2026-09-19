@@ -171,11 +171,10 @@ describe('playedMoveGainNote', () => {
 
 describe('playedMoveForkNote', () => {
   const forkFen = '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1';
-  it('names the fork without claiming the fall', () => {
+  it('stays silent on detected even exchanges: no fork to name', () => {
     // Mutual defense (Q guards B, B guards Q): the knight takes, the queen
-    // takes back — contested, so no win is claimed.
-    expect(playedMoveForkNote(forkFen, 'f5d4', 'black'))
-      .toBe("Nd4 forks White's bishop and queen, but only forces an even exchange.");
+    // takes back — an even exchange means there is no tactic to name.
+    expect(playedMoveForkNote(forkFen, 'f5d4', 'black')).toBeNull();
   });
 
   it('leaves winning trades unqualified', () => {
