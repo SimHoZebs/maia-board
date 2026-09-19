@@ -82,7 +82,7 @@ func resolveMaiaQuery(query lookupRequest) (EngineRequest, string, *requestError
 // admission lives inside runLive.
 type engineExecutor[T any] interface {
 	loadCached() (T, bool)
-	runLive(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64) (T, func(), bool, error)
+	runLive(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64) (result T, release func(), degraded bool, err error)
 	validate(T) error
 	store(T)
 }
@@ -138,12 +138,12 @@ type sfExecutor struct {
 
 func (e sfExecutor) loadCached() (*evaluationResponse, bool) { return e.s.cachedSF(e.req) }
 
-func (e sfExecutor) runLive(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64) (*evaluationResponse, func(), bool, error) {
+func (e sfExecutor) runLive(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64) (result *evaluationResponse, release func(), degraded bool, err error) {
 	if e.s.evaluator == nil {
 		// Cache-only path (e.g. evaluator absent): hits serve, misses fail.
 		return nil, nil, false, errors.New("Stockfish is unavailable")
 	}
-	result, release, err := e.s.evaluator.run(waitCtx, execCtx, prio, submitSeq, e.req)
+	result, release, err = e.s.evaluator.run(waitCtx, execCtx, prio, submitSeq, e.req)
 	if err != nil {
 		return nil, release, false, err
 	}
@@ -175,12 +175,12 @@ func (e maiaExecutor) loadCached() (moveResponse, bool) {
 	return moveResponse{}, false
 }
 
-func (e maiaExecutor) runLive(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64) (moveResponse, func(), bool, error) {
+func (e maiaExecutor) runLive(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64) (response moveResponse, release func(), degraded bool, err error) {
 	result, release, used, degraded, err := e.s.pool.predict(waitCtx, execCtx, prio, submitSeq, e.model, e.req)
 	if err != nil {
 		return moveResponse{}, release, false, err
 	}
-	response := moveResponse{Move: result.Move, WDL: result.WDL, ModelUsed: used, Degraded: degraded}
+	response = moveResponse{Move: result.Move, WDL: result.WDL, ModelUsed: used, Degraded: degraded}
 	for _, candidate := range result.Candidates {
 		response.TopMoves = append(response.TopMoves, topMove{Move: candidate.Move, Prob: candidate.Policy, WDL: candidate.WDL})
 	}
