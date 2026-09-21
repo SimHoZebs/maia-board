@@ -117,6 +117,62 @@ func (s *GameStore) cacheGet(hash string) (cachedEvaluation, error) {
 	return entry, nil
 }
 
+// cacheGetMany fetches up to len(hashes) rows in bulk order-independent:
+// one SELECT per 500-hash chunk with the same size guards as cacheGet.
+// Corrupt rows are skipped (misses), never served. A query failure aborts
+// the whole fetch with an error so callers can treat it as all-miss, the
+// same outcome as N failing point reads.
+func (s *GameStore) cacheGetMany(hashes []string) (map[string]cachedEvaluation, error) {
+	out := make(map[string]cachedEvaluation, len(hashes))
+	seen := make(map[string]bool, len(hashes))
+	unique := make([]string, 0, len(hashes))
+	for _, hash := range hashes {
+		if hash == "" || seen[hash] {
+			continue
+		}
+		seen[hash] = true
+		unique = append(unique, hash)
+	}
+	for at := 0; at < len(unique); at += 500 {
+		end := min(at+500, len(unique))
+		chunk := unique[at:end]
+		placeholders := strings.Repeat("?,", len(chunk)-1) + "?"
+		rows, err := s.db.Query(`SELECT key_hash, engine, cache_key, value, created_at
+			FROM evaluations_v2 WHERE key_hash IN (`+placeholders+`) AND LENGTH(value) <= ? AND LENGTH(cache_key) <= ?`,
+			append(queryArgs(chunk), evalCacheMaxValueBytes, evalCacheMaxKeyBytes)...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var entry cachedEvaluation
+			var value string
+			if err := rows.Scan(&entry.KeyHash, &entry.Engine, &entry.Key, &value, &entry.CreatedAt); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			if !json.Valid([]byte(value)) {
+				continue
+			}
+			entry.Value = json.RawMessage(value)
+			out[entry.KeyHash] = entry
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+	}
+	return out, nil
+}
+
+func queryArgs(hashes []string) []any {
+	args := make([]any, 0, len(hashes)+2)
+	for _, hash := range hashes {
+		args = append(args, hash)
+	}
+	return args
+}
+
 // The full canonical key is compared as well as its digest.
 func validCacheRef(hash, key string) bool {
 	return evalHashPattern.MatchString(hash) && key != "" && len(key) <= evalCacheMaxKeyBytes

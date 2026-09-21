@@ -1,13 +1,16 @@
 package main
 
 import (
-	"bytes"
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -34,48 +37,159 @@ type openingsResponse struct {
 	Degraded  bool           `json:"degraded,omitempty"`
 }
 
-// OpeningsLookup owns the trusted helper configuration. run is a seam for
-// tests so handler tests never need Python.
+// OpeningsLookup owns the trusted helper configuration plus one warm helper
+// process. The table (447 KiB JSON) loads once at first use; every lookup
+// after that is one JSON line through the already-imported interpreter, not
+// a fork/exec + import + table load. run is a seam for tests so handler
+// tests never need Python.
 type OpeningsLookup struct {
 	command []string
 	timeout time.Duration
 	run     func(ctx context.Context, command []string, input []byte) ([]byte, error)
+	mu      sync.Mutex
+	proc    *openingsProcess
+}
+
+type openingsProcess struct {
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout *bufio.Reader
 }
 
 func NewOpeningsLookup(python, helper string) *OpeningsLookup {
-	return &OpeningsLookup{command: []string{python, helper}, timeout: 15 * time.Second, run: execOpeningsLookup}
+	lookup := &OpeningsLookup{command: []string{python, helper, "--serve"}, timeout: 15 * time.Second}
+	lookup.run = func(ctx context.Context, _ []string, input []byte) ([]byte, error) {
+		return lookup.query(ctx, input)
+	}
+	return lookup
 }
 
-func execOpeningsLookup(ctx context.Context, command []string, input []byte) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+// query serves one lookup on the warm process, starting it on demand.
+// Requests serialize on mu; each is millisecond-scale, so no queueing
+// scheduler. Any protocol or timeout failure kills the process group and
+// drops it — the next query restarts cleanly.
+func (l *OpeningsLookup) query(ctx context.Context, input []byte) ([]byte, error) {
+	if len(input) > workerLineLimit {
+		return nil, errors.New("openings request exceeds limit")
+	}
+	ctx, cancel := context.WithTimeout(ctx, l.timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := l.ensureLocked(ctx); err != nil {
+		return nil, err
+	}
+	proc := l.proc
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := proc.stdin.Write(append(append([]byte(nil), input...), '\n'))
+		writeDone <- err
+	}()
+	select {
+	case err := <-writeDone:
+		if err != nil {
+			l.failLocked()
+			return nil, err
+		}
+	case <-ctx.Done():
+		l.failLocked()
+		return nil, ctx.Err()
+	}
+	type response struct {
+		line []byte
+		err  error
+	}
+	readDone := make(chan response, 1)
+	go func() {
+		line, err := proc.stdout.ReadSlice('\n')
+		readDone <- response{append([]byte(nil), line...), err}
+	}()
+	select {
+	case r := <-readDone:
+		if r.err != nil {
+			l.failLocked()
+			return nil, r.err
+		}
+		return r.line, nil
+	case <-ctx.Done():
+		l.failLocked()
+		return nil, ctx.Err()
+	}
+}
+
+func (l *OpeningsLookup) ensureLocked(ctx context.Context) error {
+	if l.proc != nil {
+		return nil
+	}
+	if len(l.command) == 0 {
+		return errors.New("openings helper has no command")
+	}
+	cmd := exec.Command(l.command[0], l.command[1:]...)
+	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil || cmd.Process.Pid <= 0 {
-			return nil
-		}
-		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		if errors.Is(err, syscall.ESRCH) {
-			return nil
-		}
+	cmd.Stderr = newWorkerDiagnostics("openings")
+	cmd.WaitDelay = time.Second
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
 		return err
 	}
-	cmd.WaitDelay = time.Second
-	cmd.Stdin = bytes.NewReader(input)
-	var output cappedOutput
-	cmd.Stdout = &output
-	cmd.Stderr = newWorkerDiagnostics("openings")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		_ = stdin.Close()
+		return err
+	}
 	if err := cmd.Start(); err != nil {
-		return nil, err
+		_ = stdin.Close()
+		_ = stdout.Close()
+		return err
 	}
-	if err := cmd.Wait(); err != nil {
-		return nil, err
+	proc := &openingsProcess{cmd: cmd, stdin: stdin, stdout: bufio.NewReaderSize(stdout, workerLineLimit)}
+	l.proc = proc
+	line, err := l.readLineLocked(ctx)
+	if err != nil {
+		l.failLocked()
+		return err
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	var ready struct {
+		Ready bool `json:"ready"`
 	}
-	return output.Bytes(), nil
+	if json.Unmarshal(line, &ready) != nil || !ready.Ready {
+		l.failLocked()
+		return errors.New("openings helper missing ready marker")
+	}
+	return nil
+}
+
+func (l *OpeningsLookup) readLineLocked(ctx context.Context) ([]byte, error) {
+	proc := l.proc
+	type response struct {
+		line []byte
+		err  error
+	}
+	done := make(chan response, 1)
+	go func() {
+		line, err := proc.stdout.ReadSlice('\n')
+		done <- response{append([]byte(nil), line...), err}
+	}()
+	select {
+	case r := <-done:
+		return r.line, r.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (l *OpeningsLookup) failLocked() {
+	if l.proc == nil {
+		return
+	}
+	proc := l.proc
+	l.proc = nil
+	_ = proc.stdin.Close()
+	if proc.cmd.Process != nil {
+		_ = syscall.Kill(-proc.cmd.Process.Pid, syscall.SIGKILL)
+	}
+	_ = proc.cmd.Wait()
 }
 
 func (s *server) openingsHandler(w http.ResponseWriter, r *http.Request) {

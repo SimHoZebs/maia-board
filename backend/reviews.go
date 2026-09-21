@@ -36,7 +36,7 @@ const (
 // (Worker.startWait/moveWait, Evaluator.timeout); admission lives inside
 // predict/run. Work runs on detached contexts so disconnects never leak slots
 // and granted ops still write through. Intake cache-filtering happens at
-// batch submit (resolveBatchEntry); write-through happens inside execute.
+// batch submit (resolveBatchEntryRequest + prefetched intake filter); write-through happens inside execute.
 func resolveSFQuery(query lookupRequest) (evaluationRequest, *requestError) {
 	if query.Moves == nil {
 		return evaluationRequest{}, &requestError{"invalid_request", "moves must be an array"}
@@ -449,35 +449,47 @@ func (js *ReviewJobs) evictLocked(keepID string) {
 	}
 }
 
-// resolveBatchEntry validates one batch request exactly like the sync
-// endpoints + lookup do (via the shared resolve), and reports whether its
-// row is already cached (intake cache-filter).
-func (js *ReviewJobs) resolveBatchEntry(index int, query lookupRequest) (*batchEntry, bool, *requestError) {
+// resolveBatchEntryRequest validates one batch request exactly like the sync
+// endpoints + lookup do (via the shared resolve). Cache filtering happens
+// separately in reviews() from one prefetched snapshot, so intake costs one
+// bulk read instead of a point read per entry.
+func (js *ReviewJobs) resolveBatchEntryRequest(index int, query lookupRequest) (*batchEntry, *requestError) {
 	entry := &batchEntry{index: index, engine: query.Engine, status: batchPending}
 	prefix := fmt.Sprintf("requests[%d]: ", index)
 	switch query.Engine {
 	case "sf":
 		request, reqErr := resolveSFQuery(query)
 		if reqErr != nil {
-			return nil, false, &requestError{"invalid_request", prefix + reqErr.Message}
+			return nil, &requestError{"invalid_request", prefix + reqErr.Message}
 		}
 		entry.evalReq = request
-		if _, ok := js.s.cachedSF(request); ok {
-			return entry, true, nil
-		}
 	case "maia":
 		request, model, reqErr := resolveMaiaQuery(query)
 		if reqErr != nil {
-			return nil, false, &requestError{"invalid_request", prefix + reqErr.Message}
+			return nil, &requestError{"invalid_request", prefix + reqErr.Message}
 		}
 		entry.maiaReq, entry.maiaModel = request, model
-		if _, ok := js.s.cachedMaia(request, model); ok {
-			return entry, true, nil
-		}
 	default:
-		return nil, false, &requestError{"invalid_request", fmt.Sprintf("requests[%d]: engine must be sf or maia", index)}
+		return nil, &requestError{"invalid_request", fmt.Sprintf("requests[%d]: engine must be sf or maia", index)}
 	}
-	return entry, false, nil
+	return entry, nil
+}
+
+// entryHashes lists every cache identity the intake filter may read for one
+// entry: the exact SF identity plus larger-lines superset variants, or the
+// single Maia identity.
+func entryHashes(entry *batchEntry) []string {
+	if entry.engine == "sf" {
+		candidates := sfSupersetCandidates(entry.evalReq)
+		hashes := make([]string, 0, len(candidates))
+		for _, candidate := range candidates {
+			hash, _ := sfIdentity(candidate).coordinates()
+			hashes = append(hashes, hash)
+		}
+		return hashes
+	}
+	hash, _ := maiaIdentity(entry.maiaReq, entry.maiaModel).coordinates()
+	return []string{hash}
 }
 
 func (js *ReviewJobs) reviews(w http.ResponseWriter, r *http.Request) {
@@ -514,11 +526,28 @@ func (js *ReviewJobs) reviews(w http.ResponseWriter, r *http.Request) {
 		entries := make([]*batchEntry, 0, len(body.Requests))
 		cached := 0
 		sfMiss := false
+		// Intake cache-filter in two phases: validate every entry first
+		// (no I/O), prefetch all identities in one bulk read, then mark
+		// hits from the snapshot. Same accept/filter outcome as per-entry
+		// reads, without N sequential round trips on long games.
+		var hashes []string
 		for index, query := range body.Requests {
-			entry, hit, invalid := js.resolveBatchEntry(index, query)
+			entry, invalid := js.resolveBatchEntryRequest(index, query)
 			if invalid != nil {
 				writeAPIError(w, http.StatusBadRequest, invalid.Code, invalid.Message)
 				return
+			}
+			hashes = append(hashes, entryHashes(entry)...)
+			entries = append(entries, entry)
+		}
+		src := js.s.prefetch(hashes)
+		for _, entry := range entries {
+			var hit bool
+			switch entry.engine {
+			case "sf":
+				_, hit = js.s.cachedSFFrom(src, entry.evalReq)
+			case "maia":
+				_, hit = js.s.cachedMaiaFrom(src, entry.maiaReq, entry.maiaModel)
 			}
 			if entry.engine == "sf" && !hit {
 				sfMiss = true
@@ -527,7 +556,6 @@ func (js *ReviewJobs) reviews(w http.ResponseWriter, r *http.Request) {
 				entry.status = batchDone
 				cached++
 			}
-			entries = append(entries, entry)
 		}
 		// The sync /evaluate endpoint serves cache hits without an evaluator;
 		// batches are identical: only sf misses need live inference.

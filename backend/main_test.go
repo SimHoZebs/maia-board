@@ -433,3 +433,27 @@ func TestWorkerCommandDeviceArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestFrontendServesImmutableAssetsAndFreshIndex(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "assets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "assets", "app-abc123.js"), []byte("console.log(1)"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{staticDir: dir}
+	asset := httptest.NewRecorder()
+	s.frontend(asset, httptest.NewRequest(http.MethodGet, "/assets/app-abc123.js", nil))
+	if asset.Code != 200 || asset.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" {
+		t.Fatalf("asset cache = %q status = %d", asset.Header().Get("Cache-Control"), asset.Code)
+	}
+	index := httptest.NewRecorder()
+	s.frontend(index, httptest.NewRequest(http.MethodGet, "/analyze?moves=e2e4", nil))
+	if index.Code != 200 || index.Header().Get("Cache-Control") != "no-cache" {
+		t.Fatalf("index cache = %q status = %d", index.Header().Get("Cache-Control"), index.Code)
+	}
+}

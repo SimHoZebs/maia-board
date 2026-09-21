@@ -400,3 +400,61 @@ func TestLookupBodyByteLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestBulkPrefetchMatchesSingleReads(t *testing.T) {
+	s := &server{store: testStore(t)}
+	sfReq := evaluationRequest{FEN: startFEN}
+	seedSF(t, s, sfReq, 20)
+	elo := 1600
+	maiaReq := EngineRequest{FEN: startFEN, SelfElo: elo, OppoElo: elo}
+	maiaHash, maiaKey := maiaIdentity(maiaReq, "79m").coordinates()
+	maiaValue := moveResponse{Move: "e2e4", TopMoves: []topMove{{Move: "e2e4", Prob: 1, WDL: [3]float64{.2, .3, .5}}}, WDL: [3]float64{.2, .3, .5}, ModelUsed: "79m"}
+	s.storeCache(maiaHash, "maia", maiaKey, maiaValue)
+	missReq := evaluationRequest{FEN: "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1", Moves: []string{"e2e4"}}
+
+	var hashes []string
+	for _, candidate := range sfSupersetCandidates(sfReq) {
+		hash, _ := sfIdentity(candidate).coordinates()
+		hashes = append(hashes, hash)
+	}
+	hashes = append(hashes, maiaHash)
+	missHash, _ := sfIdentity(missReq).coordinates()
+	hashes = append(hashes, missHash, missHash) // duplicate exercises dedupe
+	src := s.prefetch(hashes)
+	if single, ok := s.cachedSF(sfReq); !ok {
+		t.Fatal("single-path SF fixture missed")
+	} else if bulk, ok := s.cachedSFFrom(src, sfReq); !ok || bulk.Score != single.Score || bulk.BestMove == nil || *bulk.BestMove != *single.BestMove {
+		t.Fatalf("bulk SF disagrees with single path: %+v vs %+v", bulk, single)
+	}
+	if single, ok := s.cachedMaia(maiaReq, "79m"); !ok {
+		t.Fatal("single-path Maia fixture missed")
+	} else if bulk, ok := s.cachedMaiaFrom(src, maiaReq, "79m"); !ok || bulk.Move != single.Move {
+		t.Fatalf("bulk Maia disagrees with single path: %+v vs %+v", bulk, single)
+	}
+	if _, ok := s.cachedSFFrom(src, missReq); ok {
+		t.Fatal("bulk served an unseeded identity")
+	}
+	if _, ok := (&server{}).prefetch([]string{maiaHash}).fetch(maiaHash, "maia", maiaKey); ok {
+		t.Fatal("nil-store prefetch hit")
+	}
+}
+
+func TestBulkPrefetchChunksLargeBatches(t *testing.T) {
+	s := &server{store: testStore(t)}
+	const rows = 505 // past the 500-hash chunk boundary
+	var hashes []string
+	for i := 0; i < rows; i++ {
+		hash := fmt.Sprintf("%04x", i)
+		if _, err := s.store.cachePut(hash, "sf", fmt.Sprintf("k%d", i), `{"ok":true}`); err != nil {
+			t.Fatal(err)
+		}
+		hashes = append(hashes, hash)
+	}
+	got, err := s.store.cacheGetMany(hashes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != rows {
+		t.Fatalf("bulk rows=%d want=%d", len(got), rows)
+	}
+}

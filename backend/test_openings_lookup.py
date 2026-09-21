@@ -3,6 +3,7 @@ the worker tests) and the checked-in backend/openings_table.json."""
 
 import json
 import os
+import sys
 import unittest
 
 import chess
@@ -109,6 +110,39 @@ class LookupRealBookTest(unittest.TestCase):
         self.assertTrue(first["matches"])
         self.assertTrue(second["matches"])
         self.assertEqual(first["matches"][-1], second["matches"][-1])
+
+
+class ServeTest(unittest.TestCase):
+    """Persistent --serve mode: table loads once, each stdin line is one
+    lookup. Runs on StringIO, so no engine or subprocess is needed."""
+
+    def run_serve(self, table, stdin_text):
+        import io
+        from contextlib import redirect_stdout
+        old_stdin = sys.stdin
+        sys.stdin = io.StringIO(stdin_text)
+        output = io.StringIO()
+        try:
+            with redirect_stdout(output):
+                openings_lookup.serve(table)
+        finally:
+            sys.stdin = old_stdin
+        return [json.loads(line) for line in output.getvalue().splitlines()]
+
+    def test_serve_one_lookup(self):
+        table = {openings_lookup.epd_key(board_after(["e4"])): ["B00", "Test Opening"]}
+        lines = self.run_serve(table, '{"moves": ["e2e4"]}\n')
+        self.assertEqual(lines[0], {"ready": True})
+        self.assertEqual(lines[1]["book_flags"], [True])
+        self.assertEqual(lines[1]["matches"], [{"ply": 1, "eco": "B00", "name": "Test Opening"}])
+
+    def test_serve_oversize_drains_and_continues(self):
+        big = "x" * (openings_lookup.MAX_LINE + 10) + "\n"
+        lines = self.run_serve({}, big + '{"moves": []}\n')
+        self.assertEqual(lines[0], {"ready": True})
+        self.assertIn("code", lines[1])
+        # The drained garbage must not desync the next frame.
+        self.assertEqual(lines[2], {"matches": [], "book_flags": []})
 
 
 if __name__ == "__main__":

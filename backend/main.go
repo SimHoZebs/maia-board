@@ -107,7 +107,18 @@ func main() {
 	mux.HandleFunc("/", app.frontend)
 	address := ":" + port
 	log.Printf("maia-board listening on %s", address)
-	if err := http.ListenAndServe(address, recoverJSON(mux)); err != nil {
+	// Bounded reads keep slow clients from holding connections; no
+	// WriteTimeout because /reviews/:id/events streams heartbeats for the
+	// whole batch (minutes) and the timeout would cut long streams.
+	// Client abort governs the write side.
+	httpServer := &http.Server{
+		Addr:              address,
+		Handler:           recoverJSON(mux),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	if err := httpServer.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -134,6 +145,12 @@ func (s *server) frontend(w http.ResponseWriter, r *http.Request) {
 	filePath := filepath.Join(s.staticDir, filepath.FromSlash(requested))
 	if requested != "" {
 		if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
+			// Vite emits content-hashed filenames under assets/; those
+			// bytes are immutable, so browsers may cache them for a year.
+			// Everything else (including the index fallback below) revalidates.
+			if strings.HasPrefix(requested, "assets/") {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			}
 			http.ServeFile(w, r, filePath)
 			return
 		}
@@ -144,6 +161,7 @@ func (s *server) frontend(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeFile(w, r, indexPath)
 }
 

@@ -93,15 +93,10 @@ def lookup(request, table):
     return {"matches": matches, "book_flags": flags}
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--table", default=None)
-    args = parser.parse_args()
+def handle(request, table):
     try:
-        request = json.load(sys.stdin)
         if not isinstance(request, dict):
             raise InvalidRequest("invalid_position")
-        table = load_table(table_path(args.table))
         result = lookup(request, table)
         if table is None:
             result["degraded"] = True
@@ -109,7 +104,54 @@ def main():
         result = {"code": error.code, "message": "position or move history is invalid"}
     except Exception:
         result = {"code": "openings_unavailable", "message": "Opening lookup is unavailable"}
-    print(json.dumps(result))
+    return result
+
+
+MAX_LINE = 64 * 1024
+
+
+def serve(table):
+    """Persistent mode for the Go server: table loads once, then each stdin
+    line is one lookup. An oversized line emits an error without killing the
+    worker; the Go side validates sizes first, so this only fires on misuse."""
+    print(json.dumps({"ready": True}), flush=True)
+    while True:
+        raw = sys.stdin.readline(MAX_LINE + 1)
+        if not raw:
+            return
+        if len(raw.encode()) > MAX_LINE or not raw.endswith("\n"):
+            # Drain the remainder so the next read starts at a frame
+            # boundary instead of mid-line garbage.
+            while not raw.endswith("\n"):
+                raw = sys.stdin.readline(MAX_LINE + 1)
+                if not raw:
+                    return
+            print(json.dumps({"code": "openings_unavailable",
+                              "message": "Opening lookup is unavailable"}), flush=True)
+            continue
+        try:
+            request = json.loads(raw)
+        except ValueError:
+            request = None
+        print(json.dumps(handle(request, table)), flush=True)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--table", default=None)
+    parser.add_argument("--serve", action="store_true",
+                        help="JSON-lines persistent mode instead of one-shot stdin")
+    args = parser.parse_args()
+    table = load_table(table_path(args.table))
+    if args.serve:
+        serve(table)
+        return
+    try:
+        request = json.load(sys.stdin)
+    except Exception:
+        print(json.dumps({"code": "openings_unavailable", "message": "Opening lookup is unavailable"}))
+        return
+    print(json.dumps(handle(request, table)))
 
 
 if __name__ == "__main__":

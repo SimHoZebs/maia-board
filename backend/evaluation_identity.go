@@ -10,6 +10,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"time"
 )
 
 const maiaRevision = "1e13597c42d4858b7cfd7cfdae01e297263364b2"
@@ -304,14 +305,63 @@ func validEvaluationValue(v evaluationResponse, settings *stockfishSettings) boo
 	return true
 }
 
+// cacheSource abstracts point reads so bulk paths can prefetch one IN query
+// and serve the same decode/validate/slice logic from memory. serverSource
+// is the single-row path; bulkSource is a prefetched snapshot for one
+// submit or lookup. Both enforce the same engine/key match.
+type cacheSource interface {
+	fetch(hash, engine, key string) (cachedEvaluation, bool)
+}
+
+type serverSource struct{ s *server }
+
+func (src serverSource) fetch(hash, engine, key string) (cachedEvaluation, bool) {
+	return src.s.lookupCache(hash, engine, key)
+}
+
+type bulkSource struct{ rows map[string]cachedEvaluation }
+
+func (b bulkSource) fetch(hash, engine, key string) (cachedEvaluation, bool) {
+	if !validCacheRef(hash, key) {
+		return cachedEvaluation{}, false
+	}
+	entry, ok := b.rows[hash]
+	if !ok || entry.Engine != engine || entry.Key != key {
+		return cachedEvaluation{}, false
+	}
+	return entry, true
+}
+
+// prefetch loads every hash in one batched read (chunked IN queries). A nil
+// store yields all-miss; a query failure logs once and yields all-miss, the
+// same outcome as N failing point reads.
+func (s *server) prefetch(hashes []string) cacheSource {
+	if s.store == nil || len(hashes) == 0 {
+		return bulkSource{rows: map[string]cachedEvaluation{}}
+	}
+	started := time.Now()
+	rows, err := s.store.cacheGetMany(hashes)
+	if err != nil {
+		log.Printf("evaluation cache bulk read failed hashes=%d error=%v", len(hashes), err)
+		return bulkSource{rows: map[string]cachedEvaluation{}}
+	}
+	log.Printf("evaluation cache bulk read hashes=%d rows=%d duration_us=%d",
+		len(hashes), len(rows), time.Since(started).Microseconds())
+	return bulkSource{rows: rows}
+}
+
 func (s *server) cachedSF(r evaluationRequest) (*evaluationResponse, bool) {
+	return s.cachedSFFrom(serverSource{s}, r)
+}
+
+func (s *server) cachedSFFrom(src cacheSource, r evaluationRequest) (*evaluationResponse, bool) {
 	// Superset reuse: a stored 5-line search serves a 2-line request by
 	// slicing, so compatible budgets never recompute. Native exact identity
 	// always wins; larger-lines variants are tried in increasing order. The
 	// legacy node-budget policy has no compatible v2 timed-policy equivalent,
 	// even at 750ms / two candidates.
 	for _, candidate := range sfSupersetCandidates(r) {
-		if value, ok := s.lookupSFCandidate(candidate, r.Settings); ok {
+		if value, ok := s.lookupSFCandidateFrom(src, candidate, r.Settings); ok {
 			return value, true
 		}
 	}
@@ -342,8 +392,12 @@ func sfSupersetCandidates(r evaluationRequest) []evaluationRequest {
 // native: ActualSettings and SearchPolicy report the stored search, not the
 // smaller request.
 func (s *server) lookupSFCandidate(candidate evaluationRequest, want *stockfishSettings) (*evaluationResponse, bool) {
+	return s.lookupSFCandidateFrom(serverSource{s}, candidate, want)
+}
+
+func (s *server) lookupSFCandidateFrom(src cacheSource, candidate evaluationRequest, want *stockfishSettings) (*evaluationResponse, bool) {
 	hash, key := sfIdentity(candidate).coordinates()
-	entry, ok := s.lookupCache(hash, "sf", key)
+	entry, ok := src.fetch(hash, "sf", key)
 	if !ok {
 		return nil, false
 	}
@@ -359,8 +413,12 @@ func (s *server) lookupSFCandidate(candidate evaluationRequest, want *stockfishS
 }
 
 func (s *server) cachedMaia(r EngineRequest, model string) (*moveResponse, bool) {
+	return s.cachedMaiaFrom(serverSource{s}, r, model)
+}
+
+func (s *server) cachedMaiaFrom(src cacheSource, r EngineRequest, model string) (*moveResponse, bool) {
 	hash, key := maiaIdentity(r, model).coordinates()
-	entry, ok := s.lookupCache(hash, "maia", key)
+	entry, ok := src.fetch(hash, "maia", key)
 	if !ok {
 		return nil, false
 	}
@@ -406,29 +464,41 @@ func (s *server) evaluationLookup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	results := []lookupResult{}
+	// Two phases: resolve every request first (validation only, collecting
+	// the identities to fetch), then serve all hits from one prefetched
+	// snapshot. Same validation, same per-index results and logs as the old
+	// per-entry loop — one bulk read instead of N point reads.
+	type resolved struct {
+		query   lookupRequest
+		sfReq   evaluationRequest
+		maiaReq EngineRequest
+		model   string
+	}
+	prepared := make([]resolved, 0, len(body.Requests))
+	var hashes []string
 	for index, query := range body.Requests {
-		// Lookup reuses the shared resolve read-only: same validation as
-		// live/batch paths, cache read only, never admits or stores.
+		entry := resolved{query: query}
 		var invalid error
 		switch query.Engine {
 		case "sf":
 			request, reqErr := resolveSFQuery(query)
 			if reqErr != nil {
 				invalid = fmt.Errorf("%s", reqErr.Message)
-			} else if value, ok := s.cachedSF(request); ok {
-				results = append(results, lookupResult{index, value, value.ActualSettings})
-				log.Printf("eval-content engine=sf cache=hit via=lookup index=%d fen=%s plies=%d pos=%s %s",
-					index, query.FEN, len(query.Moves), orDash(query.PosHash), sfContentFields(value))
+			} else {
+				entry.sfReq = request
+				for _, candidate := range sfSupersetCandidates(request) {
+					hash, _ := sfIdentity(candidate).coordinates()
+					hashes = append(hashes, hash)
+				}
 			}
 		case "maia":
 			request, model, reqErr := resolveMaiaQuery(query)
 			if reqErr != nil {
 				invalid = fmt.Errorf("%s", reqErr.Message)
-			} else if value, ok := s.cachedMaia(request, model); ok {
-				results = append(results, lookupResult{Index: index, Value: value})
-				log.Printf("eval-content engine=maia cache=hit via=lookup index=%d fen=%s plies=%d pos=%s elo=%s value=%s model=%s %s",
-					index, query.FEN, len(query.Moves), orDash(query.PosHash), eloPair(query.EloMaia, query.EloUser),
-					valueEloPair(query.ValueEloMaia, query.ValueEloUser), model, maiaContentFields(*value))
+			} else {
+				entry.maiaReq, entry.model = request, model
+				hash, _ := maiaIdentity(request, model).coordinates()
+				hashes = append(hashes, hash)
 			}
 		default:
 			invalid = fmt.Errorf("engine must be sf or maia")
@@ -436,6 +506,28 @@ func (s *server) evaluationLookup(w http.ResponseWriter, r *http.Request) {
 		if invalid != nil {
 			writeAPIError(w, 400, "invalid_request", fmt.Sprintf("requests[%d]: %s", index, invalid))
 			return
+		}
+		prepared = append(prepared, entry)
+	}
+	src := s.prefetch(hashes)
+	for index, entry := range prepared {
+		// Lookup reuses the shared resolve read-only: same validation as
+		// live/batch paths, cache read only, never admits or stores.
+		query := entry.query
+		switch query.Engine {
+		case "sf":
+			if value, ok := s.cachedSFFrom(src, entry.sfReq); ok {
+				results = append(results, lookupResult{index, value, value.ActualSettings})
+				log.Printf("eval-content engine=sf cache=hit via=lookup index=%d fen=%s plies=%d pos=%s %s",
+					index, query.FEN, len(query.Moves), orDash(query.PosHash), sfContentFields(value))
+			}
+		case "maia":
+			if value, ok := s.cachedMaiaFrom(src, entry.maiaReq, entry.model); ok {
+				results = append(results, lookupResult{Index: index, Value: value})
+				log.Printf("eval-content engine=maia cache=hit via=lookup index=%d fen=%s plies=%d pos=%s elo=%s value=%s model=%s %s",
+					index, query.FEN, len(query.Moves), orDash(query.PosHash), eloPair(query.EloMaia, query.EloUser),
+					valueEloPair(query.ValueEloMaia, query.ValueEloUser), entry.model, maiaContentFields(*value))
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
