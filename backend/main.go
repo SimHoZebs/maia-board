@@ -178,7 +178,8 @@ func (s *server) serveMove(w http.ResponseWriter, r *http.Request, prio Priority
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	w = rec
 	var request moveRequest
-	model, degraded := "", false
+	var response moveResponse
+	model, degraded, hit := "", false, false
 	lane := "play"
 	if prio == PriorityFocus {
 		lane = "focus"
@@ -186,6 +187,21 @@ func (s *server) serveMove(w http.ResponseWriter, r *http.Request, prio Priority
 	defer func() {
 		log.Printf("move status=%d lane=%s plies=%d model=%s degraded=%t duration_ms=%d",
 			rec.status, lane, len(request.Moves), model, degraded, time.Since(started).Milliseconds())
+		if rec.status == http.StatusOK {
+			cache := "miss"
+			if request.Temperature != 0 {
+				cache = "live"
+			} else if hit {
+				cache = "hit"
+			}
+			modelName := request.Model
+			if modelName == "" {
+				modelName = "79m"
+			}
+			log.Printf("eval-content engine=maia cache=%s lane=%s fen=%s plies=%d elo=%s value=%s model=%s color=%s %s",
+				cache, lane, request.FEN, len(request.Moves), eloPair(request.EloMaia, request.EloUser),
+				valueEloPair(request.ValueEloMaia, request.ValueEloUser), modelName, request.MaiaColor, maiaContentFields(response))
+		}
 	}()
 	request, ok := decodeSingle[moveRequest](w, r, 64*1024)
 	if !ok {

@@ -121,6 +121,7 @@ func (s *server) evaluate(w http.ResponseWriter, r *http.Request) {
 	w = rec
 	var request evaluationRequest
 	var result *evaluationResponse
+	var hit bool
 	defer func() {
 		policy := SearchPolicy
 		if request.Settings != nil {
@@ -132,6 +133,14 @@ func (s *server) evaluate(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("evaluate status=%d plies=%d policy=%s duration_ms=%d depth=%d lines=%d",
 			rec.status, len(request.Moves), policy, time.Since(started).Milliseconds(), depth, lines)
+		if rec.status == http.StatusOK && result != nil {
+			cache := "miss"
+			if hit {
+				cache = "hit"
+			}
+			log.Printf("eval-content engine=sf cache=%s policy=%s fen=%s plies=%d pos=%s %s",
+				cache, policy, request.FEN, len(request.Moves), orDash(request.PosHash), sfContentFields(result))
+		}
 	}()
 	decoded, ok := decodeSingle[evaluationRequest](w, r, 64*1024)
 	if !ok {

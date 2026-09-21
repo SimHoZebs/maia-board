@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 )
@@ -416,6 +417,8 @@ func (s *server) evaluationLookup(w http.ResponseWriter, r *http.Request) {
 				invalid = fmt.Errorf("%s", reqErr.Message)
 			} else if value, ok := s.cachedSF(request); ok {
 				results = append(results, lookupResult{index, value, value.ActualSettings})
+				log.Printf("eval-content engine=sf cache=hit via=lookup index=%d fen=%s plies=%d pos=%s %s",
+					index, query.FEN, len(query.Moves), orDash(query.PosHash), sfContentFields(value))
 			}
 		case "maia":
 			request, model, reqErr := resolveMaiaQuery(query)
@@ -423,6 +426,9 @@ func (s *server) evaluationLookup(w http.ResponseWriter, r *http.Request) {
 				invalid = fmt.Errorf("%s", reqErr.Message)
 			} else if value, ok := s.cachedMaia(request, model); ok {
 				results = append(results, lookupResult{Index: index, Value: value})
+				log.Printf("eval-content engine=maia cache=hit via=lookup index=%d fen=%s plies=%d pos=%s elo=%s value=%s model=%s %s",
+					index, query.FEN, len(query.Moves), orDash(query.PosHash), eloPair(query.EloMaia, query.EloUser),
+					valueEloPair(query.ValueEloMaia, query.ValueEloUser), model, maiaContentFields(*value))
 			}
 		default:
 			invalid = fmt.Errorf("engine must be sf or maia")

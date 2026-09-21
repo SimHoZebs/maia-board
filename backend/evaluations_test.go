@@ -79,3 +79,46 @@ func TestEvaluationCacheEvictionRefreshesRank(t *testing.T) {
 		t.Fatalf("stats %d %v", count, err)
 	}
 }
+
+func TestEvalContentMaiaLine(t *testing.T) {
+	resp := moveResponse{Move: "e2e4", WDL: [3]float64{0.437, 0.063, 0.5}, ModelUsed: "79m",
+		TopMoves: []topMove{
+			{Move: "e2e4", Prob: 0.466, WDL: [3]float64{0.437, 0.063, 0.5}},
+			{Move: "d2d4", Prob: 0.335, WDL: [3]float64{0.435, 0.066, 0.499}},
+		}}
+	fields := maiaContentFields(resp)
+	for _, want := range []string{
+		"move=e2e4", "wdl=0.437/0.063/0.500", "exp=53.1", "used=79m", "degraded=false",
+		"e2e4:46.6%:0.437/0.063/0.500", "d2d4:33.5%:0.435/0.066/0.499",
+	} {
+		if !strings.Contains(fields, want) {
+			t.Fatalf("maia fields %q missing %q", fields, want)
+		}
+	}
+	if got := wdlExpected([3]float64{0.5, 0.06, 0.44}); got < 46.999 || got > 47.001 {
+		t.Fatalf("wdlExpected = %v, want ~47", got)
+	}
+}
+
+func TestEvalContentSFLine(t *testing.T) {
+	best := "e2e4"
+	resp := &evaluationResponse{Engine: "Stockfish 19", SearchPolicy: SearchPolicy, Depth: 18,
+		Score: evaluationScore{Type: "cp", Value: 35}, BestMove: &best,
+		Lines: []evaluationLine{
+			{Move: "e2e4", Score: evaluationScore{Type: "cp", Value: 35}, Depth: 18},
+			{Move: "d2d4", Score: evaluationScore{Type: "cp", Value: 12}, Depth: 18},
+		}}
+	fields := sfContentFields(resp)
+	for _, want := range []string{
+		"score=cp:35", "best=e2e4", "depth=18", "terminal=-", "policy=" + SearchPolicy,
+		"lines=e2e4:cp:35,d2d4:cp:12",
+	} {
+		if !strings.Contains(fields, want) {
+			t.Fatalf("sf fields %q missing %q", fields, want)
+		}
+	}
+	mate := &evaluationResponse{Score: evaluationScore{Type: "mate", Value: 3, WinningSide: "white"}}
+	if got := sfContentFields(mate); !strings.Contains(got, "score=mate:3:white") {
+		t.Fatalf("mate fields %q missing mate score", got)
+	}
+}

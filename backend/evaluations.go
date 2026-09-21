@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"regexp"
@@ -198,4 +199,74 @@ func (s *server) evaluations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, entry)
+}
+
+// Eval-content log lines: one per served evaluation — fresh inference or
+// cache hit — so any number on screen traces to a server-log line. WDL
+// triples print loss/draw/win (mover-relative, three decimals); exp is
+// win+draw/2 in percent, the same math the UI renders.
+func wdlTriple(w [3]float64) string {
+	return fmt.Sprintf("%.3f/%.3f/%.3f", w[0], w[1], w[2])
+}
+
+func wdlExpected(w [3]float64) float64 {
+	return (w[2] + w[1]/2) * 100
+}
+
+func eloOrQ(elo *int) string {
+	if elo == nil {
+		return "?"
+	}
+	return fmt.Sprintf("%d", *elo)
+}
+
+func eloPair(a, b *int) string {
+	return eloOrQ(a) + "/" + eloOrQ(b)
+}
+
+func valueEloPair(a, b *int) string {
+	if a == nil && b == nil {
+		return "-"
+	}
+	return eloPair(a, b)
+}
+
+func orDash(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
+}
+
+func maiaContentFields(resp moveResponse) string {
+	tops := make([]string, 0, len(resp.TopMoves))
+	for _, t := range resp.TopMoves {
+		tops = append(tops, fmt.Sprintf("%s:%.1f%%:%s", t.Move, t.Prob*100, wdlTriple(t.WDL)))
+	}
+	return fmt.Sprintf("move=%s wdl=%s exp=%.1f used=%s degraded=%t top=%s",
+		resp.Move, wdlTriple(resp.WDL), wdlExpected(resp.WDL), resp.ModelUsed, resp.Degraded, strings.Join(tops, ","))
+}
+
+func sfScoreText(score evaluationScore) string {
+	if score.Type == "mate" {
+		return fmt.Sprintf("mate:%d:%s", score.Value, score.WinningSide)
+	}
+	return fmt.Sprintf("cp:%d", score.Value)
+}
+
+func sfContentFields(resp *evaluationResponse) string {
+	terminal := "-"
+	if resp.Terminal != nil {
+		terminal = *resp.Terminal
+	}
+	best := "-"
+	if resp.BestMove != nil {
+		best = *resp.BestMove
+	}
+	lines := make([]string, 0, len(resp.Lines))
+	for _, line := range resp.Lines {
+		lines = append(lines, line.Move+":"+sfScoreText(line.Score))
+	}
+	return fmt.Sprintf("score=%s best=%s depth=%d terminal=%s policy=%s lines=%s",
+		sfScoreText(resp.Score), best, resp.Depth, terminal, resp.SearchPolicy, strings.Join(lines, ","))
 }
