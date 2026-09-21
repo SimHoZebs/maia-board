@@ -25,13 +25,20 @@ RUN curl -fL --retry 3 https://github.com/official-stockfish/Stockfish/archive/r
 FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6
 
 ARG MAIA3_REF=1e13597c42d4858b7cfd7cfdae01e297263364b2
+# PyTorch wheel index. The default CUDA build runs on GPU hosts (needs the
+# host NVIDIA driver + container toolkit, see backend/README.md) and still
+# falls back to CPU where no GPU is visible; override with --build-arg
+# TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu for a slim CPU-only
+# image. Keep the index's CUDA generation at or below what the host driver
+# supports (cu126 needs R560+).
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu126
 ENV HF_HOME=/models/huggingface \
     HF_HUB_CACHE=/models/huggingface/hub \
     PYTHONUNBUFFERED=1
 
 COPY backend/requirements.txt /tmp/requirements.txt
 RUN python -m pip install --no-cache-dir \
-      --index-url https://download.pytorch.org/whl/cpu \
+      --index-url ${TORCH_INDEX_URL} \
       "torch>=2,<3" \
     && python -m pip install --no-cache-dir -r /tmp/requirements.txt \
     && python -m pip install --no-cache-dir --no-deps \

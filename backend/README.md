@@ -210,13 +210,31 @@ mock tests do not measure model quality or cold-loading performance.
 | `MAIA3_WORKER` | `/app/maia3_worker.py` | Maia adapter |
 | `MAIA3_MODEL_79M` | `79m` | Large-model alias |
 | `MAIA3_MODEL_5M` | `5m` | Fallback-model alias |
+| `MAIA3_DEVICE` | `auto` | Torch device for both Maia workers: `auto` (upstream default — CUDA when torch sees a GPU, else CPU), `cpu`, or `cuda[:N]`. CUDA also enables AMP; explicit `cpu` keeps AMP off. Invalid values fail fast at startup. |
 | `STOCKFISH_WORKER` | `/app/stockfish_worker.py` | Stockfish adapter |
 | `STOCKFISH_BINARY` | `/app/stockfish` | Native engine |
 
-The [combined Dockerfile](Dockerfile) pins CPU Torch and Maia3 revision
+The [combined Dockerfile](Dockerfile) pins the Torch wheel index and Maia3 revision
 `1e13597c42d4858b7cfd7cfdae01e297263364b2`. Its `/models/huggingface` cache holds
 downloaded model files. Build from the repository root as described in the
 [root README](../README.md#combined-container-and-hosting).
+
+## GPU inference
+
+The image ships a CUDA PyTorch build (`TORCH_INDEX_URL`, default cu126),
+so the same image runs GPU inference where a GPU is visible and CPU
+elsewhere with no config change (`MAIA3_DEVICE=auto`). Both workers (79M +
+5M, under 500 MiB of weights plus two CUDA contexts) fit comfortably on a
+4 GiB card. Requirements on the host:
+
+- NVIDIA driver at or above what the image's CUDA generation needs (cu126
+  needs R560+); a mismatch surfaces as worker startup failure in the logs.
+- NVIDIA container toolkit installed, and the service granted GPU access
+  (compose `gpus: all` or equivalent).
+- To build a slim CPU-only image instead, pass
+  `--build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu`.
+
+Stockfish always runs on CPU and is unaffected.
 
 - [Pinned Maia3 source](https://github.com/CSSLab/maia3/tree/1e13597c42d4858b7cfd7cfdae01e297263364b2)
 - [Pinned model API](https://github.com/CSSLab/maia3/blob/1e13597c42d4858b7cfd7cfdae01e297263364b2/maia3/uci.py)

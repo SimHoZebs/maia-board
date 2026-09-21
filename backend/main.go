@@ -26,8 +26,8 @@ type moveRequest struct {
 	ValueEloUser *int     `json:"value_elo_user,omitempty"`
 	Model        string   `json:"model"`
 	MaiaColor    string   `json:"maia_color"`
-	InitialFEN  string   `json:"initial_fen,omitempty"`
-	Temperature float64  `json:"temperature,omitempty"`
+	InitialFEN   string   `json:"initial_fen,omitempty"`
+	Temperature  float64  `json:"temperature,omitempty"`
 	// Accepted for older clients; cache identity is derived by the server.
 	CacheHash string `json:"cache_hash,omitempty"`
 	CacheKey  string `json:"cache_key,omitempty"`
@@ -73,11 +73,15 @@ func main() {
 	python := getenv("PYTHON", "python3")
 	largeModel := getenv("MAIA3_MODEL_79M", "79m")
 	smallModel := getenv("MAIA3_MODEL_5M", "5m")
+	device := getenv("MAIA3_DEVICE", "auto")
+	if !validDevice(device) {
+		log.Fatalf("invalid MAIA3_DEVICE %q: must be auto, cpu, or cuda[:N]", device)
+	}
 	port := getenv("PORT", "8080")
 	staticDir := getenv("STATIC_DIR", "/app/static")
 
-	large := NewWorker("79m", workerCommand(python, workerPath, largeModel))
-	small := NewWorker("5m", workerCommand(python, workerPath, smallModel))
+	large := NewWorker("79m", workerCommand(python, workerPath, largeModel, device))
+	small := NewWorker("5m", workerCommand(python, workerPath, smallModel, device))
 	store, err := NewGameStore(getenv("DB_PATH", "maia-board.db"))
 	if err != nil {
 		log.Fatalf("open game database: %v", err)
@@ -143,8 +147,41 @@ func (s *server) frontend(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, indexPath)
 }
 
-func workerCommand(python, workerPath, model string) []string {
-	return []string{python, workerPath, "--model", model, "--device", "cpu", "--no-use-amp", "--multipv", "5", "--temperature", "0", "--use-uci-history"}
+func workerCommand(python, workerPath, model, device string) []string {
+	args := []string{python, workerPath, "--model", model}
+	// "auto" defers to the pinned upstream default (cuda when torch sees a
+	// GPU, else cpu) with AMP on; explicit cpu keeps today's deterministic
+	// flags. AMP only engages on cuda (upstream autocast guard), so omitting
+	// --no-use-amp on the cuda path is what unlocks mixed precision.
+	if device != "auto" {
+		args = append(args, "--device", device)
+		if device == "cpu" {
+			args = append(args, "--no-use-amp")
+		}
+	}
+	return append(args, "--multipv", "5", "--temperature", "0", "--use-uci-history")
+}
+
+// validDevice gates MAIA3_DEVICE: auto (upstream default), cpu, or
+// cuda with an optional index. Anything else fails fast at startup so a
+// typo never boots workers that immediately crash on torch .to(device).
+func validDevice(device string) bool {
+	if device == "auto" || device == "cpu" || device == "cuda" {
+		return true
+	}
+	if len(device) > 5 && device[:5] == "cuda:" {
+		index := device[5:]
+		if index == "" {
+			return false
+		}
+		for _, digit := range index {
+			if digit < '0' || digit > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func (s *server) healthz(w http.ResponseWriter, r *http.Request) {

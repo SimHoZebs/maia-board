@@ -407,3 +407,29 @@ func TestRecoverJSONEmitsErrorBeforeCrash(t *testing.T) {
 		t.Fatalf("unexpected panic body: %+v", body)
 	}
 }
+
+func TestWorkerCommandDeviceArgs(t *testing.T) {
+	join := func(args []string) string { return strings.Join(args, " ") }
+	auto := join(workerCommand("python3", "/app/maia3_worker.py", "79m", "auto"))
+	if strings.Contains(auto, "--device") || strings.Contains(auto, "amp") {
+		t.Fatalf("auto command must defer to upstream defaults, got %q", auto)
+	}
+	cpu := join(workerCommand("python3", "/app/maia3_worker.py", "79m", "cpu"))
+	if !strings.Contains(cpu, "--device cpu") || !strings.Contains(cpu, "--no-use-amp") {
+		t.Fatalf("cpu command must pin cpu without AMP, got %q", cpu)
+	}
+	cuda := join(workerCommand("python3", "/app/maia3_worker.py", "79m", "cuda:0"))
+	if !strings.Contains(cuda, "--device cuda:0") || strings.Contains(cuda, "no-use-amp") {
+		t.Fatalf("cuda command must select the GPU with AMP on, got %q", cuda)
+	}
+	for _, device := range []string{"auto", "cpu", "cuda", "cuda:0"} {
+		if !validDevice(device) {
+			t.Fatalf("validDevice(%q) = false, want true", device)
+		}
+	}
+	for _, device := range []string{"", "cud", "cuda:", "cuda:x", "gpu", "CUDA"} {
+		if validDevice(device) {
+			t.Fatalf("validDevice(%q) = true, want false", device)
+		}
+	}
+}
