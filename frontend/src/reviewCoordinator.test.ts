@@ -34,9 +34,13 @@ describe('timeline-backed restoration', () => {
     expect(fetcher.mock.calls[0][0]).toBe('/evaluations/lookup');
     const init = fetcher.mock.calls[0][1]!;
     expect(init.method).toBe('POST');
-    const requests = JSON.parse(requestBodyText(init)).requests;
+    const body = JSON.parse(requestBodyText(init));
+    expect(body.line).toMatchObject({ initial_fen: START_FEN, moves: ['e2e4', 'e7e5', 'g1f3'] });
+    const requests = body.requests;
     expect(requests).toHaveLength(8);
-    expect(requests[6]).toMatchObject({ engine: 'sf', moves: ['e2e4', 'e7e5', 'g1f3'], initial_fen: START_FEN, fen: nodes[3].fen });
+    expect(requests[6]).toMatchObject({ engine: 'sf', ply: 3, fen: nodes[3].fen });
+    expect(requests[6]).not.toHaveProperty('moves');
+    expect(requests[6]).not.toHaveProperty('initial_fen');
     expect(nodes.every(node => !('moves' in node) && !('sanMoves' in node) && node.timeline === nodes[0].timeline)).toBe(true);
   });
   it('restores sparse indexes, rejects wrong-model rows, and retries only the missing keys', async () => {
@@ -53,7 +57,7 @@ describe('timeline-backed restoration', () => {
     expect(coordinator.result('maia', nodes[1], settings)).toBeDefined();
     await coordinator.ensure(nodes.slice(0, 2), settings, { signal: new AbortController().signal });
     const requests = JSON.parse(requestBodyText(fetcher.mock.calls[1][1])).requests;
-    expect(requests.map((r: { engine: string; moves: string[] }) => [r.engine, r.moves.length])).toEqual([['maia', 0], ['sf', 1]]);
+    expect(requests.map((r: { engine: string; ply: number }) => [r.engine, r.ply])).toEqual([['maia', 0], ['sf', 1]]);
     expect(fetcher.mock.calls.every(([url]) => url === '/evaluations/lookup')).toBe(true);
   });
   it('prime hits report full coverage without extra requests', async () => {
@@ -96,11 +100,21 @@ describe('timeline-backed restoration', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
   it('chunks bulk restoration only at the 1024-request bound', async () => {
-    const roots = Array.from({ length: 513 }, (_, index) => reviewNodes(buildTimeline(START_FEN.replace('0 1', `0 ${index + 1}`), []))[0]);
+    // Single-line chunking: the line ships once per POST, entries carry ply.
+    // 513 plies x sf+maia = 1026 jobs -> 1024 + 2 across two POSTs sharing
+    // one line object. Outcomes are cleared so the repetition draw in the
+    // synthetic cycle does not filter the tail (chunking, not coverage).
+    const cycle = ['g1f3', 'g8f6', 'f3g1', 'f6g8'];
+    const moves = Array.from({ length: 512 }, (_, index) => cycle[index % cycle.length]);
+    const longLine = reviewNodes(buildTimeline(START_FEN, moves)).map(node => ({ ...node, outcome: null }));
     const fetcher = liveFetch(), coordinator = new ReviewCoordinator(fetcher);
-    await coordinator.ensure(roots, settings, { signal: new AbortController().signal });
-    expect(fetcher.mock.calls.map(([url, init]) => [url, JSON.parse(requestBodyText(init)).requests.length])).toEqual([
-      ['/evaluations/lookup', 1024], ['/evaluations/lookup', 2],
+    await coordinator.ensure(longLine, settings, { signal: new AbortController().signal });
+    const calls = fetcher.mock.calls.map(([url, init]) => {
+      const body = JSON.parse(requestBodyText(init));
+      return [url, body.requests.length, body.line.moves.length];
+    });
+    expect(calls).toEqual([
+      ['/evaluations/lookup', 1024, 512], ['/evaluations/lookup', 2, 512],
     ]);
   });
   it('overlapping restores merge: a stale line landing late still settles shared rows', async () => {

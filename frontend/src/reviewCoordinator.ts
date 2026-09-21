@@ -1,7 +1,7 @@
 import { MaiaApiError, requestMaiaAnalysis, requestMove, type MoveRequest, type MoveResponse } from './api';
 import { clampMaiaElo } from './BoardTools';
 import type { Evaluation } from './reviewMetrics';
-import { EvaluationStore, evaluationStore, evaluationRequest, fastReviewSettings, fetchEvaluation, reviewKey, resolveSettings, stablePositionKey,
+import { EvaluationStore, evaluationStore, fastReviewSettings, fetchEvaluation, reviewKey, resolveSettings, splitValueElos, stablePositionKey,
   type Engine, type EvaluationResult, type Job, type ReviewNode, type ReviewSettings, type SettingsInput } from './evaluationStore';
 export { EvaluationStore, fastReviewSettings, fastStockfishSettings, fetchEvaluation, parseEvaluation, resolveSettings, reviewKey, reviewNodes, stablePositionKey,
   type Engine, type EvaluationResult, type Job, type ReviewNode, type ReviewSettings, type SettingsInput } from './evaluationStore';
@@ -288,14 +288,20 @@ export class ReviewCoordinator {
   }
   private async execute(job: Job, signal: AbortSignal): Promise<Evaluation | MoveResponse> {
     if (job.engine === 'sf') return fetchEvaluation(job.node, signal, this.fetcher, job.settings.stockfish);
-    const request = evaluationRequest('maia', job.node, job.settings);
+    // Single-position endpoint (OUT OF SCOPE for the line-oriented batch
+    // change): still sends the full prefix per request.
+    const prefix = job.node.timeline.moves.slice(0, job.node.ply);
+    const split = splitValueElos(job.settings);
+    const valueElos = {
+      ...(split.valueEloMaia !== undefined ? { value_elo_maia: split.valueEloMaia } : {}),
+      ...(split.valueEloUser !== undefined ? { value_elo_user: split.valueEloUser } : {}),
+    };
     // Retrospective analysis rides the Focus lane (POST /move/analysis),
     // never the play lane — it fires alongside the live reply every move
     // and queues behind it instead of superseding it.
-    return requestMaiaAnalysis({ fen: request.fen, moves: request.moves, initial_fen: request.initial_fen,
+    return requestMaiaAnalysis({ fen: job.node.fen, moves: prefix, initial_fen: job.node.initialFen,
       elo_maia: clampMaiaElo(job.settings.eloMaia), elo_user: clampMaiaElo(job.settings.eloUser),
-      ...('value_elo_maia' in request ? { value_elo_maia: (request as { value_elo_maia: number }).value_elo_maia } : {}),
-      ...('value_elo_user' in request ? { value_elo_user: (request as { value_elo_user: number }).value_elo_user } : {}),
+      ...valueElos,
       model: job.settings.model, maia_color: job.node.turn }, this.fetcher, signal);
   }
   // Play /move flight with play's tighter parameters: latest-wins (a newer

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildTimeline, START_FEN } from './domain';
-import { BatchGoneError, BATCH_PERSIST_KEY, buildBatchItems,
+import { BatchGoneError, BATCH_PERSIST_KEY, buildBatchItems, buildBatchLine,
   clearPersistedBatch, fetchBatchStatus, hashBatchKeys, parseBatchRetryDelayMs, readPersistedBatch, submitBatch, subscribeBatchEvents,
   writePersistedBatch, type BatchEventSource, type BatchProgress } from './batchReview';
 import { MaiaApiError } from './api';
@@ -13,6 +13,7 @@ import { defaultStockfishSettings } from './stockfishSettings';
 const settings: ReviewSettings = { eloMaia: 1600, eloUser: 1600, model: '79m', stockfish: defaultStockfishSettings };
 const nodes = reviewNodes(buildTimeline(START_FEN, ['e2e4', 'e7e5']));
 const items = () => buildBatchItems(nodes, settings);
+const line = () => buildBatchLine(nodes);
 const progress = (over: Partial<BatchProgress> = {}): BatchProgress =>
   ({ job_id: 'job1', total: 6, done: 0, failed: 0, finished: false, ...over });
 const response429 = (retryAfter: string | null, body: unknown = {}) => {
@@ -26,8 +27,10 @@ describe('buildBatchItems', () => {
     const built = items();
     expect(built).toHaveLength(6);
     expect(built.map(item => item.engine)).toEqual(['sf', 'maia', 'sf', 'maia', 'sf', 'maia']);
-    expect(built[0].request).toMatchObject({ engine: 'sf', fen: nodes[0].fen, initial_fen: START_FEN });
-    expect(built[1].request).toMatchObject({ engine: 'maia', fen: nodes[0].fen });
+    expect(built[0].request).toMatchObject({ engine: 'sf', ply: 0, fen: nodes[0].fen });
+    expect(built[0].request).not.toHaveProperty('moves');
+    expect(built[0].request).not.toHaveProperty('initial_fen');
+    expect(built[1].request).toMatchObject({ engine: 'maia', ply: 0, fen: nodes[0].fen });
     expect(new Set(built.map(item => item.key)).size).toBe(6);
   });
   it('appends one grading-maia entry per node, collapsing identical keys', () => {
@@ -62,14 +65,17 @@ describe('buildBatchItems', () => {
 });
 
 describe('submitBatch', () => {
-  it('posts lookup-shaped requests and returns the job', async () => {
+  it('posts line-once requests and returns the job', async () => {
     const fetcher = vi.fn<typeof fetch>(async () => jsonResponse({ job_id: 'job1', total: 6, cached: 2, pending: 4 }, 202));
-    const submitted = await submitBatch(items(), fetcher);
+    const submitted = await submitBatch(items(), line(), fetcher);
     expect(submitted).toMatchObject({ job_id: 'job1', total: 6 });
     expect(fetcher.mock.calls[0][0]).toBe('/reviews');
     const body = JSON.parse(requestBodyText(fetcher.mock.calls[0][1]));
+    expect(body.line).toMatchObject({ initial_fen: START_FEN, moves: ['e2e4', 'e7e5'] });
     expect(body.requests).toHaveLength(6);
-    expect(body.requests[0]).toMatchObject({ engine: 'sf', moves: [], initial_fen: START_FEN });
+    expect(body.requests[0]).toMatchObject({ engine: 'sf', ply: 0, fen: nodes[0].fen });
+    expect(body.requests[0]).not.toHaveProperty('moves');
+    expect(body.requests[0]).not.toHaveProperty('initial_fen');
   });
 });
 
@@ -93,7 +99,7 @@ describe('submitBatch 429 backpressure', () => {
       if (fetcher.mock.calls.length === 1) return response429('2');
       return jsonResponse({ job_id: 'job1', total: 6, cached: 0, pending: 6 }, 202);
     });
-    const submitted = await submitBatch(items(), fetcher, sleep);
+    const submitted = await submitBatch(items(), line(), fetcher, sleep);
     expect(submitted).toMatchObject({ job_id: 'job1' });
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledTimes(1);
@@ -104,7 +110,7 @@ describe('submitBatch 429 backpressure', () => {
   it('resubmits only once then surfaces engine-busy', async () => {
     const sleep = vi.fn(async () => undefined);
     const fetcher = vi.fn<typeof fetch>(async () => response429('1'));
-    const error = await submitBatch(items(), fetcher, sleep).then(() => null, error => error);
+    const error = await submitBatch(items(), line(), fetcher, sleep).then(() => null, error => error);
     expect(error).toBeInstanceOf(MaiaApiError);
     expect(error.code).toBe('engine_busy');
     expect(error.status).toBe(429);
@@ -117,7 +123,7 @@ describe('submitBatch 429 backpressure', () => {
     for (const header of [null, 'garbage'] as const) {
       const sleep = vi.fn(async () => undefined);
       const fetcher = vi.fn<typeof fetch>(async () => response429(header));
-      await submitBatch(items(), fetcher, sleep).then(() => null, error => error);
+      await submitBatch(items(), line(), fetcher, sleep).then(() => null, error => error);
       expect(sleep).toHaveBeenCalledWith(5_000);
       expect(fetcher).toHaveBeenCalledTimes(2);
     }
@@ -125,7 +131,7 @@ describe('submitBatch 429 backpressure', () => {
   it('clamps extreme Retry-After values', async () => {
     const sleep = vi.fn(async () => undefined);
     const fetcher = vi.fn<typeof fetch>(async () => response429('120'));
-    await submitBatch(items(), fetcher, sleep).then(() => null, error => error);
+    await submitBatch(items(), line(), fetcher, sleep).then(() => null, error => error);
     expect(sleep).toHaveBeenCalledWith(30_000);
   });
 });
@@ -150,7 +156,7 @@ describe('cancel-free client', () => {
       if (url === '/reviews') return jsonResponse({ job_id: 'job1', total: 6, cached: 0, pending: 6 }, 202);
       return jsonResponse(progress({ done: 6, finished: true }));
     });
-    await submitBatch(items(), fetcher, async () => undefined);
+    await submitBatch(items(), line(), fetcher, async () => undefined);
     await fetchBatchStatus('job1', fetcher);
     expect(fetcher.mock.calls.length).toBeGreaterThan(0);
     for (const [, init] of fetcher.mock.calls) expect(init?.method).not.toBe('DELETE');

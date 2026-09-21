@@ -1,7 +1,7 @@
 import { MaiaApiError, parseErrorCode } from './api';
 import { postJson, readJsonBody } from './evaluationTransport';
 import { isNonNegativeInt, isRecord, isStringMap } from './guards';
-import { evaluationRequest, resolveSettings, reviewKey, type Engine, type ReviewNode, type SettingsInput } from './evaluationStore';
+import { evaluationRequest, batchLineFor, resolveSettings, reviewKey, type BatchLine, type Engine, type ReviewNode, type SettingsInput } from './evaluationStore';
 
 export type BatchItem = { request: ReturnType<typeof evaluationRequest>; key: string; engine: Engine };
 export type BatchProgress = {
@@ -169,12 +169,22 @@ function parseSubmitted(body: unknown, status?: number): BatchSubmitted {
   return { job_id: body.job_id, total: body.total, cached: body.cached, pending: body.pending };
 }
 
-export async function submitBatch(items: BatchItem[], fetchImpl: FetchLike = fetch, sleepImpl: SleepLike = defaultSleep): Promise<BatchSubmitted> {
+// The shared line for a single-line batch. Batches are whole-line reviews:
+// every node shares one timeline, so the first node's timeline owns the
+// line. Callers pass single-line node sets (as before); heterogeneous sets
+// would slice the wrong line and surface as per-index server errors.
+export function buildBatchLine(nodes: ReviewNode[]): BatchLine {
+  const first = nodes[0];
+  if (!first) return { initial_fen: '', moves: [] };
+  return batchLineFor(first.timeline);
+}
+
+export async function submitBatch(items: BatchItem[], line: BatchLine, fetchImpl: FetchLike = fetch, sleepImpl: SleepLike = defaultSleep): Promise<BatchSubmitted> {
   // The one shared JSON-POST sender (see evaluationTransport.postJson): one
-  // send + one body read per attempt. 429 wait-once backpressure below is
-  // per-endpoint policy and stays here; per-endpoint codes ride the shared
-  // error map (errorFromBody).
-  const postOnce = () => postJson(fetchImpl, '/reviews', { requests: items.map(item => item.request) })
+  // send + one body read per attempt. The line ships once; entries carry
+  // ply. 429 wait-once backpressure below is per-endpoint policy and stays
+  // here; per-endpoint codes ride the shared error map (errorFromBody).
+  const postOnce = () => postJson(fetchImpl, '/reviews', { line, requests: items.map(item => item.request) })
     .catch(() => { throw new MaiaApiError('server_unreachable', 'The review server could not be reached.'); });
   const readSuccess = ({ response, body }: { response: Response; body: unknown }): BatchSubmitted => {
     if (!response.ok) throw errorFromBody(response, body, 'The review server rejected this batch.');

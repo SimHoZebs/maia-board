@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BatchGoneError, buildBatchItems, clearPersistedBatch,
+import { BatchGoneError, buildBatchItems, buildBatchLine, clearPersistedBatch,
   fetchBatchStatus, hashBatchKeys,
   readPersistedBatch, submitBatch, subscribeBatchEvents, writePersistedBatch,
   type BatchItem, type BatchProgress, type PersistedBatch } from './batchReview';
@@ -103,7 +103,7 @@ export function useServerBatch(args: {
     if (!batchItems.length) { setJobId(null); setJobScopeKey(null); return; }
     void (async () => {
       try {
-        const submitted = await submitBatch(batchItems, fetcher);
+        const submitted = await submitBatch(batchItems, buildBatchLine(nodesRef.current), fetcher);
         // Stale submit: the line moved while we were submitting. Nothing
         // cancels: drop optimism we still own so the new line never inherits
         // a running count with no job behind it. The orphan drains on the

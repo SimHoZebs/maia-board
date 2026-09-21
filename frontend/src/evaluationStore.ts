@@ -91,20 +91,24 @@ export function reviewKey(engine: Engine, node: ReviewNode, settings: ReviewSett
   return JSON.stringify([posId(node.initialFen, prefixOf(node)), engine, settingsHash(engine, settings)]);
 }
 
-// Prefix arrays exist only at the HTTP boundary.
-//
-// Every request also carries pos_hash, the stable content identity (posId
-// over initialFen + moves prefix — the same value as stablePositionKey).
-// fen/moves/initial_fen are still sent; the backend allowlists pos_hash and
-// ignores it for identity, so a future backend can resolve by hash alone,
-// dropping the O(n^2) prefix bytes on long games.
+// Line-oriented bulk wire: the full line ships once per POST, entries carry
+// only ply. Client keys stay prefix-based locally (reviewKey/posId via
+// prefixOf); only the wire payload changes. pos_hash rides along allowlisted
+// and ignored for identity, as before.
+export type BatchLine = { initial_fen: string; moves: string[] };
+export function batchLineFor(timeline: { initialFen: string; moves: readonly string[] }): BatchLine {
+  return { initial_fen: timeline.initialFen, moves: [...timeline.moves] };
+}
+export function lineKeyForNode(node: ReviewNode): string {
+  return posId(node.timeline.initialFen, node.timeline.moves);
+}
 export function evaluationRequest(engine: Engine, node: ReviewNode, settings: ReviewSettings) {
   if (engine === 'sf') {
-    return { engine, fen: node.fen, initial_fen: node.initialFen, moves: prefixOf(node), pos_hash: stablePositionKey(node),
+    return { engine, ply: node.ply, fen: node.fen, pos_hash: stablePositionKey(node),
       ...(settings.stockfish ? { settings: settings.stockfish } : {}) };
   }
   const split = splitValueElos(settings);
-  return { engine, fen: node.fen, initial_fen: node.initialFen, moves: prefixOf(node), pos_hash: stablePositionKey(node),
+  return { engine, ply: node.ply, fen: node.fen, pos_hash: stablePositionKey(node),
     elo_maia: clampMaiaElo(settings.eloMaia), elo_user: clampMaiaElo(settings.eloUser), model: settings.model,
     ...(split.valueEloMaia !== undefined ? { value_elo_maia: split.valueEloMaia } : {}),
     ...(split.valueEloUser !== undefined ? { value_elo_user: split.valueEloUser } : {}) };
@@ -291,38 +295,56 @@ export class EvaluationStore {
       return [...head, ...tail];
     })();
     const pending = [...new Map(ordered.filter(job => !this.cache.has(job.key)).map(job => [job.key, job])).values()];
-    // The byte bound includes the surrounding JSON and commas. Encode only
-    // the current chunk so long histories do not retain all prefix arrays.
-    for (let at = 0; at < pending.length;) {
-      const chunk: Job[] = [];
-      const requests: ReturnType<typeof evaluationRequest>[] = [];
-      let bytes = 15;
-      while (at < pending.length && chunk.length < 1024) {
-        const job = pending[at];
-        const request = evaluationRequest(job.engine, job.node, job.settings);
-        const size = new TextEncoder().encode(JSON.stringify(request)).length + 1;
-        if (bytes + size > 4 * 1024 * 1024) { if (!chunk.length) throw new Error('Evaluation request exceeds 4 MiB.'); break; }
-        bytes += size; chunk.push(job); requests.push(request); at++;
+    // Group by line: one POST per distinct timeline (line ships once, entries
+    // carry ply). In practice restores are single-line; grouping keeps
+    // heterogeneous calls correct without changing the single-line fast path.
+    const groups = new Map<string, { line: BatchLine; jobs: Job[] }>();
+    for (const job of pending) {
+      const key = lineKeyForNode(job.node);
+      let group = groups.get(key);
+      if (!group) {
+        group = { line: batchLineFor(job.node.timeline), jobs: [] };
+        groups.set(key, group);
       }
-      const { response, body } = await fetchJsonWithBusyRetry(this.fetcher, '/evaluations/lookup',
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requests }) }, signal, 30_000);
-      signal.throwIfAborted();
-      if (!response.ok) throw new Error(`Evaluation lookup failed (${response.status}).`);
-      const payload: unknown = body;
-      if (!isRecord(payload) || !Array.isArray(payload.results)) throw new Error('Evaluation lookup returned an incomplete list.');
-      const counts = new Map<number, number>();
-      for (const row of payload.results) if (isRecord(row) && typeof row.index === 'number' && Number.isInteger(row.index)) counts.set(row.index, (counts.get(row.index) ?? 0) + 1);
-      for (const row of payload.results) {
-        if (!isRecord(row) || typeof row.index !== 'number' || !Number.isInteger(row.index) || counts.get(row.index) !== 1) continue;
-        const job = chunk[row.index];
-        if (!job) continue;
-        try {
-          const value = job.engine === 'sf' ? parseEvaluation(row.value, job.settings.stockfish, row.actual_settings, job.node.fen)
-            : parseMoveResponse(row.value, { model: job.settings.model, fen: job.node.fen });
-          this.retain(job.key, value);
-        } catch { /* Malformed cached values remain misses. */ }
+      group.jobs.push(job);
+    }
+    const encoder = new TextEncoder();
+    for (const { line, jobs: groupJobs } of groups.values()) {
+      // Byte bound covers the line once plus entries and surrounding JSON:
+      // exact base size for {"line":...,"requests":[]}, then entries + commas.
+      const baseBytes = encoder.encode(JSON.stringify({ line, requests: [] })).length;
+      // Encode entries only for the current chunk.
+      for (let at = 0; at < groupJobs.length;) {
+        const chunk: Job[] = [];
+        const requests: ReturnType<typeof evaluationRequest>[] = [];
+        let bytes = baseBytes;
+        while (at < groupJobs.length && chunk.length < 1024) {
+          const job = groupJobs[at];
+          const request = evaluationRequest(job.engine, job.node, job.settings);
+          const size = encoder.encode(JSON.stringify(request)).length + 1;
+          if (bytes + size > 4 * 1024 * 1024) { if (!chunk.length) throw new Error('Evaluation request exceeds 4 MiB.'); break; }
+          bytes += size; chunk.push(job); requests.push(request); at++;
+        }
+        const { response, body } = await fetchJsonWithBusyRetry(this.fetcher, '/evaluations/lookup',
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ line, requests }) }, signal, 30_000);
+        signal.throwIfAborted();
+        if (!response.ok) throw new Error(`Evaluation lookup failed (${response.status}).`);
+        const payload: unknown = body;
+        if (!isRecord(payload) || !Array.isArray(payload.results)) throw new Error('Evaluation lookup returned an incomplete list.');
+        const counts = new Map<number, number>();
+        for (const row of payload.results) if (isRecord(row) && typeof row.index === 'number' && Number.isInteger(row.index)) counts.set(row.index, (counts.get(row.index) ?? 0) + 1);
+        for (const row of payload.results) {
+          if (!isRecord(row) || typeof row.index !== 'number' || !Number.isInteger(row.index) || counts.get(row.index) !== 1) continue;
+          const job = chunk[row.index];
+          if (!job) continue;
+          try {
+            const value = job.engine === 'sf' ? parseEvaluation(row.value, job.settings.stockfish, row.actual_settings, job.node.fen)
+              : parseMoveResponse(row.value, { model: job.settings.model, fen: job.node.fen });
+            this.retain(job.key, value);
+          } catch { /* Malformed cached values remain misses. */ }
+        }
+        this.notify();
       }
-      this.notify();
     }
     return this.primeCoverage(nodes, settings, engines);
   }

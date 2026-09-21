@@ -37,22 +37,22 @@ const (
 // predict/run. Work runs on detached contexts so disconnects never leak slots
 // and granted ops still write through. Intake cache-filtering happens at
 // batch submit (resolveBatchEntryRequest + prefetched intake filter); write-through happens inside execute.
-func resolveSFQuery(query lookupRequest) (evaluationRequest, *requestError) {
-	if query.Moves == nil {
+func resolveSFQuery(query lookupRequest, initialFEN string, prefix []string) (evaluationRequest, *requestError) {
+	if prefix == nil {
 		return evaluationRequest{}, &requestError{"invalid_request", "moves must be an array"}
 	}
 	if query.EloMaia != nil || query.EloUser != nil || query.Model != "" {
 		return evaluationRequest{}, &requestError{"invalid_request", "Stockfish request contains Maia settings"}
 	}
-	req := evaluationRequest{FEN: query.FEN, InitialFEN: query.InitialFEN, Moves: query.Moves, Settings: query.Settings}
+	req := evaluationRequest{FEN: query.FEN, InitialFEN: initialFEN, Moves: prefix, Settings: query.Settings}
 	if err := validateEvaluationRequest(&req); err != nil {
 		return evaluationRequest{}, &requestError{"invalid_request", err.Message}
 	}
 	return req, nil
 }
 
-func resolveMaiaQuery(query lookupRequest) (EngineRequest, string, *requestError) {
-	if query.Moves == nil {
+func resolveMaiaQuery(query lookupRequest, initialFEN string, prefix []string) (EngineRequest, string, *requestError) {
+	if prefix == nil {
 		return EngineRequest{}, "", &requestError{"invalid_request", "moves must be an array"}
 	}
 	if query.Settings != nil {
@@ -63,8 +63,8 @@ func resolveMaiaQuery(query lookupRequest) (EngineRequest, string, *requestError
 	if side == "b" {
 		color = "black"
 	}
-	req, model, err := validateMoveRequest(moveRequest{FEN: query.FEN, InitialFEN: query.InitialFEN,
-		Moves: query.Moves, EloMaia: query.EloMaia, EloUser: query.EloUser,
+	req, model, err := validateMoveRequest(moveRequest{FEN: query.FEN, InitialFEN: initialFEN,
+		Moves: prefix, EloMaia: query.EloMaia, EloUser: query.EloUser,
 		ValueEloMaia: query.ValueEloMaia, ValueEloUser: query.ValueEloUser,
 		Model: query.Model, MaiaColor: color})
 	if err != nil {
@@ -450,23 +450,29 @@ func (js *ReviewJobs) evictLocked(keepID string) {
 }
 
 // resolveBatchEntryRequest validates one batch request exactly like the sync
-// endpoints + lookup do (via the shared resolve). Cache filtering happens
-// separately in reviews() from one prefetched snapshot, so intake costs one
-// bulk read instead of a point read per entry.
-func (js *ReviewJobs) resolveBatchEntryRequest(index int, query lookupRequest) (*batchEntry, *requestError) {
+// endpoints + lookup do (via the shared resolve). The prefix is sliced from
+// the shared line (pure slice, no chess); the derived triple feeds the
+// unchanged identity/validate paths. Cache filtering happens separately in
+// reviews() from one prefetched snapshot, so intake costs one bulk read
+// instead of a point read per entry.
+func (js *ReviewJobs) resolveBatchEntryRequest(index int, line batchLine, query lookupRequest) (*batchEntry, *requestError) {
 	entry := &batchEntry{index: index, engine: query.Engine, status: batchPending}
-	prefix := fmt.Sprintf("requests[%d]: ", index)
+	prefixMsg := fmt.Sprintf("requests[%d]: ", index)
+	prefix, prefixErr := linePrefix(line, query.Ply)
+	if prefixErr != nil {
+		return nil, &requestError{"invalid_request", prefixMsg + prefixErr.Message}
+	}
 	switch query.Engine {
 	case "sf":
-		request, reqErr := resolveSFQuery(query)
+		request, reqErr := resolveSFQuery(query, line.InitialFEN, prefix)
 		if reqErr != nil {
-			return nil, &requestError{"invalid_request", prefix + reqErr.Message}
+			return nil, &requestError{"invalid_request", prefixMsg + reqErr.Message}
 		}
 		entry.evalReq = request
 	case "maia":
-		request, model, reqErr := resolveMaiaQuery(query)
+		request, model, reqErr := resolveMaiaQuery(query, line.InitialFEN, prefix)
 		if reqErr != nil {
-			return nil, &requestError{"invalid_request", prefix + reqErr.Message}
+			return nil, &requestError{"invalid_request", prefixMsg + reqErr.Message}
 		}
 		entry.maiaReq, entry.maiaModel = request, model
 	default:
@@ -502,15 +508,21 @@ func (js *ReviewJobs) reviews(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
+		Line     batchLine       `json:"line"`
 		Requests []lookupRequest `json:"requests"`
 	}
 	decoded, ok := decodeSingle[struct {
+		Line     batchLine       `json:"line"`
 		Requests []lookupRequest `json:"requests"`
 	}](w, r, 4*1024*1024)
 	if !ok {
 		return
 	}
 	body = decoded
+	if lineErr := validateBatchLine(body.Line); lineErr != nil {
+		writeAPIError(w, http.StatusBadRequest, lineErr.Code, lineErr.Message)
+		return
+	}
 	if body.Requests == nil || len(body.Requests) == 0 || len(body.Requests) > maxBatchRequests {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("requests must contain 1 to %d entries", maxBatchRequests))
 		return
@@ -532,7 +544,7 @@ func (js *ReviewJobs) reviews(w http.ResponseWriter, r *http.Request) {
 		// reads, without N sequential round trips on long games.
 		var hashes []string
 		for index, query := range body.Requests {
-			entry, invalid := js.resolveBatchEntryRequest(index, query)
+			entry, invalid := js.resolveBatchEntryRequest(index, body.Line, query)
 			if invalid != nil {
 				writeAPIError(w, http.StatusBadRequest, invalid.Code, invalid.Message)
 				return

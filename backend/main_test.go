@@ -222,8 +222,8 @@ func TestMoveHandlerPersistsAfterClientStopsWaiting(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("bounded handler did not finish")
 			}
-			query := lookupRequest{Engine: "maia", FEN: startFEN, InitialFEN: startFEN, Moves: []string{}, EloMaia: &self, EloUser: &opponent, Model: "79m"}
-			lookupBody, err := json.Marshal(map[string]any{"requests": []lookupRequest{query}})
+			query := lookupRequest{Engine: "maia", FEN: startFEN, Ply: 0, EloMaia: &self, EloUser: &opponent, Model: "79m"}
+			lookupBody, err := json.Marshal(map[string]any{"line": batchLine{InitialFEN: startFEN, Moves: []string{}}, "requests": []lookupRequest{query}})
 			if err != nil {
 				t.Fatal(err)
 			}

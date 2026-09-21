@@ -30,15 +30,22 @@ func seedSF(t *testing.T, s *server, r evaluationRequest, score int) {
 		t.Fatalf("producer rejected fixture: %v", err)
 	}
 }
-func lookup(t *testing.T, s *server, requests []lookupRequest) *httptest.ResponseRecorder {
+func testLine() batchLine {
+	return batchLine{InitialFEN: startFEN, Moves: []string{}}
+}
+func lookup(t *testing.T, s *server, line batchLine, requests []lookupRequest) *httptest.ResponseRecorder {
 	t.Helper()
-	data, err := json.Marshal(map[string]any{"requests": requests})
+	data, err := json.Marshal(map[string]any{"line": line, "requests": requests})
 	if err != nil {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
 	s.evaluationLookup(w, httptest.NewRequest("POST", "/evaluations/lookup", strings.NewReader(string(data))))
 	return w
+}
+func lookupDefault(t *testing.T, s *server, requests []lookupRequest) *httptest.ResponseRecorder {
+	t.Helper()
+	return lookup(t, s, testLine(), requests)
 }
 func lookupValues(t *testing.T, w *httptest.ResponseRecorder) []lookupResult {
 	t.Helper()
@@ -73,8 +80,8 @@ func TestLookupCompatibleSettingsPreserveActualProvenance(t *testing.T) {
 	large := &stockfishSettings{750, 5, 8}
 	r := evaluationRequest{FEN: startFEN, Moves: []string{}, Settings: large}
 	seedSF(t, s, r, 55)
-	query := lookupRequest{Engine: "sf", FEN: startFEN, InitialFEN: startFEN, Moves: []string{}, Settings: &stockfishSettings{750, 2, 8}}
-	rows := lookupValues(t, lookup(t, s, []lookupRequest{query}))
+	query := lookupRequest{Engine: "sf", FEN: startFEN, Ply: 0, Settings: &stockfishSettings{750, 2, 8}}
+	rows := lookupValues(t, lookupDefault(t, s, []lookupRequest{query}))
 	if len(rows) != 1 || rows[0].Index != 0 || rows[0].ActualSettings == nil || *rows[0].ActualSettings != *large {
 		t.Fatalf("provenance %+v", rows)
 	}
@@ -102,7 +109,7 @@ func TestLookupCompatibleSettingsPreserveActualProvenance(t *testing.T) {
 		t.Fatalf("restamped reuse: %v", err)
 	}
 	seedSF(t, s, requested, 99)
-	rows = lookupValues(t, lookup(t, s, []lookupRequest{query}))
+	rows = lookupValues(t, lookupDefault(t, s, []lookupRequest{query}))
 	value, ok = strictEvalResponse(t, rows[0].Value)
 	if !ok || value.Score.Value != 99 || value.SearchPolicy != query.Settings.policy() || *rows[0].ActualSettings != *query.Settings {
 		t.Fatalf("exact search did not win: %+v", rows)
@@ -112,26 +119,27 @@ func TestLookupSettingsAndCompleteHistoryIsolation(t *testing.T) {
 	s := &server{store: testStore(t)}
 	settings := &stockfishSettings{750, 3, 8}
 	seedSF(t, s, evaluationRequest{FEN: startFEN, Settings: settings}, 10)
-	base := lookupRequest{Engine: "sf", FEN: startFEN, InitialFEN: startFEN, Moves: []string{}, Settings: settings}
+	base := lookupRequest{Engine: "sf", FEN: startFEN, Ply: 0, Settings: settings}
 	queries := []lookupRequest{base}
 	for _, mutate := range []func(*lookupRequest){
 		func(q *lookupRequest) { q.Settings = &stockfishSettings{1000, 3, 8} },
 		func(q *lookupRequest) { q.Settings = &stockfishSettings{750, 3, 9} },
 		func(q *lookupRequest) { q.Settings = &stockfishSettings{750, 4, 8} },
 		func(q *lookupRequest) { q.Settings = nil },
-		func(q *lookupRequest) { q.Moves = []string{"g1f3", "g8f6", "f3g1", "f6g8"} },
+		func(q *lookupRequest) { q.Ply = 4 },
 	} {
 		q := base
 		mutate(&q)
 		queries = append(queries, q)
 	}
-	rows := lookupValues(t, lookup(t, s, queries))
+	line := batchLine{InitialFEN: startFEN, Moves: []string{"g1f3", "g8f6", "f3g1", "f6g8"}}
+	rows := lookupValues(t, lookup(t, s, line, queries))
 	if len(rows) != 1 || rows[0].Index != 0 {
 		t.Fatalf("cross-key hit: %+v", rows)
 	}
 	// A normalized request shares identity with the real inference route.
 	base.FEN = "  " + strings.ReplaceAll(startFEN, " ", "  ") + " "
-	if len(lookupValues(t, lookup(t, s, []lookupRequest{base}))) != 1 {
+	if len(lookupValues(t, lookupDefault(t, s, []lookupRequest{base}))) != 1 {
 		t.Fatal("whitespace altered identity")
 	}
 }
@@ -141,12 +149,17 @@ func TestLookupSettingsAndCompleteHistoryIsolation(t *testing.T) {
 func TestInconsistentTripleRejectedNeverFiled(t *testing.T) {
 	s := &server{store: testStore(t)}
 	badInitial := strings.Replace(startFEN, "0 1", "1 1", 1)
-	// lookupRequest shape with empty moves + mismatched root.
-	for _, q := range []lookupRequest{
-		{Engine: "sf", FEN: startFEN, InitialFEN: badInitial, Moves: []string{}, Settings: &stockfishSettings{750, 3, 8}},
-		{Engine: "sf", FEN: badInitial, InitialFEN: startFEN, Moves: []string{}, Settings: &stockfishSettings{750, 3, 8}},
+	// Ply-0 entries rooting away from the shared line initial.
+	for _, line := range []batchLine{
+		{InitialFEN: badInitial, Moves: []string{}},
+		{InitialFEN: startFEN, Moves: []string{}},
 	} {
-		w := lookup(t, s, []lookupRequest{q})
+		fen := startFEN
+		if line.InitialFEN == startFEN {
+			fen = badInitial
+		}
+		q := lookupRequest{Engine: "sf", FEN: fen, Ply: 0, Settings: &stockfishSettings{750, 3, 8}}
+		w := lookup(t, s, line, []lookupRequest{q})
 		if w.Code != 400 {
 			t.Fatalf("inconsistent lookup status %d: %s", w.Code, w.Body)
 		}
@@ -181,10 +194,10 @@ func TestMaiaLookupModelEloAndLegacyIsolation(t *testing.T) {
 	hash, key := maiaIdentity(r, "79m").coordinates()
 	value := moveResponse{Move: "e2e4", TopMoves: []topMove{{Move: "e2e4", Prob: 1, WDL: [3]float64{.2, .3, .5}}}, WDL: [3]float64{.2, .3, .5}, ModelUsed: "79m"}
 	s.storeCache(hash, "maia", key, value)
-	base := lookupRequest{Engine: "maia", FEN: startFEN, InitialFEN: startFEN, Moves: []string{}, EloMaia: &elo, EloUser: &elo, Model: "79m"}
+	base := lookupRequest{Engine: "maia", FEN: startFEN, Ply: 0, EloMaia: &elo, EloUser: &elo, Model: "79m"}
 	queries := []lookupRequest{base, base, base, base}
 	queries[1].Model, queries[2].EloMaia, queries[3].EloUser = "5m", &other, &other
-	rows := lookupValues(t, lookup(t, s, queries))
+	rows := lookupValues(t, lookupDefault(t, s, queries))
 	if len(rows) != 1 || rows[0].Index != 0 {
 		t.Fatalf("model or ratings leaked: %+v", rows)
 	}
@@ -194,30 +207,34 @@ func TestMaiaLookupModelEloAndLegacyIsolation(t *testing.T) {
 	if _, err := legacy.store.cachePut("abc", "maia", "legacy", string(data)); err != nil {
 		t.Fatal(err)
 	}
-	if rows := lookupValues(t, lookup(t, legacy, []lookupRequest{base})); len(rows) != 0 {
+	if rows := lookupValues(t, lookupDefault(t, legacy, []lookupRequest{base})); len(rows) != 0 {
 		t.Fatal("trusted legacy row")
 	}
 }
 func TestLookupRejectsMalformedShapeAndBounds(t *testing.T) {
 	s := &server{store: testStore(t)}
-	valid := `{"engine":"sf","fen":"` + startFEN + `","initial_fen":"","moves":[]}`
+	line := `"line":{"initial_fen":"","moves":[]}`
+	valid := `{"engine":"sf","ply":0,"fen":"` + startFEN + `"}`
 	for name, body := range map[string]string{
-		"null": "null", "missing": `{}`, "null entries": `{"requests":null}`,
-		"wrong array": `{"requests":{}}`, "null request": `{"requests":[null]}`,
-		"no moves":               `{"requests":[{"engine":"sf","fen":"` + startFEN + `","initial_fen":""}]}`,
-		"null moves":             `{"requests":[` + strings.Replace(valid, `"moves":[]`, `"moves":null`, 1) + `]}`,
-		"no initial":             `{"requests":[` + strings.Replace(valid, `"initial_fen":"",`, ``, 1) + `]}`,
-		"bad FEN":                `{"requests":[` + strings.Replace(valid, startFEN, "garbage", 1) + `]}`,
-		"bad move":               `{"requests":[` + strings.Replace(valid, `"moves":[]`, `"moves":["oops"]`, 1) + `]}`,
-		"unknown":                `{"requests":[` + strings.Replace(valid, `"engine":"sf"`, `"engine":"other"`, 1) + `]}`,
-		"extra":                  `{"requests":[],"extra":true}`,
-		"null settings":          `{"requests":[` + strings.TrimSuffix(valid, "}") + `,"settings":null}]}`,
-		"missing settings depth": `{"requests":[` + strings.TrimSuffix(valid, "}") + `,"settings":{"time_ms":750,"lines":2}}]}`,
-		"mixed settings":         `{"requests":[` + strings.TrimSuffix(valid, "}") + `,"elo_maia":1600}]}`,
-		"unknown coordinates":    `{"requests":[` + strings.TrimSuffix(valid, "}") + `,"cache_hash":"abc"}]}`,
-		"trailing":               `{"requests":[]} {}`,
-		"count":                  `{"requests":[` + strings.Repeat(valid+",", 1024) + valid + `]}`,
-		"size":                   `{"requests":[],"padding":"` + strings.Repeat("x", 4*1024*1024) + `"}`,
+		"null": "null", "missing": `{}`, "null entries": `{"line":{"initial_fen":"","moves":[]},"requests":null}`,
+		"wrong array": `{"line":{"initial_fen":"","moves":[]},"requests":{}}`, "null request": `{"line":{"initial_fen":"","moves":[]},"requests":[null]}`,
+		"no ply":                 `{"line":{"initial_fen":"","moves":[]},"requests":[{"engine":"sf","fen":"` + startFEN + `"}]}`,
+		"null ply":               `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.Replace(valid, `"ply":0`, `"ply":null`, 1) + `]}`,
+		"no line":                `{"requests":[]}`,
+		"null line moves":        `{"line":{"initial_fen":"","moves":null},"requests":[]}`,
+		"no line initial":        `{"line":{"moves":[]},"requests":[]}`,
+		"bad FEN":                `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.Replace(valid, startFEN, "garbage", 1) + `]}`,
+		"bad line move":          `{"line":{"initial_fen":"","moves":["oops"]},"requests":[]}`,
+		"unknown":                `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.Replace(valid, `"engine":"sf"`, `"engine":"other"`, 1) + `]}`,
+		"extra":                  `{"line":{"initial_fen":"","moves":[]},"requests":[],"extra":true}`,
+		"null settings":          `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.TrimSuffix(valid, "}") + `,"settings":null}]}`,
+		"missing settings depth": `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.TrimSuffix(valid, "}") + `,"settings":{"time_ms":750,"lines":2}}]}`,
+		"mixed settings":         `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.TrimSuffix(valid, "}") + `,"elo_maia":1600}]}`,
+		"unknown coordinates":    `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.TrimSuffix(valid, "}") + `,"cache_hash":"abc"}]}`,
+		"old coordinates":        `{"line":{"initial_fen":"","moves":[]},"requests":[{"engine":"sf","ply":0,"fen":"` + startFEN + `","initial_fen":"","moves":[]}]}`,
+		"trailing":               `{"line":{"initial_fen":"","moves":[]},"requests":[]} {}`,
+		"count":                  `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.Repeat(valid+",", 1024) + valid + `]}`,
+		"size":                   `{"line":{"initial_fen":"","moves":[]},"requests":[],"padding":"` + strings.Repeat("x", 4*1024*1024) + `"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := httptest.NewRecorder()
@@ -227,11 +244,12 @@ func TestLookupRejectsMalformedShapeAndBounds(t *testing.T) {
 			}
 		})
 	}
+	_ = line
 	requests := make([]lookupRequest, 1024)
 	for i := range requests {
-		requests[i] = lookupRequest{Engine: "sf", FEN: startFEN, InitialFEN: "", Moves: []string{}}
+		requests[i] = lookupRequest{Engine: "sf", FEN: startFEN, Ply: 0}
 	}
-	if rows := lookupValues(t, lookup(t, s, requests)); len(rows) != 0 {
+	if rows := lookupValues(t, lookup(t, s, batchLine{InitialFEN: "", Moves: []string{}}, requests)); len(rows) != 0 {
 		t.Fatal("cold cache produced results")
 	}
 	var rows int
@@ -385,7 +403,7 @@ func TestTerminalWinnerContract(t *testing.T) {
 
 func TestLookupBodyByteLimit(t *testing.T) {
 	s := &server{store: testStore(t)}
-	prefix := `{"requests":[{"engine":"sf","initial_fen":"","moves":[],"fen":"`
+	prefix := `{"line":{"initial_fen":"","moves":[]},"requests":[{"engine":"sf","ply":0,"fen":"`
 	suffix := startFEN + `"}]}`
 	for _, extra := range []int{0, 1} {
 		body := prefix + strings.Repeat(" ", 4*1024*1024-len(prefix)-len(suffix)+extra) + suffix

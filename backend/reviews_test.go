@@ -21,13 +21,21 @@ func batchServer(t *testing.T, mode string) *server {
 	return s
 }
 
-// Batch requests carry the full lookup shape, including initial_fen.
+// Batch entries carry ply; the shared line ships once.
+func batchLineJSON() string {
+	return fmt.Sprintf(`"line":{"initial_fen":%q,"moves":[]}`, startFEN)
+}
+
 func sfBatchReq() string {
-	return fmt.Sprintf(`{"engine":"sf","fen":"%s","initial_fen":"%s","moves":[]}`, startFEN, startFEN)
+	return fmt.Sprintf(`{"engine":"sf","ply":0,"fen":"%s"}`, startFEN)
 }
 
 func maiaBatchReq() string {
-	return fmt.Sprintf(`{"engine":"maia","fen":"%s","initial_fen":"%s","moves":[],"elo_maia":1500,"elo_user":1500,"model":"79m"}`, startFEN, startFEN)
+	return fmt.Sprintf(`{"engine":"maia","ply":0,"fen":"%s","elo_maia":1500,"elo_user":1500,"model":"79m"}`, startFEN)
+}
+
+func batchBody(reqs ...string) string {
+	return fmt.Sprintf(`{%s,"requests":[%s]}`, batchLineJSON(), strings.Join(reqs, ","))
 }
 
 func postBatch(t *testing.T, s *server, body string) (int, map[string]any) {
@@ -68,21 +76,29 @@ func awaitBatch(t *testing.T, s *server, id string) batchProgress {
 
 func TestBatchValidation(t *testing.T) {
 	s := batchServer(t, "ok")
-	badEngine := fmt.Sprintf(`{"requests":[{"engine":"xx","fen":"%s","initial_fen":"%s","moves":[]}]}`, startFEN, startFEN)
-	nilMoves := fmt.Sprintf(`{"requests":[{"engine":"sf","fen":"%s","initial_fen":"%s"}]}`, startFEN, startFEN)
-	maiaInSF := fmt.Sprintf(`{"requests":[{"engine":"sf","fen":"%s","initial_fen":"%s","moves":[],"model":"79m"}]}`, startFEN, startFEN)
-	sfInMaia := fmt.Sprintf(`{"requests":[{"engine":"maia","fen":"%s","initial_fen":"%s","moves":[],"elo_maia":1500,"elo_user":1500,"model":"79m","settings":{"time_ms":750,"lines":2}}]}`, startFEN, startFEN)
-	tooLong := fmt.Sprintf(`{"requests":[{"engine":"sf","fen":"%s","initial_fen":"%s","moves":[%s]}]}`, startFEN, startFEN, strings.Repeat(`"e2e4",`, 257)+`"e2e4"`)
+	line := batchLineJSON()
+	badEngine := fmt.Sprintf(`{%s,"requests":[{"engine":"xx","ply":0,"fen":"%s"}]}`, line, startFEN)
+	nilPly := fmt.Sprintf(`{%s,"requests":[{"engine":"sf","fen":"%s"}]}`, line, startFEN)
+	maiaInSF := fmt.Sprintf(`{%s,"requests":[{"engine":"sf","ply":0,"fen":"%s","model":"79m"}]}`, line, startFEN)
+	sfInMaia := fmt.Sprintf(`{%s,"requests":[{"engine":"maia","ply":0,"fen":"%s","elo_maia":1500,"elo_user":1500,"model":"79m","settings":{"time_ms":750,"lines":2}}]}`, line, startFEN)
+	tooLongLine := fmt.Sprintf(`{"line":{"initial_fen":%q,"moves":[%s]},"requests":[{"engine":"sf","ply":258,"fen":%q}]}`,
+		startFEN, strings.Repeat(`"e2e4",`, 257)+`"e2e4"`, startFEN)
+	plyOutOfRange := fmt.Sprintf(`{%s,"requests":[{"engine":"sf","ply":1,"fen":"%s"}]}`, line, startFEN)
+	badLineMove := fmt.Sprintf(`{"line":{"initial_fen":%q,"moves":["oops"]},"requests":[{"engine":"sf","ply":0,"fen":%q}]}`,
+		startFEN, startFEN)
 	for _, tc := range []struct {
 		name, body string
 	}{
-		{"empty", `{"requests":[]}`},
+		{"empty", fmt.Sprintf(`{%s,"requests":[]}`, line)},
 		{"missing", `{}`},
+		{"missing line", `{"requests":[]}`},
 		{"bad engine", badEngine},
-		{"nil moves", nilMoves},
+		{"nil ply", nilPly},
 		{"maia in sf", maiaInSF},
 		{"sf in maia", sfInMaia},
-		{"too long", tooLong},
+		{"too long", tooLongLine},
+		{"ply out of range", plyOutOfRange},
+		{"bad line move", badLineMove},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if code, _ := postBatch(t, s, tc.body); code != 400 {
@@ -94,7 +110,7 @@ func TestBatchValidation(t *testing.T) {
 
 func TestBatchDrainsAndPersists(t *testing.T) {
 	s := batchServer(t, "ok")
-	body := `{"requests":[` + sfBatchReq() + `,` + maiaBatchReq() + `]}`
+	body := batchBody(sfBatchReq(), maiaBatchReq())
 	code, created := postBatch(t, s, body)
 	if code != 202 {
 		t.Fatalf("submit %d: %v", code, created)
@@ -108,7 +124,7 @@ func TestBatchDrainsAndPersists(t *testing.T) {
 		t.Fatalf("progress: %+v", progress)
 	}
 	// Finished rows are ordinary cache rows visible to bulk lookup.
-	lookupBody := `{"requests":[` + sfBatchReq() + `,` + maiaBatchReq() + `]}`
+	lookupBody := batchBody(sfBatchReq(), maiaBatchReq())
 	w := httptest.NewRecorder()
 	s.evaluationLookup(w, httptest.NewRequest("POST", "/evaluations/lookup", strings.NewReader(lookupBody)))
 	var lookup struct {
@@ -127,9 +143,9 @@ func TestBatchDrainsAndPersists(t *testing.T) {
 func TestBatchConcurrentAdmits(t *testing.T) {
 	s := batchServer(t, "ok")
 	otherFEN := strings.Replace(startFEN, "w KQkq", "b KQkq", 1)
-	body1 := fmt.Sprintf(`{"requests":[{"engine":"maia","fen":%q,"initial_fen":%q,"moves":[],"elo_maia":1500,"elo_user":1500,"model":"79m"}]}`,
+	body1 := fmt.Sprintf(`{"line":{"initial_fen":%q,"moves":[]},"requests":[{"engine":"maia","ply":0,"fen":%q,"elo_maia":1500,"elo_user":1500,"model":"79m"}]}`,
 		startFEN, startFEN)
-	body2 := fmt.Sprintf(`{"requests":[{"engine":"maia","fen":%q,"initial_fen":%q,"moves":[],"elo_maia":1500,"elo_user":1500,"model":"79m"}]}`,
+	body2 := fmt.Sprintf(`{"line":{"initial_fen":%q,"moves":[]},"requests":[{"engine":"maia","ply":0,"fen":%q,"elo_maia":1500,"elo_user":1500,"model":"79m"}]}`,
 		otherFEN, otherFEN)
 	code1, created1 := postBatch(t, s, body1)
 	if code1 != 202 {
@@ -175,7 +191,7 @@ func TestBatchUnknownID(t *testing.T) {
 
 func TestBatchDeleteGone(t *testing.T) {
 	s := batchServer(t, "ok")
-	body := `{"requests":[` + sfBatchReq() + `]}`
+	body := batchBody(sfBatchReq())
 	code, created := postBatch(t, s, body)
 	if code != 202 {
 		t.Fatalf("submit %d: %v", code, created)
@@ -194,11 +210,19 @@ func TestBatchDeleteGone(t *testing.T) {
 }
 
 func sfReqFEN(fen string) string {
-	return fmt.Sprintf(`{"engine":"sf","fen":%q,"initial_fen":%q,"moves":[]}`, fen, fen)
+	return fmt.Sprintf(`{"engine":"sf","ply":0,"fen":%q}`, fen)
+}
+
+func sfBodyFEN(fen string) string {
+	return fmt.Sprintf(`{"line":{"initial_fen":%q,"moves":[]},"requests":[%s]}`, fen, sfReqFEN(fen))
 }
 
 func maiaReqFEN(fen, model string) string {
-	return fmt.Sprintf(`{"engine":"maia","fen":%q,"initial_fen":%q,"moves":[],"elo_maia":1500,"elo_user":1500,"model":%q}`, fen, fen, model)
+	return fmt.Sprintf(`{"engine":"maia","ply":0,"fen":%q,"elo_maia":1500,"elo_user":1500,"model":%q}`, fen, model)
+}
+
+func maiaBodyFEN(fen, model string) string {
+	return fmt.Sprintf(`{"line":{"initial_fen":%q,"moves":[]},"requests":[%s]}`, fen, maiaReqFEN(fen, model))
 }
 
 func postBatchRec(s *server, body string) *httptest.ResponseRecorder {
@@ -343,14 +367,14 @@ func TestBatchUnfinishedCap(t *testing.T) {
 	for i := 0; i < maxUnfinishedJobs; i++ {
 		seedFakeJob(s.reviews, fmt.Sprintf("busy%d", i), false, 1, 0, 0)
 	}
-	w := postBatchRec(s, `{"requests":[`+sfBatchReq()+`]}`)
+	w := postBatchRec(s, batchBody(sfBatchReq()))
 	assertEngineBusy(t, w)
 	// Finished jobs do not count toward the cap.
 	s2 := batchServer(t, "ok")
 	for i := 0; i < maxUnfinishedJobs; i++ {
 		seedFakeJob(s2.reviews, fmt.Sprintf("done%d", i), true, 1, 0, 0)
 	}
-	code, _ := postBatch(t, s2, `{"requests":[`+sfBatchReq()+`]}`)
+	code, _ := postBatch(t, s2, batchBody(sfBatchReq()))
 	if code != 202 {
 		t.Fatalf("finished jobs must not trip unfinished cap: %d", code)
 	}
@@ -359,7 +383,7 @@ func TestBatchUnfinishedCap(t *testing.T) {
 func TestBatchMissCapSF(t *testing.T) {
 	s := batchServer(t, "ok")
 	seedFakeJob(s.reviews, "fill", false, maxBatchRequests, 0, 0)
-	w := postBatchRec(s, `{"requests":[`+sfBatchReq()+`]}`)
+	w := postBatchRec(s, batchBody(sfBatchReq()))
 	assertEngineBusy(t, w)
 	unfinished, sf, _, _ := s.reviews.snapshotCounts()
 	if unfinished != 1 || sf != maxBatchRequests {
@@ -373,17 +397,17 @@ func TestBatchMissCapMaiaDoubleCounts(t *testing.T) {
 	seedFakeJob(s.reviews, "fill-large", false, 0, maxBatchRequests, 0)
 	otherFEN := strings.Replace(startFEN, "w KQkq", "b KQkq", 1)
 	// Large-destined submit 429s on large.
-	w := postBatchRec(s, `{"requests":[`+maiaReqFEN(otherFEN, "79m")+`]}`)
+	w := postBatchRec(s, maiaBodyFEN(otherFEN, "79m"))
 	assertEngineBusy(t, w)
 	// 5m-destined submit 429s alike on small: no reservation.
-	w = postBatchRec(s, `{"requests":[`+maiaReqFEN(otherFEN, "5m")+`]}`)
+	w = postBatchRec(s, maiaBodyFEN(otherFEN, "5m"))
 	assertEngineBusy(t, w)
 	// Small-only fills leave large room.
 	s2 := batchServer(t, "ok")
 	seedFakeJob(s2.reviews, "fill-small", false, 0, 0, maxBatchRequests)
-	w = postBatchRec(s2, `{"requests":[`+maiaReqFEN(otherFEN, "5m")+`]}`)
+	w = postBatchRec(s2, maiaBodyFEN(otherFEN, "5m"))
 	assertEngineBusy(t, w)
-	code, _ := postBatch(t, s2, `{"requests":[`+maiaReqFEN(otherFEN, "79m")+`]}`)
+	code, _ := postBatch(t, s2, maiaBodyFEN(otherFEN, "79m"))
 	// Large still has room (0 large used) but small is full and large
 	// double-counts small, so this 429s too — on small, not large.
 	if code != 429 {
@@ -394,7 +418,7 @@ func TestBatchMissCapMaiaDoubleCounts(t *testing.T) {
 func TestBatchCachedHitsDontCount(t *testing.T) {
 	s := batchServer(t, "ok")
 	// Warm one Maia row, then fill schedulers with distinct misses.
-	warm := `{"requests":[` + maiaReqFEN(startFEN, "79m") + `]}`
+	warm := maiaBodyFEN(startFEN, "79m")
 	code, warmed := postBatch(t, s, warm)
 	if code != 202 {
 		t.Fatalf("warm submit %d", code)
@@ -408,7 +432,7 @@ func TestBatchCachedHitsDontCount(t *testing.T) {
 		t.Fatalf("cached-hits submit %d, want 202: %s", w.Code, w.Body.String())
 	}
 	// One more miss still 429s.
-	w = postBatchRec(s, `{"requests":[`+maiaReqFEN(otherFEN, "79m")+`]}`)
+	w = postBatchRec(s, maiaBodyFEN(otherFEN, "79m"))
 	assertEngineBusy(t, w)
 }
 
@@ -418,8 +442,8 @@ func TestBatchRaceRetryThen429(t *testing.T) {
 	seedFakeJob(s.reviews, "fill", false, maxBatchRequests-1, 0, 0)
 	fenA := strings.Replace(startFEN, "0 1", "0 2", 1)
 	fenB := strings.Replace(startFEN, "0 1", "0 3", 1)
-	bodyA := `{"requests":[` + sfReqFEN(fenA) + `]}`
-	bodyB := `{"requests":[` + sfReqFEN(fenB) + `]}`
+	bodyA := sfBodyFEN(fenA)
+	bodyB := sfBodyFEN(fenB)
 	var wg sync.WaitGroup
 	codes := make([]int, 2)
 	wg.Add(2)
@@ -447,7 +471,7 @@ func TestBatchRaceRetryThen429(t *testing.T) {
 func TestBatchSubmitSeqAssignedAndHidden(t *testing.T) {
 	s := batchServer(t, "ok")
 	before := submitSeqCounter.Load()
-	code, created := postBatch(t, s, `{"requests":[`+sfBatchReq()+`]}`)
+	code, created := postBatch(t, s, batchBody(sfBatchReq()))
 	if code != 202 {
 		t.Fatalf("submit %d", code)
 	}
@@ -469,13 +493,13 @@ func TestBatchSubmitSeqAssignedAndHidden(t *testing.T) {
 		}
 	}
 	// Rejected submits consume nothing.
-	code, _ = postBatch(t, s, `{"requests":[{"engine":"xx"}]}`)
+	code, _ = postBatch(t, s, fmt.Sprintf(`{%s,"requests":[{"engine":"xx","ply":0,"fen":%q}]}`, batchLineJSON(), startFEN))
 	if code != 400 {
 		t.Fatalf("invalid %d", code)
 	}
 	seedFakeJob(s.reviews, "capfill", false, maxBatchRequests, 0, 0)
 	otherFEN := strings.Replace(startFEN, "0 1", "0 2", 1)
-	w := postBatchRec(s, `{"requests":[`+sfReqFEN(otherFEN)+`]}`)
+	w := postBatchRec(s, sfBodyFEN(otherFEN))
 	assertEngineBusy(t, w)
 	if submitSeqCounter.Load() != before+1 {
 		t.Fatalf("rejected submits must consume nothing")
@@ -503,7 +527,7 @@ func TestBatchSubmitSeqAssignedAndHidden(t *testing.T) {
 func TestBatchEventsStreamSnapshot(t *testing.T) {
 	s := batchServer(t, "ok")
 	// Pre-warm the cache so the batch is fully settled at submit.
-	warm := `{"requests":[` + sfBatchReq() + `]}`
+	warm := batchBody(sfBatchReq())
 	code, warmed := postBatch(t, s, warm)
 	if code != 202 {
 		t.Fatal("warmup submit failed")
@@ -532,8 +556,10 @@ func TestBatchEventsStreamSnapshot(t *testing.T) {
 func TestBatchYieldsToInteractive(t *testing.T) {
 	s := batchServer(t, "slow")
 	otherFEN := strings.Replace(startFEN, "w KQkq", "b KQkq", 1)
-	body := fmt.Sprintf(`{"requests":[{"engine":"sf","fen":%q,"initial_fen":%q,"moves":[]},{"engine":"sf","fen":%q,"initial_fen":%q,"moves":[]}]}`,
-		startFEN, startFEN, otherFEN, otherFEN)
+	// Heterogeneous ply-0 entries share one line via empty initial_fen
+	// (empty root skips today's empty-history check, as before).
+	body := fmt.Sprintf(`{"line":{"initial_fen":"","moves":[]},"requests":[{"engine":"sf","ply":0,"fen":%q},{"engine":"sf","ply":0,"fen":%q}]}`,
+		startFEN, otherFEN)
 	code, created := postBatch(t, s, body)
 	if code != 202 {
 		t.Fatalf("submit %d: %v", code, created)

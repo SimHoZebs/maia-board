@@ -432,8 +432,7 @@ func (s *server) cachedMaiaFrom(src cacheSource, r EngineRequest, model string) 
 type lookupRequest struct {
 	Engine       string             `json:"engine"`
 	FEN          string             `json:"fen"`
-	InitialFEN   string             `json:"initial_fen"`
-	Moves        []string           `json:"moves"`
+	Ply          int                `json:"ply"`
 	PosHash      string             `json:"pos_hash,omitempty"`
 	Settings     *stockfishSettings `json:"settings,omitempty"`
 	EloMaia      *int               `json:"elo_maia,omitempty"`
@@ -441,6 +440,43 @@ type lookupRequest struct {
 	ValueEloMaia *int               `json:"value_elo_maia,omitempty"`
 	ValueEloUser *int               `json:"value_elo_user,omitempty"`
 	Model        string             `json:"model,omitempty"`
+}
+
+// batchLine carries the shared game line once per bulk submit. Entries
+// reference it by ply: prefix = moves[:ply] (pure slice, no chess needed).
+// The derived triple (fen, initial_fen, prefix) feeds the unchanged
+// identity/validate/worker paths, so cache identities are untouched.
+type batchLine struct {
+	InitialFEN string   `json:"initial_fen"`
+	Moves      []string `json:"moves"`
+}
+
+// validateBatchLine checks the shared line before per-entry work: moves must
+// be a present array, bounded, and UCI-shaped. InitialFEN is left to the
+// per-entry triple validation (empty allowed, invalid surfaces as today).
+func validateBatchLine(line batchLine) *requestError {
+	if line.Moves == nil {
+		return &requestError{"invalid_request", "line.moves must be an array"}
+	}
+	if len(line.Moves) > 4096 {
+		return &requestError{"invalid_request", "line.moves may contain at most 4096 plies"}
+	}
+	for _, move := range line.Moves {
+		if !uciMovePattern.MatchString(move) {
+			return &requestError{"invalid_request", "line.moves must contain UCI moves"}
+		}
+	}
+	return nil
+}
+
+// linePrefix slices the shared line for one entry. Bounds are checked here
+// so callers never panic; ply<=256 enforcement stays in the existing
+// triple validation (history_too_long wrapped as invalid_request).
+func linePrefix(line batchLine, ply int) ([]string, *requestError) {
+	if ply < 0 || ply > len(line.Moves) {
+		return nil, &requestError{"invalid_request", "ply must be between 0 and len(line.moves)"}
+	}
+	return line.Moves[:ply], nil
 }
 type lookupResult struct {
 	Index          int                `json:"index"`
@@ -450,15 +486,21 @@ type lookupResult struct {
 
 func (s *server) evaluationLookup(w http.ResponseWriter, r *http.Request) {
 	var body struct {
+		Line     batchLine       `json:"line"`
 		Requests []lookupRequest `json:"requests"`
 	}
 	decoded, ok := decodeSingle[struct {
+		Line     batchLine       `json:"line"`
 		Requests []lookupRequest `json:"requests"`
 	}](w, r, 4*1024*1024)
 	if !ok {
 		return
 	}
 	body = decoded
+	if lineErr := validateBatchLine(body.Line); lineErr != nil {
+		writeAPIError(w, 400, lineErr.Code, lineErr.Message)
+		return
+	}
 	if body.Requests == nil || len(body.Requests) > 1024 {
 		writeAPIError(w, 400, "invalid_request", "requests must be an array of at most 1024 entries")
 		return
@@ -467,7 +509,9 @@ func (s *server) evaluationLookup(w http.ResponseWriter, r *http.Request) {
 	// Two phases: resolve every request first (validation only, collecting
 	// the identities to fetch), then serve all hits from one prefetched
 	// snapshot. Same validation, same per-index results and logs as the old
-	// per-entry loop — one bulk read instead of N point reads.
+	// per-entry loop — one bulk read instead of N point reads. Prefixes are
+	// pure slices of the shared line; the derived triples feed the unchanged
+	// resolve paths.
 	type resolved struct {
 		query   lookupRequest
 		sfReq   evaluationRequest
@@ -479,29 +523,34 @@ func (s *server) evaluationLookup(w http.ResponseWriter, r *http.Request) {
 	for index, query := range body.Requests {
 		entry := resolved{query: query}
 		var invalid error
-		switch query.Engine {
-		case "sf":
-			request, reqErr := resolveSFQuery(query)
-			if reqErr != nil {
-				invalid = fmt.Errorf("%s", reqErr.Message)
-			} else {
-				entry.sfReq = request
-				for _, candidate := range sfSupersetCandidates(request) {
-					hash, _ := sfIdentity(candidate).coordinates()
+		prefix, prefixErr := linePrefix(body.Line, query.Ply)
+		if prefixErr != nil {
+			invalid = fmt.Errorf("%s", prefixErr.Message)
+		} else {
+			switch query.Engine {
+			case "sf":
+				request, reqErr := resolveSFQuery(query, body.Line.InitialFEN, prefix)
+				if reqErr != nil {
+					invalid = fmt.Errorf("%s", reqErr.Message)
+				} else {
+					entry.sfReq = request
+					for _, candidate := range sfSupersetCandidates(request) {
+						hash, _ := sfIdentity(candidate).coordinates()
+						hashes = append(hashes, hash)
+					}
+				}
+			case "maia":
+				request, model, reqErr := resolveMaiaQuery(query, body.Line.InitialFEN, prefix)
+				if reqErr != nil {
+					invalid = fmt.Errorf("%s", reqErr.Message)
+				} else {
+					entry.maiaReq, entry.model = request, model
+					hash, _ := maiaIdentity(request, model).coordinates()
 					hashes = append(hashes, hash)
 				}
+			default:
+				invalid = fmt.Errorf("engine must be sf or maia")
 			}
-		case "maia":
-			request, model, reqErr := resolveMaiaQuery(query)
-			if reqErr != nil {
-				invalid = fmt.Errorf("%s", reqErr.Message)
-			} else {
-				entry.maiaReq, entry.model = request, model
-				hash, _ := maiaIdentity(request, model).coordinates()
-				hashes = append(hashes, hash)
-			}
-		default:
-			invalid = fmt.Errorf("engine must be sf or maia")
 		}
 		if invalid != nil {
 			writeAPIError(w, 400, "invalid_request", fmt.Sprintf("requests[%d]: %s", index, invalid))
@@ -519,13 +568,13 @@ func (s *server) evaluationLookup(w http.ResponseWriter, r *http.Request) {
 			if value, ok := s.cachedSFFrom(src, entry.sfReq); ok {
 				results = append(results, lookupResult{index, value, value.ActualSettings})
 				log.Printf("eval-content engine=sf cache=hit via=lookup index=%d fen=%s plies=%d pos=%s %s",
-					index, query.FEN, len(query.Moves), orDash(query.PosHash), sfContentFields(value))
+					index, query.FEN, query.Ply, orDash(query.PosHash), sfContentFields(value))
 			}
 		case "maia":
 			if value, ok := s.cachedMaiaFrom(src, entry.maiaReq, entry.model); ok {
 				results = append(results, lookupResult{Index: index, Value: value})
 				log.Printf("eval-content engine=maia cache=hit via=lookup index=%d fen=%s plies=%d pos=%s elo=%s value=%s model=%s %s",
-					index, query.FEN, len(query.Moves), orDash(query.PosHash), eloPair(query.EloMaia, query.EloUser),
+					index, query.FEN, query.Ply, orDash(query.PosHash), eloPair(query.EloMaia, query.EloUser),
 					valueEloPair(query.ValueEloMaia, query.ValueEloUser), entry.model, maiaContentFields(*value))
 			}
 		}
