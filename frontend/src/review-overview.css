@@ -1,11 +1,8 @@
-.analysis-tabs { display: flex; gap: 18px; align-items: center; }
-.analysis-tablist { display: flex; gap: 18px; align-items: center; }
-.analysis-tabs [role="tab"] { min-height: 32px; padding: 4px 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); font-size: 13px; }
-.analysis-tabs [role="tab"][aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
-.analysis-tabs [role="tab"]:hover { background: transparent; color: #eeeae3; }
-.tab-action { margin-left: auto; display: flex; align-items: center; }
-.tab-action button { flex-shrink: 0; white-space: nowrap; }
-.tab-action [role="status"] { flex-shrink: 0; white-space: nowrap; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.analysis-footer-section.footer-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+.footer-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-width: 0; }
+.footer-analyze { margin-left: auto; display: flex; align-items: center; }
+.footer-analyze button { flex-shrink: 0; white-space: nowrap; }
+.footer-analyze [role="status"] { flex-shrink: 0; white-space: nowrap; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .review-overview .review-charts { margin: 0 0 18px; }
 .chart-point .chart-dot-inaccuracy { background: #7c691e; }
 .chart-point .chart-dot-mistake { background: #985920; }
@@ -27,11 +24,8 @@
 .overview-partial { margin: 12px 0; padding: 10px 12px; border-left: 2px solid var(--accent); background: #b8c99809; font-size: 12px; }
 .overview-issues-heading { display: flex; align-items: center; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
 /* Separation from the summary above lives on the section boundary, not the
-   heading: the heading is also the first child of the standalone Moves to
-   review tab, where a top margin would collapse through and break the
-   panel's 12px rhythm. */
-.review-overview + .review-overview { margin-top: 20px; }
-/* The summary now continues the Move analysis tab below the engines. */
+   heading, preserving the panel's 12px rhythm. */
+/* The summary continues below the engines. */
 .engine-duo + .review-overview { margin-top: 20px; }
 .overview-issues-heading h3 { margin: 0; font-size: 13px; }
 .overview-issues-heading > span { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }

@@ -41,7 +41,6 @@ export function ReviewSummary({
             <p className="opening-line" role="status">
               <BookOpen size={14} aria-hidden="true" />
               <strong>{opening.eco} · {opening.name}</strong>
-              {!opening.isExact && <span className="opening-out"> · out of book</span>}
             </p>
           )}
           <ReviewCharts

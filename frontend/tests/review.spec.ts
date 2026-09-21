@@ -175,7 +175,7 @@ test('standalone FEN shows current candidates and clears correct-frame previews'
   await expect(preview).toHaveCount(0);
   await candidate.focus();
   await expect(preview).toHaveCount(1);
-  await page.getByRole('tab', { name: 'Move analysis', exact: true }).focus();
+  await page.getByRole('button', { name: 'Analyze entire game' }).focus();
   await expect(preview).toHaveCount(0);
   await maia.getByRole('button', { name: 'Explore e4', exact: true }).click();
   await expect(page.locator('.move-cell')).toContainText('23. e4');
@@ -275,28 +275,24 @@ for (const width of [320, 1440]) {
   test(`analysis container spaces both sides of section dividers at ${width}px`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: 1000 });
     await bootReview(page);
-    for (const tab of ['Move analysis', 'Moves to review']) {
-      await page.getByRole('tab', { name: tab, exact: true }).click();
-      const sections = await page.locator('.insight-panel > .analysis-tabs:visible, .insight-panel > .analysis-section:visible').evaluateAll(elements => elements.map(el => {
-        const rect = el.getBoundingClientRect(), style = getComputedStyle(el);
-        return { top: rect.top, bottom: rect.bottom, border: parseFloat(style.borderTopWidth), contentTop: el.firstElementChild!.getBoundingClientRect().top };
-      }));
-      expect(sections).toHaveLength(3);
-      for (let index = 1; index < sections.length; index++) {
-        expect(sections[index].border).toBe(1);
-        expect(sections[index].top - sections[index - 1].bottom).toBeCloseTo(12, 0);
-        expect(sections[index].contentTop - sections[index].top - sections[index].border).toBeCloseTo(12, 0);
-      }
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-      await page.screenshot({ path: info.outputPath(`analysis-spacing-${width}-${tab.replace(' ', '-')}.png`), fullPage: true });
+    const sections = await page.locator('.insight-panel > .analysis-section:visible').evaluateAll(elements => elements.map(el => {
+      const rect = el.getBoundingClientRect(), style = getComputedStyle(el);
+      return { top: rect.top, bottom: rect.bottom, border: parseFloat(style.borderTopWidth), contentTop: el.firstElementChild!.getBoundingClientRect().top };
+    }));
+    expect(sections).toHaveLength(3);
+    for (let index = 1; index < sections.length; index++) {
+      expect(sections[index].border).toBe(1);
+      expect(sections[index].top - sections[index - 1].bottom).toBeCloseTo(12, 0);
+      expect(sections[index].contentTop - sections[index].top - sections[index].border).toBeCloseTo(12, 0);
     }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: info.outputPath(`analysis-spacing-${width}.png`), fullPage: true });
   });
 }
 
 test('move analysis summarizes the game below the engines and links mistakes from moves to review', async ({ page }, info) => {
   const app = await bootReview(page);
   await expect(page.locator('#objective-rating')).toHaveValue('2400');
-  await expect(page.getByRole('tabpanel', { name: 'Move analysis', exact: true })).toBeVisible();
   await expect(page.locator('.overview-partial')).toContainText('Summary covers reviewed moves only');
   await expect(page.getByRole('region', { name: 'White move quality', exact: true })).toBeVisible();
   await expect(page.locator('.accuracy-value')).toHaveCount(0);
@@ -305,11 +301,9 @@ test('move analysis summarizes the game below the engines and links mistakes fro
   await expect(page.locator('.overview-partial')).toHaveCount(0);
   await expect(page.locator('.quality-counts li')).toHaveCount(18);
   await expect(page.locator('.accuracy-summary')).not.toContainText('You');
-  await page.getByRole('tab', { name: 'Moves to review', exact: true }).click();
   await expect(page.locator('.review-issue')).toHaveCount(2);
   await page.screenshot({ path: info.outputPath('overview-desktop.png'), fullPage: true });
   await page.getByRole('button', { name: 'Review 2. Nf3 · White · Blunder', exact: true }).click();
-  await expect(page.getByRole('tab', { name: 'Move analysis', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
   await expect(page.locator('#insight-content').getByRole('button', { name: 'Explore Nf3 (played) from before this move', exact: true })).toBeVisible();
   await expect(page.locator('.balance-white-tag')).toHaveText('7%');
@@ -318,15 +312,14 @@ test('move analysis summarizes the game below the engines and links mistakes fro
   expect(app.errors).toEqual([]);
 });
 
-test('tabs support keyboard navigation without stepping the board and link inaccuracies on mobile', async ({ page }, info) => {
+test('moves to review links inaccuracies on mobile without stepping the board', async ({ page }, info) => {
   await page.setViewportSize({ width: 360, height: 800 });
   const app = await bootReview(page, '1. e4 e5 2. Nf3 Nc6', [0,0,100,0,0]);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   // Quiescence: the foreground pair-ensure drains against batch filing in a
   // ~40ms race window, so capture the baseline only after the inference
-  // count settles (stable across 3x200ms). Intent unchanged: tabbing itself
-  // must issue nothing.
+  // count settles (stable across 3x200ms).
   let settled = -1, stableRounds = 0;
   while (stableRounds < 3) {
     await page.waitForTimeout(200);
@@ -335,21 +328,12 @@ test('tabs support keyboard navigation without stepping the board and link inacc
     else { settled = count; stableRounds = 0; }
   }
   const before = app.requests.length;
-  await page.getByRole('tab', { name: 'Move analysis', exact: true }).focus();
-  await page.keyboard.press('ArrowRight');
-  await expect(page.getByRole('tab', { name: 'Moves to review', exact: true })).toBeFocused();
-  await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
   await expect(page.locator('.review-issue')).toHaveCount(2);
-  await page.keyboard.press('Home');
-  await expect(page.getByRole('tab', { name: 'Move analysis', exact: true })).toBeFocused();
-  await page.keyboard.press('End');
-  await expect(page.getByRole('tab', { name: 'Moves to review', exact: true })).toBeFocused();
   await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
   expect(app.requests).toHaveLength(before);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath('overview-mobile.png'), fullPage: true });
   await page.getByRole('button', { name: 'Review 1… e5 · Black · Inaccuracy', exact: true }).click();
-  await expect(page.getByRole('tabpanel', { name: 'Move analysis', exact: true })).toBeVisible();
   await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 5');
   await expect(page.locator('#insight-content').getByRole('button', { name: 'Explore e5 (played) from before this move', exact: true })).toBeVisible();
   expect(app.errors).toEqual([]);
@@ -359,30 +343,25 @@ test('moves to review distinguishes empty games, no issues, and explored lines',
   await bootReview(page, '1. e4 e5', [0,0,0]);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
-  await page.getByRole('tab', { name: 'Moves to review', exact: true }).click();
   await expect(page.getByText('No inaccuracies, mistakes, blunders, or allowed mates found.', { exact: true })).toBeVisible();
-  await page.getByRole('tab', { name: 'Move analysis', exact: true }).click();
   const board = (await page.locator('#board cg-board').boundingBox())!;
   await page.mouse.click(board.x + board.width * 3.5 / 8, board.y + board.height * 6.5 / 8);
   await page.mouse.click(board.x + board.width * 3.5 / 8, board.y + board.height * 4.5 / 8);
-  await page.getByRole('tab', { name: 'Moves to review', exact: true }).click();
-  await expect(page.locator('.tab-action').getByRole('button', { name: 'Analyze explored line' })).toBeVisible();
+  await expect(page.locator('.footer-analyze').getByRole('button', { name: 'Analyze explored line' })).toBeVisible();
   // No return button: step back to the fork, then Next continues original.
   await page.locator('#analysis-prev').click();
   await page.locator('#analysis-next').click();
   await expect(page.getByLabel('Explored variation', { exact: true })).toHaveCount(0);
-  await page.getByRole('tab', { name: 'Move analysis', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Game overview' })).toBeVisible();
-  await page.getByRole('tab', { name: 'Moves to review', exact: true }).click();
   await expect(page.getByText('No inaccuracies, mistakes, blunders, or allowed mates found.', { exact: true })).toBeVisible();
   await page.locator('#mode-analysis').click();
   await page.locator('#analysis-pgn').fill('1. d4');
   await page.locator('#load-analysis').click();
-  await expect(page.getByRole('tab', { name: 'Move analysis', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('Play or load some moves to see a move summary.', { exact: true })).toBeVisible();
+  await expect(page.locator('.accuracy-value')).toHaveCount(0);
   await page.locator('#mode-analysis').click();
   await page.locator('#analysis-controls').getByRole('button', { name: 'Starting position', exact: true }).click();
   await page.locator('#load-analysis').click();
-  await page.getByRole('tab', { name: 'Move analysis', exact: true }).click();
   await expect(page.getByText('Play or load some moves to see a move summary.', { exact: true })).toBeVisible();
   await expect(page.locator('.accuracy-value')).toHaveCount(0);
 });
@@ -401,15 +380,12 @@ for (const width of [1440, 360]) test(`move analysis restores evaluation graph a
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath(`overview-graphs-${width}.png`), fullPage: true });
   await page.locator('.chart-point').nth(3).click();
-  await expect(page.getByRole('tab', { name: 'Move analysis', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
   await expect(page.locator('.review-charts')).toHaveCount(1);
   await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/2\. Nf3/);
-  await expect(page.getByRole('tab', { name: 'Move accuracy', exact: true })).toHaveCount(0);
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
   await expect(page.locator('.chart-point').nth(4)).toHaveAccessibleName(/2… Nc6 · Black.*7\.6% White winning chance.*Best/);
   await page.locator('.chart-point').nth(4).click();
-  await expect(page.getByRole('tab', { name: 'Move analysis', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
   await expect(page.locator('.balance-white-tag')).toHaveText('8%');
   await expect(page.locator('.balance-black-tag')).toHaveText('92%');
@@ -444,11 +420,9 @@ test('move analysis shows only your moves with your decision points on the graph
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   await expect(page.locator('.quality-counts li')).toHaveCount(9);
-  await page.getByRole('tab', { name: 'Moves to review', exact: true }).click();
   await expect(page.locator('.review-issue')).toHaveCount(1);
   await expect(page.locator('.issue-move small')).toHaveCount(0);
   await page.getByRole('button', { name: 'Review 1… e5 · Black · You · Mistake', exact: true }).click();
-  await expect(page.getByRole('tab', { name: 'Move analysis', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 5');
   await expect(page.locator('.chart-point i')).toHaveCount(2);
   await expect(page.locator('.chart-line')).toHaveCount(1);
@@ -461,17 +435,37 @@ test('move analysis shows only your moves with your decision points on the graph
   expect(app.errors).toEqual([]);
 });
 
-test('analysis tabs stay visible while panel content scrolls', async ({ page }) => {
+test('analysis panel shows move analysis, moves to review, and footer analyze together', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 700 });
   await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
-  const tabs = page.getByRole('tablist', { name: 'Game analysis views', exact: true });
-  const before = await tabs.boundingBox();
-  await page.locator('#analysis-panel-moves').evaluate(el => { el.scrollTop = el.scrollHeight; });
-  await expect.poll(() => page.locator('#analysis-panel-moves').evaluate(el => el.scrollTop)).toBeGreaterThan(0);
-  expect(await tabs.boundingBox()).toEqual(before);
-  await expect(tabs).toBeInViewport();
+  await expect(page.locator('.engine-duo')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Moves to review' })).toBeVisible();
+  await expect(page.locator('.footer-analyze').getByRole('button', { name: 'Analyzed' })).toBeVisible();
+  const geometry = await page.locator('.analysis-footer-section.footer-row, .analysis-actions, .footer-analyze').evaluateAll((elements) => {
+    const [footer, actions, analyze] = elements as HTMLElement[];
+    const footerRect = footer.getBoundingClientRect();
+    const analyzeRect = analyze.getBoundingClientRect();
+    const actionsRect = actions.getBoundingClientRect();
+    const style = getComputedStyle(footer);
+    return {
+      footerLeft: footerRect.left,
+      footerRight: footerRect.right,
+      paddingLeft: parseFloat(style.paddingLeft),
+      paddingRight: parseFloat(style.paddingRight),
+      analyzeRight: analyzeRect.right,
+      actionsLeft: actionsRect.left,
+      analyzeLeft: analyzeRect.left,
+      actionsRight: actionsRect.right,
+      analyzeMarginLeft: parseFloat(getComputedStyle(analyze).marginLeft),
+    };
+  });
+  // Content-box alignment: section padding offsets both edges by 18px.
+  expect(geometry.actionsLeft).toBeCloseTo(geometry.footerLeft + geometry.paddingLeft, 0);
+  expect(geometry.analyzeRight).toBeCloseTo(geometry.footerRight - geometry.paddingRight, 0);
+  expect(geometry.analyzeMarginLeft).toBeGreaterThan(0);
+  expect(geometry.analyzeLeft).toBeGreaterThan(geometry.actionsRight);
 });
 
 test('unlisted played moves have no fallback below either prediction list', async ({ page }) => {
@@ -638,7 +632,7 @@ test('analysis progress replaces the analyze button while running without a canc
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect.poll(() => heldEvents.length).toBeGreaterThan(0);
   await expect.poll(() => heldStatus.length).toBeGreaterThan(0);
-  await expect(page.locator('.tab-action').getByRole('status')).toHaveText(/Analyzing \d+ of \d+…/);
+  await expect(page.locator('.footer-analyze').getByRole('status')).toHaveText(/Analyzing \d+ of \d+…/);
   await expect(page.getByRole('button', { name: 'Analyze entire game' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Cancel analysis' })).toHaveCount(0);
   for (const route of heldStatus) {
@@ -652,7 +646,7 @@ test('analysis progress replaces the analyze button while running without a canc
     await route.fulfill({ body: `data: ${JSON.stringify({ progress })}\n\n`, contentType: 'text/event-stream' });
   }
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
-  await expect(page.locator('.tab-action').getByRole('status')).toHaveCount(0);
+  await expect(page.locator('.footer-analyze').getByRole('status')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Cancel analysis' })).toHaveCount(0);
 });
 for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900 }, { width: 360, height: 800 }, { width: 390, height: 844 }]) {
@@ -667,8 +661,23 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
       expect(rect.top).toBeGreaterThanOrEqual(0); expect(rect.bottom).toBeLessThanOrEqual(viewport.height);
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    const row = await page.locator('.analysis-tabs [role="tab"], .tab-action button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; }));
-    expect(Math.max(...row.map(r => r.top))).toBeLessThan(Math.min(...row.map(r => r.bottom)));
+    const footerGeometry = await page.locator('.analysis-footer-section.footer-row, .analysis-actions, .footer-analyze').evaluateAll((elements) => {
+      const [footer, actions, analyze] = elements as HTMLElement[];
+      const footerRect = footer.getBoundingClientRect();
+      const actionsRect = actions.getBoundingClientRect();
+      const analyzeRect = analyze.getBoundingClientRect();
+      return {
+        footerRight: footerRect.right,
+        paddingRight: parseFloat(getComputedStyle(footer).paddingRight),
+        analyzeRight: analyzeRect.right,
+        actionsTop: actionsRect.top,
+        analyzeTop: analyzeRect.top,
+      };
+    });
+    // Wrapping allowed on narrow viewports: analyze stays right-aligned and
+    // at or below the export buttons, never above them.
+    expect(footerGeometry.analyzeRight).toBeCloseTo(footerGeometry.footerRight - footerGeometry.paddingRight, 0);
+    expect(footerGeometry.analyzeTop).toBeGreaterThanOrEqual(footerGeometry.actionsTop);
     const bar = (await page.locator('.balance-track').boundingBox())!;
     expect(bar.height).toBeGreaterThan(bar.width * 5);
     const squares = (await page.locator('#board cg-board').boundingBox())!;

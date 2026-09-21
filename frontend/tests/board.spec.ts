@@ -1113,10 +1113,24 @@ for (const width of [320, 390]) {
     await expect(page.getByText('Exploring', { exact: true })).toHaveCount(0);
     await expect(page.getByText('Unreviewed', { exact: false })).toHaveCount(0);
     await expect(page.locator('.selected-quality, .quality-unreviewed')).toHaveCount(0);
-    await expect(page.locator('.tab-action').getByRole('button', { name: 'Analyze explored line' })).toBeVisible();
-    const tabRow = await page.locator('.analysis-tabs [role="tab"], .tab-action button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { y: r.y, height: r.height }; }));
-    expect(tabRow).toHaveLength(3);
-    expect(Math.max(...tabRow.map(r => r.y))).toBeLessThan(Math.min(...tabRow.map(r => r.y + r.height)));
+    await expect(page.locator('.footer-analyze').getByRole('button', { name: 'Analyze explored line' })).toBeVisible();
+    const footerGeometry = await page.locator('.analysis-footer-section.footer-row, .analysis-actions, .footer-analyze').evaluateAll((elements) => {
+      const [footer, actions, analyze] = elements as HTMLElement[];
+      const footerRect = footer.getBoundingClientRect();
+      const actionsRect = actions.getBoundingClientRect();
+      const analyzeRect = analyze.getBoundingClientRect();
+      return {
+        footerRight: footerRect.right,
+        paddingRight: parseFloat(getComputedStyle(footer).paddingRight),
+        analyzeRight: analyzeRect.right,
+        actionsTop: actionsRect.top,
+        analyzeTop: analyzeRect.top,
+      };
+    });
+    // Wrapping allowed on narrow viewports: analyze stays right-aligned and
+    // at or below the export buttons, never above them.
+    expect(footerGeometry.analyzeRight).toBeCloseTo(footerGeometry.footerRight - footerGeometry.paddingRight, 0);
+    expect(footerGeometry.analyzeTop).toBeGreaterThanOrEqual(footerGeometry.actionsTop);
     const ratingBox = (await page.locator('#analysis-rating').boundingBox())!;
     expect(ratingBox.height).toBeLessThanOrEqual(32);
     const engines = (await page.locator('.engine-duo').boundingBox())!;
