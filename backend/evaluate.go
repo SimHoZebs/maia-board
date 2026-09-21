@@ -1,13 +1,16 @@
 package main
 
 import (
-	"bytes"
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -51,19 +54,21 @@ type evaluationResponse struct {
 	ActualSettings *stockfishSettings `json:"actual_settings,omitempty"`
 }
 
-// Evaluator owns the priority schedulers and trusted process configuration.
-// Each search still spawns one isolated process (`python helper --binary
-// stockfish`); the schedulers only order admission to protect the CPU from
-// fork/exec + search overlap.
+// Evaluator owns the priority schedulers, one warm helper per scheduler, and
+// the trusted process configuration. Each slot's helper is a persistent
+// `python helper --serve` process holding a warm interpreter and a warm
+// engine: repeat requests skip interpreter startup, python-chess import, and
+// UCI spawn, paying only the search budget. The schedulers still order
+// admission to protect the CPU; the per-slot grant serializes that slot's
+// helper exchange, so interactive Focus work never shares a process with a
+// Batch search.
 //
-// Per-request overhead breakdown (see stockfish_timing spawn_ms vs search_ms):
-// python interpreter startup + python-chess import (~50-100ms) + UCI spawn +
-// Threads=4/Hash=128 search. A process-level python-chess import warmup is not
-// possible with fork-per-request isolation, and a persistent worker pool was
-// deliberately not adopted: one owned engine per request keeps cancellation
-// (SIGKILL of the process group), version checks, and crash isolation trivial.
-// The speed win here comes from Threads 4 / Hash 128 (policy v3) plus
-// concurrency below, not from reusing processes.
+// Per-request overhead left (see stockfish_timing spawn_ms vs search_ms):
+// spawn_ms is ~0 on a warm engine and only nonzero after a restart. Fork
+// isolation is gone, but cancellation is unchanged (SIGKILL of the process
+// group on timeout, helper restarts on next use) and output validation still
+// rejects garbage per request. The engine's 128 MiB hash persists across
+// requests within a slot; that only affects speed, never validity.
 //
 // GOMAXPROCS-aware concurrency: two admission slots instead of one. The
 // interactive scheduler serves Play>Focus>Batch for sync traffic (/evaluate
@@ -81,10 +86,181 @@ type Evaluator struct {
 	// schedulerFor falls back to whichever scheduler exists.
 	batchSched *Scheduler
 	timeout    time.Duration
+	// workers holds one warm helper per scheduler, created on demand so
+	// test-constructed Evaluators without workers keep working.
+	mu      sync.Mutex
+	workers map[*Scheduler]*stockfishWorker
+}
+
+// stockfishWorker owns one persistent helper process. The slot's scheduler
+// grant serializes exchanges (one running ticket per scheduler), so no extra
+// locking is needed around the process itself; mu only guards lazy process
+// creation.
+type stockfishWorker struct {
+	command []string
+	mu      sync.Mutex
+	proc    *stockfishProcess
+}
+
+type stockfishProcess struct {
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout *bufio.Reader
 }
 
 func NewEvaluator(python, helper, binary string) *Evaluator {
-	return &Evaluator{command: []string{python, helper, "--binary", binary}, sched: NewScheduler(), batchSched: NewScheduler(), timeout: 8 * time.Second}
+	return &Evaluator{command: []string{python, helper, "--binary", binary, "--serve"}, sched: NewScheduler(), batchSched: NewScheduler(), timeout: 8 * time.Second}
+}
+
+// workerFor returns the warm helper for one scheduler, starting from
+// nothing on first use. One worker per scheduler keeps the interactive and
+// batch slots on separate processes, matching the separate admission slots.
+func (e *Evaluator) workerFor(sched *Scheduler) *stockfishWorker {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.workers == nil {
+		e.workers = make(map[*Scheduler]*stockfishWorker)
+	}
+	worker, ok := e.workers[sched]
+	if !ok {
+		worker = &stockfishWorker{command: append([]string(nil), e.command...)}
+		e.workers[sched] = worker
+	}
+	return worker
+}
+
+// exchange serves one lookup on the warm helper, starting it on demand. Any
+// protocol or timeout failure kills the process group and drops it — the
+// next exchange restarts clean (losing warmth only on the failure path).
+func (w *stockfishWorker) exchange(ctx context.Context, input []byte) ([]byte, error) {
+	if len(input) > workerLineLimit {
+		return nil, errors.New("stockfish request exceeds limit")
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err := w.ensureLocked(ctx); err != nil {
+		return nil, err
+	}
+	proc := w.proc
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := proc.stdin.Write(append(append([]byte(nil), input...), '\n'))
+		writeDone <- err
+	}()
+	select {
+	case err := <-writeDone:
+		if err != nil {
+			w.failLocked()
+			return nil, err
+		}
+	case <-ctx.Done():
+		w.failLocked()
+		return nil, ctx.Err()
+	}
+	line, err := w.readLineLocked(ctx)
+	if err != nil {
+		w.failLocked()
+		return nil, err
+	}
+	return line, nil
+}
+
+func (w *stockfishWorker) ensureLocked(ctx context.Context) error {
+	if w.proc != nil {
+		return nil
+	}
+	if len(w.command) == 0 {
+		return errors.New("stockfish helper has no command")
+	}
+	cmd := exec.Command(w.command[0], w.command[1:]...)
+	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Stderr = newWorkerDiagnostics("stockfish")
+	cmd.WaitDelay = time.Second
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		_ = stdin.Close()
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		_ = stdout.Close()
+		return err
+	}
+	proc := &stockfishProcess{cmd: cmd, stdin: stdin, stdout: bufio.NewReaderSize(stdout, workerLineLimit)}
+	w.proc = proc
+	line, err := w.readLineLocked(ctx)
+	if err != nil {
+		w.failLocked()
+		return err
+	}
+	var ready struct {
+		Ready bool `json:"ready"`
+	}
+	if json.Unmarshal(line, &ready) != nil || !ready.Ready {
+		w.failLocked()
+		return errors.New("stockfish helper missing ready marker")
+	}
+	return nil
+}
+
+// readLineLocked reads one newline-terminated reply, bounded so a rogue
+// helper cannot grow the server's memory without limit (the old fork path
+// capped collection at the same bound).
+func (w *stockfishWorker) readLineLocked(ctx context.Context) ([]byte, error) {
+	proc := w.proc
+	type response struct {
+		line []byte
+		err  error
+	}
+	done := make(chan response, 1)
+	go func() {
+		var line []byte
+		for {
+			fragment, err := proc.stdout.ReadSlice('\n')
+			line = append(line, fragment...)
+			if len(line) > workerLineLimit {
+				done <- response{nil, errors.New("stockfish worker output exceeds limit")}
+				return
+			}
+			if err == bufio.ErrBufferFull {
+				continue
+			}
+			done <- response{append([]byte(nil), line...), err}
+			return
+		}
+	}()
+	select {
+	case r := <-done:
+		return r.line, r.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (w *stockfishWorker) failLocked() {
+	if w.proc == nil {
+		return
+	}
+	proc := w.proc
+	w.proc = nil
+	_ = proc.stdin.Close()
+	if proc.cmd.Process != nil {
+		_ = syscall.Kill(-proc.cmd.Process.Pid, syscall.SIGKILL)
+	}
+	_ = proc.cmd.Wait()
+}
+
+// failLockedWithMu kills and drops the helper for callers that don't hold
+// w.mu (the grant holder after a successful-but-late exchange).
+func (w *stockfishWorker) failLockedWithMu() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.failLocked()
 }
 
 // schedulerFor picks the admission slot by priority: Batch reviews use the
@@ -202,18 +378,6 @@ func validateEvaluationRequest(r *evaluationRequest) *requestError {
 	return nil
 }
 
-// Output is small; cap collection even if a misconfigured helper is noisy.
-type cappedOutput struct{ buffer bytes.Buffer }
-
-func (b *cappedOutput) Bytes() []byte { return b.buffer.Bytes() }
-
-func (b *cappedOutput) Write(p []byte) (int, error) {
-	if b.buffer.Len()+len(p) > 64*1024 {
-		return 0, errors.New("worker output exceeds limit")
-	}
-	return b.buffer.Write(p)
-}
-
 func (e *Evaluator) run(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, request evaluationRequest) (*evaluationResponse, func(), error) {
 	key, _ := sfIdentity(request).coordinates()
 	sched := e.schedulerFor(prio)
@@ -236,39 +400,20 @@ func (e *Evaluator) run(waitCtx, execCtx context.Context, prio Priority, submitS
 	if err != nil {
 		return fail(err)
 	}
-	cmd := exec.CommandContext(ctx, e.command[0], e.command[1:]...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil || cmd.Process.Pid <= 0 {
-			return nil
-		}
-		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		if errors.Is(err, syscall.ESRCH) {
-			return nil
-		}
-		return err
-	}
-	cmd.WaitDelay = time.Second
-	cmd.Stdin = bytes.NewReader(input)
-	var output cappedOutput
-	cmd.Stdout = &output
-	cmd.Stderr = newWorkerDiagnostics("stockfish")
-	if err := cmd.Start(); err != nil {
-		return fail(err)
-	}
-	pid := cmd.Process.Pid
-	if err := cmd.Wait(); err != nil {
-		// Clean up only when the wrapper did not exit cleanly; a successful
-		// Python finally block already quits the engine.
-		cleanupEvaluationGroup(pid)
+	// One warm helper per slot: the grant above serializes this slot's
+	// exchanges, so the helper serves them one at a time.
+	output, err := e.workerFor(sched).exchange(ctx, input)
+	if err != nil {
 		return fail(err)
 	}
 	if err := ctx.Err(); err != nil {
-		cleanupEvaluationGroup(pid)
+		// Answered at the deadline: don't trust or serve it, matching the
+		// old fork path (which killed the group here instead).
+		e.workerFor(sched).failLockedWithMu()
 		return fail(err)
 	}
 	var workerError apiError
-	if err := json.Unmarshal(output.Bytes(), &workerError); err != nil {
+	if err := json.Unmarshal(output, &workerError); err != nil {
 		return fail(err)
 	}
 	if workerError.Code != "" {
@@ -285,7 +430,7 @@ func (e *Evaluator) run(waitCtx, execCtx context.Context, prio Priority, submitS
 	// Single strict decode path (validate-on-write owns poisoning defense;
 	// read validates shape once here, then semantic ranges below). This
 	// collapses the former evaluationDocument+strictDocument double decode.
-	decoded, err := decodeStrict[evaluationResponse](output.Bytes(), evalRequired, docAllowNull)
+	decoded, err := decodeStrict[evaluationResponse](output, evalRequired, docAllowNull)
 	if err != nil || !validEvaluationValue(decoded, request.Settings) {
 		return fail(errors.New("invalid worker response"))
 	}

@@ -1,10 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -19,59 +19,97 @@ import (
 const startFEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
 func TestEvaluationOutputLimit(t *testing.T) {
-	var output cappedOutput
-	_, err := io.Copy(&output, io.LimitReader(strings.NewReader(strings.Repeat("x", 65537)), 65537))
-	if err == nil || len(output.Bytes()) > 65536 {
+	helper := func(body string) *stockfishWorker {
+		return &stockfishWorker{proc: &stockfishProcess{stdout: bufio.NewReader(strings.NewReader(body))}}
+	}
+	// Over-long reply without a newline: bounded, never unbounded growth.
+	if _, err := helper(strings.Repeat("x", workerLineLimit+1)).readLineLocked(context.Background()); err == nil {
 		t.Fatal("output collection exceeded bound")
+	}
+	line, err := helper("{\"ok\":true}\n").readLineLocked(context.Background())
+	if err != nil || string(line) != "{\"ok\":true}\n" {
+		t.Fatalf("bounded line rejected: %v %q", err, line)
 	}
 }
 
 // Re-exec the Go test binary as an isolated helper; no Python needed for HTTP tests.
+// Speaks the --serve protocol: ready marker, then one canned reply per stdin
+// JSON line, so worker tests exercise the persistent path.
 func TestEvaluationHelper(t *testing.T) {
 	mode := os.Getenv("SF_TEST_HELPER")
 	if mode == "" {
 		return
 	}
-	switch mode {
-	case "hang", "crash":
-		child := exec.Command(os.Args[0], "-test.run=TestEvaluationHelper")
-		child.Env = append(os.Environ(), "SF_TEST_HELPER=child")
-		if err := child.Start(); err != nil {
-			os.Exit(2)
-		}
-		_ = os.WriteFile(os.Getenv("SF_TEST_PID"), []byte(fmt.Sprintf("%d %d", os.Getpid(), child.Process.Pid)), 0600)
-		if mode == "crash" {
-			os.Exit(2)
-		}
-		_ = child.Wait()
-	case "child":
+	if mode == "child" {
 		time.Sleep(time.Minute)
-	case "bad":
-		fmt.Print("not json /secret/path")
-	case "settings":
-		var request evaluationRequest
-		if err := json.NewDecoder(os.Stdin).Decode(&request); err != nil {
-			os.Exit(2)
-		}
-		terminal := "draw"
-		_ = json.NewEncoder(os.Stdout).Encode(evaluationResponse{Engine: "Stockfish 19", SearchPolicy: request.Settings.policy(), Terminal: &terminal, Score: evaluationScore{Type: "cp"}, Lines: []evaluationLine{}})
-	case "white_win", "black_win":
-		_ = json.NewEncoder(os.Stdout).Encode(evaluationResponse{Engine: "Stockfish 19", SearchPolicy: SearchPolicy, Terminal: &mode, Score: evaluationScore{Type: "mate", WinningSide: strings.TrimSuffix(mode, "_win")}, Lines: []evaluationLine{}})
-	case "position_mismatch", "invalid_position", "invalid_fen", "engine_unavailable":
-		_ = json.NewEncoder(os.Stdout).Encode(apiError{mode, "/secret/path"})
-	case "duplicates", "wrongbest":
-		best := "g8f6"
-		if mode == "wrongbest" {
-			best = "f8c5"
-		}
-		fmt.Fprintf(os.Stdout, `{"engine":"Stockfish 19","search_policy":"sf19-n100k-ms750-mpv2-t4-h128-v3","depth":12,"terminal":null,"best_move":"%s","score":{"type":"cp","value":-92},"lines":[{"move":"g8f6","score":{"type":"cp","value":-92},"depth":12},{"move":"g8f6","score":{"type":"cp","value":-92},"depth":12}]}`, best)
-	case "slow":
-		time.Sleep(300 * time.Millisecond)
-		fmt.Print(`{"engine":"Stockfish 19","search_policy":"sf19-n100k-ms750-mpv2-t4-h128-v3","depth":0,"terminal":"draw","best_move":null,"score":{"type":"cp","value":0},"lines":[]}`)
-	default:
-		fmt.Print(`{"engine":"Stockfish 19","search_policy":"sf19-n100k-ms750-mpv2-t4-h128-v3","depth":0,"terminal":"draw","best_move":null,"score":{"type":"cp","value":0},"lines":[]}`)
+		return
 	}
-	os.Exit(0)
+	fmt.Println(`{"ready":true}`)
+	badOnce := false
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return
+		}
+		switch mode {
+		case "hang", "crash":
+			child := exec.Command(os.Args[0], "-test.run=TestEvaluationHelper")
+			child.Env = append(os.Environ(), "SF_TEST_HELPER=child")
+			if err := child.Start(); err != nil {
+				os.Exit(2)
+			}
+			_ = os.WriteFile(os.Getenv("SF_TEST_PID"), []byte(fmt.Sprintf("%d %d", os.Getpid(), child.Process.Pid)), 0600)
+			if mode == "crash" {
+				os.Exit(2)
+			}
+			_ = child.Wait()
+			return
+		case "bad":
+			fmt.Println("not json /secret/path")
+		case "badonce":
+			// First request is garbage (Go kills and restarts us); later
+			// requests answer normally on the fresh process.
+			if !badOnce {
+				badOnce = true
+				fmt.Println("not json /secret/path")
+				break
+			}
+			fmt.Println(`{"engine":"Stockfish 19","search_policy":"sf19-n100k-ms750-mpv2-t4-h128-v3","depth":0,"terminal":"draw","best_move":null,"score":{"type":"cp","value":0},"lines":[]}`)
+		case "pid":
+			// Record one helper pid per request so tests can prove sequential
+			// queries reuse a single process.
+			_ = os.WriteFile(os.Getenv("SF_TEST_PID"), []byte(fmt.Sprintf("%s%d\n", readPIDFile(), os.Getpid())), 0600)
+			fmt.Println(`{"engine":"Stockfish 19","search_policy":"sf19-n100k-ms750-mpv2-t4-h128-v3","depth":0,"terminal":"draw","best_move":null,"score":{"type":"cp","value":0},"lines":[]}`)
+		case "settings":
+			var request evaluationRequest
+			if err := json.Unmarshal([]byte(line), &request); err != nil {
+				os.Exit(2)
+			}
+			terminal := "draw"
+			_ = json.NewEncoder(os.Stdout).Encode(evaluationResponse{Engine: "Stockfish 19", SearchPolicy: request.Settings.policy(), Terminal: &terminal, Score: evaluationScore{Type: "cp"}, Lines: []evaluationLine{}})
+		case "white_win", "black_win":
+			_ = json.NewEncoder(os.Stdout).Encode(evaluationResponse{Engine: "Stockfish 19", SearchPolicy: SearchPolicy, Terminal: &mode, Score: evaluationScore{Type: "mate", WinningSide: strings.TrimSuffix(mode, "_win")}, Lines: []evaluationLine{}})
+		case "position_mismatch", "invalid_position", "invalid_fen", "engine_unavailable":
+			_ = json.NewEncoder(os.Stdout).Encode(apiError{mode, "/secret/path"})
+		case "duplicates", "wrongbest":
+			best := "g8f6"
+			if mode == "wrongbest" {
+				best = "f8c5"
+			}
+			fmt.Fprintf(os.Stdout, `{"engine":"Stockfish 19","search_policy":"sf19-n100k-ms750-mpv2-t4-h128-v3","depth":12,"terminal":null,"best_move":"%s","score":{"type":"cp","value":-92},"lines":[{"move":"g8f6","score":{"type":"cp","value":-92},"depth":12},{"move":"g8f6","score":{"type":"cp","value":-92},"depth":12}]}`+"\n", best)
+		case "slow":
+			time.Sleep(300 * time.Millisecond)
+			fmt.Println(`{"engine":"Stockfish 19","search_policy":"sf19-n100k-ms750-mpv2-t4-h128-v3","depth":0,"terminal":"draw","best_move":null,"score":{"type":"cp","value":0},"lines":[]}`)
+		default:
+			fmt.Println(`{"engine":"Stockfish 19","search_policy":"sf19-n100k-ms750-mpv2-t4-h128-v3","depth":0,"terminal":"draw","best_move":null,"score":{"type":"cp","value":0},"lines":[]}`)
+		}
+	}
+}
+
+func readPIDFile() string {
+	data, _ := os.ReadFile(os.Getenv("SF_TEST_PID"))
+	return string(data)
 }
 
 func fakeEvaluator(t *testing.T, mode string) *Evaluator {
@@ -193,6 +231,37 @@ func TestEvaluateCacheReadThrough(t *testing.T) {
 	s.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(`{"fen":"`+startFEN+`","moves":[]}`)))
 	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "hit" {
 		t.Fatalf("uncached: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
+	}
+}
+
+func TestWarmHelperServesSequentialRequestsFromOneProcess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pids")
+	t.Setenv("SF_TEST_PID", path)
+	e := fakeEvaluator(t, "pid")
+	for i := 0; i < 2; i++ {
+		_, release, err := e.run(context.Background(), context.Background(), PriorityFocus, 0, evaluationRequest{FEN: startFEN})
+		if err != nil {
+			t.Fatal(err)
+		}
+		release()
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pids := strings.Fields(string(data))
+	if len(pids) != 2 || pids[0] != pids[1] {
+		t.Fatalf("sequential requests forked per request: %v", pids)
+	}
+}
+
+func TestWarmHelperRestartsAfterProtocolFailure(t *testing.T) {
+	e := fakeEvaluator(t, "badonce")
+	if _, _, err := e.run(context.Background(), context.Background(), PriorityFocus, 0, evaluationRequest{FEN: startFEN}); err == nil {
+		t.Fatal("garbage helper output accepted")
+	}
+	if _, _, err := e.run(context.Background(), context.Background(), PriorityFocus, 0, evaluationRequest{FEN: startFEN}); err != nil {
+		t.Fatalf("query after helper death: %v", err)
 	}
 }
 

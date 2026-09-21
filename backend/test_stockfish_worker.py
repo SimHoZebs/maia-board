@@ -68,6 +68,59 @@ class StockfishTests(unittest.TestCase):
         engine.quit.assert_called_once()
         engine.close.assert_called_once()
 
+    def test_serve_reuses_one_engine(self):
+        import io
+        from contextlib import redirect_stdout
+        import stockfish_worker
+        engine = MagicMock()
+        engine.id = {"name": "Stockfish 19"}
+        engine.analysis.return_value.__enter__.return_value = [
+            dict(depth=5, multipv=1, pv=[chess.Move.from_uci("e2e4")],
+                 score=chess.engine.PovScore(chess.engine.Cp(10), chess.WHITE)),
+            dict(depth=5, multipv=2, pv=[chess.Move.from_uci("d2d4")],
+                 score=chess.engine.PovScore(chess.engine.Cp(5), chess.WHITE))]
+        line = json.dumps({"fen": chess.STARTING_FEN, "moves": []}) + "\n"
+        old_stdin = sys.stdin
+        sys.stdin = io.StringIO(line + line)
+        output = io.StringIO()
+        spawns = []
+        try:
+            with redirect_stdout(output), patch("stockfish_worker.spawn_engine",
+                                               side_effect=lambda binary: spawns.append(binary) or engine):
+                stockfish_worker.serve("/unused")
+        finally:
+            sys.stdin = old_stdin
+        rows = [json.loads(row) for row in output.getvalue().splitlines()]
+        self.assertEqual(rows[0], {"ready": True})
+        self.assertEqual(len(spawns), 1)
+        self.assertEqual(len(rows), 3)
+        for row in rows[1:]:
+            self.assertEqual(row["best_move"], "e2e4")
+            self.assertIsNone(row["terminal"])
+        engine.quit.assert_not_called()
+
+    def test_serve_terminal_after_startup_spawn(self):
+        import io
+        from contextlib import redirect_stdout
+        import stockfish_worker
+        board = chess.Board("7k/5Q2/6K1/8/8/8/8/8 w - - 0 1")
+        line = json.dumps({"fen": board.fen(), "moves": []}) + "\n"
+        old_stdin = sys.stdin
+        sys.stdin = io.StringIO(line)
+        output = io.StringIO()
+        spawns = []
+        try:
+            with redirect_stdout(output), patch("stockfish_worker.spawn_engine",
+                                               side_effect=lambda binary: spawns.append(binary) or MagicMock()):
+                stockfish_worker.serve("/unused")
+        finally:
+            sys.stdin = old_stdin
+        rows = [json.loads(row) for row in output.getvalue().splitlines()]
+        self.assertEqual(rows[0], {"ready": True})
+        # One eager spawn at startup; the terminal itself needs no search.
+        self.assertEqual(len(spawns), 1)
+        self.assertEqual(rows[1]["terminal"], "white_win")
+
     @unittest.skipUnless(os.environ.get("STOCKFISH_BINARY"), "requires Stockfish 19")
     def test_real_cp_white_perspective_on_black_turn(self):
         board = chess.Board("8/8/4k3/8/4K3/8/4P3/8 b - - 0 1")

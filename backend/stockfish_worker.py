@@ -1,4 +1,15 @@
-"""One request, one owned engine. No Maia imports or persistent state."""
+"""Persistent or one-shot Stockfish lookup. No Maia imports.
+
+One-shot (default): reads one JSON request from stdin, writes one JSON
+response to stdout, exits. Persistent (--serve): emits {"ready": true},
+then serves one JSON-lines lookup per stdin line with a warm interpreter
+and a warm engine, so repeat requests skip interpreter startup,
+python-chess import, and UCI spawn. A wedged helper is SIGKILLed as a
+group by the Go side (same as one-shot cancellation); per-request engine
+failures drop the engine and error that request, and the next request
+respawns transparently."""
+
+MAX_LINE = 64 * 1024
 import argparse
 import json
 import sys
@@ -62,7 +73,43 @@ def report_timing(request, policy, multipv, started, spawn_ms, search_ms, depth,
           f"depth={depth} lines={count}", file=sys.stderr, flush=True)
 
 
-def evaluate(request, binary):
+def spawn_engine(binary):
+    """Spawn, version-check, and configure one engine. Only called with a
+    fresh spawn: the warm path reuses the returned handle across requests
+    (sequential analysis() calls are normal python-chess usage; the 128 MiB
+    hash persists, which only affects speed, never validity)."""
+    # Go establishes the process group; inheriting it is essential for cancellation.
+    engine = chess.engine.SimpleEngine.popen_uci(binary, setpgrp=False)
+    try:
+        if engine.id.get("name") != "Stockfish 19":
+            raise RuntimeError("unexpected engine version")
+        # Fixed Threads=4 / Hash=128 for speed (policy v3). Fixed rather than
+        # min(cpu,4) so cache identity stays deterministic across hosts; the Go
+        # side splits interactive vs batch into two slots (max 2 x 4 threads).
+        engine.configure({"Threads": 4, "Hash": 128})
+    except Exception:
+        drop_engine(engine)
+        raise
+    return engine
+
+
+def drop_engine(engine):
+    """Best-effort teardown; returns None so callers assign it directly."""
+    if engine is None:
+        return None
+    try:
+        engine.quit()
+    except Exception:
+        pass
+    finally:
+        try:
+            engine.close()
+        except Exception:
+            pass
+    return None
+
+
+def evaluate(request, binary, engine=None):
     started = time.monotonic()
     board = reconstruct(request)
     settings = request.get("settings")
@@ -93,16 +140,12 @@ def evaluate(request, binary):
             result["score"] = {"type": "mate", "value": 0, "winning_side": winner}
         report_timing(request, policy, multipv, started, 0, 0, 0, 0)
         return result
-    # Go establishes the process group; inheriting it is essential for cancellation.
+    # spawn_ms measures engine spawn on a cold slot and ~0 on a warm one.
     spawn_started = time.monotonic()
-    engine = chess.engine.SimpleEngine.popen_uci(binary, setpgrp=False)
+    owned = engine is None
+    if owned:
+        engine = spawn_engine(binary)
     try:
-        if engine.id.get("name") != "Stockfish 19":
-            raise RuntimeError("unexpected engine version")
-        # Fixed Threads=4 / Hash=128 for speed (policy v3). Fixed rather than
-        # min(cpu,4) so cache identity stays deterministic across hosts; the Go
-        # side splits interactive vs batch into two slots (max 2 x 4 threads).
-        engine.configure({"Threads": 4, "Hash": 128})
         spawn_ms = round((time.monotonic() - spawn_started) * 1000)
         count = min(multipv, board.legal_moves.count())
         iterations = {}
@@ -149,16 +192,84 @@ def evaluate(request, binary):
         report_timing(request, policy, multipv, started, spawn_ms, search_ms, result["depth"], count)
         return result
     finally:
+        if owned:
+            drop_engine(engine)
+
+
+def serve(binary):
+    """JSON-lines loop over a warm engine. Terminal/invalid requests never
+    touch the engine. A dead engine respawns once and retries the request;
+    two consecutive failures exit so the Go side restarts the slot clean."""
+    try:
+        engine = spawn_engine(binary)
+    except Exception as error:
+        print(f"stockfish_timing outcome=error total_ms=0 error={type(error).__name__}: {str(error)[:1024]}", file=sys.stderr, flush=True)
+        raise
+    print(json.dumps({"ready": True}), flush=True)
+    while True:
+        raw = sys.stdin.readline(MAX_LINE + 1)
+        if not raw:
+            return
+        if len(raw.encode()) > MAX_LINE or not raw.endswith("\n"):
+            while not raw.endswith("\n"):
+                raw = sys.stdin.readline(MAX_LINE + 1)
+                if not raw:
+                    return
+            print(json.dumps({"code": "engine_unavailable",
+                              "message": "Stockfish evaluation is unavailable"}), flush=True)
+            continue
+        started = time.monotonic()
         try:
-            engine.quit()
-        finally:
-            engine.close()
+            request = json.loads(raw)
+        except ValueError:
+            request = None
+        result = None
+        engine_dead_once = False
+        while True:
+            try:
+                if not isinstance(request, dict):
+                    raise InvalidRequest("invalid_position")
+                result = evaluate(request, binary, engine)
+                break
+            except InvalidRequest as error:
+                result = {"code": error.code, "message": "position or move history is invalid"}
+                break
+            except chess.engine.EngineTerminatedError as error:
+                total_ms = round((time.monotonic() - started) * 1000)
+                print(f"stockfish_timing outcome=error total_ms={total_ms} error={type(error).__name__}: {str(error)[:1024]}", file=sys.stderr, flush=True)
+                engine = drop_engine(engine)
+                if engine_dead_once:
+                    result = {"code": "engine_unavailable", "message": "Stockfish evaluation is unavailable"}
+                    break
+                engine_dead_once = True
+                try:
+                    engine = spawn_engine(binary)
+                except Exception as respawn_error:
+                    total_ms = round((time.monotonic() - started) * 1000)
+                    print(f"stockfish_timing outcome=error total_ms={total_ms} error={type(respawn_error).__name__}: {str(respawn_error)[:1024]}", file=sys.stderr, flush=True)
+                    result = {"code": "engine_unavailable", "message": "Stockfish evaluation is unavailable"}
+                    break
+            except Exception as error:
+                # Transient search failure on a live engine: keep the warmth,
+                # error only this request.
+                total_ms = round((time.monotonic() - started) * 1000)
+                print(f"stockfish_timing outcome=error total_ms={total_ms} error={type(error).__name__}: {str(error)[:1024]}", file=sys.stderr, flush=True)
+                result = {"code": "engine_unavailable", "message": "Stockfish evaluation is unavailable"}
+                break
+        print(json.dumps(result))
+        if engine is None:
+            return
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", required=True)
+    parser.add_argument("--serve", action="store_true",
+                        help="JSON-lines persistent mode instead of one-shot stdin")
     args = parser.parse_args()
+    if args.serve:
+        serve(args.binary)
+        return
     started = time.monotonic()
     try:
         result = evaluate(json.load(sys.stdin), args.binary)

@@ -4,7 +4,9 @@
 The Go server owns its admission slot and request cancellation. See the
 [backend README](README.md) for the other API endpoints and the
 [root README](../README.md) for FEN (position), UCI (coordinate move), and ply
-(one player's move) terminology.
+(one player's move) terminology. The helper runs persistent (`--serve`):
+one warm interpreter + one warm engine per admission slot, so repeat
+requests skip interpreter startup, python-chess import, and UCI spawn.
 
 ## Request and position history
 
@@ -100,19 +102,23 @@ iteration is available, it returns an engine error.
 The legacy policy uses four threads, 128 MiB hash, two principal variations
 (`MultiPV=2`, meaning two candidate lines), and
 `Limit(nodes=100000, time=0.75)`. The node budget is capped by a 750 ms search
-clock. Engine startup, position validation, and shutdown add time beyond the
-search clock. Search depth is an observation, never a target or guarantee.
+clock. Position validation adds time beyond the search clock. Search depth is
+an observation, never a target or guarantee.
 The wall-clock limit can cause results to vary under host load.
 
-Two admission slots cover helper launch through process cleanup: one for
+Two admission slots cover one lookup each on a warm helper: one for
 interactive Focus work, one for Batch reviews, so Focus never queues behind a
-Batch entry's in-flight ~750ms search. Concurrent evaluations on the same slot
+Batch entry's in-flight ~750ms search. The helper spawns its engine once per
+slot (version-checked and configured at startup) and reuses it across
+requests; the 128 MiB hash persists within a slot, which only affects speed,
+never validity. Concurrent evaluations on the same slot
 receive `503 engine_busy` with `Retry-After: 1`; there is no queue
 or public batch endpoint. The whole operation has an eight-second timeout tied
 to HTTP request cancellation. Go starts a separate process group; python-chess
-starts Stockfish with `setpgrp=False` so both inherit that group. Normal cleanup
-uses UCI `quit` and closes the engine. Cancellation sends `SIGKILL` to the whole
-group. Explicit settings add the requested search time to the eight-second
+starts Stockfish with `setpgrp=False` so both inherit that group. A dead
+engine respawns once and retries the request; anything else (timeout,
+unreachable helper, unusable output) kills the helper's process group and the
+next lookup restarts warm. Explicit settings add the requested search time to the eight-second
 operation timeout. Each admission slot stays occupied during that search;
 whole-game reviews apply the budget separately to each position.
 Pipe waits are capped at one second. Cleanup also kills survivors after
@@ -149,7 +155,8 @@ Server and worker logs separate request time from native search time:
   each evaluation into process-spawn vs actual search.
 
 `search_ms` near the requested `time_ms` points at the search budget;
-`spawn_ms`-dominated cost points at process startup. Compare `plies` across requests
+`spawn_ms` is near zero on a warm engine and nonzero only after a helper or
+engine restart. Compare `plies` across requests
 to examine history-length effects. The [frontend performance fixture](../frontend/README.md#simulated-client-performance)
 separately measures navigation, rendering, and mocked network timings.
 

@@ -157,7 +157,7 @@ cache identity. The worker's caller API still supports cancellation of an indivi
 waiter. Neither path releases the serial slot before the operation is drained or
 terminated. Sampled and degraded responses remain excluded from persistent caching.
 
-Stockfish uses an isolated request process whose cancellation kills its process
+Stockfish uses one warm helper per admission slot whose cancellation kills its process
 group, as described in [STOCKFISH.md](STOCKFISH.md#resource-and-failure-behavior).
 
 ## Local verification
