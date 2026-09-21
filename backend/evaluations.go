@@ -299,8 +299,12 @@ func maiaContentFields(resp moveResponse) string {
 	for _, t := range resp.TopMoves {
 		tops = append(tops, fmt.Sprintf("%s:%.1f%%:%s", t.Move, t.Prob*100, wdlTriple(t.WDL)))
 	}
-	return fmt.Sprintf("move=%s wdl=%s exp=%.1f used=%s degraded=%t top=%s",
-		resp.Move, wdlTriple(resp.WDL), wdlExpected(resp.WDL), resp.ModelUsed, resp.Degraded, strings.Join(tops, ","))
+	delta := "-"
+	if resp.DeltaBaseline != nil {
+		delta = fmt.Sprintf("%.1f:%s", resp.DeltaBaseline.Value, resp.DeltaBaseline.Kind)
+	}
+	return fmt.Sprintf("move=%s wdl=%s exp=%.1f used=%s degraded=%t top=%s baseline=%s",
+		resp.Move, wdlTriple(resp.WDL), wdlExpected(resp.WDL), resp.ModelUsed, resp.Degraded, strings.Join(tops, ","), delta)
 }
 
 func sfScoreText(score evaluationScore) string {

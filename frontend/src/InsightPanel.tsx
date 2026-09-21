@@ -1,4 +1,4 @@
-import { useRef, useState, type Dispatch, type ReactNode } from "react";
+import { type Dispatch, type ReactNode } from "react";
 import { TrendingDown, Users } from "lucide-react";
 import type { Action, State } from "./state/index";
 import { Rating } from "./BoardTools";
@@ -7,15 +7,15 @@ import { Chess } from "chess.js";
 import type { Review } from "./useReview";
 import { describeMove } from "./reviewMetrics";
 import { fixedElo, sourceLabel } from "./objective";
-import { deltaBaseline, deltaColumnTitle, formatWinrateDelta, maiaDisplayParts } from "./objective/maia";
+import { deltaColumnTitle, formatWinrateDelta, maiaExpected, selectDeltaParts } from "./objective/maia";
 import { bestLinePreview, playedCapture } from "./material";
 import { verdictInputsForPly } from "./theory";
 import { useLineOpenings } from "./openings";
 import { ReviewIssues, ReviewSummary } from "./ReviewOverview";
 import { SkeletonList, SkeletonText } from "./ObjectiveBar";
 
-// Tab-bar action: the Analyze / Analyzed button owns the right
-// end of the tab row. While running it is replaced in place by the progress
+// Footer action: the Analyze / Analyzed button owns the right
+// end of the bottom button row. While running it is replaced in place by the progress
 // status. Driven by the single reviewState (loading|partial|complete|failed).
 function ReviewActionButton({ state, review }: { state: State; review: Review }) {
   const progress = review.progress;
@@ -206,27 +206,32 @@ export function MoveAnalysis({
   const verdictLoading =
     hasMove && !!played && !verdict && !hasError && !tooLong && (!evaluation || !afterEvaluation);
   // Display list values: policy share at the selected Elo plus winrate delta
-  // from 2400's perspective. One baseline for every row: each candidate's
-  // calculated child WDL minus the previous position's WDL (the 2400 point
-  // at the before-ply). Previous 50%, candidate gives 45%: -5%. The played
-  // row reads 0.0% exactly when you played the model's top choice — the
-  // position's WDL IS that move's WDL — and nonzero otherwise. When the
-  // before point hasn't landed yet, the baseline falls back to the best
-  // listed winrate.
+  // from 2400's perspective. The server pairs each served row with its
+  // before-position baseline at read time; the selector below prefers those
+  // attached deltas and keeps the local before/max comparison as fallback
+  // for rows served without delta context.
   const beforePly = hasMove ? focus : ply;
   const beforeExpected = review.objective[beforePly]?.expected ?? null;
   const displayListed = response?.top_moves.slice(0, 5) ?? [];
   const objectiveEntries = candidates?.entries ?? [];
   const objectiveHasProb = objectiveEntries.length > 0
     && objectiveEntries.every(candidate => typeof candidate.prob === 'number' && Number.isFinite(candidate.prob));
-  // Single tested baseline for every row in both lanes (see deltaBaseline):
-  // the before-position point when settled, else the best listed winrate.
   const bestListed = objectiveHasProb ? Math.max(...objectiveEntries.map(candidate => candidate.expected)) : null;
-  const { baseline, kind } = deltaBaseline(beforeExpected, bestListed);
-  // Deltas stay side-to-move-relative (both ends of the subtraction are the
-  // mover's 2400 expectations), so positive always favors whoever's move is
-  // on screen — no board-orientation flip.
-  const displayParts = maiaDisplayParts(displayListed, baseline);
+  const {
+    parts: displayParts,
+    kind,
+  } = selectDeltaParts(
+    displayListed.map(candidate => ({ prob: candidate.prob, expected: maiaExpected(candidate.wdl), delta: candidate.delta ?? null })),
+    response?.delta_baseline ?? null,
+    beforeExpected,
+    bestListed,
+  );
+  const objectiveDelta = selectDeltaParts(
+    objectiveEntries.map(candidate => ({ prob: candidate.prob ?? 0, expected: candidate.expected, delta: candidate.delta ?? null })),
+    candidates?.baseline ?? null,
+    beforeExpected,
+    bestListed,
+  );
   // One header set for both Maia lanes: play probability (Users) plus
   // win-rate delta (TrendingDown): every row versus the previous position's
   // WDL. The display lane carries low-Elo policy with 2400 values; the
@@ -340,11 +345,11 @@ export function MoveAnalysis({
               played={played}
               hasMove={hasMove}
               previewUci={state.preview}
-              items={objectiveEntries.map((candidate) => (objectiveHasProb
+                items={objectiveEntries.map((candidate, index) => (objectiveHasProb
                 ? {
                   uci: candidate.uci,
                   metric: `${Math.round(candidate.prob! * 100)}%`,
-                  delta: formatWinrateDelta(baseline == null ? 0 : candidate.expected - baseline),
+                  delta: objectiveDelta.parts[index]?.delta ?? formatWinrateDelta(0),
                 }
                 : { uci: candidate.uci, metric: `${Math.round(candidate.expected)}%` }))}
               headers={objectiveHasProb ? maiaListHeaders : {
@@ -384,23 +389,13 @@ export function InsightPanel({
   review: Review;
   children?: ReactNode;
 }) {
-  const [tab, setTab] = useState<"moves" | "issues">("moves");
-  const moveTab = useRef<HTMLButtonElement>(null);
-  const issuesTab = useRef<HTMLButtonElement>(null);
-  const tabs = [
-    { id: "moves", label: "Move analysis", ref: moveTab },
-    { id: "issues", label: "Moves to review", ref: issuesTab },
-  ] as const;
   const inspect = (beforePly: number) => {
-    setTab("moves");
     // Issues name the before-position; the verdict now renders after the
     // move, so land one ply forward.
     dispatch({ type: "view", ply: beforePly + 1 });
-    moveTab.current?.focus({ preventScroll: true });
     document.getElementById("board")?.scrollIntoView({ block: "start" });
   };
-  // Graph points move the viewed position without leaving the Move analysis
-  // tab: the selection marker follows and the board updates underneath.
+  // Graph points move the viewed position without leaving the analysis.
   const viewInPlace = (ply: number) => {
     dispatch({ type: "view", ply });
   };
@@ -413,53 +408,6 @@ export function InsightPanel({
   const ply = state.analysis.index;
   return (
     <aside className="panel insight-panel" aria-label="Game analysis">
-      <div className="analysis-tabs">
-        <div
-          role="tablist"
-          aria-label="Game analysis views"
-          className="analysis-tablist"
-        >
-        {tabs.map((item, index) => (
-          <button
-            key={item.id}
-            ref={item.ref}
-            type="button"
-            role="tab"
-            id={`analysis-tab-${item.id}`}
-            aria-controls={`analysis-panel-${item.id}`}
-            aria-selected={tab === item.id}
-            tabIndex={tab === item.id ? 0 : -1}
-            onClick={() => {
-              setTab(item.id);
-              dispatch({ type: "preview", uci: null });
-            }}
-            onKeyDown={(event) => {
-              const next =
-                event.key === "Home"
-                  ? 0
-                  : event.key === "End"
-                    ? tabs.length - 1
-                    : event.key === "ArrowRight"
-                      ? (index + 1) % tabs.length
-                      : event.key === "ArrowLeft"
-                        ? (index + tabs.length - 1) % tabs.length
-                        : null;
-              if (next === null) return;
-              event.preventDefault();
-              event.stopPropagation();
-              setTab(tabs[next].id);
-              dispatch({ type: "preview", uci: null });
-              tabs[next].ref.current?.focus();
-            }}
-          >
-            {item.label}
-          </button>
-        ))}
-        </div>
-        <div className="tab-action">
-          <ReviewActionButton state={state} review={review} />
-        </div>
-      </div>
       {showControls && (
       <div className="analysis-section analysis-controls-section">
         {review.tooLong && (
@@ -473,45 +421,30 @@ export function InsightPanel({
         )}
       </div>
       )}
-      <div
-        className="analysis-section"
-        role="tabpanel"
-        id="analysis-panel-moves"
-        aria-labelledby="analysis-tab-moves"
-        hidden={tab !== "moves"}
-        tabIndex={0}
-      >
-        {tab === "moves" && (
-          <>
-            <MoveAnalysis state={state} dispatch={dispatch} review={review} />
-            <ReviewSummary
-              review={review}
-              ply={ply}
-              userSide={userSide}
-              branch={branch}
-              onGraphView={viewInPlace}
-            />
-          </>
-        )}
+      <div className="analysis-section">
+        <MoveAnalysis state={state} dispatch={dispatch} review={review} />
+        <ReviewSummary
+          review={review}
+          ply={ply}
+          userSide={userSide}
+          branch={branch}
+          onGraphView={viewInPlace}
+        />
       </div>
-      <div
-        className="analysis-section"
-        role="tabpanel"
-        id="analysis-panel-issues"
-        aria-labelledby="analysis-tab-issues"
-        hidden={tab !== "issues"}
-        tabIndex={0}
-      >
-        {tab === "issues" && (
-          <ReviewIssues
-            review={review}
-            userSide={userSide}
-            branch={branch}
-            onInspect={inspect}
-          />
-        )}
+      <div className="analysis-section">
+        <ReviewIssues
+          review={review}
+          userSide={userSide}
+          branch={branch}
+          onInspect={inspect}
+        />
       </div>
-      {children && <div className="analysis-section analysis-footer-section">{children}</div>}
+      <div className="analysis-section analysis-footer-section footer-row">
+        <div className="footer-actions">{children}</div>
+        <div className="footer-analyze">
+          <ReviewActionButton state={state} review={review} />
+        </div>
+      </div>
     </aside>
   );
 }

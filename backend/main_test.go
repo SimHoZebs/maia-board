@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -320,6 +321,48 @@ func TestMoveCacheReadThrough(t *testing.T) {
 	hit.move(w, httptest.NewRequest(http.MethodPost, "/move", strings.NewReader(degradedBody)))
 	if w.Code == http.StatusOK && w.Header().Get("X-Eval-Cache") == "hit" {
 		t.Fatal("degraded answer was persisted")
+	}
+}
+
+func TestMoveAnalysisAttachesDeltaWithoutStoring(t *testing.T) {
+	body := `{"fen":"` + startFEN + `","moves":[],"elo_maia":1600,"elo_user":1600,"model":"79m","maia_color":"white"}`
+	store := testStore(t)
+	seedMaia(t, &server{store: store}, EngineRequest{FEN: startFEN, SelfElo: 2400, OppoElo: 2400}, "79m",
+		moveResponse{Move: "e2e4", WDL: [3]float64{.2, .3, .5}, ModelUsed: "79m",
+			TopMoves: []topMove{{Move: "e2e4", Prob: 1, WDL: [3]float64{.2, .3, .5}}}})
+	wdl := [3]float64{0.437, 0.063, 0.5}
+	live := &fakePredictor{result: EngineResult{Move: "e2e4", Candidates: []Candidate{{Move: "e2e4", Policy: 0.6, WDL: wdl}}, WDL: wdl}}
+	s := &server{pool: NewEnginePool(live, live), store: store}
+	w := httptest.NewRecorder()
+	s.moveAnalysis(w, httptest.NewRequest(http.MethodPost, "/move/analysis", strings.NewReader(body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("analysis: %d %s", w.Code, w.Body)
+	}
+	var served moveResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &served); err != nil {
+		t.Fatal(err)
+	}
+	if served.DeltaBaseline == nil || served.DeltaBaseline.Kind != "before" ||
+		math.Abs(served.DeltaBaseline.Value-65) > 1e-9 {
+		t.Fatalf("served baseline = %+v", served.DeltaBaseline)
+	}
+	if len(served.TopMoves) != 1 || served.TopMoves[0].Delta == nil ||
+		math.Abs(*served.TopMoves[0].Delta-(53.15-65)) > 1e-9 {
+		t.Fatalf("served deltas = %+v", served.TopMoves)
+	}
+	// The persisted row stays baseline-free: baselines depend on which
+	// grading rows exist at serve time and would go stale frozen.
+	hash, _ := maiaIdentity(EngineRequest{FEN: startFEN, SelfElo: 1600, OppoElo: 1600}, "79m").coordinates()
+	entry, err := store.cacheGet(hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored moveResponse
+	if err := json.Unmarshal(entry.Value, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.DeltaBaseline != nil || stored.TopMoves[0].Delta != nil {
+		t.Fatalf("stored baseline leaked: %+v", stored)
 	}
 }
 

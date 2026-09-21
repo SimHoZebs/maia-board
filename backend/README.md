@@ -38,7 +38,11 @@ to 1; saved games retain their temperature and legacy games default to 0.
 Responses contain the selected `move`, ranked `top_moves` with model policy
 probabilities, and normalized `[loss, draw, win]` `wdl` for the first candidate.
 Sampling can select a move outside the displayed candidates. `model_used` and
-`degraded` identify fallback from 79M to 5M. Busy responses return 503; a failed
+`degraded` identify fallback from 79M to 5M. Served rows (not stored rows)
+also carry `delta_baseline` (the before-position 2400 point) and per-candidate
+`delta` values, computed at read time from the grading row behind the request;
+without a grading row the fields stay absent and the client falls back to its
+list-max comparison. Busy responses return 503; a failed
 79M operation can fall back to 5M, while an explicit 5M request uses only that model.
 
 `POST /move/analysis` accepts the same payload for retrospective Maia analysis

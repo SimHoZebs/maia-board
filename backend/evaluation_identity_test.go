@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -475,4 +476,92 @@ func TestBulkPrefetchChunksLargeBatches(t *testing.T) {
 	if len(got) != rows {
 		t.Fatalf("bulk rows=%d want=%d", len(got), rows)
 	}
+}
+
+func seedMaia(t *testing.T, s *server, r EngineRequest, model string, value moveResponse) {
+	t.Helper()
+	hash, key := maiaIdentity(r, model).coordinates()
+	s.storeCache(hash, "maia", key, value)
+	if _, err := s.store.cacheGet(hash); err != nil {
+		t.Fatalf("producer rejected fixture: %v", err)
+	}
+}
+
+// Golden delta attachment: display row at 1600 with a 2400 grading row
+// behind it. Grading WDL [.2,.3,.5] is 65.0 expected; candidates land at
+// 53.15/53.2, so deltas are -11.85/-11.8 with kind before.
+func TestMaiaDeltaAttachGolden(t *testing.T) {
+	s := &server{store: testStore(t)}
+	elo := 1600
+	req := EngineRequest{FEN: startFEN, SelfElo: elo, OppoElo: elo}
+	display := moveResponse{Move: "e2e4", WDL: [3]float64{0.437, 0.063, 0.5}, ModelUsed: "79m", TopMoves: []topMove{
+		{Move: "e2e4", Prob: 0.6, WDL: [3]float64{0.437, 0.063, 0.5}},
+		{Move: "d2d4", Prob: 0.4, WDL: [3]float64{0.435, 0.066, 0.499}},
+	}}
+	seedMaia(t, s, req, "79m", display)
+	grading := EngineRequest{FEN: startFEN, SelfElo: 2400, OppoElo: 2400}
+	seedMaia(t, s, grading, "79m", moveResponse{Move: "e2e4",
+		WDL: [3]float64{.2, .3, .5}, ModelUsed: "79m",
+		TopMoves: []topMove{{Move: "e2e4", Prob: 1, WDL: [3]float64{.2, .3, .5}}}})
+	before, err := json.Marshal(display)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attached := attachMaiaDelta(serverSource{s}, req, &display)
+	if string(before) != mustMarshal(t, display) {
+		t.Fatal("attach mutated its input")
+	}
+	if attached.DeltaBaseline == nil || attached.DeltaBaseline.Kind != "before" ||
+		math.Abs(attached.DeltaBaseline.Value-65) > 1e-9 {
+		t.Fatalf("baseline = %+v, want {65 before}", attached.DeltaBaseline)
+	}
+	want := []float64{53.15 - 65, 53.2 - 65}
+	if len(attached.TopMoves) != 2 {
+		t.Fatalf("top moves = %+v", attached.TopMoves)
+	}
+	for i, delta := range want {
+		got := attached.TopMoves[i].Delta
+		if got == nil || math.Abs(*got-delta) > 1e-9 {
+			t.Fatalf("delta[%d] = %v, want %v", i, got, delta)
+		}
+	}
+	// End to end through the line-shaped lookup: same baseline and deltas.
+	rows := lookupValues(t, lookupDefault(t, s, []lookupRequest{{Engine: "maia", FEN: startFEN,
+		Ply: 0, EloMaia: &elo, EloUser: &elo, Model: "79m"}}))
+	if len(rows) != 1 {
+		t.Fatalf("lookup rows = %+v", rows)
+	}
+	served, err := decodeStrict[moveResponse]([]byte(mustMarshal(t, rows[0].Value)), moveRequired, nil)
+	if err != nil {
+		t.Fatalf("served value rejected: %v", err)
+	}
+	if served.DeltaBaseline == nil || served.DeltaBaseline.Kind != "before" {
+		t.Fatalf("served baseline = %+v", served.DeltaBaseline)
+	}
+	// Without a grading row the baseline stays absent and the client falls
+	// back to its list-max comparison.
+	bare := &server{store: testStore(t)}
+	seedMaia(t, bare, EngineRequest{FEN: startFEN, SelfElo: 1500, OppoElo: 1500}, "79m", display)
+	servedBare, ok := bare.cachedMaia(EngineRequest{FEN: startFEN, SelfElo: 1500, OppoElo: 1500}, "79m")
+	if !ok {
+		t.Fatal("bare display row missed")
+	}
+	if withDelta := attachMaiaDelta(serverSource{bare}, EngineRequest{FEN: startFEN, SelfElo: 1500, OppoElo: 1500}, servedBare); withDelta.DeltaBaseline != nil {
+		t.Fatalf("baseline without grading row = %+v", withDelta.DeltaBaseline)
+	} else {
+		for _, candidate := range withDelta.TopMoves {
+			if candidate.Delta != nil {
+				t.Fatalf("delta without baseline = %+v", withDelta.TopMoves)
+			}
+		}
+	}
+}
+
+func mustMarshal(t *testing.T, value any) string {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }

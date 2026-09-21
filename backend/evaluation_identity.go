@@ -429,6 +429,52 @@ func (s *server) cachedMaiaFrom(src cacheSource, r EngineRequest, model string) 
 	return &value, true
 }
 
+// maiaGradingHash is the cache identity of the before-position 2400 point
+// for a display triple: same position and history, fixed 2400/2400 ratings
+// on 79m, no value split. It mirrors the client's grading lane
+// (GRADING_MAIA_SETTINGS), including the ValueRev-1 normalization that lets
+// a 2400 display row share its own grading row.
+func maiaGradingHash(r EngineRequest) (string, string) {
+	grading := EngineRequest{FEN: r.FEN, Moves: r.Moves, InitialFEN: r.InitialFEN, SelfElo: 2400, OppoElo: 2400}
+	return maiaIdentity(grading, "79m").coordinates()
+}
+
+// attachMaiaDelta serves a Maia row with its delta context: the
+// before-position 2400 baseline plus per-candidate deltas (raw floats; the
+// client formats). The baseline is read, never stored: it depends on which
+// grading rows exist at serve time, so freezing it into the cache would go
+// stale. Without a grading row the baseline stays absent and the client
+// falls back to its list-max comparison.
+//
+// The grading fetch is deliberately more lenient than the display read: the
+// client derives its before-point from any settled grading row (expected is
+// always shown, even degraded), so the baseline mirrors that leniency —
+// strict shape plus a valid position WDL, nothing more.
+func attachMaiaDelta(src cacheSource, r EngineRequest, value *moveResponse) *moveResponse {
+	if value == nil || len(value.TopMoves) == 0 {
+		return value
+	}
+	hash, key := maiaGradingHash(r)
+	entry, ok := src.fetch(hash, "maia", key)
+	if !ok {
+		return value
+	}
+	grading, ok := decodeStrictValue[moveResponse](entry.Value, moveRequired, nil)
+	if !ok || !validWDL(grading.WDL) {
+		return value
+	}
+	baseline := wdlExpected(grading.WDL)
+	out := *value
+	out.DeltaBaseline = &deltaBaseline{Value: baseline, Kind: "before"}
+	tops := make([]topMove, 0, len(value.TopMoves))
+	for _, candidate := range value.TopMoves {
+		delta := wdlExpected(candidate.WDL) - baseline
+		tops = append(tops, topMove{Move: candidate.Move, Prob: candidate.Prob, WDL: candidate.WDL, Delta: &delta})
+	}
+	out.TopMoves = tops
+	return &out
+}
+
 type lookupRequest struct {
 	Engine       string             `json:"engine"`
 	FEN          string             `json:"fen"`
@@ -543,11 +589,15 @@ func (s *server) evaluationLookup(w http.ResponseWriter, r *http.Request) {
 				request, model, reqErr := resolveMaiaQuery(query, body.Line.InitialFEN, prefix)
 				if reqErr != nil {
 					invalid = fmt.Errorf("%s", reqErr.Message)
-				} else {
-					entry.maiaReq, entry.model = request, model
-					hash, _ := maiaIdentity(request, model).coordinates()
-					hashes = append(hashes, hash)
-				}
+			} else {
+				entry.maiaReq, entry.model = request, model
+				hash, _ := maiaIdentity(request, model).coordinates()
+				hashes = append(hashes, hash)
+				// The delta baseline reads the grading row from the same
+				// snapshot, so its identity joins the prefetch.
+				gradingHash, _ := maiaGradingHash(request)
+				hashes = append(hashes, gradingHash)
+			}
 			default:
 				invalid = fmt.Errorf("engine must be sf or maia")
 			}
@@ -572,6 +622,7 @@ func (s *server) evaluationLookup(w http.ResponseWriter, r *http.Request) {
 			}
 		case "maia":
 			if value, ok := s.cachedMaiaFrom(src, entry.maiaReq, entry.model); ok {
+				value = attachMaiaDelta(src, entry.maiaReq, value)
 				results = append(results, lookupResult{Index: index, Value: value})
 				log.Printf("eval-content engine=maia cache=hit via=lookup index=%d fen=%s plies=%d pos=%s elo=%s value=%s model=%s %s",
 					index, query.FEN, query.Ply, orDash(query.PosHash), eloPair(query.EloMaia, query.EloUser),

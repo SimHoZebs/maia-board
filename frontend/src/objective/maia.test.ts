@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { candidatesFor, deltaBaseline, deltaColumnTitle, fixedElo, formatWinrateDelta, lanePoints, maiaDisplayParts, maiaExpected, maiaPoint, maiaWhiteWdl } from './maia';
+import { candidatesFor, deltaBaseline, deltaColumnTitle, fixedElo, formatWinrateDelta, lanePoints, maiaDisplayParts, maiaExpected, maiaPoint, maiaWhiteWdl, selectDeltaParts } from './maia';
 
 it('reads mover-relative expected scores from WDL triples', () => {
   expect(maiaExpected([0.2, 0.3, 0.5])).toBeCloseTo(65, 9);
@@ -46,10 +46,22 @@ it('lists ranked candidates with per-choice expectations', () => {
     wdl: [0.2, 0.3, 0.5], model_used: '79m', degraded: false,
   }, node);
   expect(list?.entries).toEqual([
-    { uci: 'e2e4', expected: 65, prob: 0.5 },
-    { uci: 'd2d4', expected: 35, prob: 0.3 },
+    { uci: 'e2e4', expected: 65, prob: 0.5, delta: null },
+    { uci: 'd2d4', expected: 35, prob: 0.3, delta: null },
   ]);
-  expect(list).toMatchObject({ degraded: false });
+  expect(list).toMatchObject({ degraded: false, baseline: null });
+  // Server-attached deltas ride through to the panel selector inputs.
+  const attached = candidatesFor({
+    move: 'e2e4',
+    top_moves: [
+      { move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5], delta: 0 },
+      { move: 'd2d4', prob: 0.3, wdl: [0.5, 0.3, 0.2], delta: -30 },
+    ],
+    wdl: [0.2, 0.3, 0.5], model_used: '79m', degraded: false,
+    delta_baseline: { value: 65, kind: 'before' },
+  }, node);
+  expect(attached?.baseline).toEqual({ value: 65, kind: 'before' });
+  expect(attached?.entries.map(entry => entry.delta)).toEqual([0, -30]);
 });
 
 it('pins the panel dropdown to 2400', () => {
@@ -147,4 +159,47 @@ it('keeps deltas side-to-move-relative: Black gains read positive', () => {
   const parts = maiaDisplayParts(topMoves, baseline);
   expect(parts[0]).toEqual({ prob: '38%', delta: '0.0%' });
   expect(parts[1]).toEqual({ prob: '18%', delta: '+1.1%' });
+});
+
+it('prefers server-attached deltas and matches local arithmetic exactly', () => {
+  const rows = [
+    { prob: 0.6, expected: 53.15, delta: -11.85 as number | null },
+    { prob: 0.4, expected: 53.2, delta: -11.8 as number | null },
+  ];
+  const server = { value: 65, kind: 'before' as const };
+  const picked = selectDeltaParts(rows, server, 65, null);
+  expect(picked.baseline).toBe(65);
+  expect(picked.kind).toBe('before');
+  expect(picked.parts).toEqual([
+    { prob: '60%', delta: '-11.9%' },
+    { prob: '40%', delta: '-11.8%' },
+  ]);
+  // Same inputs through the local path agree (server math mirrors it).
+  const local = selectDeltaParts(
+    rows.map(row => ({ ...row, delta: null })),
+    null,
+    65,
+    null,
+  );
+  expect(local).toEqual(picked);
+});
+
+it('falls back locally when server deltas are absent or partial', () => {
+  const rows = [
+    { prob: 0.6, expected: 53.15, delta: null as number | null },
+    { prob: 0.4, expected: 53.2, delta: null as number | null },
+  ];
+  const fallback = selectDeltaParts(rows, null, null, 53.2);
+  expect(fallback.baseline).toBe(53.2);
+  expect(fallback.kind).toBe('best');
+  expect(fallback.parts[0]).toEqual({ prob: '60%', delta: '-0.1%' });
+  // One malformed row poisons the server fast path, not the list.
+  const partial = selectDeltaParts(
+    [{ ...rows[0], delta: -11.85 }, rows[1]],
+    { value: 65, kind: 'before' as const },
+    65,
+    null,
+  );
+  expect(partial.kind).toBe('before');
+  expect(partial.parts[0]).toEqual({ prob: '60%', delta: '-11.9%' });
 });

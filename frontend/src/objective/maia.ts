@@ -122,8 +122,44 @@ export function candidatesFor(
 ): ObjectiveCandidates | undefined {
   if (!row) return undefined;
   return {
-    entries: row.top_moves.map(candidate => ({ uci: candidate.move, expected: maiaExpected(candidate.wdl), prob: candidate.prob })),
+    entries: row.top_moves.map(candidate => ({ uci: candidate.move, expected: maiaExpected(candidate.wdl), prob: candidate.prob, delta: candidate.delta ?? null })),
     degraded: row.degraded,
+    baseline: row.delta_baseline ?? null,
+  };
+}
+
+// Display parts for one candidate list, preferring server-attached deltas.
+// The server pairs each row with its before-position 2400 baseline at read
+// time (same arithmetic as below); the local comparison is the fallback for
+// rows served without delta context (including mixed-version deploys), kept
+// exact by the tests beside deltaBaseline.
+export type DeltaRow = { prob: number; expected: number; delta?: number | null };
+export function selectDeltaParts(
+  rows: DeltaRow[],
+  server: { value: number; kind: 'before' | 'best' } | undefined | null,
+  beforeExpected: number | null,
+  bestListed: number | null,
+): { parts: { prob: string; delta: string }[]; baseline: number | null; kind: DeltaBaseline['kind'] } {
+  if (server && Number.isFinite(server.value) && (server.kind === 'before' || server.kind === 'best')
+    && rows.length > 0 && rows.every(row => typeof row.delta === 'number' && Number.isFinite(row.delta))) {
+    return {
+      parts: rows.map(row => ({ prob: `${Math.round(row.prob * 100)}%`, delta: formatWinrateDelta(row.delta as number) })),
+      baseline: server.value,
+      kind: server.kind,
+    };
+  }
+  // Local fallback: identical arithmetic to maiaDisplayParts, over expected
+  // values (objective entries carry no WDL). Kept exact by shared tests.
+  if (rows.length === 0) {
+    const { baseline, kind } = deltaBaseline(beforeExpected, bestListed);
+    return { parts: [], baseline, kind };
+  }
+  const { baseline, kind } = deltaBaseline(beforeExpected, bestListed);
+  const best = baseline ?? Math.max(...rows.map(row => row.expected));
+  return {
+    parts: rows.map(row => ({ prob: `${Math.round(row.prob * 100)}%`, delta: formatWinrateDelta(row.expected - best) })),
+    baseline,
+    kind,
   };
 }
 

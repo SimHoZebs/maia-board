@@ -21,6 +21,10 @@ export type TopMove = {
   move: string;
   prob: number;
   wdl: [number, number, number];
+  // Server-attached delta vs the served baseline (raw float; formatted by
+  // the panel). Absent on rows served without delta context — the panel
+  // falls back to its local comparison.
+  delta?: number;
 };
 
 export type MoveResponse = {
@@ -29,6 +33,9 @@ export type MoveResponse = {
   wdl: [number, number, number];
   model_used: MaiaModel;
   degraded: boolean;
+  // Server-attached delta baseline (before-position 2400 point). Absent
+  // when no grading row existed at serve time.
+  delta_baseline?: { value: number; kind: 'before' | 'best' };
 };
 
 export type ApiErrorCode =
@@ -130,11 +137,28 @@ export function parseMoveResponse(value: unknown, expected?: { model: MaiaModel;
   }
   return {
     move: value.move,
-    top_moves: candidates,
+    top_moves: candidates.map(candidate => ({
+      move: candidate.move,
+      prob: candidate.prob,
+      wdl: candidate.wdl,
+      ...(typeof candidate.delta === 'number' && Number.isFinite(candidate.delta) ? { delta: candidate.delta } : {}),
+    })),
     wdl,
     model_used: value.model_used,
     degraded: value.degraded,
+    ...parseDeltaBaseline(value),
   };
+}
+
+// Server-attached baseline, validated-or-absent: a malformed attachment is
+// dropped (the panel falls back to its local comparison) rather than
+// rejecting a row whose engine content is fine.
+function parseDeltaBaseline(value: Record<string, unknown>): Pick<MoveResponse, 'delta_baseline'> {
+  const baseline: unknown = value.delta_baseline;
+  if (baseline === undefined) return {};
+  if (!isRecord(baseline) || typeof baseline.value !== 'number' || !Number.isFinite(baseline.value)
+    || (baseline.kind !== 'before' && baseline.kind !== 'best')) return {};
+  return { delta_baseline: { value: baseline.value, kind: baseline.kind } };
 }
 
 const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set([

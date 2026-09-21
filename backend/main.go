@@ -37,6 +37,10 @@ type topMove struct {
 	Move string     `json:"move"`
 	Prob float64    `json:"prob"`
 	WDL  [3]float64 `json:"wdl"`
+	// Delta is the candidate's expected winrate minus the served baseline,
+	// attached at read time (never stored). Absent on rows served before
+	// the baseline existed or when no baseline applied.
+	Delta *float64 `json:"delta,omitempty"`
 }
 
 type moveResponse struct {
@@ -45,6 +49,18 @@ type moveResponse struct {
 	WDL       [3]float64 `json:"wdl"`
 	ModelUsed string     `json:"model_used"`
 	Degraded  bool       `json:"degraded"`
+	// DeltaBaseline is the before-position 2400 point the deltas above
+	// were computed against, attached at read time (never stored).
+	DeltaBaseline *deltaBaseline `json:"delta_baseline,omitempty"`
+}
+
+// deltaBaseline names the baseline a served Maia row's deltas compare
+// against. Only "before" is emitted today: the before-position 2400 point.
+// "best" stays in the contract for the list-max fallback the client applies
+// when no baseline is attached.
+type deltaBaseline struct {
+	Value float64 `json:"value"`
+	Kind  string  `json:"kind"`
 }
 
 type apiError struct {
@@ -283,6 +299,13 @@ func (s *server) serveMove(w http.ResponseWriter, r *http.Request, prio Priority
 		return
 	}
 	model, degraded = response.ModelUsed, response.Degraded
+	// The analysis lane serves rows with their delta context attached (the
+	// before-position 2400 baseline + per-candidate deltas). Attachment
+	// happens after the executor's write-through, so cached rows stay
+	// baseline-free and never go stale. Play replies carry no delta column.
+	if prio == PriorityFocus {
+		response = *attachMaiaDelta(serverSource{s}, engineRequest, &response)
+	}
 	if useCache {
 		if hit {
 			w.Header().Set("X-Eval-Cache", "hit")

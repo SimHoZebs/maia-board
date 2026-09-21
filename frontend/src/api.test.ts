@@ -131,6 +131,26 @@ describe('native Maia response validation', () => {
     expect(parseMoveResponse(tied, payload).move).toBe('d2d4');
     expect(() => parseMoveResponse({ ...tied, top_moves: [{ move: 'e2e4', prob: 0.6, wdl: [0.2, 0.3, 0.5] }, { move: 'd2d4', prob: 0.4, wdl: [0.2, 0.3, 0.5] }] }, payload)).toThrow();
   });
+  it('passes server-attached deltas through and drops malformed ones', () => {
+    const attached = {
+      ...valid,
+      delta_baseline: { value: 65, kind: 'before' as const },
+      top_moves: valid.top_moves.map((candidate, index) => ({ ...candidate, delta: index === 0 ? -11.85 : -11.8 })),
+    };
+    expect(parseMoveResponse(attached, payload)).toMatchObject({
+      delta_baseline: { value: 65, kind: 'before' },
+      top_moves: [{ delta: -11.85 }, { delta: -11.8 }],
+    });
+    // Malformed attachments never reject the row; the panel falls back.
+    const sloppy = {
+      ...valid,
+      delta_baseline: { value: 'high', kind: 'before' },
+      top_moves: valid.top_moves.map(candidate => ({ ...candidate, delta: 'low' })),
+    };
+    const parsed = parseMoveResponse(sloppy, payload);
+    expect(parsed.delta_baseline).toBeUndefined();
+    expect(parsed.top_moves.every(candidate => candidate.delta === undefined)).toBe(true);
+  });
   it('does not issue client repair writes for invalid cache hits', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ ...valid, top_moves: [] }), { headers: { 'X-Eval-Cache': 'hit' } }));
     await expect(requestMove(payload, fetcher)).rejects.toBeInstanceOf(MaiaApiError);

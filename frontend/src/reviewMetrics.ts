@@ -361,8 +361,11 @@ export type ObjectivePoint = {
 // policy share); lanes without one (Stockfish lines) omit it and the panel
 // falls back to the single absolute value.
 export type ObjectiveCandidates = {
-  entries: { uci: string; expected: number; prob?: number | null }[];
+  entries: { uci: string; expected: number; prob?: number | null; delta?: number | null }[];
   degraded: boolean;
+  // Server-attached delta baseline for these entries (mirrors the row's
+  // delta_baseline). Absent when served without delta context.
+  baseline?: { value: number; kind: 'before' | 'best' } | null;
 };
 // White-relative view of a mover-relative expectation. Callers pass the
 // node's turn; no FEN parsing, no model knowledge.
