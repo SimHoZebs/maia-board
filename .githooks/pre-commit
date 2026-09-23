@@ -1,0 +1,71 @@
+#!/bin/sh
+# pre-commit — staged-aware fast checks (<60s typical).
+# Full test suites belong in pre-push (scripts/verify.sh) or CI, not here.
+set -eu
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+STAGED="$(git diff --cached --name-only --diff-filter=ACM)"
+[ -z "$STAGED" ] && exit 0
+
+FE_FILES="$(printf '%s\n' "$STAGED" | grep '^frontend/' || true)"
+BE_ANY="$(printf '%s\n' "$STAGED" | grep '^backend/' || true)"
+BE_GO="$(printf '%s\n' "$STAGED" | grep '^backend/.*\.go$' || true)"
+SH_FILES="$(printf '%s\n' "$STAGED" | grep '\.sh$' || true)"
+
+if [ -n "$FE_FILES" ]; then
+  echo "pre-commit: frontend typecheck"
+  (cd "$ROOT/frontend" && npm run typecheck)
+  TESTS="$(printf '%s\n' "$FE_FILES" | grep '^frontend/.*\.test\.[jt]sx\?$' || true)"
+  if [ -n "$TESTS" ]; then
+    COUNT="$(printf '%s\n' "$TESTS" | wc -l | tr -d ' ')"
+    if [ "$COUNT" -le 3 ]; then
+      REL="$(printf '%s\n' "$TESTS" | sed 's|^frontend/||')"
+      echo "pre-commit: vitest subset"
+      # shellcheck disable=SC2086
+      (cd "$ROOT/frontend" && npx vitest run $REL)
+    else
+      echo "pre-commit: skipping vitest subset ($COUNT staged test files); full suite runs in pre-push/CI"
+    fi
+  else
+    echo "pre-commit: skipping vitest subset (no staged test files); full suite runs in pre-push/CI"
+  fi
+fi
+
+if [ -n "$BE_ANY" ]; then
+  echo "pre-commit: go vet"
+  (cd "$ROOT/backend" && CGO_ENABLED=0 go vet ./...)
+  if [ -n "$BE_GO" ]; then
+    echo "pre-commit: gofmt -l on staged Go files"
+    BAD=""
+    while IFS= read -r f; do
+      [ -z "$f" ] && continue
+      if [ -f "$ROOT/$f" ]; then
+        OUT="$(gofmt -l "$ROOT/$f" || true)"
+        if [ -n "$OUT" ]; then
+          BAD="$BAD$OUT
+"
+        fi
+      fi
+    done <<EOF
+$BE_GO
+EOF
+    if [ -n "$BAD" ]; then
+      echo "pre-commit: badly formatted Go files:" >&2
+      printf '%s' "$BAD" >&2
+      exit 1
+    fi
+  fi
+fi
+
+if [ -n "$SH_FILES" ]; then
+  echo "pre-commit: bash -n on staged shell scripts"
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    if [ -f "$ROOT/$f" ]; then
+      bash -n "$ROOT/$f" || exit 1
+    fi
+  done <<EOF
+$SH_FILES
+EOF
+fi
+
+echo "pre-commit: OK"

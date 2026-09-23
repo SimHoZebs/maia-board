@@ -1,0 +1,20 @@
+#!/bin/sh
+# pre-push — fuller scripts/verify.sh with a 3-minute timebox.
+# On timeout, falls back to frontend-only and notes it.
+set -eu
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if command -v timeout >/dev/null 2>&1; then
+  if timeout 180 "$ROOT/scripts/verify.sh"; then
+    exit 0
+  else
+    RC=$?
+    if [ "$RC" -eq 124 ]; then
+      echo "pre-push: full verify exceeded 3 min; falling back to frontend-only" >&2
+      exec "$ROOT/scripts/verify.sh" --frontend-only
+    fi
+    exit "$RC"
+  fi
+else
+  echo "pre-push: 'timeout' not found; running full verify without timebox" >&2
+  exec "$ROOT/scripts/verify.sh"
+fi

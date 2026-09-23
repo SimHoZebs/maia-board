@@ -64,35 +64,34 @@ syncing and asks you to export its pending work before reloading.
 ## Development and checks
 
 Use Node.js 22, Go as specified in [`backend/go.mod`](backend/go.mod), and Python
-3.12 for worker tests. Run commands from the indicated directory.
+3.12 for worker tests. Bootstrap once with `scripts/env-setup.sh`, plus `npm ci`
+in `frontend/` and `npx playwright install chromium` for browser tests.
+
+Run checks via `scripts/` (each supports `--help`):
 
 ```sh
-# frontend/
-npm ci
-npm test
-npm run typecheck
-npm run build:bundle
-npm run test:browser          # builds its fixture bundle, then runs it; no API server needed
-npm run test:browser:run      # runs an already-built fixture bundle (CI builds first)
-npm run test:browser:strict   # development React / StrictMode fixture
-npm run test:perf             # simulated-client profiling fixture
+scripts/verify.sh               # typecheck + vitest + go vet/test
+scripts/e2e.sh <spec>           # build dist-browser, preview, run a Playwright spec
+scripts/perf.sh                 # profiling build + PERF_SEED/PERF_PLIES matrix
+scripts/serve.sh                # preview an existing build
+node scripts/chess.mjs "<fen>"  # position legality/SAN/UCI/material as JSON
+scripts/env-setup.sh            # Stockfish, Python venv, JRE + tla2tools bootstrap
 ```
 
-Install Chromium once with `npx playwright install chromium`; host browser libraries
-must also be available. Browser fixtures mock engine responses. They do not exercise
+Browser fixtures mock engine responses. They do not exercise
 real model inference. Keep concurrent browser runs' output directories separate; see
 [`frontend/README.md`](frontend/README.md).
 
-```sh
-# backend/
-CGO_ENABLED=0 go test ./...
-CGO_ENABLED=0 go vet ./...
-```
-
-Python setup, mocked-worker commands, and real-engine checks are in
+Python setup details, mocked-worker commands, and real-engine checks are in
 [`backend/README.md`](backend/README.md) and [`backend/STOCKFISH.md`](backend/STOCKFISH.md).
 CI has separate Go/mock-worker, frontend, and packaged Stockfish jobs. TypeScript
 runs once before CI's browser fixture build.
+
+### Agent checks
+
+Agents run `scripts/verify.sh` before finishing any code task.
+Use `--frontend-only`, `--backend-only`, or `--file <vitest-path>` for scoped changes.
+Pre-commit runs staged typecheck/vet/gofmt; pre-push runs the full verify.
 
 For a frontend development server or preview against an existing backend:
 

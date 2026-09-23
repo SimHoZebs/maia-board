@@ -14,7 +14,13 @@
     "test:browser:run": "playwright test",
     "test:browser": "MAIA_BUILD_DIR=dist-browser npm run build && npm run test:browser:run",
     "test:browser:strict": "NODE_ENV=development npm run test:browser",
-    "test:perf": "MAIA_BUILD_DIR=dist-profiling npm run build:profiling && MAIA_BUILD_DIR=dist-profiling playwright test -c playwright.perf.config.ts"
+    "test:perf": "MAIA_BUILD_DIR=dist-profiling npm run build:profiling && MAIA_BUILD_DIR=dist-profiling playwright test -c playwright.perf.config.ts",
+    "verify": "../scripts/verify.sh",
+    "e2e": "../scripts/e2e.sh",
+    "serve": "../scripts/serve.sh",
+    "chess": "node ../scripts/chess.mjs",
+    "perf": "../scripts/perf.sh",
+    "env-setup": "../scripts/env-setup.sh"
   },
   "dependencies": {
     "@lichess-org/chessground": "^10.1.1",
