@@ -242,6 +242,40 @@ func TestGameStoreGeneratesID(t *testing.T) {
 	}
 }
 
+// An orphan current-game marker must read as no current game, never as a
+// dangling id paired with a null row.
+func TestGamesListOrphanMarkerReadsNull(t *testing.T) {
+	store := testStore(t)
+	current := gameFixture("old", "e2e4")
+	current.Current = true
+	if _, err := store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+	// Bypass Delete's marker cleanup to simulate a marker/game race.
+	if _, err := store.db.Exec(`DELETE FROM games WHERE id = 'old'`); err != nil {
+		t.Fatal(err)
+	}
+	if id := store.CurrentID(); id != "old" {
+		t.Fatalf("marker setup failed: %q", id)
+	}
+	s := &server{store: store}
+	w := httptest.NewRecorder()
+	s.games(w, httptest.NewRequest("GET", "/games?limit=200&offset=0", nil))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var page struct {
+		CurrentID   *string  `json:"current_id"`
+		CurrentGame *gameRow `json:"current_game"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if page.CurrentID != nil || page.CurrentGame != nil {
+		t.Fatalf("orphan marker served dangling: %s", w.Body)
+	}
+}
+
 func TestGameStoreResult(t *testing.T) {
 	store := testStore(t)
 	payload := gameFixture("a", "e2e4")

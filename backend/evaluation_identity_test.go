@@ -557,6 +557,28 @@ func TestMaiaDeltaAttachGolden(t *testing.T) {
 	}
 }
 
+// A degraded grading row must never anchor display deltas, even if one
+// reaches the cache through a path that bypasses write validation.
+func TestMaiaDeltaIgnoresDegradedBaseline(t *testing.T) {
+	req := EngineRequest{FEN: startFEN, SelfElo: 1600, OppoElo: 1600}
+	display := moveResponse{Move: "e2e4", WDL: [3]float64{0.437, 0.063, 0.5}, ModelUsed: "79m", TopMoves: []topMove{
+		{Move: "e2e4", Prob: 0.6, WDL: [3]float64{0.437, 0.063, 0.5}},
+	}}
+	gradingHash, gradingKey := maiaGradingHash(req)
+	degraded, err := json.Marshal(moveResponse{Move: "e2e4",
+		WDL: [3]float64{.2, .3, .5}, ModelUsed: "5m", Degraded: true,
+		TopMoves: []topMove{{Move: "e2e4", Prob: 1, WDL: [3]float64{.2, .3, .5}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := bulkSource{rows: map[string]cachedEvaluation{
+		gradingHash: {KeyHash: gradingHash, Engine: "maia", Key: gradingKey, Value: degraded},
+	}}
+	if attached := attachMaiaDelta(src, req, &display); attached.DeltaBaseline != nil {
+		t.Fatalf("degraded baseline attached = %+v", attached.DeltaBaseline)
+	}
+}
+
 func mustMarshal(t *testing.T, value any) string {
 	t.Helper()
 	data, err := json.Marshal(value)

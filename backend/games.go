@@ -341,7 +341,12 @@ func (s *server) games(w http.ResponseWriter, r *http.Request) {
 			row, err := s.store.Get(currentID)
 			if err == nil {
 				current = &row
-			} else if !errors.Is(err, sql.ErrNoRows) {
+			} else if errors.Is(err, sql.ErrNoRows) {
+				// Orphan marker (e.g. game deleted between the marker
+				// read and the row fetch): report no current game
+				// instead of a dangling id the client must null out.
+				currentID = ""
+			} else {
 				writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "current game is unavailable")
 				return
 			}

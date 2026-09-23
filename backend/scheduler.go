@@ -73,7 +73,10 @@ type Grant struct {
 //
 // Depths: Play 1 latest-wins, Focus 1 latest-wins (a new arrival replaces the
 // queued waiter, which gets ErrSuperseded and never consumes the slot),
-// Batch unbounded FIFO. Dedup-by-key spans lanes; empty keys never dedup.
+// Batch unbounded FIFO. Dedup-by-key spans lanes within this scheduler
+// instance; empty keys never dedup. Stockfish runs two instances
+// (interactive + batch), so a Focus duplicate of in-flight Batch work
+// recomputes instead of joining; correctness is unaffected (last write wins).
 // Grant order is Play>Focus>Batch, non-preemptive (a grant waits at most one op).
 type Scheduler struct {
 	mu          sync.Mutex

@@ -359,7 +359,11 @@ func (s *server) cachedSFFrom(src cacheSource, r evaluationRequest) (*evaluation
 	// slicing, so compatible budgets never recompute. Native exact identity
 	// always wins; larger-lines variants are tried in increasing order. The
 	// legacy node-budget policy has no compatible v2 timed-policy equivalent,
-	// even at 750ms / two candidates.
+	// even at 750ms / two candidates. Timed reuse is approximate: a fixed
+	// time budget spread over more lines is thinner per line than a dedicated
+	// smaller search. Provenance must stay native (ActualSettings and
+	// SearchPolicy report the stored search) so the client can slice without
+	// relabelling; see TestLookupCompatibleSettingsPreserveActualProvenance.
 	for _, candidate := range sfSupersetCandidates(r) {
 		if value, ok := s.lookupSFCandidateFrom(src, candidate, r.Settings); ok {
 			return value, true
@@ -446,10 +450,10 @@ func maiaGradingHash(r EngineRequest) (string, string) {
 // stale. Without a grading row the baseline stays absent and the client
 // falls back to its list-max comparison.
 //
-// The grading fetch is deliberately more lenient than the display read: the
-// client derives its before-point from any settled grading row (expected is
-// always shown, even degraded), so the baseline mirrors that leniency —
-// strict shape plus a valid position WDL, nothing more.
+// The grading fetch mirrors the display read's trust boundary: the baseline
+// must come from a non-degraded 79m row with a valid position WDL. Degraded
+// rows are never written through the cache, but the read must not depend on
+// that write-path guarantee alone.
 func attachMaiaDelta(src cacheSource, r EngineRequest, value *moveResponse) *moveResponse {
 	if value == nil || len(value.TopMoves) == 0 {
 		return value
@@ -460,7 +464,7 @@ func attachMaiaDelta(src cacheSource, r EngineRequest, value *moveResponse) *mov
 		return value
 	}
 	grading, ok := decodeStrictValue[moveResponse](entry.Value, moveRequired, nil)
-	if !ok || !validWDL(grading.WDL) {
+	if !ok || grading.Degraded || grading.ModelUsed != "79m" || !validWDL(grading.WDL) {
 		return value
 	}
 	baseline := wdlExpected(grading.WDL)
