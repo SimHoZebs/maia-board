@@ -175,10 +175,91 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
   // answer in CACHE_HIT_MS with the X-Eval-Cache header; misses pay the
   // live budget and file the row, mirroring the Go contract.
   const evaluations = new EvaluationFixture();
+  // Bulk line-oriented endpoints (current contract): the line ships once,
+  // entries carry ply. Values are generated from the request FEN so every
+  // row passes parseEvaluation/parseMoveResponse; rows cache by engine +
+  // fen + settings so batch submit populates and lookup primes hit.
+  let batchTotal = 0;
+  const batchJobId = 'perf-job-1';
+  let batchSubmitted = false;
+  const bulkCache = new Map<string, unknown>();
+  const bulkKey = (req: any) => JSON.stringify(req.engine === 'sf'
+    ? ['sf', req.fen, req.settings ?? defaultStockfishSettings]
+    : ['maia', req.fen, req.elo_maia, req.elo_user, req.model, req.value_elo_maia ?? null, req.value_elo_user ?? null]);
+  const bulkValue = (req: any): unknown | null => {
+    let legal: string[];
+    try {
+      legal = new Chess(req.fen).moves({ verbose: true }).map(m => `${m.from}${m.to}${m.promotion ?? ''}`);
+    } catch { return null; }
+    if (!legal.length) return null;
+    if (req.engine === 'sf') {
+      const settings = req.settings ?? defaultStockfishSettings;
+      const count = Math.max(1, Math.min(settings.lines ?? 2, legal.length));
+      const moves = legal.slice(0, count);
+      const lines = moves.map((move: string, index: number) => ({ move, score: { type: 'cp', value: 20 - index * 10 }, depth: 12 }));
+      return { engine: 'Stockfish 19', search_policy: stockfishPolicy(settings), terminal: null, depth: 12, best_move: lines[0].move, score: lines[0].score, lines };
+    }
+    const candidates = legal.slice(0, 2);
+    return { move: candidates[0], top_moves: candidates.map(move => ({ move, prob: 0.3, wdl: [0.2, 0.3, 0.5] })), wdl: [0.2, 0.3, 0.5], model_used: req.model ?? '79m', degraded: false };
+  };
   await page.route('http://maia.test/**', async route => {
     const url = new URL(route.request().url());
     const path = url.pathname;
-    if (await evaluations.lookup(route, EVAL_GET_MS)) return;
+    if (path === '/evaluations/lookup') {
+      const body = route.request().postDataJSON();
+      // Before the batch submit, report cache misses so the analysis page
+      // stays in the pre-batch "Analyze entire game" state the sim clicks.
+      // After submit, serve generated rows so the batch prime settles.
+      if (!batchSubmitted) {
+        await sleep(EVAL_GET_MS);
+        await route.fulfill({ json: { results: [] } });
+        return;
+      }
+      const requests = body?.requests ?? [];
+      const results: { index: number; value: unknown }[] = [];
+      for (let index = 0; index < requests.length; index++) {
+        const req = requests[index];
+        const key = bulkKey(req);
+        let value = bulkCache.get(key);
+        if (value === undefined) {
+          const generated = bulkValue(req);
+          if (generated === null) continue;
+          bulkCache.set(key, generated);
+          net.push({ engine: req.engine, ply: req.ply, cache: 'live', simulatedMs: req.engine === 'maia' ? MAIA_LIVE_MS : SF_LIVE_MS, wallMs: EVAL_GET_MS });
+          value = generated;
+        } else {
+          net.push({ engine: req.engine, ply: req.ply, cache: 'hit', simulatedMs: CACHE_HIT_MS, wallMs: EVAL_GET_MS });
+        }
+        results.push({ index, value });
+      }
+      await sleep(EVAL_GET_MS);
+      await route.fulfill({ json: { results } });
+      return;
+    }
+    if (path === '/reviews' && route.request().method() === 'POST') {
+      const body = route.request().postDataJSON();
+      const requests = body?.requests ?? [];
+      for (const req of requests) {
+        const key = bulkKey(req);
+        if (!bulkCache.has(key)) {
+          const generated = bulkValue(req);
+          if (generated !== null) bulkCache.set(key, generated);
+        }
+      }
+      batchTotal = requests.length;
+      batchSubmitted = true;
+      await route.fulfill({ json: { job_id: batchJobId, total: requests.length, cached: 0, pending: requests.length }, status: 202 });
+      return;
+    }
+    if (path === `/reviews/${batchJobId}/events`) {
+      const progress = { job_id: batchJobId, total: batchTotal, done: batchTotal, failed: 0, finished: true };
+      await route.fulfill({ body: `data: ${JSON.stringify({ progress })}\n\n`, contentType: 'text/event-stream' });
+      return;
+    }
+    if (path === `/reviews/${batchJobId}`) {
+      await route.fulfill({ json: { job_id: batchJobId, total: batchTotal, done: batchTotal, failed: 0, finished: true } });
+      return;
+    }
     if (path === '/openings') {
       const moves = route.request().postDataJSON()?.moves;
       await route.fulfill({ json: { matches: [], book_flags: Array.isArray(moves) ? moves.map(() => false) : [] } });
@@ -207,11 +288,16 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
       const sfMoves = [best, ...legal.filter(m => m !== best)].slice(0, 2);
       const value = engine === 'maia'
         ? { move: best, top_moves: [{ move: best, prob: 0.6, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], model_used: payload.model, degraded: false }
-        : {
-            engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 14, terminal: null,
-            best_move: sfMoves[0], score: { type: 'cp', value: 20 },
-            lines: sfMoves.map((move, index) => ({ move, score: { type: 'cp', value: index === 0 ? 20 : 0 }, depth: 14 })),
-          };
+        : (() => {
+            const settings = payload.settings ?? defaultStockfishSettings;
+            const count = Math.max(1, Math.min(settings.lines ?? 2, sfMoves.length));
+            const moves = sfMoves.slice(0, count);
+            const lines = moves.map((move, index) => ({ move, score: { type: 'cp', value: index === 0 ? 20 : 0 }, depth: 12 }));
+            return {
+              engine: 'Stockfish 19', search_policy: stockfishPolicy(settings), depth: 12, terminal: null,
+              best_move: lines[0].move, score: lines[0].score, lines,
+            };
+          })();
       evaluations.set(engine, payload, value);
       net.push({ engine, ply: payload.moves.length, cache: 'live', simulatedMs: liveMs, wallMs: Date.now() - wallStart });
       await route.fulfill({ json: value });
@@ -324,7 +410,7 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
   // 4. Foreground latency after a settings change (no second batch).
   await timed('analysis: rating change foreground', async () => {
     await page.locator('#analysis-rating').selectOption('1800');
-    await expect(page.getByRole('heading', { name: 'Maia 79m • 1800', exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('heading', { name: 'Maia • 1800', exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText('updating to 1800')).toHaveCount(0);
   });
 
@@ -426,5 +512,5 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
 
   expect(errors).toEqual([]);
   expect(batchCommits).toBeGreaterThan(0);
-  expect(evaluations.entries.size).toBeGreaterThanOrEqual(positions);
+  expect(evaluations.entries.size + bulkCache.size).toBeGreaterThanOrEqual(positions);
 });
