@@ -11,8 +11,10 @@ import {
 } from "react-router";
 import { App } from "./App";
 const EvalLoadingLab = lazy(() => import("./EvalLoadingLab").then(module => ({ default: module.EvalLoadingLab })));
+const VerdictLab = lazy(() => import("./VerdictLab").then(module => ({ default: module.VerdictLab })));
 import type { Mode } from "./domain";
 import { loadLine } from "./domain";
+import { NotFound } from "./NotFound";
 import type { Action, State } from "./state/index";
 import { useMaiaBoard } from "./useMaiaBoard";
 import { SyncContext } from "./syncStore";
@@ -281,20 +283,24 @@ export function BoardRouter() {
     </RegionRecorder>
   );
   // Invariant: every destination change dispatches its mode at the event
-  // (tab taps, popstate, the review/unload/saved navigations above, and the
-  // pre-mount canonicalization in main.tsx). No new <Navigate> may appear
-  // in these routes without one: location moving alone leaves the reducer
-  // behind with nothing left to correct it — and a correcting effect would
-  // flail against the eager dispatches (duplicate engine POSTs, see the
-  // mode-ownership notes).
+  // (tab taps, NotFound links, popstate, the review/unload/saved navigations
+  // above, and the pre-mount canonicalization in main.tsx). No new <Navigate>
+  // may appear in these routes without one: location moving alone leaves the
+  // reducer behind with nothing left to correct it — and a correcting effect
+  // would flail against the eager dispatches (duplicate engine POSTs, see the
+  // mode-ownership notes). The "*" route renders NotFound instead of
+  // navigating: its links dispatch their mode at the click event, the same
+  // ownership as DestinationNav above and MobileMenu in workspaces.tsx — keep
+  // all three branches identical and report any drift.
   return (
     <Routes>
       <Route path="/dev/eval-loading" element={<Suspense fallback={null}><EvalLoadingLab /></Suspense>} />
+      <Route path="/dev/verdict-lab" element={<Suspense fallback={null}><VerdictLab /></Suspense>} />
       {destinations.map(({ path }) => (
         <Route key={path} path={path} element={workspace} />
       ))}
       <Route path="/" element={<Navigate to="/play" replace />} />
-      <Route path="*" element={<Navigate to="/play" replace />} />
+      <Route path="*" element={<NotFound state={state} dispatch={dispatch} />} />
     </Routes>
   );
 }

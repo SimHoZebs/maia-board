@@ -283,30 +283,41 @@ test('Back retires pending analysis; remounts refetch retired rows once and neve
   expect(app.errors).toEqual([]);
 });
 
-for (const path of ['/', '/unknown/destination']) {
-  test(`${path} redirects and resumes restored Maia turn exactly once`, async ({ page }) => {
-    const app = await boot(page, { [KEYS.current]: record(['e2e4']) }, false, path);
-    await expect(page).toHaveURL('http://maia.test/play');
-    await expect.poll(() => app.requests.length).toBe(1);
-    expect(app.requests[0].payload.moves).toEqual(['e2e4']);
-    await app.reply(0, 'e7e5');
-    await piece(page, 'e5', 'black pawn');
-    expect(await currentMoves(page)).toEqual(['e2e4', 'e7e5']);
-    expect(app.requests).toHaveLength(1);
-    expect(app.errors).toEqual([]);
-  });
+test('/ redirects and resumes restored Maia turn exactly once', async ({ page }) => {
+  const app = await boot(page, { [KEYS.current]: record(['e2e4']) }, false, '/');
+  await expect(page).toHaveURL('http://maia.test/play');
+  await expect.poll(() => app.requests.length).toBe(1);
+  expect(app.requests[0].payload.moves).toEqual(['e2e4']);
+  await app.reply(0, 'e7e5');
+  await piece(page, 'e5', 'black pawn');
+  expect(await currentMoves(page)).toEqual(['e2e4', 'e7e5']);
+  expect(app.requests).toHaveLength(1);
+  expect(app.errors).toEqual([]);
+});
 
-  test(`${path} replaces its history entry with play`, async ({ page }) => {
-    await boot(page, {}, false, '/history');
-    await page.goto(`http://maia.test${path}`);
-    await expect(page).toHaveURL('http://maia.test/play');
-    await expect(page.locator('#play-controls')).toBeVisible();
-    await page.goBack();
-    await expect(page).toHaveURL('http://maia.test/history');
-    await page.goForward();
-    await expect(page).toHaveURL('http://maia.test/play');
-  });
-}
+test('/ replaces its history entry with play', async ({ page }) => {
+  await boot(page, {}, false, '/history');
+  await page.goto('http://maia.test/');
+  await expect(page).toHaveURL('http://maia.test/play');
+  await expect(page.locator('#play-controls')).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL('http://maia.test/history');
+  await page.goForward();
+  await expect(page).toHaveURL('http://maia.test/play');
+});
+
+test('/unknown/destination renders not-found with destinations', async ({ page }) => {
+  await boot(page, {}, false, '/unknown/destination');
+  await expect(page).toHaveURL('http://maia.test/unknown/destination');
+  await expect(page.locator('#not-found')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible();
+  for (const mode of ['play', 'analysis', 'history', 'settings']) {
+    await expect(page.locator(`#not-found #mode-${mode}`)).toBeVisible();
+  }
+  await page.locator('#not-found #mode-history').click();
+  await expect(page).toHaveURL('http://maia.test/history');
+  await expect(page.locator('.saved-panel')).toBeVisible();
+});
 test('Analyze current game keeps the importer behind its analysis URL', async ({ page }) => {
   const game = record(['e2e4', 'e7e5']);
   const app = await boot(page, { [KEYS.current]: game }, false, '/history');
