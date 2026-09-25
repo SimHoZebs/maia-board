@@ -13,19 +13,30 @@ Status: `Pending` | `Accepted` | `Rejected` | `Needs-doc` (keep code, document i
 - [x] 5. Single strict-decode path + merged walker (Accepted)
 - [x] 6. Batch fairness: rotation + dual caps (Accepted, keep)
 - [x] 7. Single frontend restore path (Accepted, corrected)
-- [ ] 7. Single frontend restore path
 - [x] 8. Merge `useBulkPrime` into `useServerBatch` (Accepted)
 - [x] 9. Unify `useReview` / `usePlayFeedback` orchestration (Accepted)
 - [x] 10. Single transport + play `/move` through coordinator (Accepted)
 - [ ] 11. Single timeline selector / FEN-scan fan-out (active)
-- [ ] 9. Unify `useReview` / `usePlayFeedback` orchestration
-- [ ] 10. Single transport + play `/move` through coordinator
-- [ ] 11. Single timeline selector / FEN-scan fan-out
 - [ ] 12. Persistence writes behind repository only
 - [ ] 13. Verdict priority tables in one module (keep wording richness)
 - [ ] 14. One opening subscription per workspace
-- [ ] 15. Dissolve `state.ts` god reducer (Accepted — delete the file, split into slices)
-- [ ] 16. Tests / scripts / docs trim
+- [x] 15. Dissolve `state.ts` god reducer (Accepted — delete the file, split into slices)
+- [ ] 16. Tests / scripts / docs trim (this cleanup is the docs half)
+
+## Settled architecture (from REFACTOR_PLAN, 2026-09-15)
+
+Intent: LAN-first self-hosted Play vs Maia + Analyze (Maia + Stockfish) + History. Single container. Server owns ordering, identity, persistence. Browser owns rendering + what it still needs.
+
+1. Scheduler: 3 lanes, endpoint-implied. `POST /move` → Play, `POST /move/analysis` → Focus, `POST /evaluate` → Focus, `POST /reviews` → Batch. One slot per engine, non-preemptive, grant order Play > Focus > Batch. Dedup-by-hash within each scheduler instance: Maia's single scheduler spans Play/Focus/Batch; Stockfish's interactive and batch slots dedup separately (a Focus duplicate of in-flight Batch recomputes, last write wins).
+2. Abort scopes: `{ lineKey, gameId? }`. Line change/unmount aborts the foreground controller; game delete cancels its hydration jobs, drops pending UI, keeps settled cache. Branch collapse = line change. Backgrounding never aborts batch.
+3. Persistence: keep versioned outbox + pending-wins + compare-swap + recovery/export.
+4. Cache identity: keep superset reuse + `initialFen`. Reject inconsistent triples; validate once on write, shape-check on read.
+5. Single executor: one `resolve() + execute()` for `/move`, `/evaluate`, `/reviews` entries; `lookup` reuses `resolve` read-only. Keep forgiving-live vs strict-batch as a flag.
+6. Timeline: one `posId = hash(initialFen, prefix)`, `reviewKey = posId + engine + settingsHash`. Keep history-aware terminals + prefix-sharing LRU.
+7. Review grades: compute once. One `computeQualities` call site; single `reviewState: loading|partial|complete|failed` drives the action button. God `State` split into play/analysis/ui slices.
+8. Tests/build/docs/openings: tests to `go test` + pure-logic vitest + 1 Playwright smoke; docs to usage README + architecture limits.
+
+Retired specs (implemented, removed 2026-09-22; git history retains them): `CANCEL_REMOVAL_SPEC.md` (rotation + dual caps, no cancel paths), `JOBLESS_BATCH_SPEC.md` (rejected jobless alternative), `MECHANISM_AUDIT.md` (threat model + items 1–4 implemented), `USEEFFECT_CLEANUP_NOTES.md` (bulk-prime sharing, openings server-side), `REFACTOR_PLAN.md` (folded into the section above).
 
 ## 1. Shared HTTP envelope helper
 
@@ -125,7 +136,7 @@ Status: Accepted. Owner direction: no repeated checks of the same kind; verify o
 
 ### Proposal in plain language
 
-Today's batch lane (per `CANCEL_REMOVAL_SPEC.md`, partly implemented: `submitSeq`, per-scheduler `batchCursor`, `maxBatchRequests = 768`, `maxKeptJobs = 8`) does fair sharing: when two tabs submit whole-game reviews at once, grants alternate A,B,A,B so the second tab starts on the second grant instead of waiting for the first tab's whole game. Plus two admission caps (512-768 misses per engine, 8 unfinished jobs) with snapshot + re-check + 429 so a runaway client fails visibly instead of piling silently.
+Today's batch lane (implemented: `submitSeq`, per-scheduler `batchCursor`, `maxBatchRequests = 768`, `maxKeptJobs = 8`) does fair sharing: when two tabs submit whole-game reviews at once, grants alternate A,B,A,B so the second tab starts on the second grant instead of waiting for the first tab's whole game. Plus two admission caps (512-768 misses per engine, 8 unfinished jobs) with snapshot + re-check + 429 so a runaway client fails visibly instead of piling silently.
 
 The simpler alternative was FIFO + tripwire: batches run in submit order, one tripwire depth cap only as a runaway backstop. Less code (no rotation proof, no dual-cap counting, no 429 wait-once client path), but tab B waits for tab A's whole game.
 
@@ -168,7 +179,7 @@ Proposal: one `useLookupRestore` hook owning flights + guards + throttle; `useSe
 
 ### Guessed justification for the current shape
 
-`useBulkPrime` was extracted (per `USEEFFECT_CLEANUP_NOTES.md`) to share the bulk shape between `useReview` and `usePlayFeedback` without touching `useServerBatch`'s job lifecycle. The batch hook kept its own prime because progress reconcile predates the shared hook and has its own timing (2s throttle + progress events + online listener). Two owners, two rhythms — sharing the shape but not the driver.
+`useBulkPrime` was extracted (earlier cleanup) to share the bulk shape between `useReview` and `usePlayFeedback` without touching `useServerBatch`'s job lifecycle. The batch hook kept its own prime because progress reconcile predates the shared hook and has its own timing (2s throttle + progress events + online listener). Two owners, two rhythms — sharing the shape but not the driver.
 
 ### Open questions for you
 
