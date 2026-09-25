@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -116,10 +117,81 @@ type Worker struct {
 	state               workerState
 	last                string
 	busy                bool
+	// idleTimeout unloads the GPU model after this long without a completed
+	// inference. Zero disables eviction. lastActive is the last admission
+	// or completion time; the reaper in main.go sweeps idle workers.
+	idleMu      sync.Mutex
+	idleTimeout time.Duration
+	lastActive  time.Time
 }
 
 func NewWorker(name string, command []string) *Worker {
-	return &Worker{name: name, command: append([]string(nil), command...), startWait: workerStartWait, moveWait: workerMoveWait, sched: NewScheduler(), state: stateUnloaded}
+	return &Worker{name: name, command: append([]string(nil), command...), startWait: workerStartWait, moveWait: workerMoveWait, sched: NewScheduler(), state: stateUnloaded, lastActive: time.Now()}
+}
+
+// SetIdleTimeout configures GPU unload after d of inactivity. Zero or
+// negative disables eviction.
+func (w *Worker) SetIdleTimeout(d time.Duration) {
+	w.idleMu.Lock()
+	defer w.idleMu.Unlock()
+	w.idleTimeout = d
+	if w.lastActive.IsZero() {
+		w.lastActive = time.Now()
+	}
+}
+
+func (w *Worker) markUsed() {
+	w.idleMu.Lock()
+	w.lastActive = time.Now()
+	w.idleMu.Unlock()
+}
+
+// tryUnloadIdle stops a warm but unused worker process, freeing its GPU
+// memory. It returns true when it evicted. It never interrupts a running or
+// queued operation: scheduler idleness plus a TryLock on the operation mutex
+// gate the unload, with a lastActive re-check after the lock to avoid
+// evicting a request that arrived concurrently.
+func (w *Worker) tryUnloadIdle(now time.Time) bool {
+	w.idleMu.Lock()
+	timeout := w.idleTimeout
+	last := w.lastActive
+	w.idleMu.Unlock()
+	if timeout <= 0 {
+		return false
+	}
+	if now.Sub(last) < timeout {
+		return false
+	}
+	if !w.sched.Idle() {
+		return false
+	}
+	if !w.mu.TryLock() {
+		return false
+	}
+	defer w.mu.Unlock()
+	if !w.sched.Idle() {
+		return false
+	}
+	if w.proc == nil {
+		return false
+	}
+	w.idleMu.Lock()
+	last = w.lastActive
+	w.idleMu.Unlock()
+	if now.Sub(last) < timeout {
+		return false
+	}
+	w.stateMu.RLock()
+	busy := w.busy
+	w.stateMu.RUnlock()
+	if busy {
+		return false
+	}
+	timeoutStr := timeout.String()
+	w.stopProcessLocked()
+	w.setState(stateUnloaded)
+	log.Printf("worker=%s idle timeout (%s) reached, unloaded model from GPU", w.name, timeoutStr)
+	return true
 }
 func (w *Worker) snapshot() WorkerStatus {
 	w.stateMu.RLock()
@@ -162,6 +234,7 @@ func (w *Worker) predict(waitCtx, execCtx context.Context, prio Priority, submit
 	if err != nil {
 		return EngineResult{}, nil, err
 	}
+	w.markUsed()
 	w.setBusy(true)
 	release := func() {
 		w.sched.Release(grant)
@@ -172,6 +245,7 @@ func (w *Worker) predict(waitCtx, execCtx context.Context, prio Priority, submit
 		w.mu.Lock()
 		op.result, op.err = w.predictLocked(context.Background(), request)
 		w.mu.Unlock()
+		w.markUsed()
 		// done's close publishes result/err to the waiter; abandoned is
 		// atomic because the waiter may set it concurrently on disconnect.
 		if op.abandoned.Load() {
@@ -429,4 +503,15 @@ func (p *EnginePool) health() (string, map[string]WorkerStatus, int) {
 		status = "degraded"
 	}
 	return status, map[string]WorkerStatus{"79m": large, "5m": small}, code
+}
+
+// sweepIdle unloads workers idle since before now minus their timeout,
+// freeing GPU memory. It is a no-op for predictors without idle support
+// (test fakes) and for timeouts <= 0.
+func (p *EnginePool) sweepIdle(now time.Time) {
+	for _, pr := range []predictor{p.large, p.small} {
+		if w, ok := pr.(interface{ tryUnloadIdle(time.Time) bool }); ok {
+			w.tryUnloadIdle(now)
+		}
+	}
 }

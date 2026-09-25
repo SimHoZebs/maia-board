@@ -352,3 +352,134 @@ func TestWorkerAcquireReturnsBusyWithoutStartingProcess(t *testing.T) {
 		t.Fatal("busy admission started a process")
 	}
 }
+
+func TestParseIdleTimeout(t *testing.T) {
+	for raw, want := range map[string]time.Duration{"10m": 10 * time.Minute, "30s": 30 * time.Second, "1h": time.Hour, "0": 0, "": 0} {
+		got, err := parseIdleTimeout(raw)
+		if err != nil || got != want {
+			t.Fatalf("parseIdleTimeout(%q) = %v, %v; want %v", raw, got, err, want)
+		}
+	}
+	if _, err := parseIdleTimeout("ten minutes"); err == nil {
+		t.Fatal("invalid duration accepted")
+	}
+	if got, err := parseIdleTimeout("-5m"); err != nil || got != 0 {
+		t.Fatalf("negative must disable without error, got %v %v", got, err)
+	}
+}
+
+func TestIdleReaperInterval(t *testing.T) {
+	if got := idleReaperInterval(10 * time.Minute); got != time.Minute {
+		t.Fatalf("10m interval = %v, want 1m", got)
+	}
+	if got := idleReaperInterval(30 * time.Second); got != 15*time.Second {
+		t.Fatalf("30s interval = %v, want 15s", got)
+	}
+	if got := idleReaperInterval(time.Second); got != 10*time.Second {
+		t.Fatalf("1s interval = %v, want 10s floor", got)
+	}
+}
+
+func backdateIdle(t *testing.T, w *Worker, age time.Duration) {
+	t.Helper()
+	w.idleMu.Lock()
+	w.lastActive = time.Now().Add(-age)
+	w.idleMu.Unlock()
+}
+
+func TestIdleUnloadFreesWarmWorkerAndColdStarts(t *testing.T) {
+	w, _ := persistentWorker(t)
+	if _, err := predictSync(t, w, EngineRequest{FEN: startFEN}); err != nil {
+		t.Fatal(err)
+	}
+	w.mu.Lock()
+	pid := w.proc.cmd.Process.Pid
+	w.mu.Unlock()
+	w.SetIdleTimeout(50 * time.Millisecond)
+	backdateIdle(t, w, time.Hour)
+	if !w.tryUnloadIdle(time.Now()) {
+		t.Fatal("idle worker was not unloaded")
+	}
+	if w.proc != nil || w.snapshot().State != stateUnloaded {
+		t.Fatalf("after unload proc=%v state=%s", w.proc, w.snapshot().State)
+	}
+	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("PID %d not reaped: %v", pid, err)
+	}
+	// Next inference cold-starts a fresh process.
+	result, err := predictSync(t, w, EngineRequest{FEN: startFEN, OppoElo: 2})
+	if err != nil || result.Move != "d2d4" {
+		t.Fatalf("cold restart: %+v %v", result, err)
+	}
+}
+
+func TestIdleUnloadSkipsRecentAndBusy(t *testing.T) {
+	w, path := persistentWorker(t)
+	w.SetIdleTimeout(time.Hour)
+	if _, err := predictSync(t, w, EngineRequest{FEN: startFEN}); err != nil {
+		t.Fatal(err)
+	}
+	// Recent activity: no eviction even when the sweep runs.
+	if w.tryUnloadIdle(time.Now()) {
+		t.Fatal("recent worker unloaded")
+	}
+	// Disabled timeout never evicts, even when long idle.
+	w.SetIdleTimeout(0)
+	backdateIdle(t, w, 24*time.Hour)
+	if w.tryUnloadIdle(time.Now()) {
+		t.Fatal("disabled timeout unloaded")
+	}
+	// Busy worker is never interrupted, even when the last admission is
+	// older than the timeout (long inference vs short timeout).
+	w.SetIdleTimeout(50 * time.Millisecond)
+	_ = os.Remove(path)
+	done := make(chan error, 1)
+	go func() {
+		_, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0,
+			EngineRequest{FEN: startFEN, SelfElo: 400})
+		if release != nil {
+			release()
+		}
+		done <- err
+	}()
+	awaitPID(t, path)
+	// The 400ms inference is now running; sleep past the 50ms timeout so
+	// the time check passes and only the busy guards can save it.
+	time.Sleep(100 * time.Millisecond)
+	if w.sched.Idle() {
+		t.Fatal("test setup: scheduler idle during running op")
+	}
+	if w.tryUnloadIdle(time.Now()) {
+		t.Fatal("busy worker unloaded")
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	// After completion the timer resets: immediate sweep keeps it warm.
+	if w.tryUnloadIdle(time.Now()) {
+		t.Fatal("just-used worker unloaded")
+	}
+}
+
+func TestPoolSweepIdleUnloadsBoth(t *testing.T) {
+	large, _ := persistentWorker(t)
+	small, _ := persistentWorker(t)
+	large.SetIdleTimeout(time.Millisecond)
+	small.SetIdleTimeout(time.Millisecond)
+	if _, err := predictSync(t, large, EngineRequest{FEN: startFEN}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := predictSync(t, small, EngineRequest{FEN: startFEN}); err != nil {
+		t.Fatal(err)
+	}
+	backdateIdle(t, large, time.Hour)
+	backdateIdle(t, small, time.Hour)
+	pool := NewEnginePool(large, small)
+	pool.sweepIdle(time.Now())
+	if large.snapshot().State != stateUnloaded || small.snapshot().State != stateUnloaded {
+		t.Fatalf("sweep left %s / %s", large.snapshot().State, small.snapshot().State)
+	}
+	// Fakes without idle support are ignored.
+	pool = NewEnginePool(&fakePredictor{}, &fakePredictor{})
+	pool.sweepIdle(time.Now())
+}

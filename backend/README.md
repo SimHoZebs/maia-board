@@ -131,7 +131,13 @@ them. Maia identity includes both ratings and the pinned upstream model revision
 Within the batch lane, submits share fairly by rotation (A,B,A,B) with dual
 admission caps (misses per engine + unfinished jobs, 429 wait-once). This is
 fairness-without-auth for self-host scaling to family/friends; priority
-lanes (Play > Focus > Batch) stay regardless.
+lanes (Play > Focus > Batch) stay regardless. Threat model: trusted
+LAN/tailnet, no auth. Same-key resubmits join instead of growing the queue;
+the caps are tripwires so a runaway client fails visibly with 429. Maia
+large-model misses count against both the large and small tallies because
+79M→5M fallback eligibility is unknowable at intake; mixed submits can
+therefore 429 while the small slot is idle. That conservative over-count is
+intentional backpressure.
 
 ## Maia worker lifecycle
 
@@ -153,6 +159,10 @@ do not share results. Startup has a 300-second deadline and inference has a sepa
 continues to own its slot until the reply is drained. A hard timeout or protocol
 failure kills and reaps the worker process group before releasing admission.
 Successful operations preserve the warm process for the next request.
+
+Workers idle longer than `MAIA3_IDLE_TIMEOUT` are stopped to free GPU memory;
+the next request cold-starts them. The sweep never interrupts running or queued
+work, only truly idle processes.
 
 The `/move` and `/move/analysis` HTTP handlers wait with client cancellation detached from that bounded
 worker operation. A disconnected client therefore leaves the handler waiting long
@@ -215,6 +225,7 @@ mock tests do not measure model quality or cold-loading performance.
 | `MAIA3_MODEL_79M` | `79m` | Large-model alias |
 | `MAIA3_MODEL_5M` | `5m` | Fallback-model alias |
 | `MAIA3_DEVICE` | `auto` | Torch device for both Maia workers: `auto` (upstream default — CUDA when torch sees a GPU, else CPU), `cpu`, or `cuda[:N]`. CUDA also enables AMP; explicit `cpu` keeps AMP off. Invalid values fail fast at startup. |
+| `MAIA3_IDLE_TIMEOUT` | `10m` | Unused Maia worker lifetime: Go duration after which an idle model process is stopped to free GPU memory (`0` disables). The next request cold-starts it. Invalid values fail fast at startup. |
 | `STOCKFISH_WORKER` | `/app/stockfish_worker.py` | Stockfish adapter |
 | `STOCKFISH_BINARY` | `/app/stockfish` | Native engine |
 
@@ -237,6 +248,9 @@ elsewhere with no config change (`MAIA3_DEVICE=auto`). Both workers (79M +
   (compose `gpus: all` or equivalent).
 - To build a slim CPU-only image instead, pass
   `--build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu`.
+
+Idle workers (`MAIA3_IDLE_TIMEOUT`, default 10 minutes) are unloaded from GPU
+until the next request, so the card is free for other uses between games.
 
 Stockfish always runs on CPU and is unaffected.
 

@@ -93,11 +93,17 @@ func main() {
 	if !validDevice(device) {
 		log.Fatalf("invalid MAIA3_DEVICE %q: must be auto, cpu, or cuda[:N]", device)
 	}
+	idleTimeout, err := parseIdleTimeout(getenv("MAIA3_IDLE_TIMEOUT", "10m"))
+	if err != nil {
+		log.Fatalf("invalid MAIA3_IDLE_TIMEOUT: %v", err)
+	}
 	port := getenv("PORT", "8080")
 	staticDir := getenv("STATIC_DIR", "/app/static")
 
 	large := NewWorker("79m", workerCommand(python, workerPath, largeModel, device))
 	small := NewWorker("5m", workerCommand(python, workerPath, smallModel, device))
+	large.SetIdleTimeout(idleTimeout)
+	small.SetIdleTimeout(idleTimeout)
 	store, err := NewGameStore(getenv("DB_PATH", "maia-board.db"))
 	if err != nil {
 		log.Fatalf("open game database: %v", err)
@@ -106,6 +112,9 @@ func main() {
 		evaluator: NewEvaluator(python, getenv("STOCKFISH_WORKER", "/app/stockfish_worker.py"), getenv("STOCKFISH_BINARY", "/app/stockfish")),
 		openings:  NewOpeningsLookup(python, getenv("OPENINGS_LOOKUP", "/app/openings_lookup.py"))}
 	app.reviews = NewReviewJobs(app)
+	if idleTimeout > 0 {
+		startIdleReaper(app.pool, idleTimeout)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", app.healthz)
@@ -216,6 +225,53 @@ func validDevice(device string) bool {
 		return true
 	}
 	return false
+}
+
+// parseIdleTimeout parses MAIA3_IDLE_TIMEOUT: a Go duration ("10m", "1h")
+// after which an unused Maia worker process is stopped to free GPU memory.
+// "0" (or negative, or empty) disables eviction; the caller supplies the
+// default via getenv before calling.
+func parseIdleTimeout(raw string) (time.Duration, error) {
+	if raw == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, err
+	}
+	if d < 0 {
+		return 0, nil
+	}
+	return d, nil
+}
+
+// idleReaperInterval checks often enough to honor the timeout without
+// waking constantly: half the timeout, clamped to [10s, 1m].
+func idleReaperInterval(timeout time.Duration) time.Duration {
+	interval := timeout / 2
+	if interval < 10*time.Second {
+		interval = 10 * time.Second
+	}
+	if interval > time.Minute {
+		interval = time.Minute
+	}
+	return interval
+}
+
+// startIdleReaper stops Maia workers that outlived their idle timeout,
+// freeing GPU memory until the next request cold-starts them. The sweep
+// never interrupts running or queued work; it only unloads truly idle
+// processes. Next inference pays a reload.
+func startIdleReaper(pool *EnginePool, timeout time.Duration) {
+	interval := idleReaperInterval(timeout)
+	log.Printf("maia idle unloader: timeout=%s interval=%s", timeout, interval)
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			pool.sweepIdle(time.Now())
+		}
+	}()
 }
 
 func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
