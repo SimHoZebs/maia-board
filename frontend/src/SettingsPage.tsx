@@ -42,11 +42,11 @@ export function SettingsPage({ state, dispatch }: Props) {
     { value: 'white' as const, label: 'White' },
     { value: 'black' as const, label: 'Black' },
   ];
-  const arrowRows: { key: ArrowSettingsKey; label: string; hint: string }[] = [
-    { key: 'actual', label: 'Played move', hint: 'The game move' },
-    { key: 'maia', label: 'Maia suggestion', hint: 'Display-Elo top choice' },
-    { key: 'objective', label: 'Maia 2400 suggestion', hint: 'Maia 2400 top choice' },
-    { key: 'candidate', label: 'Preview', hint: 'Hover/keyboard preview' },
+  const arrowRows: { key: ArrowSettingsKey; label: string }[] = [
+    { key: 'actual', label: 'Game move' },
+    { key: 'maia', label: 'Maia at your rating' },
+    { key: 'objective', label: 'Maia 2400 reference' },
+    { key: 'candidate', label: 'Lookahead' },
   ];
   return <section className="engine-settings panel" aria-labelledby="settings-title">
     <p className="settings-eyebrow">BOARD</p>
@@ -106,7 +106,7 @@ export function SettingsPage({ state, dispatch }: Props) {
       {arrowRows.map(row => {
         const style = state.arrows[row.key];
         return <div className="field arrow-row" key={row.key}>
-          <span className="field-label" id={`arrow-${row.key}-label`}>{row.label} <span>{row.hint}</span></span>
+          <span className="field-label" id={`arrow-${row.key}-label`}>{row.label}</span>
           <div className="arrow-inputs" role="group" aria-labelledby={`arrow-${row.key}-label`}>
             <input id={`arrow-${row.key}-color`} type="color" value={style.color} onChange={e => dispatch({ type: 'arrow-settings', source: row.key, style: { color: e.target.value } })} aria-label={`${row.label} color`} />
             <input id={`arrow-${row.key}-width`} type="range" min={ARROW_WIDTH_MIN} max={ARROW_WIDTH_MAX} step={1} value={style.width} onChange={e => dispatch({ type: 'arrow-settings', source: row.key, style: { width: e.target.valueAsNumber } })} aria-label={`${row.label} thickness`} />

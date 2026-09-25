@@ -15,7 +15,8 @@ export type RepositorySnapshot = DurableGames & { error: string; durabilityError
 let sequence = 0;
 const version = () => `${typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`}-${++sequence}`;
 
-// Game-delete broadcast (REFACTOR_PLAN §2): the review-batch owner lives in a
+// Game-delete broadcast (abort scopes: line change/unmount aborts the
+// foreground owner; deletes announce here): the review-batch owner lives in a
 // different subtree with no shared handle, so deletes are announced on this
 // module channel. Subscribers drop local references only; batch jobs are
 // never cancelled and settled cache survives.
@@ -113,7 +114,7 @@ export class GameRepository {
     this.persist();
     if (this.active) void this.flush();
   }
-  // Abort-scope hook for the lineKey owner (REFACTOR_PLAN §2): deleting a game
+  // Abort-scope hook for the lineKey owner: deleting a game
   // cancels its in-flight history hydration here. Foreground eval abort lives
   // with that owner, not in the repository. Batch jobs are never cancelled.
   cancelScope(_gameId: string) {
