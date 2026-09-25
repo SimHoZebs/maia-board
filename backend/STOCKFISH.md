@@ -113,7 +113,8 @@ slot (version-checked and configured at startup) and reuses it across
 requests; the 128 MiB hash persists within a slot, which only affects speed,
 never validity. Concurrent evaluations on the same slot
 receive `503 engine_busy` with `Retry-After: 1`; there is no queue
-or public batch endpoint. The whole operation has an eight-second timeout tied
+for single evaluations (whole-game batches go through `POST /reviews`,
+documented in [API.md](API.md)). The whole operation has an eight-second timeout tied
 to HTTP request cancellation. Go starts a separate process group; python-chess
 starts Stockfish with `setpgrp=False` so both inherit that group. A dead
 engine respawns once and retries the request; anything else (timeout,
@@ -206,6 +207,6 @@ docker rm "$container"
 STOCKFISH_BINARY=/tmp/stockfish python3 -m unittest -v test_stockfish_worker test_engine_settings
 ```
 
-CI extracts the binary the same way and additionally runs
+The same extraction also supports manual verification of
 `test_engine_settings` and the Go HTTP/cancellation integration test on the
 host with Python 3.12 and the pinned chess packages.

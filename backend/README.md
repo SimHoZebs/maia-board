@@ -53,7 +53,8 @@ superseding each other.
 `POST /evaluate` performs a Stockfish search. Its settings, score perspective,
 history validation, limits, and process cleanup are documented in
 [`STOCKFISH.md`](STOCKFISH.md). Errors use `{code, message}`. `/healthz` supplies
-the server health endpoint.
+the server health endpoint. Full route, shape, and status reference lives in
+[`API.md`](API.md).
 
 `POST /openings` resolves ECO opening names for a line. It accepts
 `{initial_fen, moves}` (UCI, at most 4096 plies) and returns every exact book
@@ -112,9 +113,9 @@ and settings differ, so one combined row would bust the Stockfish half on a
 Maia rating change. Composition stays request-time over per-model reads;
 no combined row is ever stored.
 
-`POST /evaluations/lookup` accepts `{requests: [...]}` with at most 1024 requests
-and a 4 MiB body. Each entry supplies `engine: "sf" | "maia"`, `fen`, `initial_fen`,
-and `moves`; Stockfish may supply `settings`, while Maia supplies `elo_maia`,
+`POST /evaluations/lookup` accepts `{line: {initial_fen, moves}, requests: [...]}` with at most 1024 requests
+and a 4 MiB body. Each entry supplies `engine: "sf" | "maia"`, `fen`, and `ply`
+(slicing the shared line); Stockfish may supply `settings`, while Maia supplies `elo_maia`,
 `elo_user`, and `model`. The response is
 `{results: [{index, value, actual_settings?}]}`. Missing indexes are cache misses.
 This read-only endpoint never starts inference; invalid requests return a typed 400.
@@ -198,8 +199,9 @@ Use that interpreter for test discovery:
 
 The default suite uses `python-chess`, a stub Maia module, and engine mocks, without
 Torch or weights. Real Stockfish cases skip unless `STOCKFISH_BINARY` names the
-engine. CI builds the pinned engine from `Dockerfile`, extracts the binary, and
-runs `test_stockfish_worker` plus `test_engine_settings` on the host before the
+engine. For real-engine checks, build the pinned engine from `Dockerfile`,
+extract the binary as shown in [STOCKFISH.md](STOCKFISH.md#verification), and
+run `test_stockfish_worker` plus `test_engine_settings` on the host before the
 Go HTTP/cancellation integration test.
 
 The real Maia test skips unless `MAIA3_TEST_MODEL` names a locally cached model.

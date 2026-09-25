@@ -21,7 +21,7 @@ npm run build:bundle
 
 `npm run build` combines the last two commands. `npm run dev` starts Vite;
 `npm run preview` serves a built bundle. Set `MAIA_API_TARGET` to an existing
-backend URL to proxy `/move`, `/move/analysis`, `/evaluate`, `/evaluations`, `/games`, and `/openings`.
+backend URL to proxy `/move`, `/move/analysis`, `/evaluate`, `/evaluations/lookup`, `/reviews`, `/reviews/:id`, `/games`, and `/openings`.
 `MAIA_BUILD_DIR` overrides the build destination (default `dist`).
 
 ## State boundaries
@@ -146,8 +146,9 @@ npm run test:browser:strict
 Playwright serves the static fixture bundle through request interception and mocks
 the API. No development server is needed. `test:browser:strict` builds with
 development React so StrictMode exercises effect cleanup. `test:browser:run`
-executes an already-built fixture bundle and is used by CI after its separate
-typecheck and build steps.
+executes an already-built fixture bundle for manual verification; run the
+separate typecheck and build steps first, then this script against the
+finished bundle.
 
 For a separately named run, build first, then isolate Playwright's results and HTML
 report:

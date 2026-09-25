@@ -84,8 +84,10 @@ real model inference. Keep concurrent browser runs' output directories separate;
 
 Python setup details, mocked-worker commands, and real-engine checks are in
 [`backend/README.md`](backend/README.md) and [`backend/STOCKFISH.md`](backend/STOCKFISH.md).
-CI has separate Go/mock-worker, frontend, and packaged Stockfish jobs. TypeScript
-runs once before CI's browser fixture build.
+There is no CI workflow; local verification runs the same stages in order:
+Go/mock-worker checks, the frontend typecheck, then the packaged Stockfish
+engine extraction and browser fixture build. Run the TypeScript typecheck
+once before building the browser fixtures.
 
 ### Agent checks
 
@@ -150,3 +152,12 @@ Upstream dependencies: [Maia3](https://github.com/CSSLab/maia3/tree/1e13597c42d4
 [chess.js](https://github.com/jhlywa/chess.js), and
 [Chessground](https://github.com/lichess-org/chessground). Stockfish redistribution
 inputs and license locations are documented in [`backend/STOCKFISH.md`](backend/STOCKFISH.md).
+HTTP route reference lives in [`backend/API.md`](backend/API.md).
+
+## License
+
+This project is licensed under AGPL-3.0-only (see `LICENSE`). If you run a
+modified version on a server, you must offer all users interacting with it over
+the network the Corresponding Source of your version, including the pinned
+Maia3 adapter input, Stockfish source archive, and build recipe documented in
+`backend/STOCKFISH.md`.
