@@ -138,7 +138,7 @@ func main() {
 	// Client abort governs the write side.
 	httpServer := &http.Server{
 		Addr:              address,
-		Handler:           recoverJSON(mux),
+		Handler:           recoverJSON(securityHeaders(mux)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       120 * time.Second,
@@ -156,6 +156,26 @@ func recoverJSON(next http.Handler) http.Handler {
 				writeAPIError(w, http.StatusInternalServerError, "internal", "the server hit an unexpected error")
 			}
 		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+// securityHeaders sets baseline hardening headers for the same-origin
+// static app and JSON API. It runs inside recoverJSON so panic-recovery
+// JSON errors carry the same headers, and it only sets headers the
+// handlers never override — existing Cache-Control logic is untouched.
+// No HSTS: TLS terminates at Traefik, not this server, so this server
+// must not emit Strict-Transport-Security.
+// CSP stays minimal (default-src 'self'): frontend/index.html has no
+// inline scripts (single external module script; Vite build emits hashed
+// external assets under assets/), and same-origin API/SSE fall back to
+// default-src.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'")
 		next.ServeHTTP(w, r)
 	})
 }
