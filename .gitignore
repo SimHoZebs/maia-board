@@ -3,3 +3,6 @@ test-results/
 backend/backend
 # Crash dumps (e.g. frontend/core.*) are local diagnostics, never committed.
 core.*
+# TLC model-checker state dumps (spec/states/<timestamp>/) are reproducible
+# local output, never committed (one run exceeded GitHub's 100MB limit).
+spec/states/
