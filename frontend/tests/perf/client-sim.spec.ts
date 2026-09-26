@@ -86,13 +86,43 @@ async function storedMoves(page: Page): Promise<string[]> {
   });
 }
 
-test('client sim: random play, long-line review batch, scrub, branch', async ({ page }, testInfo) => {
+test('client sim: boot, play, review batch, scrub, hover, branch, history', async ({ page }, testInfo) => {
   const steps: StepRow[] = [];
   const net: NetRow[] = [];
   const errors: string[] = [];
-  // React commits per interaction: play moves, whole batch, scrub clicks.
+  // React commits per interaction: boot, deep-link boot, play moves, line
+  // load, whole batch, scrub clicks, rating change, hover previews, branch
+  // explore + scrub, history mount, saved-game review switch.
   // Counts test whether re-renders multiply; durations test whether each
   // render gets more expensive as the line grows.
+  let bootCommits = 0;
+  let bootCommitMs = 0;
+  let bootSummary: Summary | null = null;
+  let deepBootCommits = 0;
+  let deepBootCommitMs = 0;
+  let deepBootSummary: Summary | null = null;
+  let lineLoadCommits = 0;
+  let lineLoadCommitMs = 0;
+  let lineLoadSummary: Summary | null = null;
+  let ratingCommits = 0;
+  let ratingCommitMs = 0;
+  let ratingSummary: Summary | null = null;
+  let exploreCommits = 0;
+  let exploreCommitMs = 0;
+  let exploreSummary: Summary | null = null;
+  const branchScrubCommits: number[] = [];
+  const branchScrubMs: number[] = [];
+  const hoverCommits: number[] = [];
+  const hoverCommitMs: number[] = [];
+  let historyCommits = 0;
+  let historyCommitMs = 0;
+  let historySummary: Summary | null = null;
+  let reviewSwitchCommits = 0;
+  let reviewSwitchCommitMs = 0;
+  let reviewSwitchSummary: Summary | null = null;
+  let startCommits = 0;
+  let startCommitMs = 0;
+  let startSummary: Summary | null = null;
   const playCommits: number[] = [];
   const playCommitMs: number[] = [];
   const playBoardMs: number[] = [];
@@ -109,10 +139,29 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
   const scrubSummaries: Summary[] = [];
   page.on('pageerror', error => errors.push(error.message));
 
+  // Seeded saved games so the history surface renders a realistic list and
+  // the review action can load one while a line is already open. Prefixes of
+  // one legal Ruy Lopez line, so every game parses.
+  const seedLine = ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1b5', 'a7a6', 'b5a4', 'g8f6', 'e1g1', 'f8e7', 'f1e1', 'b7b5', 'a4b3', 'd7d6', 'c2c3', 'e8g8', 'h2h3', 'c6a5', 'f3g5', 'a5b3', 'a2b3', 'h7h6', 'g5f3'];
+  const seedDoc = {
+    schema: 2,
+    games: Array.from({ length: 25 }, (_, i) => ({
+      id: `perf-seed-${i}`,
+      createdAt: '2026-09-10T00:00:00Z',
+      moves: seedLine.slice(0, 8 + (i % 16)),
+      settings: { userColor: 'white', eloMaia: 1600, eloUser: 1600, model: '79m' },
+    })),
+    currentId: null, pending: [], recovery: [],
+  };
+
   // Perf observers must install before any app code runs. Arming
   // `window.__perfCommits` also switches on the CommitRecorder profiler in
   // main.tsx; without it the app renders exactly as in production.
-  await page.addInitScript(() => {
+  await page.addInitScript((seed: unknown) => {
+    (window as unknown as { __perfCommits: unknown[] }).__perfCommits = [];
+    (window as unknown as { __perfLongtasks: unknown[] }).__perfLongtasks = [];
+    (window as unknown as { __perfShifts: { value: number }[] }).__perfShifts = [];
+    try { localStorage.setItem('maia-board.games.v2', JSON.stringify(seed)); } catch { /* private mode */ }
     (window as unknown as { __perfCommits: unknown[] }).__perfCommits = [];
     (window as unknown as { __perfLongtasks: unknown[] }).__perfLongtasks = [];
     (window as unknown as { __perfShifts: { value: number }[] }).__perfShifts = [];
@@ -130,7 +179,7 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
         );
       }).observe({ entryTypes: ['layout-shift'], buffered: true } as PerformanceObserverInit);
     } catch { /* layout-shift optional */ }
-  });
+  }, seedDoc);
 
   const timed = async <T>(step: string, fn: () => Promise<T>): Promise<T> => {
     const start = Date.now();
@@ -151,6 +200,14 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
     page.evaluate((from) => {
       const log = (window as unknown as { __perfCommits?: { id: string; actualDuration: number }[] }).__perfCommits ?? [];
       return log.slice(from).map(c => ({ id: c.id, ms: Math.round((c.actualDuration || 0) * 10) / 10 }));
+    }, before);
+  // Navigation-safe variant: a full goto re-arms the log (addInitScript),
+  // so a pre-goto mark can exceed the fresh log. A mark past the end means a
+  // reset happened — everything in the log belongs to this navigation.
+  const commitSliceReset = (before: number): Promise<CommitEntry[]> =>
+    page.evaluate((from) => {
+      const log = (window as unknown as { __perfCommits?: { id: string; actualDuration: number }[] }).__perfCommits ?? [];
+      return log.slice(from <= log.length ? from : 0).map(c => ({ id: c.id, ms: Math.round((c.actualDuration || 0) * 10) / 10 }));
     }, before);
   const summarize = (slice: CommitEntry[]) => {
     const byId: Record<string, { count: number; ms: number }> = {};
@@ -323,12 +380,45 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
     });
   });
 
+  // 0. Deep-link boot: initialization with a line already in the URL (the
+  // share-link path: timeline build + focus-fetch renders on first paint).
+  // A full navigation resets the armed log, so the pre-goto mark (0 here)
+  // doubles as the slice origin.
+  const deepLine = randomLine(SEED ^ 0x51ab, 40);
+  const deepPositions = deepLine.length + 1;
+  await timed('analysis: deep-link boot (40-ply line)', async () => {
+    const commitsBefore = await commitMark();
+    await page.goto(`http://maia.test/analyze?moves=${deepLine.join(',')}`);
+    await expect(page.locator('#analysis-index')).toHaveText(`Position ${deepPositions} / ${deepPositions}`, { timeout: 30_000 });
+    await expect(page.locator('#insight-content')).toBeVisible({ timeout: 60_000 });
+    await settleFrames();
+    const stats = summarize(await commitSliceReset(commitsBefore));
+    deepBootCommits = stats.root.count;
+    deepBootCommitMs = Math.round(stats.root.ms);
+    deepBootSummary = stats;
+  });
+
   // 1. Play random legal moves via real board clicks, one Maia reply each.
   const playRng = mulberry32(SEED ^ 0x9e3779b9);
-  await timed('play: boot and start', async () => {
+  await timed('play: boot to setup screen', async () => {
+    const commitsBefore = await commitMark();
     await page.goto('http://maia.test/play');
+    await expect(page.locator('#start-game')).toBeVisible();
+    await settleFrames();
+    const stats = summarize(await commitSliceReset(commitsBefore));
+    bootCommits = stats.root.count;
+    bootCommitMs = Math.round(stats.root.ms);
+    bootSummary = stats;
+  });
+  await timed('play: start game', async () => {
+    const commitsBefore = await commitMark();
     await page.locator('#start-game').click();
     await expect(page.locator('#board cg-board')).toHaveCount(1);
+    await settleFrames();
+    const stats = summarize(await commitSlice(commitsBefore));
+    startCommits = stats.root.count;
+    startCommitMs = Math.round(stats.root.ms);
+    startSummary = stats;
   });
   const played: string[] = await timed('play: random moves + maia replies', async () => {
     const made: string[] = [];
@@ -367,10 +457,16 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
   const line = randomLine(SEED, TARGET_PLIES);
   const positions = line.length + 1;
   await timed(`analysis: load random line (${line.length} plies)`, async () => {
+    const commitsBefore = await commitMark();
     await page.locator('#mode-analysis').click();
     await page.locator('#analysis-pgn').fill(lineToPgn(line));
     await page.locator('#load-analysis').click();
     await expect(page.locator('#analysis-index')).toHaveText(`Position ${positions} / ${positions}`);
+    await settleFrames();
+    const stats = summarize(await commitSlice(commitsBefore));
+    lineLoadCommits = stats.root.count;
+    lineLoadCommitMs = Math.round(stats.root.ms);
+    lineLoadSummary = stats;
   });
   await timed('analysis: full batch', async () => {
     const commitsBefore = await commitMark();
@@ -409,18 +505,93 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
 
   // 4. Foreground latency after a settings change (no second batch).
   await timed('analysis: rating change foreground', async () => {
+    const commitsBefore = await commitMark();
     await page.locator('#analysis-rating').selectOption('1800');
     await expect(page.getByRole('heading', { name: 'Maia • 1800', exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText('updating to 1800')).toHaveCount(0);
+    await settleFrames();
+    const stats = summarize(await commitSlice(commitsBefore));
+    ratingCommits = stats.root.count;
+    ratingCommitMs = Math.round(stats.root.ms);
+    ratingSummary = stats;
   });
 
-  // 5. Branch: explore the top candidate at the tip. The scrub already ends
+  // 5. Candidate hover sweep: each mouseenter dispatches a preview render and
+  // each row change clears the last one — a sweep is a small render storm.
+  // Buttons only: the list header shares the .candidate-reading class on a
+  // static span.
+  await timed('analysis: candidate hover sweep', async () => {
+    const rows = page.locator('.insight-panel button.candidate-reading');
+    const hovered = Math.min(await rows.count(), 6);
+    expect(hovered).toBeGreaterThan(0);
+    for (let i = 0; i < hovered; i++) {
+      const commitsBefore = await commitMark();
+      await rows.nth(i).hover();
+      await settleFrames();
+      const stats = summarize(await commitSlice(commitsBefore));
+      hoverCommits.push(stats.root.count);
+      hoverCommitMs.push(Math.round(stats.root.ms));
+    }
+    await page.mouse.move(8, 8);
+    await settleFrames();
+  });
+
+  // 6. Branch: explore the top candidate at the tip. The scrub already ends
   // at the tip, so Last is disabled there — no need to click it.
   await timed('analysis: explore branch', async () => {
+    const commitsBefore = await commitMark();
     await expect(page.locator('#analysis-index')).toContainText(`Position ${positions} / ${positions}`);
     const explore = page.getByRole('button', { name: /^Explore / }).first();
     await explore.click();
     await expect(page.getByLabel('Explored variation', { exact: true })).toBeVisible();
+    await settleFrames();
+    const stats = summarize(await commitSlice(commitsBefore));
+    exploreCommits = stats.root.count;
+    exploreCommitMs = Math.round(stats.root.ms);
+    exploreSummary = stats;
+  });
+
+  // 7. Branch scrub: views while the branch is live, so the
+  // mainline-continuation second grading pass is active too.
+  await timed('analysis: branch scrub', async () => {
+    const targets = [
+      page.locator('.variation-line .move-cell').first(),
+      page.locator('.original-line .move-cell').first(),
+      page.locator('.original-line .move-cell').nth(3),
+    ];
+    for (const target of targets) {
+      if (await target.count() === 0) continue;
+      const commitsBefore = await commitMark();
+      await target.click();
+      await settleFrames();
+      const stats = summarize(await commitSlice(commitsBefore));
+      branchScrubCommits.push(stats.root.count);
+      branchScrubMs.push(Math.round(stats.root.ms));
+    }
+  });
+
+  // 8. History with a realistic list, then a loaded→loaded switch: analyzing
+  // a saved game while a line is open takes the own-game (pinned-Elo) path.
+  await timed('history: open with 25 saved games', async () => {
+    const commitsBefore = await commitMark();
+    await page.locator('#mode-history').click();
+    await expect.poll(async () => page.locator('.saved-game').count(), { timeout: 30_000 }).toBeGreaterThanOrEqual(25);
+    await settleFrames();
+    const stats = summarize(await commitSlice(commitsBefore));
+    historyCommits = stats.root.count;
+    historyCommitMs = Math.round(stats.root.ms);
+    historySummary = stats;
+  });
+  await timed('history: analyze saved game while line open', async () => {
+    const commitsBefore = await commitMark();
+    await page.locator('.saved-open').first().click();
+    await expect(page.locator('#board cg-board')).toHaveCount(1, { timeout: 30_000 });
+    await expect(page.locator('#analysis-index')).toBeVisible({ timeout: 30_000 });
+    await settleFrames();
+    const stats = summarize(await commitSlice(commitsBefore));
+    reviewSwitchCommits = stats.root.count;
+    reviewSwitchCommitMs = Math.round(stats.root.ms);
+    reviewSwitchSummary = stats;
   });
 
   const perf = await page.evaluate(() => ({
@@ -458,6 +629,34 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
     steps,
     scrubClickMs: { count: scrubMs.length, p50: pct(sortedScrub, 50), p95: pct(sortedScrub, 95), max: Math.max(0, ...scrubMs), earlyAvg: earlyWallMs, lateAvg: lateWallMs, perClick: scrubMs },
     commits: {
+      boot: bootCommits,
+      bootCommitMs,
+      bootRegions: bootSummary?.byId ?? {},
+      start: startCommits,
+      startCommitMs,
+      startRegions: startSummary?.byId ?? {},
+      deepBoot: deepBootCommits,
+      deepBootCommitMs,
+      deepBootRegions: deepBootSummary?.byId ?? {},
+      lineLoad: lineLoadCommits,
+      lineLoadCommitMs,
+      lineLoadRegions: lineLoadSummary?.byId ?? {},
+      ratingChange: ratingCommits,
+      ratingChangeCommitMs: ratingCommitMs,
+      ratingChangeRegions: ratingSummary?.byId ?? {},
+      explore: exploreCommits,
+      exploreCommitMs,
+      exploreRegions: exploreSummary?.byId ?? {},
+      branchScrubPerClick: branchScrubCommits,
+      branchScrubMsPerClick: branchScrubMs,
+      hoverPerPreview: hoverCommits,
+      hoverMsPerPreview: hoverCommitMs,
+      historyMount: historyCommits,
+      historyMountCommitMs: historyCommitMs,
+      historyMountRegions: historySummary?.byId ?? {},
+      reviewSwitch: reviewSwitchCommits,
+      reviewSwitchCommitMs: reviewSwitchCommitMs,
+      reviewSwitchRegions: reviewSwitchSummary?.byId ?? {},
       playPerMove: playCommits,
       playCommitMs,
       playBoardMs,
@@ -501,6 +700,9 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
   const lateRegions = regionAvgs(scrubLate);
   const regionLine = (r: typeof earlyRegions) => `app ${r.app} chrome ${r.chrome} board ${r.board} insight ${r.insight} root ${r.root}`;
   testInfo.annotations.push(
+    { type: 'perf-boot', description: `boot ${bootCommits}/${bootCommitMs}ms ${JSON.stringify(bootSummary?.byId ?? {})}, start ${startCommits}/${startCommitMs}ms ${JSON.stringify(startSummary?.byId ?? {})}` },
+    { type: 'perf-boot-deep', description: `deep-link ${deepBootCommits}/${deepBootCommitMs}ms ${JSON.stringify(deepBootSummary?.byId ?? {})}, line-load ${lineLoadCommits}/${lineLoadCommitMs}ms, review-switch ${reviewSwitchCommits}/${reviewSwitchCommitMs}ms, history-mount ${historyCommits}/${historyCommitMs}ms` },
+    { type: 'perf-hover-branch', description: `hover/click [${hoverCommits.join(', ')}] ms [${hoverCommitMs.join(', ')}], explore ${exploreCommits}/${exploreCommitMs}ms, branch-scrub [${branchScrubCommits.join(', ')}]/[${branchScrubMs.join(', ')}]ms, rating ${ratingCommits}/${ratingCommitMs}ms` },
     { type: 'perf-scrub', description: `wall early/late ${earlyWallMs}/${lateWallMs}ms p95 ${metrics.scrubClickMs.p95}ms` },
     { type: 'perf-regions', description: `render-ms early [${regionLine(earlyRegions)}] late [${regionLine(lateRegions)}], batch ${JSON.stringify(batchSummary?.byId ?? {})}` },
     { type: 'perf-commits', description: `count early/late ${earlyCommits}/${lateCommits} per click, root-ms early/late ${earlyCommitMs}/${lateCommitMs} (board ${earlyBoardMs}/${lateBoardMs}, insight ${earlyInsightMs}/${lateInsightMs}), batch ${batchCommits}/${batchCommitMs}ms (board ${batchBoardMs}, insight ${batchInsightMs}), play [${playCommits.join(', ')}]` },
@@ -508,9 +710,15 @@ test('client sim: random play, long-line review batch, scrub, branch', async ({ 
     { type: 'perf-network', description: `${metrics.network.calls} calls (maia-live ${metrics.network.maiaLive}, sf-live ${metrics.network.sfLive}, hits ${metrics.network.hits})` },
   );
   // eslint-disable-next-line no-console
-  console.log(`[perf] ${line.length} plies | scrub wall early/late ${earlyWallMs}/${lateWallMs}ms | regions early [${regionLine(earlyRegions)}] late [${regionLine(lateRegions)}] | longtasks ${metrics.longtasks.count} | net ${metrics.network.calls}`);
+  console.log(`[perf] ${line.length} plies | deep-boot ${deepBootCommits}/${deepBootCommitMs}ms boot ${bootCommits}/${bootCommitMs}ms | scrub wall early/late ${earlyWallMs}/${lateWallMs}ms | hover [${hoverCommits.join(',')}] branch [${branchScrubCommits.join(',')}] | history ${historyCommits}/${historyCommitMs}ms switch ${reviewSwitchCommits}/${reviewSwitchCommitMs}ms | longtasks ${metrics.longtasks.count} | net ${metrics.network.calls}`);
 
   expect(errors).toEqual([]);
+  expect(bootCommits).toBeGreaterThan(0);
+  expect(deepBootCommits).toBeGreaterThan(0);
+  expect(lineLoadCommits).toBeGreaterThan(0);
   expect(batchCommits).toBeGreaterThan(0);
+  expect(branchScrubCommits.length).toBeGreaterThan(0);
+  expect(historyCommits).toBeGreaterThan(0);
+  expect(reviewSwitchCommits).toBeGreaterThan(0);
   expect(evaluations.entries.size + bulkCache.size).toBeGreaterThanOrEqual(positions);
 });
