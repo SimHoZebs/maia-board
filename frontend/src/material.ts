@@ -36,6 +36,35 @@ export function materialLeadFor(diff: number, color: MaiaSide): number {
   return color === 'white' ? diff : -diff;
 }
 
+// Prefix capture table for one line, built once and read per render: entry
+// [ply] holds the sorted captures up to (not including) ply, matching
+// capturesFromLine(initialFen, moves, ply). Scrubbing replays nothing —
+// each render is an O(1) lookup instead of an O(ply) chess.js replay.
+export type CaptureSnapshot = { white: CapturedPiece[]; black: CapturedPiece[] };
+export function buildCapturePrefix(initialFen: string, moves: string[]): CaptureSnapshot[] {
+  const snapshots: CaptureSnapshot[] = [{ white: [], black: [] }];
+  const white: CapturedPiece[] = [];
+  const black: CapturedPiece[] = [];
+  const game = new Chess(initialFen);
+  for (const move of moves) {
+    const turn = game.turn();
+    const captured = applyUci(game, move).captured?.toLowerCase();
+    if (captured && isCapturedPiece(captured)) {
+      if (turn === 'w') white.push(captured);
+      else black.push(captured);
+    }
+    snapshots.push({ white: sortCaptured(white), black: sortCaptured(black) });
+  }
+  return snapshots;
+}
+
+export function captureAt(
+  prefix: CaptureSnapshot[],
+  ply: number,
+): CaptureSnapshot {
+  const clamped = Math.max(0, Math.min(ply, prefix.length - 1));
+  return prefix[clamped] ?? { white: [], black: [] };
+}
 // Captures made during this line, up to (not including) uptoPly. Walking the
 // moves keeps custom starts exact: pieces already missing from the initial
 // FEN are never reported as captures. Promotions only affect the FEN-derived

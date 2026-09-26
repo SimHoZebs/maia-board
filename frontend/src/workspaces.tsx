@@ -21,7 +21,7 @@ import { ErrorBoundary, PanelError } from './ErrorBoundary';
 import { destinations } from './BoardRouter';
 import { RegionRecorder } from './perfCommits';
 import { useLineOpenings } from './openings';
-import { capturedGlyph, capturedLabel, capturesFromLine, materialFromFen, materialLeadFor, type CapturedPiece } from './material';
+import { capturedGlyph, capturedLabel, buildCapturePrefix, captureAt, materialFromFen, materialLeadFor, type CapturedPiece } from './material';
 import { PlayVerdict } from './PlayVerdict';
 
 function MaterialSummary({ by, captures, lead }: { by: 'white' | 'black'; captures: CapturedPiece[]; lead: number }) {
@@ -200,7 +200,11 @@ export function PlayWorkspace({ state, dispatch }: Props) {
   const [confirmResign, setConfirmResign] = useState(false);
   const replyIdentity = state.insight?.mode === 'play' ? state.insight.response : undefined;
   const displayedPly = state.viewedPly ?? state.play.moves.length;
-  const playCaptures = capturesFromLine(START_FEN, state.play.moves, displayedPly);
+  // Prefix table rebuilt only when the move list identity changes: every
+  // render (including viewed-ply browsing) is an O(1) lookup instead of an
+  // O(ply) chess.js replay.
+  const playCapturePrefix = useMemo(() => buildCapturePrefix(START_FEN, state.play.moves), [state.play.moves]);
+  const playCaptures = captureAt(playCapturePrefix, displayedPly);
   const playDiff = materialFromFen(position.fen).diff;
   const strip = (color: 'white' | 'black') => {
     const shownGame = historic ? game : live;
@@ -301,7 +305,13 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   const brushes = useMemo(() => buildReviewBrushes(state.arrows), [state.arrows]);
   const boardResetKey = JSON.stringify(['analysis', state.play.id, state.play.moves.length, state.analysis.index, state.analysisSourceId, orientation]);
   const insightResetKey = JSON.stringify([state.analysis.initialFen, state.analysis.moves, state.analysisSourceId]);
-  const analysisCaptures = capturesFromLine(review.timeline.initialFen, review.timeline.moves, ply);
+  // Same prefix-table treatment as the play room: one O(line) build per
+  // line, O(1) per scrub render instead of an O(ply) replay.
+  const analysisCapturePrefix = useMemo(
+    () => buildCapturePrefix(review.timeline.initialFen, review.timeline.moves),
+    [review.timeline],
+  );
+  const analysisCaptures = captureAt(analysisCapturePrefix, ply);
   const analysisDiff = materialFromFen(position.fen).diff;
   const strip = (color: 'white' | 'black') => {
     const shownOver = viewedOver;

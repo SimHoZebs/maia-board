@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BEST_LINE_WINDOW_MAX, bestLineMaterialNote, bestLinePreview, capturesFromLine, capturedLabel, DEFAULT_BEST_LINE_WINDOW, fusePinWithMate, fusePinWithMaterial, materialFromFen, materialLeadFor, normalizeBestLineWindow, playedCapture, playedMoveExchangeNote, playedMoveForkNote, playedMoveGainNote, playedMovePinNote, playedMoveSkewerNote, sortCaptured } from './material';
+import { BEST_LINE_WINDOW_MAX, bestLineMaterialNote, bestLinePreview, buildCapturePrefix, captureAt, capturesFromLine, capturedLabel, DEFAULT_BEST_LINE_WINDOW, fusePinWithMate, fusePinWithMaterial, materialFromFen, materialLeadFor, normalizeBestLineWindow, playedCapture, playedMoveExchangeNote, playedMoveForkNote, playedMoveGainNote, playedMovePinNote, playedMoveSkewerNote, sortCaptured } from './material';
 import { START_FEN } from './domain';
 
 describe('material', () => {
@@ -23,6 +23,18 @@ describe('material', () => {
     expect(capturesFromLine(START_FEN, moves, 3)).toEqual({ white: ['p'], black: [] });
     expect(capturesFromLine(START_FEN, moves, 4)).toEqual({ white: ['p'], black: ['p'] });
     expect(capturesFromLine(START_FEN, moves, 0)).toEqual({ white: [], black: [] });
+  });
+
+  it('prefix table matches capturesFromLine at every ply', () => {
+    const moves = ['e2e4', 'd7d5', 'e4d5', 'd8d5', 'b1c3'];
+    const prefix = buildCapturePrefix(START_FEN, moves);
+    expect(prefix).toHaveLength(moves.length + 1);
+    for (let ply = 0; ply <= moves.length; ply++) {
+      expect(captureAt(prefix, ply)).toEqual(capturesFromLine(START_FEN, moves, ply));
+    }
+    expect(captureAt(prefix, -1)).toEqual({ white: [], black: [] });
+    expect(captureAt(prefix, 999)).toEqual(capturesFromLine(START_FEN, moves));
+    expect(buildCapturePrefix(START_FEN, [])).toEqual([{ white: [], black: [] }]);
   });
 
   it('sorts captures queen-first, bishops before knights', () => {
