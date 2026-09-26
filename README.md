@@ -73,6 +73,7 @@ Run checks via `scripts/` (each supports `--help`):
 scripts/verify.sh               # typecheck + vitest + go vet/test
 scripts/e2e.sh <spec>           # build dist-browser, preview, run a Playwright spec
 scripts/perf.sh                 # profiling build + PERF_SEED/PERF_PLIES matrix
+scripts/backend-perf.sh         # mock-engine backend perf matrix (no weights/GPU)
 scripts/serve.sh                # preview an existing build
 node scripts/chess.mjs "<fen>"  # position legality/SAN/UCI/material as JSON
 scripts/env-setup.sh            # Stockfish, Python venv, JRE + tla2tools bootstrap
@@ -110,21 +111,23 @@ for development and `http://localhost:4173` for preview.
 
 ## Combined container and hosting
 
-Build from the repository root:
+From the repository root:
 
 ```sh
-docker build -f backend/Dockerfile -t maia-board:local .
-docker run --rm --name maia-board \
-  --publish 127.0.0.1:8080:8080 \
-  --env DB_PATH=/data/maia-board.db \
-  --mount type=volume,src=maia-board-data,dst=/data \
-  --mount type=volume,src=maia-board-models,dst=/models \
-  maia-board:local
+docker compose up --build
 ```
 
 Open `http://localhost:8080`. The image bundles the static frontend, Go server,
-Python workers, and Stockfish 19. Maia weights use the persistent `/models` cache;
-initial loading can require a download. Preserve the `/data` volume for games.
+Python workers, and Stockfish 19. The [`compose.yaml`](compose.yaml) persists
+games in `maia-board-data` and Maia weights in `maia-board-models`; first start
+downloads the weights (under 500 MiB), so expect a slow first game.
+
+Hardware: NVIDIA (driver R560+, container toolkit, uncomment the `deploy`
+block for GPU access), AMD, Intel, or no GPU all work — Maia falls back to CPU
+automatically where torch sees no CUDA device. A slim CPU-only image is one
+commented build arg away; see the comments in `compose.yaml`. Stockfish always
+runs on CPU. Builds assume x86-64 Linux; ARM hosts are not covered. No ROCm
+build is provided.
 
 Managed hosting lives in the separate `home-server` repository. It serves
 `https://chess.home.simho.xyz` on the LAN through Traefik; tailnet access uses the

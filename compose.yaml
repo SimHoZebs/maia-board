@@ -1,0 +1,35 @@
+# Local self-hosting: `docker compose up --build`, then open http://localhost:8080.
+# Works with NVIDIA, AMD, Intel, or no GPU: Maia falls back to CPU automatically
+# when torch sees no CUDA device. First start downloads the Maia weights
+# (under 500 MiB) into the models volume, so expect a slow first game.
+services:
+  maia-board:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      # Slim CPU-only image (smaller download, same behavior on GPU-less hosts):
+      # args:
+      #   TORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
+    image: maia-board:local
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      DB_PATH: /data/maia-board.db
+      # MAIA3_DEVICE: auto # auto (default) | cpu | cuda[:N]
+      # MAIA3_IDLE_TIMEOUT: 10m # 0 disables idle worker unloads
+    volumes:
+      - maia-board-data:/data
+      - maia-board-models:/models
+    restart: unless-stopped
+    # NVIDIA GPU access (needs host driver R560+ and the container toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  maia-board-data:
+  maia-board-models:
