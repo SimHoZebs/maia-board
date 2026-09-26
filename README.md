@@ -74,6 +74,7 @@ scripts/verify.sh               # typecheck + vitest + go vet/test
 scripts/e2e.sh <spec>           # build dist-browser, preview, run a Playwright spec
 scripts/perf.sh                 # profiling build + PERF_SEED/PERF_PLIES matrix
 scripts/backend-perf.sh         # mock-engine backend perf matrix (no weights/GPU)
+node scripts/backend-perf-live.mjs --url <backend>  # live-engine latency (needs real server)
 scripts/serve.sh                # preview an existing build
 node scripts/chess.mjs "<fen>"  # position legality/SAN/UCI/material as JSON
 scripts/env-setup.sh            # Stockfish, Python venv, JRE + tla2tools bootstrap

@@ -331,9 +331,14 @@ func (s *server) serveMove(w http.ResponseWriter, r *http.Request, prio Priority
 	if prio == PriorityFocus {
 		lane = "focus"
 	}
+	// Perf spans: validate_us covers decode + request validation, exec_ms
+	// covers the cache→admission→inference→store path. Appended to the
+	// existing timing line so docker-logs latency curves can split
+	// validation overhead from engine execution.
+	validateMicros, execMillis := int64(-1), int64(-1)
 	defer func() {
-		log.Printf("move status=%d lane=%s plies=%d model=%s degraded=%t duration_ms=%d",
-			rec.status, lane, len(request.Moves), model, degraded, time.Since(started).Milliseconds())
+		log.Printf("move status=%d lane=%s plies=%d model=%s degraded=%t duration_ms=%d validate_us=%d exec_ms=%d",
+			rec.status, lane, len(request.Moves), model, degraded, time.Since(started).Milliseconds(), validateMicros, execMillis)
 		if rec.status == http.StatusOK {
 			cache := "miss"
 			if request.Temperature != 0 {
@@ -354,7 +359,9 @@ func (s *server) serveMove(w http.ResponseWriter, r *http.Request, prio Priority
 	if !ok {
 		return
 	}
+	validateStart := time.Now()
 	engineRequest, validated, err := validateMoveRequest(request)
+	validateMicros = time.Since(validateStart).Microseconds()
 	if err != nil {
 		if reqErr, ok := errors.AsType[*requestError](err); ok {
 			writeAPIError(w, http.StatusBadRequest, reqErr.Code, reqErr.Message)
@@ -369,7 +376,9 @@ func (s *server) serveMove(w http.ResponseWriter, r *http.Request, prio Priority
 	// still validates and persists after the client goes away.
 	useCache := request.Temperature == 0
 	execCtx := context.WithoutCancel(r.Context())
+	execStart := time.Now()
 	response, hit, predictErr := s.executeMaia(r.Context(), execCtx, prio, 0, engineRequest, model, false)
+	execMillis = time.Since(execStart).Milliseconds()
 	if predictErr != nil {
 		mapEngineError(w, predictErr, sanitizeError(predictErr.Error()))
 		return

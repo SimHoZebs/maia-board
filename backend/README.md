@@ -175,6 +175,61 @@ terminated. Sampled and degraded responses remain excluded from persistent cachi
 Stockfish uses one warm helper per admission slot whose cancellation kills its process
 group, as described in [STOCKFISH.md](STOCKFISH.md#resource-and-failure-behavior).
 
+## Backend performance
+
+`scripts/backend-perf.sh` runs the mock-engine perf harness
+(`TestBackendPerfMock` in `perf_mock_test.go`) over a seed × plies matrix:
+
+```sh
+scripts/backend-perf.sh                 # defaults: seed 1, 40 plies
+scripts/backend-perf.sh --seed 1,2 --plies 40,80 --maia-ms 5
+```
+
+It measures Go overhead with inference stubbed to a fixed `PERF_MAIA_MS`
+sleep: boot reply, line lookup, whole-line batch drain (with first-half /
+second-half split), per-position lookup sweep, rating-change foreground,
+Play+Focus lane collision, and Stockfish cache-hit serve. Hits measure the
+real SQLite read path; misses never touch a subprocess. Each cell writes
+`test-results/backend-perf-s<seed>-p<plies>.json` with step timings,
+endpoint p50/p95, and early-vs-late splits, mirroring the frontend
+`perf-metrics.json` philosophy. The harness runs only with
+`PERF_MODE=mock`, so plain `go test ./...` stays fast. `PERF_LINE_JSON`
+optionally points at `scripts/gen-perf-line.py --seed N --plies M` output
+to run the shared seeded line (same mulberry32 as the frontend client
+sim); otherwise a synthetic line is used.
+
+`move` and `evaluate` log lines carry `validate_us` (decode + validation)
+and `exec_ms` (cache→admission→inference→store) spans alongside
+`duration_ms`, so `docker logs` latency curves split validation overhead
+from engine execution.
+
+### Live-engine profiling
+
+The mock harness cannot answer how different inputs change latency
+(history length, search budget, model size, cold workers). For that, run
+the live harness against a real backend — the home-server container or
+any reachable deployment — from a machine with Node.js 22:
+
+```sh
+node scripts/backend-perf-live.mjs --url http://debian-server:8080 \
+  --seed 1 --plies 40 --cache-bust 37
+```
+
+It drives a seeded chess.js line (real positions; the worker rejects
+replay-inconsistent triples) through cold start, a per-ply miss curve,
+a hit curve over the same identities, a 3-lane whole-line batch
+(SF + display Maia + 2400 grading, chunked past the 768-entry cap),
+foreground-during-batch priority, per-lane Play/Focus/SF contention
+timing, a same-lane supersede storm plus same-key join proof, a
+client-abort write-through probe, a max-size 256-ply batch, a 429
+admission-cap probe, a Stockfish time×lines grid, and
+79m vs 5m. Miss scenarios take deterministic Elo offsets (plus
+`--cache-bust` per run) so a lived-in cache cannot silently turn the
+miss curve into hits; 503/409/429 responses are recorded, not retried
+away. Cold model load can take minutes; single requests time out at 3
+minutes, the cold probe at 10. See `--help` for the scenario list and
+`--scenarios` to run a subset.
+
 ## Local verification
 
 Run from `backend/`:
