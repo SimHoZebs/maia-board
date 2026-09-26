@@ -29,6 +29,7 @@ it('a different board or played move invalidates a verdict even when evaluation 
 });
 it('pins Maia settings only on its own-game mainline positions with moves available', () => {
   expect(isMaiaPosition({ turn: 'black', outcome: null }, 'white', true)).toBe(true);
+  expect(isMaiaPosition({ turn: 'white', outcome: null }, 'white', true)).toBe(false);
   expect(isMaiaPosition({ turn: 'white', outcome: null }, 'white', false)).toBe(false);
   expect(isMaiaPosition({ turn: 'black', outcome: { kind: 'draw' } }, 'white', true)).toBe(false);
   expect(isMaiaPosition({ turn: 'black', outcome: null }, 'white', false)).toBe(false);

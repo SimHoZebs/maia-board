@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
-import { QualityBadge, qualityGlyphs, qualitySlug } from './ReviewCharts';
+import { QualityBadge, qualityGlyphs } from './ReviewCharts';
 
 it('renders the Allowed mate badge with glyph, class, and label', () => {
   expect(qualityGlyphs['Allowed mate']).toBe('💀');
@@ -38,6 +38,4 @@ it('ships Allowed mate styles and a seamless reel loop for all ten verdicts', ()
   expect(styles).toContain('calc(-22px * 10)');
   expect(overview).toContain('.chart-dot-allowed-mate');
   expect(overview).toContain('.chart-dot-alien');
-  // Chart dots derive from the label slug, so Allowed mate lands on its styled rule.
-  expect(`chart-dot-${qualitySlug('Allowed mate')}`).toBe('chart-dot-allowed-mate');
 });

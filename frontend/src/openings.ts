@@ -11,11 +11,6 @@ type LineOpenings = { matches: OpeningMatch[]; bookFlags: boolean[] };
 // evict so a later mount retries instead of caching the outage.
 const lineCache = new Map<string, LineOpenings | Promise<LineOpenings>>();
 
-/** Test seam: drop all cached lines. */
-export function clearLineOpeningsCache(): void {
-  lineCache.clear();
-}
-
 function isMatch(value: unknown): value is OpeningMatch {
   if (!isRecord(value)) return false;
   return Number.isInteger(value.ply) && typeof value.eco === 'string' && typeof value.name === 'string';

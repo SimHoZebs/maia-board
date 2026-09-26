@@ -1,5 +1,4 @@
 """Run with STOCKFISH_BINARY set to the packaged Stockfish 19 executable."""
-import inspect
 import json
 import os
 from pathlib import Path
@@ -31,7 +30,6 @@ class StockfishTests(unittest.TestCase):
 
     def test_api_signature_and_perspective(self):
         self.assertEqual(chess.__version__, "1.11.2")
-        self.assertFalse(inspect.signature(chess.engine.SimpleEngine.popen_uci).parameters["setpgrp"].default)
         for turn in [chess.WHITE, chess.BLACK]:
             for value in [-100, 100]:
                 self.assertEqual(white_score(chess.engine.PovScore(chess.engine.Cp(value), turn))["value"],

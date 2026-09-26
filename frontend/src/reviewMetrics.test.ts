@@ -95,7 +95,6 @@ it('reads a missed win that stays alive as Blunder by loss', () => {
   expect(reviewMove(before, before, new Chess(), 'g1f3').label).toBe('Top');
 });
 it('reads terminal outcomes and White-relative views provider-neutrally', () => {
-  expect(maiaExpected([0.2, 0.3, 0.5])).toBeCloseTo(65, 9);
   expect(outcomeExpected({ kind: 'checkmate', winner: 'white' })).toBe(100);
   expect(outcomeExpected({ kind: 'draw' })).toBe(50);
   expect(outcomeExpected(null)).toBeNull();

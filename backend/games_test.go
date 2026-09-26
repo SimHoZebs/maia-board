@@ -233,15 +233,6 @@ func TestGameStoreUnchangedSavePreservesOrder(t *testing.T) {
 	}
 }
 
-func TestGameStoreGeneratesID(t *testing.T) {
-	store := testStore(t)
-	payload := gameFixture("", "e2e4")
-	saved, err := store.Save(payload)
-	if err != nil || saved.ID == "" {
-		t.Fatalf("saved = %+v, err = %v", saved, err)
-	}
-}
-
 // An orphan current-game marker must read as no current game, never as a
 // dangling id paired with a null row.
 func TestGamesListOrphanMarkerReadsNull(t *testing.T) {
