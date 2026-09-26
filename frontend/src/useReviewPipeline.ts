@@ -402,8 +402,15 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   // without this the badges those moves showed on the mainline vanish on
   // branching. Position-keyed coordinator results make it a cache-read-only
   // second pass (no fetches, no memo retention); skipped on mainlines.
+  // Mainline memo carried across coordinator bumps, mirroring `previous`
+  // above: reuse is content-keyed (posKey + fen + move + eval identity), so
+  // settled prefix verdicts skip `reviewMove` while late-landing rows still
+  // recompute. Without this the unchanged mainline regrades fully on every
+  // branch-settle bump. Separate ref from the branch timeline: the node sets
+  // differ, so sharing would only ever miss.
+  const mainlinePrevious = useRef<ReviewQualitiesMemo | null>(null);
   const mainlineQualities = useMemo(() => {
-    if (state.analysis.branchFromPly === null) return undefined;
+    if (state.analysis.branchFromPly === null) { mainlinePrevious.current = null; return undefined; }
     const mainTimeline = buildTimeline(state.analysis.initialFen, state.analysis.moves);
     const mainNodes = reviewNodes(mainTimeline);
     const mainSf = mainNodes.map(node => coordinator.provisionalSfResult(node, mainlineSettingsForNode(node)));
@@ -417,12 +424,13 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     });
     const mainSfGap = mainNodes.map((node, ply) => sfTopGap(mainSf[ply]?.lines, node.turn));
     const mainGrades = computeReviewQualities({ line: mainTimeline, nodes: mainNodes, evaluations: mainSf,
-      settingsForNode: mainlineSettingsForNode, pending: coordinator.sfPendingKeys(), prev: null,
+      settingsForNode: mainlineSettingsForNode, pending: coordinator.sfPendingKeys(), prev: mainlinePrevious.current,
       objective: {
         points: mainPoints,
         pending: lanePending(coordinator),
         keyFor: (node: ReviewNode) => laneKey(node, mainlineSettingsForNode),
       } });
+    mainlinePrevious.current = mainGrades.memo;
     return translateReviewQualities({ grades: mainGrades.qualities, nodes: mainNodes, maiaResults: mainMaiaResults,
       rarities: mainRarities, settingsForNode: mainlineSettingsForNode, isMaiaPending: (node, settings) => coordinator.isPending('maia', node, settings),
       alien: { rarity2400: mainRarity2400, sfGap: mainSfGap } });
