@@ -166,16 +166,19 @@ func recoverJSON(next http.Handler) http.Handler {
 // handlers never override — existing Cache-Control logic is untouched.
 // No HSTS: TLS terminates at Traefik, not this server, so this server
 // must not emit Strict-Transport-Security.
-// CSP stays minimal (default-src 'self'): frontend/index.html has no
-// inline scripts (single external module script; Vite build emits hashed
-// external assets under assets/), and same-origin API/SSE fall back to
-// default-src.
+// CSP stays minimal (default-src 'self', plus data: for images):
+// frontend/index.html has no inline scripts (single external module
+// script; Vite build emits hashed external assets under assets/), and
+// same-origin API/SSE fall back to default-src. img-src needs data:
+// because chessground paints board squares and pieces from embedded
+// data: SVG backgrounds (chessground.brown.css, chessground.cburnett.css);
+// without it the board renders as a blank peach square with no pieces.
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:")
 		next.ServeHTTP(w, r)
 	})
 }
