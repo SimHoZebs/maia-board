@@ -51,12 +51,12 @@ func resolveSFQuery(query lookupRequest, initialFEN string, prefix []string) (ev
 	return req, nil
 }
 
-func resolveMaiaQuery(query lookupRequest, initialFEN string, prefix []string) (EngineRequest, string, *requestError) {
+func resolveMaiaQuery(query lookupRequest, initialFEN string, prefix []string) (MaiaRequest, string, *requestError) {
 	if prefix == nil {
-		return EngineRequest{}, "", &requestError{"invalid_request", "moves must be an array"}
+		return MaiaRequest{}, "", &requestError{"invalid_request", "moves must be an array"}
 	}
 	if query.Settings != nil {
-		return EngineRequest{}, "", &requestError{"invalid_request", "Maia request contains Stockfish settings"}
+		return MaiaRequest{}, "", &requestError{"invalid_request", "Maia request contains Stockfish settings"}
 	}
 	_, side, _ := normalizeFEN(query.FEN)
 	color := "white"
@@ -72,7 +72,7 @@ func resolveMaiaQuery(query lookupRequest, initialFEN string, prefix []string) (
 		if reqErr, ok := errors.AsType[*requestError](err); ok {
 			message = reqErr.Message
 		}
-		return EngineRequest{}, "", &requestError{"invalid_request", message}
+		return MaiaRequest{}, "", &requestError{"invalid_request", message}
 	}
 	return req, model, nil
 }
@@ -162,7 +162,7 @@ func (e sfExecutor) store(result *evaluationResponse) {
 
 type maiaExecutor struct {
 	s        *server
-	req      EngineRequest
+	req      MaiaRequest
 	model    string
 	useCache bool
 }
@@ -217,7 +217,7 @@ func (s *server) executeSF(waitCtx, execCtx context.Context, prio Priority, subm
 // degraded 79M→5M fallback without caching; batch (strictBatch=true) fails
 // per-index so the position can be retried live. submitSeq orders batch-lane
 // tickets; sync callers pass 0.
-func (s *server) executeMaia(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, req EngineRequest, model string, strictBatch bool) (moveResponse, bool, error) {
+func (s *server) executeMaia(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, req MaiaRequest, model string, strictBatch bool) (moveResponse, bool, error) {
 	return executeWithRetry[moveResponse](maiaExecutor{s: s, req: req, model: model, useCache: req.Temperature == 0}, waitCtx, execCtx, prio, submitSeq, strictBatch)
 }
 
@@ -234,7 +234,7 @@ type batchEntry struct {
 	index     int
 	engine    string
 	evalReq   evaluationRequest
-	maiaReq   EngineRequest
+	maiaReq   MaiaRequest
 	maiaModel string
 	// submitSeq is the batch-lane ordering nonce (§1): one process-wide
 	// atomic increment per accepted submit, shared by all its entries.
@@ -280,7 +280,7 @@ func (job *batchJob) progressLocked() batchProgress {
 	return progress
 }
 
-func (job *batchJob) snapshot() batchProgress {
+func (job *batchJob) progress() batchProgress {
 	job.mu.Lock()
 	defer job.mu.Unlock()
 	return job.progressLocked()
@@ -371,10 +371,10 @@ func countMisses(entries []*batchEntry) (sf, large, small int) {
 	return sf, large, small
 }
 
-// snapshotCounts scans unfinished jobs under js.mu and returns the
+// capTallies scans unfinished jobs under js.mu and returns the
 // accepted-but-unresolved tallies per scheduler plus the unfinished-job
 // count. Fast O(records): entries are only counted, never resolved here.
-func (js *ReviewJobs) snapshotCounts() (unfinished, sf, large, small int) {
+func (js *ReviewJobs) capTallies() (unfinished, sf, large, small int) {
 	js.mu.Lock()
 	defer js.mu.Unlock()
 	for _, job := range js.jobs {
@@ -605,7 +605,7 @@ func (js *ReviewJobs) reviews(w http.ResponseWriter, r *http.Request) {
 		for _, e := range entries {
 			e.submitSeq = seq
 		}
-		id, err := newGameID()
+		id, err := newHexID()
 		if err != nil {
 			js.mu.Unlock()
 			writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "could not start review batch")
@@ -654,7 +654,7 @@ func (js *ReviewJobs) reviewByID(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusNotFound, "not_found", "unknown review batch")
 			return
 		}
-		writeJSON(w, http.StatusOK, job.snapshot())
+		writeJSON(w, http.StatusOK, job.progress())
 	default:
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET is required")
 	}
@@ -766,8 +766,8 @@ func (js *ReviewJobs) runEntry(job *batchJob, entry *batchEntry) {
 }
 
 // reviewEvents streams live progress as server-sent events. The opening
-// snapshot makes reconnects self-healing: a client that sees an event-id gap
-// reconciles with GET status + bulk lookup instead of trusting the stream.
+// progress makes reconnects self-healing: a client that sees an event-id gap
+// restores with GET status + bulk lookup instead of trusting the stream.
 func (js *ReviewJobs) reviewEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET is required")

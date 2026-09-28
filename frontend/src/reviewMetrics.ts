@@ -408,6 +408,8 @@ export function isMateFor(score: Score, side: 'white' | 'black'): boolean {
   if (score.type !== 'mate') return false;
   return (score.winning_side ?? (score.value > 0 ? 'white' : 'black')) === side;
 }
+// SF-only engine grade (not the pipeline): Stockfish before/after facts in,
+// EngineGrade out. Praise/difficulty translate later in effectiveQuality.
 export function reviewMove(before: Evaluation | undefined, after: Evaluation | undefined, game: Chess, played: string, objective?: ObjectiveGrade): EngineGrade {
   if (!before || !after) return { label: 'Unreviewed', accuracy: null, loss: null };
   const legal = game.moves().length;

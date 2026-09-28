@@ -82,7 +82,7 @@ it('sends requested options and rejects a response from another search policy', 
   await expect(fetchEvaluation(node, new AbortController().signal, fetcher, settings)).rejects.toThrow('incompatible search settings');
 });
 
-it('primes terminal positions with the selected policy without engine requests', async () => {
+it('restores terminal positions with the selected policy without engine requests', async () => {
   const fen = '7k/6Q1/6K1/8/8/8/8/8 b - - 1 1';
   const node = testNodes(fen, [])[0];
   const fetcher = vi.fn();

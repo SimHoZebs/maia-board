@@ -15,28 +15,28 @@ import (
 	"time"
 )
 
-func engineFixture(move string) EngineResult {
+func engineFixture(move string) MaiaResult {
 	wdl := [3]float64{.2, .2, .6}
-	return EngineResult{Move: move, Candidates: []Candidate{{Move: move, Policy: 1, WDL: wdl}}, WDL: wdl}
+	return MaiaResult{Move: move, Candidates: []MaiaCandidate{{Move: move, Policy: 1, WDL: wdl}}, WDL: wdl}
 }
 
 type fakePredictor struct {
-	result EngineResult
+	result MaiaResult
 	err    error
 	calls  int
 	status WorkerStatus
 }
 
-func (f *fakePredictor) predict(_, _ context.Context, _ Priority, _ uint64, _ EngineRequest) (EngineResult, func(), error) {
+func (f *fakePredictor) predict(_, _ context.Context, _ Priority, _ uint64, _ MaiaRequest) (MaiaResult, func(), error) {
 	f.calls++
 	return f.result, nil, f.err
 }
-func (f *fakePredictor) snapshot() WorkerStatus { return f.status }
+func (f *fakePredictor) workerStatus() WorkerStatus { return f.status }
 
 func TestEnginePoolFallsBackPerRequest(t *testing.T) {
 	large := &fakePredictor{err: errors.New("79m failed")}
 	small := &fakePredictor{result: engineFixture("e2e4")}
-	result, _, used, degraded, err := NewEnginePool(large, small).predict(context.Background(), context.Background(), PriorityFocus, 0, "79m", EngineRequest{})
+	result, _, used, degraded, err := NewEnginePool(large, small).predict(context.Background(), context.Background(), PriorityFocus, 0, "79m", MaiaRequest{})
 	if err != nil || used != "5m" || !degraded || result.Move != "e2e4" || large.calls != 1 || small.calls != 1 {
 		t.Fatalf("fallback: %+v %s %t %v", result, used, degraded, err)
 	}
@@ -44,23 +44,23 @@ func TestEnginePoolFallsBackPerRequest(t *testing.T) {
 func TestEnginePoolDoesNotFallbackForRequestErrors(t *testing.T) {
 	for _, failure := range []error{ErrWorkerBusy, ErrJoined, ErrSuperseded, context.Canceled, context.DeadlineExceeded, ErrPositionMismatch, ErrInvalidPosition, ErrNoLegalMoves} {
 		large, small := &fakePredictor{err: failure}, &fakePredictor{}
-		_, _, _, _, err := NewEnginePool(large, small).predict(context.Background(), context.Background(), PriorityFocus, 0, "79m", EngineRequest{})
+		_, _, _, _, err := NewEnginePool(large, small).predict(context.Background(), context.Background(), PriorityFocus, 0, "79m", MaiaRequest{})
 		if !errors.Is(err, failure) || small.calls != 0 {
 			t.Fatalf("fallback on %v", failure)
 		}
 	}
 }
-func TestEngineResultValidation(t *testing.T) {
+func TestMaiaResultValidation(t *testing.T) {
 	valid := engineFixture("e2e4")
 	if !validEngineResult(valid, 1, true) {
 		t.Fatal("valid result rejected")
 	}
-	for _, change := range []func(*EngineResult){
-		func(r *EngineResult) { r.WDL = [3]float64{} },
-		func(r *EngineResult) { r.Candidates[0].Policy = 2 },
-		func(r *EngineResult) { r.Candidates[0].Move = "garbage" },
-		func(r *EngineResult) { r.Candidates = append(r.Candidates, r.Candidates[0]) },
-		func(r *EngineResult) { r.Move = "d2d4" },
+	for _, change := range []func(*MaiaResult){
+		func(r *MaiaResult) { r.WDL = [3]float64{} },
+		func(r *MaiaResult) { r.Candidates[0].Policy = 2 },
+		func(r *MaiaResult) { r.Candidates[0].Move = "garbage" },
+		func(r *MaiaResult) { r.Candidates = append(r.Candidates, r.Candidates[0]) },
+		func(r *MaiaResult) { r.Move = "d2d4" },
 	} {
 		r := engineFixture("e2e4")
 		change(&r)
@@ -88,7 +88,7 @@ func TestPersistentMaiaHelper(t *testing.T) {
 	scanner := bufio.NewScanner(os.Stdin)
 	calls := 0
 	for scanner.Scan() {
-		var r EngineRequest
+		var r MaiaRequest
 		if json.Unmarshal(scanner.Bytes(), &r) != nil {
 			os.Exit(2)
 		}
@@ -166,7 +166,7 @@ func TestCanceledCallerKeepsWarmWorkerAndSlot(t *testing.T) {
 	w, path := persistentWorker(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	r := EngineRequest{FEN: startFEN, SelfElo: 400, OppoElo: 1}
+	r := MaiaRequest{FEN: startFEN, SelfElo: 400, OppoElo: 1}
 	go func() {
 		_, release, err := w.predict(ctx, ctx, PriorityFocus, 0, r)
 		if release != nil {
@@ -179,12 +179,12 @@ func TestCanceledCallerKeepsWarmWorkerAndSlot(t *testing.T) {
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	if w.snapshot().State != stateBusy {
+	if w.workerStatus().State != stateBusy {
 		t.Fatal("canceled caller released slot")
 	}
 	// A different position waits for the drain, then reports busy: it must
 	// not cut in front of the running operation.
-	if _, _, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0, EngineRequest{FEN: startFEN, OppoElo: 2}); !errors.Is(err, ErrWorkerBusy) {
+	if _, _, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0, MaiaRequest{FEN: startFEN, OppoElo: 2}); !errors.Is(err, ErrWorkerBusy) {
 		t.Fatalf("second request: %v", err)
 	}
 	// The same deterministic work joins instead of inferring twice. The join
@@ -207,7 +207,7 @@ func TestCanceledCallerKeepsWarmWorkerAndSlot(t *testing.T) {
 	if err != nil || result.Move != "e2e4" {
 		t.Fatalf("re-infer: %+v %v", result, err)
 	}
-	result, err = predictSync(t, w, EngineRequest{FEN: startFEN, OppoElo: 2})
+	result, err = predictSync(t, w, MaiaRequest{FEN: startFEN, OppoElo: 2})
 	if err != nil || result.Move != "d2d4" {
 		t.Fatalf("cross-talk: %+v %v", result, err)
 	}
@@ -221,7 +221,7 @@ func TestCanceledCallerKeepsWarmWorkerAndSlot(t *testing.T) {
 
 // predictSync runs one inference and releases the slot, mirroring the
 // handler's release-after-store discipline (tests have nothing to store).
-func predictSync(t *testing.T, w *Worker, r EngineRequest) (EngineResult, error) {
+func predictSync(t *testing.T, w *Worker, r MaiaRequest) (MaiaResult, error) {
 	t.Helper()
 	result, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0, r)
 	if release != nil {
@@ -234,7 +234,7 @@ func TestHardTimeoutKillsReapsAndReleases(t *testing.T) {
 	w.moveWait = 150 * time.Millisecond
 	done := make(chan error, 1)
 	go func() {
-		_, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0, EngineRequest{FEN: startFEN, SelfElo: 4999})
+		_, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0, MaiaRequest{FEN: startFEN, SelfElo: 4999})
 		if release != nil {
 			release()
 		}
@@ -244,19 +244,19 @@ func TestHardTimeoutKillsReapsAndReleases(t *testing.T) {
 	if err := <-done; !errors.Is(err, ErrProtocol) {
 		t.Fatalf("timeout: %v", err)
 	}
-	if !w.sched.Idle() || w.snapshot().State != stateFailed {
+	if !w.sched.Idle() || w.workerStatus().State != stateFailed {
 		t.Fatal("hard timeout retained slot")
 	}
 	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
 		t.Fatalf("PID %d not reaped: %v", pid, err)
 	}
-	if _, err := predictSync(t, w, EngineRequest{FEN: startFEN, OppoElo: 2}); err != nil {
+	if _, err := predictSync(t, w, MaiaRequest{FEN: startFEN, OppoElo: 2}); err != nil {
 		t.Fatalf("recovery: %v", err)
 	}
 }
 func TestWorkerRejectsOversizedResponse(t *testing.T) {
 	w, _ := persistentWorker(t)
-	if _, err := predictSync(t, w, EngineRequest{FEN: startFEN, OppoElo: 3}); !errors.Is(err, ErrProtocol) {
+	if _, err := predictSync(t, w, MaiaRequest{FEN: startFEN, OppoElo: 3}); !errors.Is(err, ErrProtocol) {
 		t.Fatal(err)
 	}
 	if !w.sched.Idle() {
@@ -270,7 +270,7 @@ func TestInitializationTimeoutKillsAndReaps(t *testing.T) {
 	w.startWait = 150 * time.Millisecond
 	done := make(chan error, 1)
 	go func() {
-		_, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0, EngineRequest{FEN: startFEN})
+		_, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0, MaiaRequest{FEN: startFEN})
 		if release != nil {
 			release()
 		}
@@ -290,13 +290,13 @@ func TestInitializationTimeoutKillsAndReaps(t *testing.T) {
 
 func TestInvalidPositionResponseLeavesWarmWorkerReady(t *testing.T) {
 	w, _ := persistentWorker(t)
-	if _, err := predictSync(t, w, EngineRequest{FEN: startFEN, OppoElo: 4}); !errors.Is(err, ErrInvalidPosition) {
+	if _, err := predictSync(t, w, MaiaRequest{FEN: startFEN, OppoElo: 4}); !errors.Is(err, ErrInvalidPosition) {
 		t.Fatal(err)
 	}
 	w.mu.Lock()
 	pid := w.proc.cmd.Process.Pid
 	w.mu.Unlock()
-	result, err := predictSync(t, w, EngineRequest{FEN: startFEN, OppoElo: 2})
+	result, err := predictSync(t, w, MaiaRequest{FEN: startFEN, OppoElo: 2})
 	if err != nil || result.Move != "d2d4" {
 		t.Fatalf("stale error: %+v %v", result, err)
 	}
@@ -312,7 +312,7 @@ func TestSampledRequestsDoNotJoin(t *testing.T) {
 	syncWaitFocus = 100 * time.Millisecond
 	defer func() { syncWaitFocus = oldWait }()
 	w, path := persistentWorker(t)
-	request := EngineRequest{FEN: startFEN, SelfElo: 400, Temperature: .7}
+	request := MaiaRequest{FEN: startFEN, SelfElo: 400, Temperature: .7}
 	done := make(chan error, 1)
 	go func() {
 		_, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0, request)
@@ -345,7 +345,7 @@ func TestWorkerAcquireReturnsBusyWithoutStartingProcess(t *testing.T) {
 	oldWait := syncWaitFocus
 	syncWaitFocus = 50 * time.Millisecond
 	defer func() { syncWaitFocus = oldWait }()
-	if _, _, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0, EngineRequest{}); !errors.Is(err, ErrWorkerBusy) {
+	if _, _, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0, MaiaRequest{}); !errors.Is(err, ErrWorkerBusy) {
 		t.Fatal(err)
 	}
 	if w.proc != nil {
@@ -389,7 +389,7 @@ func backdateIdle(t *testing.T, w *Worker, age time.Duration) {
 
 func TestIdleUnloadFreesWarmWorkerAndColdStarts(t *testing.T) {
 	w, _ := persistentWorker(t)
-	if _, err := predictSync(t, w, EngineRequest{FEN: startFEN}); err != nil {
+	if _, err := predictSync(t, w, MaiaRequest{FEN: startFEN}); err != nil {
 		t.Fatal(err)
 	}
 	w.mu.Lock()
@@ -400,14 +400,14 @@ func TestIdleUnloadFreesWarmWorkerAndColdStarts(t *testing.T) {
 	if !w.tryUnloadIdle(time.Now()) {
 		t.Fatal("idle worker was not unloaded")
 	}
-	if w.proc != nil || w.snapshot().State != stateUnloaded {
-		t.Fatalf("after unload proc=%v state=%s", w.proc, w.snapshot().State)
+	if w.proc != nil || w.workerStatus().State != stateUnloaded {
+		t.Fatalf("after unload proc=%v state=%s", w.proc, w.workerStatus().State)
 	}
 	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
 		t.Fatalf("PID %d not reaped: %v", pid, err)
 	}
 	// Next inference cold-starts a fresh process.
-	result, err := predictSync(t, w, EngineRequest{FEN: startFEN, OppoElo: 2})
+	result, err := predictSync(t, w, MaiaRequest{FEN: startFEN, OppoElo: 2})
 	if err != nil || result.Move != "d2d4" {
 		t.Fatalf("cold restart: %+v %v", result, err)
 	}
@@ -416,7 +416,7 @@ func TestIdleUnloadFreesWarmWorkerAndColdStarts(t *testing.T) {
 func TestIdleUnloadSkipsRecentAndBusy(t *testing.T) {
 	w, path := persistentWorker(t)
 	w.SetIdleTimeout(time.Hour)
-	if _, err := predictSync(t, w, EngineRequest{FEN: startFEN}); err != nil {
+	if _, err := predictSync(t, w, MaiaRequest{FEN: startFEN}); err != nil {
 		t.Fatal(err)
 	}
 	// Recent activity: no eviction even when the sweep runs.
@@ -436,7 +436,7 @@ func TestIdleUnloadSkipsRecentAndBusy(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, release, err := w.predict(context.Background(), context.Background(), PriorityFocus, 0,
-			EngineRequest{FEN: startFEN, SelfElo: 400})
+			MaiaRequest{FEN: startFEN, SelfElo: 400})
 		if release != nil {
 			release()
 		}
@@ -466,18 +466,18 @@ func TestPoolSweepIdleUnloadsBoth(t *testing.T) {
 	small, _ := persistentWorker(t)
 	large.SetIdleTimeout(time.Millisecond)
 	small.SetIdleTimeout(time.Millisecond)
-	if _, err := predictSync(t, large, EngineRequest{FEN: startFEN}); err != nil {
+	if _, err := predictSync(t, large, MaiaRequest{FEN: startFEN}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := predictSync(t, small, EngineRequest{FEN: startFEN}); err != nil {
+	if _, err := predictSync(t, small, MaiaRequest{FEN: startFEN}); err != nil {
 		t.Fatal(err)
 	}
 	backdateIdle(t, large, time.Hour)
 	backdateIdle(t, small, time.Hour)
 	pool := NewEnginePool(large, small)
 	pool.sweepIdle(time.Now())
-	if large.snapshot().State != stateUnloaded || small.snapshot().State != stateUnloaded {
-		t.Fatalf("sweep left %s / %s", large.snapshot().State, small.snapshot().State)
+	if large.workerStatus().State != stateUnloaded || small.workerStatus().State != stateUnloaded {
+		t.Fatalf("sweep left %s / %s", large.workerStatus().State, small.workerStatus().State)
 	}
 	// Fakes without idle support are ignored.
 	pool = NewEnginePool(&fakePredictor{}, &fakePredictor{})

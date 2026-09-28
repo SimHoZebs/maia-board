@@ -121,7 +121,7 @@ func NewGameStore(path string) (*GameStore, error) {
 	return &GameStore{db: db}, nil
 }
 
-func newGameID() (string, error) {
+func newHexID() (string, error) {
 	var bytes [16]byte
 	if _, err := rand.Read(bytes[:]); err != nil {
 		return "", err
@@ -168,7 +168,7 @@ func (s *GameStore) Save(payload gamePayload) (gameRow, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	id := payload.ID
 	if id == "" {
-		generated, err := newGameID()
+		generated, err := newHexID()
 		if err != nil {
 			return gameRow{}, err
 		}

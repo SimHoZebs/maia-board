@@ -47,16 +47,16 @@ type perfSleeper struct {
 	mu     sync.Mutex
 	execs  int
 	liveMs int
-	result EngineResult
+	result MaiaResult
 }
 
-func newPerfSleeper(model string, liveMs int, result EngineResult) *perfSleeper {
+func newPerfSleeper(model string, liveMs int, result MaiaResult) *perfSleeper {
 	return &perfSleeper{model: model, sched: NewScheduler(), liveMs: liveMs, result: result}
 }
 
-func (f *perfSleeper) predict(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, request EngineRequest) (EngineResult, func(), error) {
+func (f *perfSleeper) predict(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, request MaiaRequest) (MaiaResult, func(), error) {
 	if err := waitCtx.Err(); err != nil {
-		return EngineResult{}, nil, err
+		return MaiaResult{}, nil, err
 	}
 	key := ""
 	if request.Temperature == 0 {
@@ -64,7 +64,7 @@ func (f *perfSleeper) predict(waitCtx, execCtx context.Context, prio Priority, s
 	}
 	grant, err := admit(waitCtx, prio, f.sched, key, submitSeq)
 	if err != nil {
-		return EngineResult{}, nil, err
+		return MaiaResult{}, nil, err
 	}
 	release := func() { f.sched.Release(grant) }
 	if f.liveMs > 0 {
@@ -72,18 +72,18 @@ func (f *perfSleeper) predict(waitCtx, execCtx context.Context, prio Priority, s
 		case <-time.After(time.Duration(f.liveMs) * time.Millisecond):
 		case <-execCtx.Done():
 			release()
-			return EngineResult{}, nil, execCtx.Err()
+			return MaiaResult{}, nil, execCtx.Err()
 		}
 	}
 	f.mu.Lock()
 	f.execs++
 	f.mu.Unlock()
 	result := f.result
-	result.Candidates = append([]Candidate(nil), f.result.Candidates...)
+	result.Candidates = append([]MaiaCandidate(nil), f.result.Candidates...)
 	return result, release, nil
 }
 
-func (f *perfSleeper) snapshot() WorkerStatus { return WorkerStatus{} }
+func (f *perfSleeper) workerStatus() WorkerStatus { return WorkerStatus{} }
 
 func (f *perfSleeper) calls() int {
 	f.mu.Lock()
@@ -206,7 +206,7 @@ func TestBackendPerfMock(t *testing.T) {
 	positions := plies + 1
 
 	wdl := [3]float64{0.2, 0.3, 0.5}
-	maiaResult := EngineResult{Move: "e2e4", Candidates: []Candidate{{Move: "e2e4", Policy: 1, WDL: wdl}}, WDL: wdl}
+	maiaResult := MaiaResult{Move: "e2e4", Candidates: []MaiaCandidate{{Move: "e2e4", Policy: 1, WDL: wdl}}, WDL: wdl}
 	// One scheduler per model, mirroring production where each Worker owns
 	// its scheduler: the 79m sleeper serves live + batch 79m traffic.
 	large := newPerfSleeper("79m", liveMs, maiaResult)

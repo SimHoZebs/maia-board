@@ -385,7 +385,7 @@ func TestBatchMissCapSF(t *testing.T) {
 	seedFakeJob(s.reviews, "fill", false, maxBatchRequests, 0, 0)
 	w := postBatchRec(s, batchBody(sfBatchReq()))
 	assertEngineBusy(t, w)
-	unfinished, sf, _, _ := s.reviews.snapshotCounts()
+	unfinished, sf, _, _ := s.reviews.capTallies()
 	if unfinished != 1 || sf != maxBatchRequests {
 		t.Fatalf("snapshot unfinished=%d sf=%d", unfinished, sf)
 	}
@@ -462,7 +462,7 @@ func TestBatchRaceRetryThen429(t *testing.T) {
 		t.Fatalf("race codes %v, want one 202 + one 429", codes)
 	}
 	// Overshoot stays zero: exactly at cap, never past.
-	_, sf, _, _ := s.reviews.snapshotCounts()
+	_, sf, _, _ := s.reviews.capTallies()
 	if sf > maxBatchRequests {
 		t.Fatalf("overshoot sf=%d", sf)
 	}

@@ -115,7 +115,7 @@ export class GameRepository {
     if (this.active) void this.flush();
   }
   // Abort-scope hook for the lineKey owner: deleting a game
-  // cancels its in-flight history hydration here. Foreground eval abort lives
+  // cancels its in-flight history page fetch here. Foreground eval abort lives
   // with that owner, not in the repository. Batch jobs are never cancelled.
   cancelScope(_gameId: string) {
     this.pageController?.abort();

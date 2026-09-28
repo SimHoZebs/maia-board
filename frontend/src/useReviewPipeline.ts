@@ -200,30 +200,30 @@ function useRestorePair(args: {
   displayKey: string;
   priorityPlies?: readonly number[];
 }): {
-  prime: { key: string; error?: string } | null;
-  gradePrime: { key: string; error?: string } | null;
+  restore: { key: string; error?: string } | null;
+  gradeRestore: { key: string; error?: string } | null;
   gradeKey: string;
   lane: ReturnType<typeof restoreDescriptor>;
   laneReady: boolean;
-  retryPrime: () => void;
+  retryRestore: () => void;
 } {
   const { active, nodes, settings, coordinator, displayKey, priorityPlies } = args;
   const lane = useMemo(() => restoreDescriptor(), []);
-  const [prime, setPrime] = useState<{ key: string; error?: string } | null>(null);
-  const [gradePrime, setGradePrime] = useState<{ key: string; error?: string } | null>(null);
-  const [primeAttempt, setPrimeAttempt] = useState(0);
+  const [restore, setRestore] = useState<{ key: string; error?: string } | null>(null);
+  const [gradeRestore, setGradeRestore] = useState<{ key: string; error?: string } | null>(null);
+  const [restoreAttempt, setRestoreAttempt] = useState(0);
   // Stable across renders so room retry/online effects can depend on it
   // without rescheduling every render.
-  const retryPrime = useCallback(() => setPrimeAttempt(attempt => attempt + 1), []);
+  const retryRestore = useCallback(() => setRestoreAttempt(attempt => attempt + 1), []);
   const gradeKey = `${displayKey}|${lane?.suffix ?? 'nolane'}`;
   useLookupRestore({ active, nodes, settings, coordinator,
-    loadKey: `${displayKey}|${primeAttempt}`, priorityPlies,
-    onSettled: (error) => setPrime({ key: displayKey, error }) });
+    loadKey: `${displayKey}|${restoreAttempt}`, priorityPlies,
+    onSettled: (error) => setRestore({ key: displayKey, error }) });
   useLookupRestore({ active: active && lane.settings !== null, nodes, settings: lane?.settings ?? settings, engines: lane?.engines ?? [], coordinator,
-    loadKey: `${gradeKey}|${primeAttempt}`, priorityPlies,
-    onSettled: (error) => setGradePrime({ key: gradeKey, error }) });
-  const laneReady = lane === null || gradePrime?.key === gradeKey;
-  return { prime, gradePrime, gradeKey, lane, laneReady, retryPrime };
+    loadKey: `${gradeKey}|${restoreAttempt}`, priorityPlies,
+    onSettled: (error) => setGradeRestore({ key: gradeKey, error }) });
+  const laneReady = lane === null || gradeRestore?.key === gradeKey;
+  return { restore, gradeRestore, gradeKey, lane, laneReady, retryRestore };
 }
 
 function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
@@ -314,12 +314,12 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
 
   // Target set (analysis): the whole line, viewed-first. Focus-first
   // restore: visible pair settles in the first lookup chunk.
-  const primeKey = `${lineKey}|${combinedKey}`;
+  const restoreKey = `${lineKey}|${combinedKey}`;
   const priorityPlies = focusNode ? [focusPly, currentPly] : [currentPly];
-  const restore = useRestorePair({ active: active && !tooLong, nodes, settings: settingsForNode, coordinator,
-    displayKey: primeKey, priorityPlies });
-  const { prime, gradePrime } = restore;
-  const batch = useServerBatch({ active: active && !tooLong, nodes, settings: settingsForNode, objectiveLane: restore.lane?.settings ?? null, coordinator, scope: active ? scope : null, auto: false, priorityPlies });
+  const restorePair = useRestorePair({ active: active && !tooLong, nodes, settings: settingsForNode, coordinator,
+    displayKey: restoreKey, priorityPlies });
+  const { restore: displayRestore, gradeRestore } = restorePair;
+  const batch = useServerBatch({ active: active && !tooLong, nodes, settings: settingsForNode, objectiveLane: restorePair.lane?.settings ?? null, coordinator, scope: active ? scope : null, auto: false, priorityPlies });
 
   // Display evaluations accept the fast MPV1 row provisionally: mate
   // detection and the material-note gating need only rank-1, so they render
@@ -442,12 +442,12 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   // count toward completeness (the objective-point check additionally
   // requires presence, and SF-sourced points always accompany exact rows
   // through the shared check).
-  const laneReady = restore.lane === null || gradePrime?.key === restore.gradeKey;
-  const primesReady = prime?.key === primeKey && laneReady;
-  const coverage = useMemo(() => active && primesReady ? { total: nodes.length,
+  const laneReady = restorePair.lane === null || gradeRestore?.key === restorePair.gradeKey;
+  const restoresReady = displayRestore?.key === restoreKey && laneReady;
+  const coverage = useMemo(() => active && restoresReady ? { total: nodes.length,
     covered: nodes.filter((node, ply) => coordinator.result('sf', node, settingsForNode(node)) && (node.outcome || maiaResults[ply]) && (node.outcome || objectivePoints[ply] !== undefined)).length } : null,
-  [active, primesReady, nodes, settingsForNode, maiaResults, objectivePoints, version, coordinator]);
-  const recordStatus: RecordStatus = { state: !active || tooLong ? 'none' : prime?.key !== primeKey || !laneReady ? 'checking' : coverage?.covered === coverage?.total ? 'fresh' : 'none' };
+  [active, restoresReady, nodes, settingsForNode, maiaResults, objectivePoints, version, coordinator]);
+  const recordStatus: RecordStatus = { state: !active || tooLong ? 'none' : displayRestore?.key !== restoreKey || !laneReady ? 'checking' : coverage?.covered === coverage?.total ? 'fresh' : 'none' };
   const priorFocus = useRef<MaiaDisplayEntry | null>(null);
   const displayed = selectMaiaDisplay(active ? focusNode : undefined, focusSettings, active ? maiaResults[focusPly] : undefined, priorFocus.current,
     active && !!focusNode && coordinator.isPending('maia', focusNode, focusSettings));
@@ -465,13 +465,13 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   const error = currentError || (active && focusNode ? coordinator.error('sf', focusNode, focusSettings) || coordinator.error('maia', focusNode, focusSettings) : undefined)
     || (active ? coordinator.error('maia', currentNode, currentSettings) : undefined)
     || (active ? laneError(coordinator, focusNode) ?? laneError(coordinator, currentNode) : undefined)
-    || (prime?.key === primeKey ? prime.error : undefined) || (restore.lane.settings !== null && gradePrime?.key === restore.gradeKey ? gradePrime.error : undefined)
+    || (displayRestore?.key === restoreKey ? displayRestore.error : undefined) || (restorePair.lane.settings !== null && gradeRestore?.key === restorePair.gradeKey ? gradeRestore.error : undefined)
     || batch.error;
   const batchComplete = !!batch.progress && !batch.progress.running && batch.progress.done === batch.progress.total && !batch.progress.failed;
   const coverageComplete = !!(coverage && coverage.covered === coverage.total);
   const reviewState: ReviewState = error || (batch.progress && batch.progress.failed > 0) ? 'failed'
     : batchComplete || coverageComplete ? 'complete'
-    : !prime || prime.key !== primeKey || !laneReady || !coverage ? 'loading'
+    : !displayRestore || displayRestore.key !== restoreKey || !laneReady || !coverage ? 'loading'
     : 'partial';
   return { timeline, nodes, evaluations, qualities, rarities, rarity2400, bestRarities, mainlineQualities, coverage,
     // Objective lane (provider points per position): the bar, graphs, and
@@ -498,7 +498,7 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     maiaStale: displayed.stale, maiaPending: displayed.pending, maiaLocked: focusIsMaia,
     gameElo: gameForLine?.settings.eloMaia, error, currentError,
     progress: batch.progress, recordStatus, reviewState, scope, lineKey, start: batch.start,
-    retry: () => { coordinator.retry(); batch.retry(); if (prime?.error || gradePrime?.error) restore.retryPrime(); }, tooLong };
+    retry: () => { coordinator.retry(); batch.retry(); if (displayRestore?.error || gradeRestore?.error) restorePair.retryRestore(); }, tooLong };
 }
 
 function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback {
@@ -520,7 +520,7 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   const allNodes = useMemo(() => reviewNodes(timeline), [timeline]);
   // Target set (play): the only foreground work play ever issues is the
   // newest move's endpoints. Outcome and over-long nodes are skipped inside
-  // the scheduler's job filter, exactly like the analysis focus fetch.
+  // the coordinator's job filter, exactly like the analysis focus fetch.
   const pair = useMemo(() => wantedPlayPair(allNodes, userColor), [allNodes, userColor]);
   const tooLong = timeline.moves.length > 256;
   // Eagerness (play): foreground fetch on move. Latest-wins per engine: a
@@ -549,16 +549,16 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   // through the bulk lookup even when fetches fail. Signal-abort is the
   // only cancel path; backgrounding never aborts. Restore errors retry
   // through the same capped bucket as foreground failures below.
-  const primeBaseKey = `${lineKey}|${settingsKey}`;
-  const restore = useRestorePair({ active, nodes, settings, coordinator, displayKey: primeBaseKey });
-  const { prime, gradePrime, retryPrime } = restore;
+  const restoreBaseKey = `${lineKey}|${settingsKey}`;
+  const restorePair = useRestorePair({ active, nodes, settings, coordinator, displayKey: restoreBaseKey });
+  const { restore: displayRestore, gradeRestore, retryRestore } = restorePair;
   // Retry sweeps every user-side endpoint with a recorded failure, not just
   // the newest pair: a failure that lands right before a reply (whose pair
   // no longer covers the failed node) must still heal, or its badge blanks
-  // until the next move. Buckets bound the fires; the scheduler skips
+  // until the next move. Buckets bound the fires; the coordinator skips
   // already-settled keys at the pump, so a sweep re-fetches only misses.
-  const retryTargets: { key: string; sf: ReviewNode[]; maia: ReviewNode[]; lane: ReviewNode[]; prime: boolean } = useMemo(() => {
-    if (!active || tooLong) return { key: '', sf: [], maia: [], lane: [], prime: false };
+  const retryTargets: { key: string; sf: ReviewNode[]; maia: ReviewNode[]; lane: ReviewNode[]; restore: boolean } = useMemo(() => {
+    if (!active || tooLong) return { key: '', sf: [], maia: [], lane: [], restore: false };
     const sf = new Map<string, ReviewNode>();
     for (const node of [...pair.sfNodes, ...nodes]) sf.set(reviewKey('sf', node, settings), node);
     const maia = new Map<string, ReviewNode>();
@@ -575,12 +575,12 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     const laneFailed = laneFailures(laneCandidates, coordinator);
     const sfFailed = [...sf.values()].filter(node => coordinator.error('sf', node, settings));
     const maiaFailed = [...maia.values()].filter(node => coordinator.error('maia', node, settings));
-    const primeFailed = (prime?.key === primeBaseKey && !!prime.error) || (restore.lane.settings !== null && gradePrime?.key === restore.gradeKey && !!gradePrime.error);
+    const restoreFailed = (displayRestore?.key === restoreBaseKey && !!displayRestore.error) || (restorePair.lane.settings !== null && gradeRestore?.key === restorePair.gradeKey && !!gradeRestore.error);
     const parts = [...sfFailed.map(node => reviewKey('sf', node, settings)), ...maiaFailed.map(node => reviewKey('maia', node, settings)),
       ...laneFailed.map(node => laneKey(node, () => settings))];
-    if (primeFailed) parts.push('prime');
-    return { key: parts.sort().join('|'), sf: sfFailed, maia: maiaFailed, lane: laneFailed, prime: primeFailed };
-  }, [active, tooLong, pair, nodes, settings, version, coordinator, prime, gradePrime, primeBaseKey, restore.gradeKey, restore.lane]);
+    if (restoreFailed) parts.push('restore');
+    return { key: parts.sort().join('|'), sf: sfFailed, maia: maiaFailed, lane: laneFailed, restore: restoreFailed };
+  }, [active, tooLong, pair, nodes, settings, version, coordinator, displayRestore, gradeRestore, restoreBaseKey, restorePair.gradeKey, restorePair.lane]);
   const attempts = useRef(new Map<string, number>());
   const [sustainedError, setSustainedError] = useState<string | undefined>(undefined);
   // Deps key on the derived error signature, not the targets object: the key
@@ -619,9 +619,9 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     const timer = setTimeout(() => {
       if (scope.signal.aborted || isOfflineNow()) return;
       attempts.current.set(bucket, (attempts.current.get(bucket) ?? 0) + 1);
-      // Re-issuing is enough: the scheduler clears failures for desired
+      // Re-issuing is enough: the coordinator clears failures for desired
       // jobs and skips already-settled ones at the pump.
-      const { sf, maia, lane, prime: primeFailed } = latestRetry.current;
+      const { sf, maia, lane, restore: restoreFailed } = latestRetry.current;
       if (!latestRetry.current.key) {
         setSustainedError(undefined);
       } else if (hasExhaustedPlayRetries(attempts.current.get(bucket) ?? 0)) {
@@ -630,10 +630,10 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
       if (sf.length) coordinator.ensure(sf, settings, { priority: true, engines: ['sf'], signal: scope.signal });
       if (maia.length) coordinator.ensure(maia, settings, { priority: true, engines: ['maia'], signal: scope.signal });
       if (lane.length) ensureLane(coordinator, lane, scope.signal);
-      if (primeFailed) retryPrime();
+      if (restoreFailed) retryRestore();
     }, FOREGROUND_RETRY_MS);
     return () => clearTimeout(timer);
-  }, [active, retryErrorKey, lineKey, settingsKey, scope, coordinator, settings, retryPrime]);
+  }, [active, retryErrorKey, lineKey, settingsKey, scope, coordinator, settings, retryRestore]);
   // Browser `online` resets the current line's bucket and retries once
   // immediately — the reconnect sweep covers all user-side moves, not just
   // the newest pair. Guarded for non-browser/test envs where window is undefined.
@@ -651,11 +651,11 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
       if (targets.sf.length) coordinator.ensure(targets.sf, s, { priority: true, engines: ['sf'], signal: sc.signal });
       if (targets.maia.length) coordinator.ensure(targets.maia, s, { priority: true, engines: ['maia'], signal: sc.signal });
       if (targets.lane.length) ensureLane(coordinator, targets.lane, sc.signal);
-      if (targets.prime) retryPrime();
+      if (targets.restore) retryRestore();
     };
     window.addEventListener('online', onOnline);
     return () => window.removeEventListener('online', onOnline);
-  }, [coordinator, retryPrime]);
+  }, [coordinator, retryRestore]);
   const previous = useRef<PlayQualitiesMemo | null>(null);
   const sfPending = coordinator.sfPendingKeys(), maiaPending = coordinator.maiaPendingKeys();
   // Objective lane for the active source, built from full-timeline rows so

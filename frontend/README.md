@@ -39,12 +39,12 @@ backend URL to proxy `/move`, `/move/analysis`, `/evaluate`, `/evaluations/looku
 - `domain.ts` contains chess-domain data and rules. Full accumulated history is
   needed for repetition; a selected FEN cannot supply that history by itself.
 - `evaluationStore.ts`, `reviewCoordinator.ts`, and `useReview.ts` separate cached
-  engine results, request scheduling, and the analysis view's lifecycle.
+  engine results, request coordination, and the analysis view's lifecycle.
 - `gameRepository.ts` owns explicit save/delete operations, pending writes, and
-  paged server hydration. Its `maia-board.games.v2` browser document stores game
+  paged server sync. Its `maia-board.games.v2` browser document stores game
   records, the current marker, and pending operations together. A successful
   request removes the operation with its version, preserving newer work.
-  `serverGames.ts` transports game requests; `storage.ts` supplies browser storage
+  `serverGames.ts` sends game requests (gameClient); `storage.ts` supplies browser storage
   and legacy record readers. Preferences and analysis inputs are browser-local.
 - `reviewMetrics.ts` derives retrospective move grades from objective points
   (best move + mover-relative expected score), never from engine responses
@@ -85,7 +85,7 @@ whole-line inference; foreground analysis and the explicit batch action generate
 results. Terminal scoring comes from the timeline's recorded outcomes through
 `outcomeEvaluation.ts`. Engine inference is limited to 256 plies.
 Batch progress rides the browser's native EventSource as a pure optimization;
-the status endpoint is the ground truth. Status + prime refetch on mount,
+the status endpoint is the ground truth. Status + restore refetch on mount,
 focus, visibility-visible, online, and stream error is what survives
 backgrounding — a broken stream only costs speed.
 
@@ -99,7 +99,7 @@ so the interface can name the actual model.
 
 The repository imports legacy saved games and pending operations, retaining game
 identifiers and the original legacy outbox. It continues to use the v2 document key
-`maia-board.games.v2`. Page hydration merges server records with pending local
+`maia-board.games.v2`. Page sync merges server records with pending local
 changes and creates no save/delete operation. Older pages merge into the library;
 an incomplete page is never treated as the full collection.
 

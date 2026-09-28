@@ -83,7 +83,7 @@ export function MobileMenu({ state, dispatch }: Props) {
 // Placement-only viewport switch (no measuring): the mobile bottom bar is
 // a separate mount from the inline move navigation, with exactly one of
 // them mounted at a time so IDs stay unique. An external store, not an
-// effect: the initial snapshot reads the current match, so there is no
+// effect: the initial matchMedia read returns the current match, so there is no
 // mount effect plus corrective second commit.
 function useMediaQuery(query: string): boolean {
   // Stable across renders so the store subscribes once per query: new
@@ -94,10 +94,10 @@ function useMediaQuery(query: string): boolean {
     list.addEventListener('change', notify);
     return () => list.removeEventListener('change', notify);
   }, [query]);
-  const snapshot = useMemo(() => () =>
+  const getSnapshot = useMemo(() => () =>
     typeof window !== 'undefined' && typeof window.matchMedia !== 'undefined' && window.matchMedia(query).matches,
   [query]);
-  return useSyncExternalStore(subscribe, snapshot, () => false);
+  return useSyncExternalStore(subscribe, getSnapshot, () => false);
 }
 
 export function useMobileBar(): boolean {

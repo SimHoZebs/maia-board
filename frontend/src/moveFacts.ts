@@ -13,10 +13,9 @@ import type { CapturedPiece, MaiaSide } from './material';
 // illegal UCIs, and move-gen failures yield null facts, and claimants stay
 // silent on null.
 
-// Single source for tactic exchange values, re-exported by material.ts as
-// PIECE_VALUES for display-side API compatibility (one object, no twin to
-// drift). material.ts imports this module at runtime; this module imports
-// material.ts as `import type` only, so there is no runtime cycle.
+// Single source for tactic exchange values. material.ts imports this module
+// at runtime; this module imports material.ts as `import type` only, so
+// there is no runtime cycle.
 export const TACTIC_VALUES: Record<CapturedPiece, number> = { p: 1, n: 3, b: 3, r: 5, q: 9 };
 
 // Fork victims include the king (never a capture); every other victim is a

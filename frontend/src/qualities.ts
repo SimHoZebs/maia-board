@@ -2,7 +2,7 @@ import { Chess } from 'chess.js';
 import { reviewKey, stablePositionKey, type ReviewNode, type ReviewSettings } from './evaluationStore';
 import { outcomeExpected, reviewMove, type EngineGrade, type Evaluation, type ObjectiveGrade, type ObjectivePoint } from './reviewMetrics';
 
-export type UnifiedVerdict = {
+export type QualityMemoEntry = {
   posKey: string; fen: string; move: string;
   before?: Evaluation; after?: Evaluation; needsPending: boolean; quality?: EngineGrade;
   // Objective inputs compare by value, not reference: providers rebuild
@@ -12,7 +12,7 @@ export type UnifiedVerdict = {
   objectiveTop?: string | null; objectiveExpected?: number | null;
   objectiveAfterExpected?: number | null; objectivePending?: boolean;
 };
-export type UnifiedMemo = { scope: string; verdicts: (UnifiedVerdict | undefined)[]; qualities: (EngineGrade | undefined)[] };
+export type UnifiedMemo = { scope: string; verdicts: (QualityMemoEntry | undefined)[]; qualities: (EngineGrade | undefined)[] };
 
 // Objective lane: node-indexed provider points for the active source, plus
 // the pending set and key builder for its fetches. The loop never names a
@@ -38,7 +38,7 @@ export function computeQualities(args: {
   const { scope, moves, nodes, evaluations, keyFor, active, pending, prev, stats, objective } = args;
   const sameScope = prev?.scope === scope;
   let allReused = !!prev && sameScope && prev.qualities.length === moves.length;
-  const verdicts = moves.map((move, index): UnifiedVerdict | undefined => {
+  const verdicts = moves.map((move, index): QualityMemoEntry | undefined => {
     const node = nodes[index], next = nodes[index + 1];
     if (!node || !next || !active(node, index)) return;
     const before = evaluations[index], after = evaluations[index + 1];

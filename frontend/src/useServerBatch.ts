@@ -11,10 +11,10 @@ export type ServerBatchProgress = { total: number; done: number; failed: number;
 // Server-batch client: submit(nodes, scope) + progress UI. Nothing cancels:
 // a scope change, unmount, deactivation, or game delete only drops local
 // references while server jobs drain on their own, and every late
-// EventSource/poll/prime callback is ignored by a single lineKey guard.
+// EventSource/poll/restore callback is ignored by a single lineKey guard.
 // Backgrounding never aborts: live ticks ride the browser's native
 // EventSource as a pure optimization, while the status endpoint is the
-// ground truth — status + prime refetch on mount, focus, visibility-visible,
+// ground truth — status + restore refetch on mount, focus, visibility-visible,
 // online, and stream error, so a broken or deleted stream only costs speed.
 // The submitted job id + content hash persist in localStorage so a reload
 // reattaches to the still-running server job instead of showing Analyze
@@ -34,8 +34,8 @@ export function useServerBatch(args: {
   scope: LineScope | null;
   auto?: boolean;
   fetcher?: typeof fetch;
-  // Focus-first reconciliation: ReviewNode .ply values to settle before the
-  // rest of the line when reconciling batch progress via the single lookup
+  // Focus-first restore: ReviewNode .ply values to settle before the
+  // rest of the line when restoring batch progress via the single lookup
   // restore. The existing 2s throttle below and the store's cache check still
   // apply (no duplicate storm). Rides a ref so an inline literal cannot
   // resubmit.
@@ -74,7 +74,7 @@ export function useServerBatch(args: {
   // completion says nothing about the new settings, so without this the
   // button would linger on "Analyzed" while coverage correctly reports the
   // new settings as missing. A running job keeps its progress and settles
-  // normally; completion then primes under the current settings refs.
+  // normally; completion then restores under the current settings refs.
   const progressRef = useRef(progress);
   progressRef.current = progress;
   const prevSettingsRef = useRef(settings);
@@ -143,7 +143,7 @@ export function useServerBatch(args: {
   }, []);
   // Change submission. Play-only in practice (the analysis page passes
   // auto: false and submits through its button): on activation, line change,
-  // or settings change, submit — unless mount reconciliation owns this
+  // or settings change, submit — unless mount restore owns this
   // scope, in which case adopting the running job is the only correct move
   // and a POST would duplicate the adopter's job. Keyed on the stable
   // scopeKey string (not scope identity) plus settings, so a parent
@@ -158,7 +158,7 @@ export function useServerBatch(args: {
     start();
   }, [auto, active, scopeKey, settings, start, persistedItemsFor]);
 
-  // Mount reconciliation (both workspaces, including manual auto: false):
+  // Mount restore path (both workspaces, including manual auto: false):
   // the server job survives a refresh on detached contexts, but the new
   // mount has no jobId. If the persisted entry matches this exact line +
   // content, adopt it and subscribe instead of showing Analyze again.
@@ -257,54 +257,54 @@ export function useServerBatch(args: {
   }, [active, jobId, jobScopeKey]);
 
   // Track progress by EventSource live ticks (fast path) with the status
-  // endpoint as ground truth, falling back to polls; reconcile values through
-  // the single shared lookup restore (the same operation bulk prime runs).
+  // endpoint as ground truth, falling back to polls; restore values through
+  // the single shared lookup restore (the same operation the bulk restore runs).
   // Guarded by one lineKey check: late events for a superseded scope are dropped.
   useEffect(() => {
     if (!active || !jobId || !jobScopeKey) return;
     const submittedKey = jobScopeKey;
     const stale = () => scopeRef.current?.lineKey !== submittedKey;
     let stopped = false;
-    let primeTimer: ReturnType<typeof setTimeout> | undefined;
-    let lastPrime = 0;
-    const primeController = new AbortController();
+    let restoreTimer: ReturnType<typeof setTimeout> | undefined;
+    let lastRestore = 0;
+    const restoreController = new AbortController();
     const fail = (message: string) => {
       if (stopped || stale()) return;
       setError(message);
       setProgress(current => current && { ...current, running: false });
     };
-    const primeNow = async () => {
+    const restoreNow = async () => {
       if (stopped || stale()) return;
-      lastPrime = Date.now();
+      lastRestore = Date.now();
       // Batch-specific keys ride the shared restore: the visible pair (when
       // the caller names plies) settles first, then the background full-line
       // remainder reuses those rows from cache. Throttling (2s coalescing
       // above) and dedupe (store cache check) are unchanged.
       const priority = priorityRef.current;
       try {
-        await restoreLookup(coordinator, nodesRef.current, settingsRef.current, primeController.signal,
+        await restoreLookup(coordinator, nodesRef.current, settingsRef.current, restoreController.signal,
           { ...(priority?.length ? { priorityPlies: priority } : {}) });
-      } catch { /* superseded prime */ }
-      // The objective lane files server-side with the batch; reconcile it
+      } catch { /* superseded restore */ }
+      // The objective lane files server-side with the batch; restore it
       // through the same lookup so its badges settle without waiting for a
       // navigation-triggered foreground fetch.
       const objective = objectiveLaneRef.current;
-      if (objective && !primeController.signal.aborted) {
+      if (objective && !restoreController.signal.aborted) {
         try {
-          await restoreLookup(coordinator, nodesRef.current, objective, primeController.signal,
+          await restoreLookup(coordinator, nodesRef.current, objective, restoreController.signal,
             { engines: ['maia'], ...(priority?.length ? { priorityPlies: priority } : {}) });
-        } catch { /* superseded prime */ }
+        } catch { /* superseded restore */ }
       }
     };
-    const prime = () => {
+    const scheduleRestore = () => {
       if (stopped || stale()) return;
       const now = Date.now();
-      if (now - lastPrime < 2000) {
-        clearTimeout(primeTimer);
-        primeTimer = setTimeout(() => { void primeNow(); }, 2000 - (now - lastPrime));
+      if (now - lastRestore < 2000) {
+        clearTimeout(restoreTimer);
+        restoreTimer = setTimeout(() => { void restoreNow(); }, 2000 - (now - lastRestore));
         return;
       }
-      void primeNow();
+      void restoreNow();
     };
     const apply = (update: BatchProgress) => {
       if (stopped || stale()) return;
@@ -316,7 +316,7 @@ export function useServerBatch(args: {
       }
       if (errors.size) coordinator.replaceFailures(new Set(), errors);
       if (update.finished) clearPersistedBatch(jobId);
-      void prime();
+      void scheduleRestore();
     };
     const gone = () => {
       if (stopped || stale() || jobIdRef.current !== jobId) return;
@@ -340,7 +340,7 @@ export function useServerBatch(args: {
       }
     };
     // Ground-truth refresh: status first (gone jobs surface here), then the
-    // shared lookup prime rides inside apply. Used on mount, resume signals,
+    // shared lookup restore rides inside apply. Used on mount, resume signals,
     // and stream error.
     const refreshFromStatus = async () => {
       if (stopped || stale()) return;
@@ -352,22 +352,22 @@ export function useServerBatch(args: {
         fail(statusError instanceof Error ? statusError.message : 'Review batch failed.');
       }
     };
-    // Mount reconciles from ground truth immediately instead of waiting for
+    // Mount restores from ground truth immediately instead of waiting for
     // the first live tick.
     void refreshFromStatus();
     void (async () => {
       try {
-        await subscribeBatchEvents(jobId, apply, primeController.signal);
-        if (!stopped && !stale()) void primeNow();
+        await subscribeBatchEvents(jobId, apply, restoreController.signal);
+        if (!stopped && !stale()) void restoreNow();
       } catch {
-        if (stopped || stale() || primeController.signal.aborted) return;
+        if (stopped || stale() || restoreController.signal.aborted) return;
         // The stream is a pure optimization: refetch ground truth first (a
         // gone job surfaces here via the status 404), then poll.
         void refreshFromStatus();
         void poll();
       }
     })();
-    // Status is the truth: resume signals refetch it (apply reprimes), not
+    // Status is the truth: resume signals refetch it (apply restores), not
     // just the lookup. Guarded for non-browser/test envs.
     const onResume = () => { void refreshFromStatus(); };
     const onVisible = () => {
@@ -382,8 +382,8 @@ export function useServerBatch(args: {
     }
     return () => {
       stopped = true;
-      clearTimeout(primeTimer);
-      primeController.abort();
+      clearTimeout(restoreTimer);
+      restoreController.abort();
       if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
         window.removeEventListener('online', onResume);
         window.removeEventListener('focus', onResume);

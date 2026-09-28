@@ -26,7 +26,6 @@ export type TopMove = {
   // falls back to its local comparison.
   delta?: number;
 };
-
 export type MoveResponse = {
   move: string;
   top_moves: TopMove[];

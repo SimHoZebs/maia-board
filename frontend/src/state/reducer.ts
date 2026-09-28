@@ -22,28 +22,28 @@ export function initialState(mode: Mode = 'play', urlLine?: UrlLine, repository 
   const settings = restored?.settings ?? loadSettings();
   const stored = readStorage<Partial<State['inputs']>>(KEYS.analysis);
   const inputs = { fen: typeof stored?.fen === 'string' ? stored.fen : '', pgn: typeof stored?.pgn === 'string' ? stored.pgn : '' };
-  const snapshot = readSnapshot();
+  const restoredSession = readSnapshot();
   let analysis = loadLine();
   let analysisLoaded = false;
-  let analysisSourceId: string | null = snapshot?.gameId ?? null;
+  let analysisSourceId: string | null = restoredSession?.gameId ?? null;
   if (mode === 'analysis' && urlLine) {
     try {
       const linked = loadLine(urlLine.initialFen, urlLine.moves.join(' '));
-      if (snapshot && sameLine(snapshot.analysis, linked)) {
-        // Shared link to the already-restored line: keep the snapshot's
+      if (restoredSession && sameLine(restoredSession.analysis, linked)) {
+        // Shared link to the already-restored line: keep the restored session's
         // cursor, branch origin, and perspective across refresh.
-        analysis = snapshot.analysis;
+        analysis = restoredSession.analysis;
         analysisLoaded = true;
       } else {
         analysis = linked;
         analysisLoaded = true;
         analysisSourceId = null;
       }
-    } catch { /* Fall through to snapshot/inputs below. */ }
+    } catch { /* Fall through to restored-session/inputs below. */ }
   }
   if (!analysisLoaded) {
-    if (snapshot) {
-      analysis = snapshot.analysis;
+    if (restoredSession) {
+      analysis = restoredSession.analysis;
       analysisLoaded = true;
     } else {
       try { analysis = loadLine(inputs.fen, inputs.pgn); } catch { /* Keep editable invalid input for correction. */ }
@@ -59,13 +59,13 @@ export function initialState(mode: Mode = 'play', urlLine?: UrlLine, repository 
 
 // Root reducer: spanning navigation (mode/move/promote/view/step), cross-line
 // transfers (review/saved-current/delete), and server sync. The `sync`-case
-// merge and the snapshot-vs-v2 session truth stay exactly as-is; this composes
+// merge and the restored-session-vs-v2 session truth stay exactly as-is; this composes
 // the slices above and owns only what touches more than one of them.
 function reduceRoot(state: State, action: Action): State | undefined {
   switch (action.type) {
     case 'mode': return action.mode === state.mode ? state : transition(state, { mode: action.mode, setup: state.started ? null : state.setup });
     case 'move': {
-      // History-aware terminality comes from the shared tip record (repetition
+      // History-aware terminality comes from the shared tipRow record (repetition
       // needs full history); the legality scan below is position-only.
       const playRecord = state.mode === 'play' ? lineRecord(state.play.moves) : null;
       const game = playRecord ? new Chess(playRecord.fen) : new Chess(currentPosition(state).fen);

@@ -9,13 +9,13 @@ import type { Mode } from './domain';
 import type { UrlLine } from './analysisUrl';
 import { STOCKFISH_STORAGE_KEY } from './stockfishSettings';
 
-type PlayFlight = { id: number };
-type FlightRef = { current: PlayFlight | null };
+type PlayFiringIdentity = { id: number };
+type FlightRef = { current: PlayFiringIdentity | null };
 
 // Play POST execution, shared by dispatch and the mount effect. Firing is
 // deferred a microtask so a supersede (or StrictMode rehearsal cleanup) that
 // lands in the same tick cancels before any byte is sent. The flight itself
-// rides the foreground scheduler (ReviewCoordinator.playMove: latest-wins
+// rides the foreground coordinator (ReviewCoordinator.playMove: latest-wins
 // with the shared transport deadline); this record is only the firing
 // identity — reply and failure match by request identity in the reducer, and
 // the record guard drops a late response a newer game superseded, so it can
@@ -27,9 +27,9 @@ function firePlayRequest(request: State['request'], flight: FlightRef, commit: (
     return;
   }
   if (running && running.id === request.id) return;
-  // Supersede frees the scheduler slot now; the replacement fires below.
+  // Supersede frees the coordinator slot now; the replacement fires below.
   if (running) coordinator.abortPlayMove();
-  const record: PlayFlight = { id: request.id };
+  const record: PlayFiringIdentity = { id: request.id };
   flight.current = record;
   queueMicrotask(() => {
     if (flight.current !== record) return;
@@ -53,7 +53,7 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
   const [state, setState] = useState(() => initialState(mode, urlLine, repository.snapshot()));
   const current = useRef(state);
   const [sync] = useState(() => new HistorySyncStore());
-  // The play /move flight rides the foreground scheduler; dispatch owns only
+  // The play /move flight rides the foreground coordinator; dispatch owns only
   // the firing identity (see firePlayRequest).
   // In-flight play POST, owned by dispatch — the shared function every board
   // event funnels through (the doc's "extract a function called from event
@@ -62,7 +62,7 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
   // of truth (thinking indicator, retry gating); the coordinator owns the
   // network flight.
   const [playCoordinator] = useState(() => new ReviewCoordinator());
-  const flight = useRef<PlayFlight | null>(null);
+  const flight = useRef<PlayFiringIdentity | null>(null);
   const lastPersisted = useRef(new Map<string, string>());
   const dispatch = useCallback((action: Action) => {
     const before = current.current;
@@ -70,11 +70,11 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
     current.current = next;
     setState(next);
     // Commands persist their accepted result immediately, outside React's
-    // replayable reducer/render lifecycle. Hydration has no mutation command.
+    // replayable reducer/render lifecycle. Boot reads have no mutation command.
     if (action.type === 'delete') {
       repository.delete(action.id);
-      const snapshot = readStorage<{ gameId?: string }>(KEYS.snapshot);
-      if (snapshot?.gameId === action.id) {
+      const storedSnapshot = readStorage<{ gameId?: string }>(KEYS.snapshot);
+      if (storedSnapshot?.gameId === action.id) {
         const error = writeStorage(KEYS.snapshot, null);
         if (error) sync.setPreferenceError(error.message);
       }
@@ -91,7 +91,7 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
   // or returns nothing new), so the mount pass fires it directly — the
   // same-id guard makes the later sync dispatch a no-op, and StrictMode
   // rehearsal single-fires through the microtask cancellation above.
-  // Unmount aborts the scheduler flight; its handlers ignore it by record
+  // Unmount aborts the coordinator flight; its handlers ignore it by record
   // identity.
   useEffect(() => {
     const boot = current.current.request;

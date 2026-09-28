@@ -109,7 +109,7 @@ export function ChessBoard({ position, transition, orientation, enabled, thinkin
           const toSquare = parseSquare(to);
           if (fromSquare === undefined || toSquare === undefined) throw new Error(`Invalid board squares: ${from}${to}`);
           callback.current(fromSquare, toSquare);
-          // Also reconcile unchanged positions after rejection or promotion selection.
+          // Also resync unchanged positions after rejection or promotion selection.
           // React batches this with the parent's authoritative move action.
           resync();
         } },

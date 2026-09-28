@@ -404,20 +404,20 @@ func (s *server) serveMove(w http.ResponseWriter, r *http.Request, prio Priority
 	writeJSON(w, http.StatusOK, response)
 }
 
-func validateMoveRequest(request moveRequest) (EngineRequest, string, error) {
+func validateMoveRequest(request moveRequest) (MaiaRequest, string, error) {
 	if !validTemperature(request.Temperature) {
-		return EngineRequest{}, "", &requestError{Code: "invalid_request", Message: "temperature must be between 0 and 2"}
+		return MaiaRequest{}, "", &requestError{Code: "invalid_request", Message: "temperature must be between 0 and 2"}
 	}
 	fen, side, err := normalizeFEN(request.FEN)
 	if err != nil {
-		return EngineRequest{}, "", err
+		return MaiaRequest{}, "", err
 	}
 	if err := validateElo(request.EloMaia, request.EloUser); err != nil {
-		return EngineRequest{}, "", err
+		return MaiaRequest{}, "", err
 	}
 	for _, elo := range []*int{request.ValueEloMaia, request.ValueEloUser} {
 		if elo != nil && (*elo < 0 || *elo > 5000) {
-			return EngineRequest{}, "", &requestError{Code: "invalid_elo", Message: "Elo values must be between 0 and 5000"}
+			return MaiaRequest{}, "", &requestError{Code: "invalid_elo", Message: "Elo values must be between 0 and 5000"}
 		}
 	}
 	model := request.Model
@@ -425,32 +425,32 @@ func validateMoveRequest(request moveRequest) (EngineRequest, string, error) {
 		model = "79m"
 	}
 	if model != "79m" && model != "5m" {
-		return EngineRequest{}, "", &requestError{Code: "invalid_model", Message: "model must be lowercase 79m or 5m"}
+		return MaiaRequest{}, "", &requestError{Code: "invalid_model", Message: "model must be lowercase 79m or 5m"}
 	}
 	if request.MaiaColor != "white" && request.MaiaColor != "black" {
-		return EngineRequest{}, "", &requestError{Code: "invalid_maia_color", Message: "maia_color must be white or black"}
+		return MaiaRequest{}, "", &requestError{Code: "invalid_maia_color", Message: "maia_color must be white or black"}
 	}
 	if (side == "w" && request.MaiaColor != "white") || (side == "b" && request.MaiaColor != "black") {
-		return EngineRequest{}, "", &requestError{Code: "not_maia_turn", Message: "fen side-to-move is not maia_color"}
+		return MaiaRequest{}, "", &requestError{Code: "not_maia_turn", Message: "fen side-to-move is not maia_color"}
 	}
 	if len(request.Moves) > 256 {
-		return EngineRequest{}, "", &requestError{Code: "history_too_long", Message: "moves may contain at most 256 plies"}
+		return MaiaRequest{}, "", &requestError{Code: "history_too_long", Message: "moves may contain at most 256 plies"}
 	}
 	if err := validateUCIMoves(request.Moves); err != nil {
-		return EngineRequest{}, "", err
+		return MaiaRequest{}, "", err
 	}
 	initialFEN := request.InitialFEN
 	if initialFEN != "" {
 		normalizedInitialFEN, _, err := normalizeFEN(initialFEN)
 		if err != nil {
-			return EngineRequest{}, "", &requestError{Code: "invalid_initial_fen", Message: "initial_fen must be a valid FEN"}
+			return MaiaRequest{}, "", &requestError{Code: "invalid_initial_fen", Message: "initial_fen must be a valid FEN"}
 		}
 		initialFEN = normalizedInitialFEN
 		if len(request.Moves) == 0 && initialFEN != fen {
-			return EngineRequest{}, "", &requestError{Code: "position_mismatch", Message: "initial_fen must equal fen when moves is empty"}
+			return MaiaRequest{}, "", &requestError{Code: "position_mismatch", Message: "initial_fen must equal fen when moves is empty"}
 		}
 	}
-	return EngineRequest{
+	return MaiaRequest{
 		FEN:          fen,
 		Moves:        request.Moves,
 		InitialFEN:   initialFEN,

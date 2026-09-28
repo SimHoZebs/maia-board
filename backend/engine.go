@@ -51,7 +51,7 @@ func syncWait(prio Priority) time.Duration {
 	return syncWaitFocus
 }
 
-type EngineRequest struct {
+type MaiaRequest struct {
 	FEN          string   `json:"fen"`
 	Moves        []string `json:"moves"`
 	InitialFEN   string   `json:"initial_fen"`
@@ -61,15 +61,15 @@ type EngineRequest struct {
 	ValueOppoElo *int     `json:"value_oppo_elo,omitempty"`
 	Temperature  float64  `json:"temperature"`
 }
-type Candidate struct {
+type MaiaCandidate struct {
 	Move   string     `json:"move"`
 	Policy float64    `json:"policy"`
 	WDL    [3]float64 `json:"wdl"`
 }
-type EngineResult struct {
-	Move       string      `json:"move"`
-	Candidates []Candidate `json:"candidates"`
-	WDL        [3]float64  `json:"wdl"`
+type MaiaResult struct {
+	Move       string          `json:"move"`
+	Candidates []MaiaCandidate `json:"candidates"`
+	WDL        [3]float64      `json:"wdl"`
 }
 type workerState string
 
@@ -86,20 +86,20 @@ type WorkerStatus struct {
 	LastError string      `json:"last_error,omitempty"`
 }
 type predictor interface {
-	predict(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, request EngineRequest) (EngineResult, func(), error)
-	snapshot() WorkerStatus
+	predict(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, request MaiaRequest) (MaiaResult, func(), error)
+	workerStatus() WorkerStatus
 }
 type workerProcess struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	stdout *bufio.Reader
 }
-type workerOperation struct {
+type maiaInflight struct {
 	key       string
 	grant     *Grant
 	done      chan struct{}
 	abandoned atomic.Bool
-	result    EngineResult
+	result    MaiaResult
 	err       error
 }
 
@@ -193,7 +193,7 @@ func (w *Worker) tryUnloadIdle(now time.Time) bool {
 	log.Printf("worker=%s idle timeout (%s) reached, unloaded model from GPU", w.name, timeoutStr)
 	return true
 }
-func (w *Worker) snapshot() WorkerStatus {
+func (w *Worker) workerStatus() WorkerStatus {
 	w.stateMu.RLock()
 	defer w.stateMu.RUnlock()
 	state := w.state
@@ -215,14 +215,14 @@ func (w *Worker) setBusy(busy bool) {
 // scan. The returned release must be
 // called exactly once after the caller persists the result (nil when there is
 // nothing to persist: acquire failure, join, or caller abandonment).
-func (w *Worker) predict(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, request EngineRequest) (EngineResult, func(), error) {
+func (w *Worker) predict(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, request MaiaRequest) (MaiaResult, func(), error) {
 	if err := waitCtx.Err(); err != nil {
-		return EngineResult{}, nil, err
+		return MaiaResult{}, nil, err
 	}
 	request.Moves = append([]string{}, request.Moves...)
 	data, err := json.Marshal(request)
 	if err != nil || len(data) > workerLineLimit {
-		return EngineResult{}, nil, ErrInvalidPosition
+		return MaiaResult{}, nil, ErrInvalidPosition
 	}
 	key := ""
 	if request.Temperature == 0 {
@@ -232,7 +232,7 @@ func (w *Worker) predict(waitCtx, execCtx context.Context, prio Priority, submit
 	// cancelled, since it runs detached without a client deadline.
 	grant, err := admit(waitCtx, prio, w.sched, key, submitSeq)
 	if err != nil {
-		return EngineResult{}, nil, err
+		return MaiaResult{}, nil, err
 	}
 	w.markUsed()
 	w.setBusy(true)
@@ -240,7 +240,7 @@ func (w *Worker) predict(waitCtx, execCtx context.Context, prio Priority, submit
 		w.sched.Release(grant)
 		w.setBusy(false)
 	}
-	op := &workerOperation{key: key, grant: grant, done: make(chan struct{})}
+	op := &maiaInflight{key: key, grant: grant, done: make(chan struct{})}
 	go func() {
 		w.mu.Lock()
 		op.result, op.err = w.predictLocked(context.Background(), request)
@@ -254,11 +254,11 @@ func (w *Worker) predict(waitCtx, execCtx context.Context, prio Priority, submit
 		}
 		close(op.done)
 	}()
-	completed := func() (EngineResult, func(), error) {
+	completed := func() (MaiaResult, func(), error) {
 		result := op.result
-		result.Candidates = append([]Candidate(nil), result.Candidates...)
+		result.Candidates = append([]MaiaCandidate(nil), result.Candidates...)
 		if op.err != nil {
-			return EngineResult{}, release, op.err
+			return MaiaResult{}, release, op.err
 		}
 		return result, release, nil
 	}
@@ -271,13 +271,13 @@ func (w *Worker) predict(waitCtx, execCtx context.Context, prio Priority, submit
 			return completed()
 		default:
 			op.abandoned.Store(true)
-			return EngineResult{}, nil, execCtx.Err()
+			return MaiaResult{}, nil, execCtx.Err()
 		}
 	case <-op.done:
 		return completed()
 	}
 }
-func (w *Worker) predictLocked(parent context.Context, request EngineRequest) (EngineResult, error) {
+func (w *Worker) predictLocked(parent context.Context, request MaiaRequest) (MaiaResult, error) {
 	if w.proc == nil {
 		w.setState(stateStarting)
 		ctx, cancel := context.WithTimeout(parent, w.startWait)
@@ -285,7 +285,7 @@ func (w *Worker) predictLocked(parent context.Context, request EngineRequest) (E
 		cancel()
 		if err != nil {
 			w.failLocked(err)
-			return EngineResult{}, err
+			return MaiaResult{}, err
 		}
 	}
 	ctx, cancel := context.WithTimeout(parent, w.moveWait)
@@ -296,12 +296,12 @@ func (w *Worker) predictLocked(parent context.Context, request EngineRequest) (E
 	}
 	if err != nil {
 		w.failLocked(err)
-		return EngineResult{}, err
+		return MaiaResult{}, err
 	}
 	line, err := w.readLineLocked(ctx)
 	if err != nil {
 		w.failLocked(err)
-		return EngineResult{}, err
+		return MaiaResult{}, err
 	}
 	var reply struct {
 		Result     json.RawMessage `json:"result,omitempty"`
@@ -313,34 +313,34 @@ func (w *Worker) predictLocked(parent context.Context, request EngineRequest) (E
 	// Decode already rejects invalid JSON; no separate json.Valid re-decode.
 	if err := decoder.Decode(&reply); err != nil || (len(reply.Result) == 0) == (reply.Error == nil) {
 		w.failLocked(ErrProtocol)
-		return EngineResult{}, ErrProtocol
+		return MaiaResult{}, ErrProtocol
 	}
 	if reply.Error != nil {
 		switch reply.Error.Code {
 		case "position_mismatch":
-			return EngineResult{}, ErrPositionMismatch
+			return MaiaResult{}, ErrPositionMismatch
 		case "invalid_position", "invalid_fen":
-			return EngineResult{}, ErrInvalidPosition
+			return MaiaResult{}, ErrInvalidPosition
 		case "game_over":
-			return EngineResult{}, ErrNoLegalMoves
+			return MaiaResult{}, ErrNoLegalMoves
 		default:
 			err := fmt.Errorf("%w: %s", ErrProtocol, sanitizeError(reply.Error.Message))
 			w.failLocked(err)
-			return EngineResult{}, err
+			return MaiaResult{}, err
 		}
 	}
 	// Validate the raw result bytes through the single strict path before
 	// trusting the typed copy: encoding/json pads/truncates wdl arrays and
 	// silences nulls, so lengths and nulls are checked on raw JSON with no
 	// re-marshal.
-	typed, ok := decodeStrictValue[EngineResult](reply.Result, engineResultRequired, nil)
+	typed, ok := decodeStrictValue[MaiaResult](reply.Result, engineResultRequired, nil)
 	if !ok || !validEngineResult(typed, reply.LegalCount, request.Temperature == 0) {
 		w.failLocked(ErrProtocol)
-		return EngineResult{}, ErrProtocol
+		return MaiaResult{}, ErrProtocol
 	}
 	return typed, nil
 }
-func validEngineResult(result EngineResult, legalCount int, deterministic bool) bool {
+func validEngineResult(result MaiaResult, legalCount int, deterministic bool) bool {
 	if legalCount < 1 || legalCount > 218 || len(result.Candidates) != min(legalCount, maxMultiPV) || !validWDL(result.WDL) {
 		return false
 	}
@@ -466,7 +466,7 @@ type EnginePool struct{ large, small predictor }
 func NewEnginePool(large, small predictor) *EnginePool {
 	return &EnginePool{large: large, small: small}
 }
-func (p *EnginePool) predict(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, model string, request EngineRequest) (EngineResult, func(), string, bool, error) {
+func (p *EnginePool) predict(waitCtx, execCtx context.Context, prio Priority, submitSeq uint64, model string, request MaiaRequest) (MaiaResult, func(), string, bool, error) {
 	if model == "5m" {
 		result, release, err := p.small.predict(waitCtx, execCtx, prio, submitSeq, request)
 		return result, release, "5m", false, err
@@ -482,20 +482,20 @@ func (p *EnginePool) predict(waitCtx, execCtx context.Context, prio Priority, su
 		release()
 	}
 	if errors.Is(err, ErrWorkerBusy) || errors.Is(err, ErrJoined) || errors.Is(err, ErrSuperseded) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrPositionMismatch) || errors.Is(err, ErrInvalidPosition) || errors.Is(err, ErrNoLegalMoves) {
-		return EngineResult{}, nil, "", false, err
+		return MaiaResult{}, nil, "", false, err
 	}
 	result, release, fallbackErr := p.small.predict(waitCtx, execCtx, prio, submitSeq, request)
 	if fallbackErr != nil {
 		if release != nil {
 			release()
 		}
-		return EngineResult{}, nil, "", false, fmt.Errorf("engine fallback failed: %w", errors.Join(err, fallbackErr))
+		return MaiaResult{}, nil, "", false, fmt.Errorf("engine fallback failed: %w", errors.Join(err, fallbackErr))
 	}
 	return result, release, "5m", true, nil
 }
 
 func (p *EnginePool) health() (string, map[string]WorkerStatus, int) {
-	large, small := p.large.snapshot(), p.small.snapshot()
+	large, small := p.large.workerStatus(), p.small.workerStatus()
 	status, code := "ok", 200
 	if large.State == stateFailed && small.State == stateFailed {
 		status, code = "unavailable", 503

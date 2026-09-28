@@ -23,8 +23,8 @@ export function sfPoint(evaluation: Evaluation | undefined, turn: 'white' | 'bla
   return { top: evaluation.best_move, expected };
 }
 
-// No extra inference beyond Stockfish: the schedulers add no lane
-// (foreground, prime, batch, and coverage all skip on null).
+// No extra inference beyond Stockfish: the coordinators add no lane
+// (foreground, restore, batch, and coverage all skip on null).
 export function laneSettings(): null {
   return null;
 }

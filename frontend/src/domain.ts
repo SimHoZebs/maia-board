@@ -67,7 +67,7 @@ export function uciFromMove(move: { from: string; to: string; promotion?: string
   return `${move.from}${move.to}${move.promotion ?? ''}`;
 }
 export function replay(moves: string[], initialFen = START_FEN): Chess {
-  const key = timelineKey(initialFen, moves);
+  const key = posId(initialFen, moves);
   const cached = timelineCache.get(key);
   if (!cached) return deriveTimeline(initialFen, moves, key).game;
   // Compatibility callers need a mutable, history-bearing Chess instance.
@@ -172,14 +172,6 @@ export function kingSquare(fen: string, color: MaiaColor): Key | undefined {
   const found = findKingSquare(game, color === 'white' ? 'w' : 'b');
   return found ? parseKey(found) : undefined;
 }
-// White-relative expected score (0-100) from a mover-relative Maia WDL
-// triple. The bar, graphs, and score copy read this at the fixed 2400
-// objective reference; move grades read the mover-relative form.
-export function maiaWhiteExpected(fen: string, wdl: MoveResponse['wdl']) {
-  const [loss, draw, win] = wdl;
-  const mover = 100 * (win + 0.5 * draw);
-  return new Chess(fen).turn() === 'w' ? mover : 100 - mover;
-}
 // score_moves evaluates _history_after_move, then invert_wdl restores the choosing side.
 // https://github.com/CSSLab/maia3/blob/1e13597c42d4858b7cfd7cfdae01e297263364b2/maia3/uci.py
 export function absoluteWdl(fen: string, wdl: MoveResponse['wdl']) {
@@ -201,7 +193,6 @@ export type Timeline = { initialFen: string; moves: string[]; rows: TimelineRow[
 export type DomainOutcome = { kind: 'checkmate'; winner: MaiaColor } | { kind: 'draw' };
 const timelineCache = new Map<string, Timeline>();
 const TIMELINE_CACHE_LIMIT = 64;
-const timelineKey = (initialFen: string, moves: string[]) => JSON.stringify([initialFen, moves]);
 function touchTimeline(key: string, timeline: Timeline) {
   timelineCache.delete(key); timelineCache.set(key, timeline);
   if (timelineCache.size > TIMELINE_CACHE_LIMIT) timelineCache.delete(timelineCache.keys().next().value!);
@@ -218,7 +209,7 @@ export function timelineBuildsForTests(): number { return timelineBuilds; }
 export function resetTimelinesForTests(): void { timelineCache.clear(); timelineBuilds = 0; }
 
 export function buildTimeline(initialFen: string, moves: string[]): Timeline {
-  const key = timelineKey(initialFen, moves);
+  const key = posId(initialFen, moves);
   const cached = timelineCache.get(key);
   if (cached) { touchTimeline(key, cached); return cached; }
   return deriveTimeline(initialFen, moves, key).timeline;
@@ -278,12 +269,12 @@ export function lineKeyFor(initialFen: string, moves: readonly string[]): string
 }
 
 // Thin row views: O(1) reads into the once-per-line timeline, never a re-walk.
-export function getRow(timeline: Timeline, ply: number): TimelineRow {
+export function rowAt(timeline: Timeline, ply: number): TimelineRow {
   const clamped = Math.max(0, Math.min(ply, timeline.rows.length - 1));
   return timeline.rows[clamped];
 }
 const tipMemo = new WeakMap<Timeline, TimelineRow>();
-export function tip(timeline: Timeline): TimelineRow {
+export function tipRow(timeline: Timeline): TimelineRow {
   let cached = tipMemo.get(timeline);
   if (!cached) { cached = timeline.rows[timeline.rows.length - 1]; tipMemo.set(timeline, cached); }
   return cached;
@@ -311,7 +302,7 @@ export function lineRecordMissesForTests(): number { return timelineBuilds; }
 export function resetLineRecordsForTests(): void { resetTimelinesForTests(); }
 export function lineRecord(moves: string[], initialFen = START_FEN): LineRecord {
   const timeline = buildTimeline(initialFen, moves);
-  const end = tip(timeline);
+  const end = tipRow(timeline);
   return { fen: end.fen, moves, sanMoves: timeline.rows.slice(1).map(row => row.san),
     lastMove: end.lastMove ? [...end.lastMove] : undefined, terminal: outcomeEvaluation(end.outcome) ?? null };
 }

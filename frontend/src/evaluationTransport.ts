@@ -1,7 +1,7 @@
 // Canonical transport per spec/GLOSSARY.md: the shared engine JSON-POST sender.
 // Game-request senders (serverGames.ts) are gameClient, never transport.
 // Race the complete operation, including body consumption. Abort-ignoring fetch
-// implementations cannot retain a scheduler slot after cancellation/deadline.
+// implementations cannot retain a coordinator slot after cancellation/deadline.
 import { isRecord } from './guards';
 // Shared engine deadline: play replies and analysis fetches share one stall
 // policy, with play passing tighter numbers at the call site when needed.

@@ -238,7 +238,7 @@ export async function fetchEvaluation(node: ReviewNode, signal: AbortSignal, fet
   return response.headers.get('X-Eval-Cache') === 'hit' ? { ...parsed, cached: true } : parsed;
 }
 
-// Settled results live for the app lifetime. Workspace schedulers own requests,
+// Settled results live for the app lifetime. Workspace coordinators own requests,
 // failures and subscriptions; disposing one workspace cannot erase these rows.
 export class EvaluationStore {
   private cache = new Map<string, Result>();

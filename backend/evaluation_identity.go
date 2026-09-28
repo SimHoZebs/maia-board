@@ -21,19 +21,19 @@ const standardInitialFEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -
 // histories must root at fen, and non-empty histories are replayed by the
 // worker (position_mismatch) whose failure never writes a row.
 type evaluationIdentity struct {
-	Version    int                `json:"version"`
-	Engine     string             `json:"engine"`
-	Revision   string             `json:"revision"`
-	FEN        string             `json:"fen"`
-	InitialFEN string             `json:"initial_fen"`
-	Moves      []string           `json:"moves"`
-	Settings   *stockfishSettings `json:"settings,omitempty"`
-	Policy     string             `json:"policy,omitempty"`
-	SelfElo    int                `json:"self_elo,omitempty"`
-	OppoElo    int                `json:"oppo_elo,omitempty"`
-	ValueSelfElo *int             `json:"value_self_elo,omitempty"`
-	ValueOppoElo *int             `json:"value_oppo_elo,omitempty"`
-	Model      string             `json:"model,omitempty"`
+	Version      int                `json:"version"`
+	Engine       string             `json:"engine"`
+	Revision     string             `json:"revision"`
+	FEN          string             `json:"fen"`
+	InitialFEN   string             `json:"initial_fen"`
+	Moves        []string           `json:"moves"`
+	Settings     *stockfishSettings `json:"settings,omitempty"`
+	Policy       string             `json:"policy,omitempty"`
+	SelfElo      int                `json:"self_elo,omitempty"`
+	OppoElo      int                `json:"oppo_elo,omitempty"`
+	ValueSelfElo *int               `json:"value_self_elo,omitempty"`
+	ValueOppoElo *int               `json:"value_oppo_elo,omitempty"`
+	Model        string             `json:"model,omitempty"`
 	// ValueRev versions the Maia value shape (per-candidate WDL arrived in
 	// v1; split policy/value Elos arrive in v2). Old Maia rows miss by key
 	// instead of failing validation on read; Stockfish rows never set it,
@@ -57,7 +57,7 @@ func sfIdentity(r evaluationRequest) evaluationIdentity {
 	return i
 }
 
-func maiaIdentity(r EngineRequest, model string) evaluationIdentity {
+func maiaIdentity(r MaiaRequest, model string) evaluationIdentity {
 	i := baseIdentity("maia", r.FEN, r.InitialFEN, r.Moves)
 	i.Revision, i.SelfElo, i.OppoElo, i.Model = maiaRevision, r.SelfElo, r.OppoElo, model
 	// Split rows (value Elos differing from policy Elos) get ValueRev 2 and
@@ -416,11 +416,11 @@ func (s *server) lookupSFCandidateFrom(src cacheSource, candidate evaluationRequ
 	return &value, true
 }
 
-func (s *server) cachedMaia(r EngineRequest, model string) (*moveResponse, bool) {
+func (s *server) cachedMaia(r MaiaRequest, model string) (*moveResponse, bool) {
 	return s.cachedMaiaFrom(serverSource{s}, r, model)
 }
 
-func (s *server) cachedMaiaFrom(src cacheSource, r EngineRequest, model string) (*moveResponse, bool) {
+func (s *server) cachedMaiaFrom(src cacheSource, r MaiaRequest, model string) (*moveResponse, bool) {
 	hash, key := maiaIdentity(r, model).coordinates()
 	entry, ok := src.fetch(hash, "maia", key)
 	if !ok {
@@ -438,8 +438,8 @@ func (s *server) cachedMaiaFrom(src cacheSource, r EngineRequest, model string) 
 // on 79m, no value split. It mirrors the client's grading lane
 // (GRADING_MAIA_SETTINGS), including the ValueRev-1 normalization that lets
 // a 2400 display row share its own grading row.
-func maiaGradingHash(r EngineRequest) (string, string) {
-	grading := EngineRequest{FEN: r.FEN, Moves: r.Moves, InitialFEN: r.InitialFEN, SelfElo: 2400, OppoElo: 2400}
+func maiaGradingHash(r MaiaRequest) (string, string) {
+	grading := MaiaRequest{FEN: r.FEN, Moves: r.Moves, InitialFEN: r.InitialFEN, SelfElo: 2400, OppoElo: 2400}
 	return maiaIdentity(grading, "79m").coordinates()
 }
 
@@ -454,7 +454,7 @@ func maiaGradingHash(r EngineRequest) (string, string) {
 // must come from a non-degraded 79m row with a valid position WDL. Degraded
 // rows are never written through the cache, but the read must not depend on
 // that write-path guarantee alone.
-func attachMaiaDelta(src cacheSource, r EngineRequest, value *moveResponse) *moveResponse {
+func attachMaiaDelta(src cacheSource, r MaiaRequest, value *moveResponse) *moveResponse {
 	if value == nil || len(value.TopMoves) == 0 {
 		return value
 	}
@@ -528,6 +528,7 @@ func linePrefix(line batchLine, ply int) ([]string, *requestError) {
 	}
 	return line.Moves[:ply], nil
 }
+
 type lookupResult struct {
 	Index          int                `json:"index"`
 	Value          any                `json:"value"`
@@ -565,7 +566,7 @@ func (s *server) evaluationLookup(w http.ResponseWriter, r *http.Request) {
 	type resolved struct {
 		query   lookupRequest
 		sfReq   evaluationRequest
-		maiaReq EngineRequest
+		maiaReq MaiaRequest
 		model   string
 	}
 	prepared := make([]resolved, 0, len(body.Requests))
@@ -593,15 +594,15 @@ func (s *server) evaluationLookup(w http.ResponseWriter, r *http.Request) {
 				request, model, reqErr := resolveMaiaQuery(query, body.Line.InitialFEN, prefix)
 				if reqErr != nil {
 					invalid = fmt.Errorf("%s", reqErr.Message)
-			} else {
-				entry.maiaReq, entry.model = request, model
-				hash, _ := maiaIdentity(request, model).coordinates()
-				hashes = append(hashes, hash)
-				// The delta baseline reads the grading row from the same
-				// snapshot, so its identity joins the prefetch.
-				gradingHash, _ := maiaGradingHash(request)
-				hashes = append(hashes, gradingHash)
-			}
+				} else {
+					entry.maiaReq, entry.model = request, model
+					hash, _ := maiaIdentity(request, model).coordinates()
+					hashes = append(hashes, hash)
+					// The delta baseline reads the grading row from the same
+					// snapshot, so its identity joins the prefetch.
+					gradingHash, _ := maiaGradingHash(request)
+					hashes = append(hashes, gradingHash)
+				}
 			default:
 				invalid = fmt.Errorf("engine must be sf or maia")
 			}

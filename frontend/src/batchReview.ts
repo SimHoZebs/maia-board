@@ -110,7 +110,7 @@ const defaultSleep: SleepLike = ms => new Promise(resolve => setTimeout(resolve,
 
 // One entry per engine per analyzable node, in a stable order the server
 // echoes back as per-index errors. Outcome nodes and over-long lines are
-// skipped exactly like the foreground scheduler skips them. The optional
+// skipped exactly like the foreground coordinator skips them. The optional
 // objective lane (extra inference the active source needs beyond Stockfish)
 // appends one entry per node under its own Elo keys; entries colliding with
 // an identical display key collapse to one.
@@ -214,8 +214,8 @@ export async function fetchBatchStatus(jobId: string, fetchImpl: FetchLike = fet
 
 // Streams live progress over the browser's native EventSource; the status
 // endpoint stays the ground truth. The stream is a pure optimization (fast
-// path): every tick reconciles through the shared lookup restore, and the
-// caller refetches status + reprimes on mount, focus, visibility-visible,
+// path): every tick restores through the shared lookup restore, and the
+// caller refetches status + restores on mount, focus, visibility-visible,
 // online, and stream error — so the app stays correct with the stream broken
 // or deleted. Resolves when a tick reports finished; rejects on stream error
 // (the caller then refetches status, which maps gone jobs to BatchGoneError,
@@ -251,7 +251,7 @@ export async function subscribeBatchEvents(
       try { envelope = JSON.parse(event.data); } catch { return; }
       const record = isRecord(envelope) ? envelope : null;
       // The server wraps ticks as {progress}; accept a bare progress body
-      // too so a missed wrap never drops a live tick (status reconciles).
+      // too so a missed wrap never drops a live tick (status restores).
       const body: unknown = record?.progress ?? envelope;
       let progress: BatchProgress;
       try { progress = parseProgress(body); } catch { return; }

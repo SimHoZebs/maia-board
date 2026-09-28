@@ -7,7 +7,7 @@ import { ReviewCoordinator, type Engine, type ReviewNode, type SettingsInput } f
 // cache reads return), never the normal path.
 const MAX_CONCURRENT_RESTORES = 3;
 
-// Shared imperative restore: batch progress and bulk prime are the same
+// Shared imperative restore: batch progress and lookup restore are the same
 // operation observed two ways. Both call through here to the coordinator's
 // single restore entry (store-owned cache-fill + visible-pair-first); only
 // the caller's timing differs (loadKey effect below vs 2s-coalesced progress
@@ -30,7 +30,7 @@ export function restoreLookup(
 }
 
 // Bulk cache restore, shared by useReviewPipeline (both rooms) and the batch
-// progress reconciler: settle settled rows through the lookup path even when
+// progress restore path: settle settled rows through the lookup path even when
 // no batch runs. A newer loadKey (line content, settings, explicit retry)
 // starts a new restore WITHOUT aborting the previous one: lookup rows are
 // content-keyed, so a landing stale line can only settle rows the new line
@@ -65,36 +65,36 @@ export function useLookupRestore(args: {
   priorityRef.current = args.priorityPlies;
   const enginesRef = useRef(args.engines);
   enginesRef.current = args.engines;
-  const flights = useRef(new Map<string, AbortController>());
+  const restoreFlights = useRef(new Map<string, AbortController>());
   const loadKeyRef = useRef(loadKey);
   loadKeyRef.current = loadKey;
   // Deactivation drops everything in flight: an inactive workspace must not
-  // keep priming behind the new mode's back. Aborted flights report nothing;
+  // keep restoring behind the new mode's back. Aborted flights report nothing;
   // reactivation starts its own lookup below.
   useEffect(() => {
     if (active) return;
-    for (const [key, controller] of [...flights.current]) {
-      flights.current.delete(key);
+    for (const [key, controller] of [...restoreFlights.current]) {
+      restoreFlights.current.delete(key);
       controller.abort();
     }
   }, [active]);
   // Unmount-only teardown. The per-key effect below deliberately aborts
   // nothing in its cleanup, so cancellation on teardown lives here alone.
   useEffect(() => () => {
-    for (const controller of flights.current.values()) controller.abort();
-    flights.current.clear();
+    for (const controller of restoreFlights.current.values()) controller.abort();
+    restoreFlights.current.clear();
   }, []);
   useEffect(() => {
     if (!active) return;
-    if (flights.current.has(loadKey)) return;
-    while (flights.current.size >= MAX_CONCURRENT_RESTORES) {
-      const oldest = flights.current.keys().next().value!;
-      flights.current.get(oldest)!.abort();
-      flights.current.delete(oldest);
+    if (restoreFlights.current.has(loadKey)) return;
+    while (restoreFlights.current.size >= MAX_CONCURRENT_RESTORES) {
+      const oldest = restoreFlights.current.keys().next().value!;
+      restoreFlights.current.get(oldest)!.abort();
+      restoreFlights.current.delete(oldest);
     }
     const controller = new AbortController();
-    flights.current.set(loadKey, controller);
-    const forget = () => { flights.current.delete(loadKey); };
+    restoreFlights.current.set(loadKey, controller);
+    const forget = () => { restoreFlights.current.delete(loadKey); };
     const task = restoreLookup(coordinator, nodesRef.current, settingsRef.current, controller.signal, {
       ...(enginesRef.current ? { engines: enginesRef.current } : {}),
       ...(priorityRef.current?.length ? { priorityPlies: priorityRef.current } : {}),
@@ -102,7 +102,7 @@ export function useLookupRestore(args: {
     void Promise.resolve(task).then(
       () => {
         forget();
-        // Stale flights merged their rows into the shared store on the way
+        // Stale restores merged their rows into the shared store on the way
         // out; only the current line's outcome drives retry callers.
         if (loadKeyRef.current === loadKey) settledRef.current?.(undefined);
       },

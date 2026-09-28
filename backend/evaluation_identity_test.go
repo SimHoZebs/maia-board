@@ -191,7 +191,7 @@ func TestInconsistentTripleRejectedNeverFiled(t *testing.T) {
 func TestMaiaLookupModelEloAndLegacyIsolation(t *testing.T) {
 	s := &server{store: testStore(t)}
 	elo, other := 1600, 1700
-	r := EngineRequest{FEN: startFEN, SelfElo: elo, OppoElo: elo}
+	r := MaiaRequest{FEN: startFEN, SelfElo: elo, OppoElo: elo}
 	hash, key := maiaIdentity(r, "79m").coordinates()
 	value := moveResponse{Move: "e2e4", TopMoves: []topMove{{Move: "e2e4", Prob: 1, WDL: [3]float64{.2, .3, .5}}}, WDL: [3]float64{.2, .3, .5}, ModelUsed: "79m"}
 	s.storeCache(hash, "maia", key, value)
@@ -291,10 +291,10 @@ func TestCorruptV2ValuesMissThenRecomputeAndOverwrite(t *testing.T) {
 }
 func TestMaiaSplitIdentityIsolatesAndDedups(t *testing.T) {
 	v2400 := 2400
-	legacy := EngineRequest{FEN: startFEN, SelfElo: 800, OppoElo: 800}
-	split := EngineRequest{FEN: startFEN, SelfElo: 800, OppoElo: 800, ValueSelfElo: &v2400, ValueOppoElo: &v2400}
-	equal := EngineRequest{FEN: startFEN, SelfElo: 2400, OppoElo: 2400, ValueSelfElo: &v2400, ValueOppoElo: &v2400}
-	grading := EngineRequest{FEN: startFEN, SelfElo: 2400, OppoElo: 2400}
+	legacy := MaiaRequest{FEN: startFEN, SelfElo: 800, OppoElo: 800}
+	split := MaiaRequest{FEN: startFEN, SelfElo: 800, OppoElo: 800, ValueSelfElo: &v2400, ValueOppoElo: &v2400}
+	equal := MaiaRequest{FEN: startFEN, SelfElo: 2400, OppoElo: 2400, ValueSelfElo: &v2400, ValueOppoElo: &v2400}
+	grading := MaiaRequest{FEN: startFEN, SelfElo: 2400, OppoElo: 2400}
 	legacyHash, legacyKey := maiaIdentity(legacy, "79m").coordinates()
 	splitHash, splitKey := maiaIdentity(split, "79m").coordinates()
 	equalHash, equalKey := maiaIdentity(equal, "79m").coordinates()
@@ -309,14 +309,14 @@ func TestMaiaSplitIdentityIsolatesAndDedups(t *testing.T) {
 		t.Fatal("explicit equal value Elos must dedup with omitted values")
 	}
 	// Half-specified split fills the other half from policy.
-	half := EngineRequest{FEN: startFEN, SelfElo: 800, OppoElo: 800, ValueSelfElo: &v2400}
+	half := MaiaRequest{FEN: startFEN, SelfElo: 800, OppoElo: 800, ValueSelfElo: &v2400}
 	_, halfKey := maiaIdentity(half, "79m").coordinates()
 	if !strings.Contains(halfKey, `"value_self_elo":2400`) || !strings.Contains(halfKey, `"value_oppo_elo":800`) {
 		t.Fatalf("half split must fill oppo from policy: %s", halfKey)
 	}
 }
 func TestMaiaIdentityVersionsCandidateWDLShape(t *testing.T) {
-	r := EngineRequest{FEN: startFEN, SelfElo: 1600, OppoElo: 1600}
+	r := MaiaRequest{FEN: startFEN, SelfElo: 1600, OppoElo: 1600}
 	_, key := maiaIdentity(r, "79m").coordinates()
 	if !strings.Contains(key, `"value_rev":1`) {
 		t.Fatalf("maia identity must version the candidate-WDL shape: %s", key)
@@ -336,7 +336,7 @@ func TestMaiaIdentityVersionsCandidateWDLShape(t *testing.T) {
 
 func TestCorruptMaiaShapeAndValuesAreMisses(t *testing.T) {
 	s := &server{store: testStore(t)}
-	r := EngineRequest{FEN: startFEN, SelfElo: 1600, OppoElo: 1600}
+	r := MaiaRequest{FEN: startFEN, SelfElo: 1600, OppoElo: 1600}
 	hash, key := maiaIdentity(r, "79m").coordinates()
 	valid := `{"move":"e2e4","top_moves":[{"move":"e2e4","prob":0.8,"wdl":[0.3,0.3,0.4]}],"wdl":[0.2,0.3,0.5],"model_used":"79m","degraded":false}`
 	for _, corrupt := range []string{
@@ -425,7 +425,7 @@ func TestBulkPrefetchMatchesSingleReads(t *testing.T) {
 	sfReq := evaluationRequest{FEN: startFEN}
 	seedSF(t, s, sfReq, 20)
 	elo := 1600
-	maiaReq := EngineRequest{FEN: startFEN, SelfElo: elo, OppoElo: elo}
+	maiaReq := MaiaRequest{FEN: startFEN, SelfElo: elo, OppoElo: elo}
 	maiaHash, maiaKey := maiaIdentity(maiaReq, "79m").coordinates()
 	maiaValue := moveResponse{Move: "e2e4", TopMoves: []topMove{{Move: "e2e4", Prob: 1, WDL: [3]float64{.2, .3, .5}}}, WDL: [3]float64{.2, .3, .5}, ModelUsed: "79m"}
 	s.storeCache(maiaHash, "maia", maiaKey, maiaValue)
@@ -478,7 +478,7 @@ func TestBulkPrefetchChunksLargeBatches(t *testing.T) {
 	}
 }
 
-func seedMaia(t *testing.T, s *server, r EngineRequest, model string, value moveResponse) {
+func seedMaia(t *testing.T, s *server, r MaiaRequest, model string, value moveResponse) {
 	t.Helper()
 	hash, key := maiaIdentity(r, model).coordinates()
 	s.storeCache(hash, "maia", key, value)
@@ -493,13 +493,13 @@ func seedMaia(t *testing.T, s *server, r EngineRequest, model string, value move
 func TestMaiaDeltaAttachGolden(t *testing.T) {
 	s := &server{store: testStore(t)}
 	elo := 1600
-	req := EngineRequest{FEN: startFEN, SelfElo: elo, OppoElo: elo}
+	req := MaiaRequest{FEN: startFEN, SelfElo: elo, OppoElo: elo}
 	display := moveResponse{Move: "e2e4", WDL: [3]float64{0.437, 0.063, 0.5}, ModelUsed: "79m", TopMoves: []topMove{
 		{Move: "e2e4", Prob: 0.6, WDL: [3]float64{0.437, 0.063, 0.5}},
 		{Move: "d2d4", Prob: 0.4, WDL: [3]float64{0.435, 0.066, 0.499}},
 	}}
 	seedMaia(t, s, req, "79m", display)
-	grading := EngineRequest{FEN: startFEN, SelfElo: 2400, OppoElo: 2400}
+	grading := MaiaRequest{FEN: startFEN, SelfElo: 2400, OppoElo: 2400}
 	seedMaia(t, s, grading, "79m", moveResponse{Move: "e2e4",
 		WDL: [3]float64{.2, .3, .5}, ModelUsed: "79m",
 		TopMoves: []topMove{{Move: "e2e4", Prob: 1, WDL: [3]float64{.2, .3, .5}}}})
@@ -541,12 +541,12 @@ func TestMaiaDeltaAttachGolden(t *testing.T) {
 	// Without a grading row the baseline stays absent and the client falls
 	// back to its list-max comparison.
 	bare := &server{store: testStore(t)}
-	seedMaia(t, bare, EngineRequest{FEN: startFEN, SelfElo: 1500, OppoElo: 1500}, "79m", display)
-	servedBare, ok := bare.cachedMaia(EngineRequest{FEN: startFEN, SelfElo: 1500, OppoElo: 1500}, "79m")
+	seedMaia(t, bare, MaiaRequest{FEN: startFEN, SelfElo: 1500, OppoElo: 1500}, "79m", display)
+	servedBare, ok := bare.cachedMaia(MaiaRequest{FEN: startFEN, SelfElo: 1500, OppoElo: 1500}, "79m")
 	if !ok {
 		t.Fatal("bare display row missed")
 	}
-	if withDelta := attachMaiaDelta(serverSource{bare}, EngineRequest{FEN: startFEN, SelfElo: 1500, OppoElo: 1500}, servedBare); withDelta.DeltaBaseline != nil {
+	if withDelta := attachMaiaDelta(serverSource{bare}, MaiaRequest{FEN: startFEN, SelfElo: 1500, OppoElo: 1500}, servedBare); withDelta.DeltaBaseline != nil {
 		t.Fatalf("baseline without grading row = %+v", withDelta.DeltaBaseline)
 	} else {
 		for _, candidate := range withDelta.TopMoves {
@@ -560,7 +560,7 @@ func TestMaiaDeltaAttachGolden(t *testing.T) {
 // A degraded grading row must never anchor display deltas, even if one
 // reaches the cache through a path that bypasses write validation.
 func TestMaiaDeltaIgnoresDegradedBaseline(t *testing.T) {
-	req := EngineRequest{FEN: startFEN, SelfElo: 1600, OppoElo: 1600}
+	req := MaiaRequest{FEN: startFEN, SelfElo: 1600, OppoElo: 1600}
 	display := moveResponse{Move: "e2e4", WDL: [3]float64{0.437, 0.063, 0.5}, ModelUsed: "79m", TopMoves: []topMove{
 		{Move: "e2e4", Prob: 0.6, WDL: [3]float64{0.437, 0.063, 0.5}},
 	}}

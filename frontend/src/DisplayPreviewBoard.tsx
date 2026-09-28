@@ -28,7 +28,7 @@ function PreviewBoard({ orientation, coordinatesOnSquares, arrows, fen, turnColo
   orientation: Color; coordinatesOnSquares: boolean; arrows: ArrowSettings; fen: string; turnColor: Color; lastMove?: Key[];
 }) {
   const container = useRef<HTMLDivElement>(null);
-  // Mount-once per settings snapshot: the parent remounts via key, so the
+  // Mount-once per settings renderKey: the parent remounts via key, so the
   // constructor always sees fresh brushes/shapes (arrowheads are append-only
   // defs that a live update would not repaint).
   useLayoutEffect(() => {
@@ -72,10 +72,10 @@ function SlicedBoard({ orientation, coordinatesOnSquares, arrows, basis }: {
   orientation: Color; coordinatesOnSquares: boolean; arrows: ArrowSettings; basis: ArrowBasis;
 }) {
   const past = basis === 'past';
-  const snapshot = JSON.stringify([orientation, coordinatesOnSquares, arrows, basis]);
+  const renderKey = JSON.stringify([orientation, coordinatesOnSquares, arrows, basis]);
   return <div className="display-slice-window" aria-hidden="true">
     <div className={`display-slice-inner slice-${orientation}`}>
-      <PreviewBoard key={snapshot} orientation={orientation} coordinatesOnSquares={coordinatesOnSquares} arrows={arrows}
+      <PreviewBoard key={renderKey} orientation={orientation} coordinatesOnSquares={coordinatesOnSquares} arrows={arrows}
         fen={past ? DEMO_AFTER_FEN : DEMO_BEFORE_FEN} turnColor={past ? 'black' : 'white'} lastMove={past ? DEMO_LASTMOVE : undefined} />
     </div>
   </div>;

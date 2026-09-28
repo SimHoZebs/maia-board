@@ -5,10 +5,6 @@ import { createMoveFacts, TACTIC_VALUES, type ForkFacts, type ForkVictim, type M
 export type CapturedPiece = 'p' | 'n' | 'b' | 'r' | 'q';
 export type MaiaSide = 'white' | 'black';
 
-// Display-side alias of the single tactic value table (moveFacts.ts owns it;
-// this re-export keeps existing import sites stable).
-export const PIECE_VALUES: Record<CapturedPiece, number> = TACTIC_VALUES;
-
 // Display order: most valuable first, bishops before knights on the 3-point tie.
 const SORT_ORDER: Record<CapturedPiece, number> = { q: 0, r: 1, b: 2, n: 3, p: 4 };
 
@@ -26,8 +22,8 @@ export function materialFromFen(fen: string): { white: number; black: number; di
   for (const row of board) for (const square of row) {
     if (!square || square.type === 'k') continue;
     if (!isCapturedPiece(square.type)) continue;
-    if (square.color === 'w') white += PIECE_VALUES[square.type];
-    else black += PIECE_VALUES[square.type];
+    if (square.color === 'w') white += TACTIC_VALUES[square.type];
+    else black += TACTIC_VALUES[square.type];
   }
   return { white, black, diff: white - black };
 }
@@ -217,7 +213,7 @@ function noteFromAnalysis(afterFen: string, analyzed: BestLineAnalysis, mover: M
   if (playedTake != null) {
     const combined = { ...analyzed, moverCaptures: [playedTake, ...analyzed.moverCaptures] };
     const valueOf = (pieces: CapturedPiece[]): number =>
-      pieces.reduce((sum, piece) => sum + PIECE_VALUES[piece], 0);
+      pieces.reduce((sum, piece) => sum + TACTIC_VALUES[piece], 0);
     if (valueOf(combined.moverCaptures) - valueOf(combined.oppCaptures) >= 0) return null;
     return genericNote(combined);
   }
@@ -434,7 +430,7 @@ export function fusePinWithMate(pinClaim: string): string {
 // pawn."). Losing recaptures stay silent. v1 requires the two takes to share
 // a square and looks one ply back only.
 export function playedMoveExchangeNote(thisPiece: CapturedPiece, prevPiece: CapturedPiece): string | null {
-  const net = PIECE_VALUES[thisPiece] - PIECE_VALUES[prevPiece];
+  const net = TACTIC_VALUES[thisPiece] - TACTIC_VALUES[prevPiece];
   if (net < 0) return null;
   if (net > 0) return `Wins ${PIECE_ARTICLE[thisPiece]} for ${PIECE_ARTICLE[prevPiece]}.`;
   return `Takes the ${PIECE_NAMES[thisPiece]} back.`;

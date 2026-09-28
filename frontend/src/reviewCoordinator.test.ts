@@ -60,7 +60,7 @@ describe('timeline-backed restoration', () => {
     expect(requests.map((r: { engine: string; ply: number }) => [r.engine, r.ply])).toEqual([['maia', 0], ['sf', 1]]);
     expect(fetcher.mock.calls.every(([url]) => url === '/evaluations/lookup')).toBe(true);
   });
-  it('prime hits report full coverage without extra requests', async () => {
+  it('restore hits report full coverage without extra requests', async () => {
     const fetcher = vi.fn<typeof fetch>(async (_url, init) => jsonResponse({ results: JSON.parse(requestBodyText(init)).requests.map((r: { engine: string; fen: string }, index: number) => ({ index, value: r.engine === 'sf' ? sfFixture(r.fen) : maiaFixture(r.fen) })) }));
     const coordinator = new ReviewCoordinator(fetcher);
     expect(await coordinator.ensure(nodes, settings, { signal: new AbortController().signal })).toEqual({ covered: 4, total: 4 });
@@ -144,7 +144,7 @@ describe('timeline-backed restoration', () => {
   });
 });
 
-describe('workspace scheduler', () => {
+describe('workspace coordinator', () => {
   it('deduplicates foreground work and provides root candidates without replay', async () => {
     const fetcher = liveFetch(), coordinator = new ReviewCoordinator(fetcher), builds = timelineBuildsForTests();
     coordinator.ensure([nodes[0]], settings, { priority: true }); coordinator.ensure([nodes[0]], settings, { priority: true });
@@ -169,7 +169,7 @@ describe('workspace scheduler', () => {
     expect(first.result('sf', nodes[1], settings)).toBe(second.result('sf', nodes[1], settings));
 
   });
-  it('default workspace schedulers share the app store', () => {
+  it('default workspace coordinators share the app store', () => {
     expect(new ReviewCoordinator().store).toBe(new ReviewCoordinator().store);
   });
   it('a newer foreground request replaces queued stale work', async () => {
@@ -269,13 +269,13 @@ describe('workspace scheduler', () => {
     expect(coordinator.sfPendingKeys().size).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
   });
-  it('aborting the restore signal rejects the prime and clears pending', async () => {
+  it('aborting the restore signal rejects the restore and clears pending', async () => {
     const fetcher = vi.fn<typeof fetch>(() => new Promise(() => {}));
     const coordinator = new ReviewCoordinator(fetcher);
     const controller = new AbortController();
-    const prime = coordinator.ensure(nodes, settings, { signal: controller.signal });
+    const restore = coordinator.ensure(nodes, settings, { signal: controller.signal });
     controller.abort();
-    await expect(prime).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(restore).rejects.toMatchObject({ name: 'AbortError' });
     expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
     expect(coordinator.sfPendingKeys().size).toBe(0);
   });

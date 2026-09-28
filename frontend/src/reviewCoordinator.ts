@@ -2,10 +2,10 @@ import { MaiaApiError, requestMaiaAnalysis, requestMove, type MoveRequest, type 
 import { clampMaiaElo } from './BoardTools';
 // Canonical terms: see spec/GLOSSARY.md.
 // transport = shared JSON-POST sender (evaluationTransport); coordinator =
-// foreground scheduler (this class, at most one live request per engine,
-// latest-wins); flight = one tracked AbortController request (playFlight,
-// restore flights). Backend admission (admit → Scheduler.Acquire) has no
-// frontend symbol.
+// foreground coordinator (this class, at most one live request per engine,
+// latest-wins); flight = one tracked AbortController request
+// (PlayFiringIdentity, restoreFlights). Backend admission
+// (admit → Scheduler.Acquire) has no frontend symbol.
 import type { Evaluation } from './reviewMetrics';
 import { EvaluationStore, evaluationStore, fastReviewSettings, fetchEvaluation, reviewKey, resolveSettings, splitValueElos, stablePositionKey,
   type Engine, type EvaluationResult, type Job, type ReviewNode, type ReviewSettings, type SettingsInput } from './evaluationStore';
@@ -28,21 +28,21 @@ export function cancelScope(scope: LineScope): void {
 }
 
 type Pending = { job: Job };
-type Running = { job: Job; controller: AbortController };
+type ForegroundFlight = { job: Job; controller: AbortController };
 const engines = ['sf', 'maia'] as const;
 
 // One keyed queue per engine for interactive (foreground) work: immediate
 // priority requests preempt each other latest-wins. Whole-game batches run
-// on the server (see batchReview); this scheduler never queues them, so it
+// on the server (see batchReview); this coordinator never queues them, so it
 // stays a small foreground pump plus the cache-restore path. The ONLY
 // foreground cancel path is the AbortSignal passed to ensure(); there are no
 // clearForeground/suspend/resume entry points.
 export class ReviewCoordinator {
   readonly store: EvaluationStore;
   private pending: Record<Engine, Map<string, Pending>> = { sf: new Map(), maia: new Map() };
-  private running: Record<Engine, Set<Running>> = { sf: new Set(), maia: new Set() };
+  private foregroundFlights: Record<Engine, Set<ForegroundFlight>> = { sf: new Set(), maia: new Set() };
   // The single in-flight play /move POST. Play replies are never cached
-  // (per-game sampling settings), but the flight still rides this scheduler
+  // (per-game sampling settings), but the flight still rides this coordinator
   // so supersedes share one latest-wins policy with the review lanes.
   private playFlight: AbortController | null = null;
   private failures = new Map<string, string>();
@@ -89,9 +89,9 @@ export class ReviewCoordinator {
   private finished(job: Job) { return !!this.store.peek(job.engine, job.key) || this.failures.has(job.key); }
   // Queue-only calls return void synchronously; signal calls return coverage.
   // Passing signal makes this ensure call abortable: aborting removes its
-  // queued jobs and aborts its running jobs. Omitting signal queues
+  // queued jobs and aborts its flight jobs. Omitting signal queues
   // latest-wins foreground work; the next priority ensure replaces queued
-  // work only and lets running work land.
+  // work only and lets flight work land.
   ensure(
     nodes: ReviewNode[],
     settings: SettingsInput,
@@ -101,7 +101,7 @@ export class ReviewCoordinator {
     const wanted = enginesOpt ?? [...engines];
     if (priority) {
       const desired: Job[] = [];
-      // Fast-then-refine (foreground focus/current only, never bulk prime):
+      // Fast-then-refine (foreground focus/current only, never bulk restore):
       // queue fast MPV1 jobs ahead of the full MPV2 jobs on the sf lane so
       // rank-1 lands first (~250ms) and the full list refines after (~750ms).
       // Maia lanes queue once as before. Skip fast when full already settles
@@ -138,7 +138,7 @@ export class ReviewCoordinator {
       // for the same engines, unless append keeps both (the grading lane
       // shares the maia queue with display Maia under different keys, so a
       // grading ensure must not wipe queued display jobs or vice versa).
-      // Running work continues either way (non-preemptive server slot).
+      // Flight work continues either way (non-preemptive server slot).
       if (!append) for (const engine of wanted) this.pending[engine].clear();
       for (const job of desired) {
         this.failures.delete(job.key);
@@ -166,9 +166,9 @@ export class ReviewCoordinator {
         }
       }
       // Supersede drops only still-queued work (pending cleared above). The
-      // server slot is non-preemptive: running work always completes and
+      // server slot is non-preemptive: flight work always completes and
       // caches, so aborting only blinds this tab to a paid-for answer. Let
-      // running fetches continue; pump starts the newest wanted work
+      // flight fetches continue; pump starts the newest wanted work
       // concurrently (deduplicated by key below).
       wanted.forEach(engine => this.pump(engine));
       this.notify();
@@ -236,31 +236,31 @@ export class ReviewCoordinator {
     engines.forEach(engine => this.pump(engine)); this.notify();
   }
   private abort(engine: Engine) {
-    const runs = [...this.running[engine]];
-    this.running[engine].clear();
+    const runs = [...this.foregroundFlights[engine]];
+    this.foregroundFlights[engine].clear();
     for (const run of runs) run.controller.abort();
   }
   private abortKeys(engine: Engine, keys: ReadonlySet<string>) {
-    for (const run of [...this.running[engine]]) {
+    for (const run of [...this.foregroundFlights[engine]]) {
       if (keys.has(run.job.key)) {
-        this.running[engine].delete(run);
+        this.foregroundFlights[engine].delete(run);
         run.controller.abort();
       }
     }
   }
   private pump(engine: Engine) {
-    const runningKeys = new Set([...this.running[engine]].map(run => run.job.key));
-    const entry = [...this.pending[engine].values()].find(entry => !this.finished(entry.job) && !runningKeys.has(entry.job.key));
+    const flightKeys = new Set([...this.foregroundFlights[engine]].map(run => run.job.key));
+    const entry = [...this.pending[engine].values()].find(entry => !this.finished(entry.job) && !flightKeys.has(entry.job.key));
     if (!entry) return;
     const job = entry.job;
-    const running: Running = { job, controller: new AbortController() };
-    this.running[engine].add(running);
-    void this.execute(job, running.controller.signal).then(result => {
+    const flight: ForegroundFlight = { job, controller: new AbortController() };
+    this.foregroundFlights[engine].add(flight);
+    void this.execute(job, flight.controller.signal).then(result => {
       // Generation check: explicitly aborted work (retry/scope abort) left
       // the set and is dropped. Superseded-but-continuing work stays in the
       // set and always lands — the content-keyed store makes landing safe,
       // and takebacks may reuse the same rows.
-      if (!this.running[engine].has(running)) return;
+      if (!this.foregroundFlights[engine].has(flight)) return;
       // execute resolves sf jobs with Evaluations and maia jobs with
       // MoveResponses; presence of top_moves discriminates the union so each
       // lane stores a proven shape. A mismatch is unreachable — drop it
@@ -273,7 +273,7 @@ export class ReviewCoordinator {
         this.store.store('maia', job.key, result);
       }
     }).catch(error => {
-      if (!this.running[engine].has(running) || running.controller.signal.aborted) return;
+      if (!this.foregroundFlights[engine].has(flight) || flight.controller.signal.aborted) return;
       // A superseded focus request was replaced by a newer one; the newer
       // request covers the position, so this is not a failure to surface.
       if (error instanceof MaiaApiError && error.code === 'superseded') return;
@@ -288,8 +288,8 @@ export class ReviewCoordinator {
       this.failures.set(job.key, error instanceof Error ? error.message : 'Analysis failed.');
     }).finally(() => {
       // A late completion belongs to its generation, even for the same key.
-      if (!this.running[engine].has(running)) return;
-      this.running[engine].delete(running); this.pump(engine); this.notify();
+      if (!this.foregroundFlights[engine].has(flight)) return;
+      this.foregroundFlights[engine].delete(flight); this.pump(engine); this.notify();
     });
   }
   private async execute(job: Job, signal: AbortSignal): Promise<Evaluation | MoveResponse> {

@@ -181,7 +181,7 @@ export function MoveAnalysis({
     dispatch({ type: "explore", uci });
   };
   // Loading signals: a missing result with no recorded error is in-flight
-  // (foreground fetch, prime, or batch) rather than genuinely absent. The
+  // (foreground fetch, restore, or batch) rather than genuinely absent. The
   // foreground lane fetches the displayed move's before/after pair on every
   // navigation. Lines longer than the review limit never fetch, so they stay
   // empty instead of skeleton-loading forever.
@@ -200,7 +200,7 @@ export function MoveAnalysis({
   const displayLoading = !response && !hasError && !terminalPosition && !tooLong;
   const objectiveLoading = !candidates && !node.outcome && !hasError && !terminalPosition && !tooLong;
   // The verdict needs both sides of the move; the foreground lane fetches
-  // both, prime/batch backfill the rest. Render as soon as the pair is
+  // both, restore/batch fill the rest. Render as soon as the pair is
   // present regardless of batch progress (progress surfaces separately via
   // ReviewActionButton); skeleton only while a side is missing.
   const verdictLoading =

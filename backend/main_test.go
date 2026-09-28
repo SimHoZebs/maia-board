@@ -70,23 +70,23 @@ func TestValidateMoveRequestValueElos(t *testing.T) {
 }
 
 type prioRecorder struct {
-	result EngineResult
+	result MaiaResult
 	prios  []Priority
 }
 
-func (f *prioRecorder) predict(_ context.Context, _ context.Context, prio Priority, _ uint64, _ EngineRequest) (EngineResult, func(), error) {
+func (f *prioRecorder) predict(_ context.Context, _ context.Context, prio Priority, _ uint64, _ MaiaRequest) (MaiaResult, func(), error) {
 	f.prios = append(f.prios, prio)
 	return f.result, nil, nil
 }
-func (f *prioRecorder) snapshot() WorkerStatus { return WorkerStatus{} }
+func (f *prioRecorder) workerStatus() WorkerStatus { return WorkerStatus{} }
 
 func TestMoveEndpointsAdmitOnSeparateLanes(t *testing.T) {
 	// /move (live replies) admits on Play, /move/analysis (retrospective
 	// analysis) on Focus, so a play move and its analysis queue instead of
 	// superseding each other on the shared slot.
 	wdl := [3]float64{0.2, 0.3, 0.5}
-	rec := &prioRecorder{result: EngineResult{Move: "e2e4",
-		Candidates: []Candidate{{Move: "e2e4", Policy: 0.6, WDL: wdl}}, WDL: wdl}}
+	rec := &prioRecorder{result: MaiaResult{Move: "e2e4",
+		Candidates: []MaiaCandidate{{Move: "e2e4", Policy: 0.6, WDL: wdl}}, WDL: wdl}}
 	s := &server{pool: NewEnginePool(rec, rec), store: testStore(t)}
 	post := func(handler func(http.ResponseWriter, *http.Request), eloUser string) *httptest.ResponseRecorder {
 		body := `{"fen":"` + startFEN + `","moves":[],"elo_maia":1600,"elo_user":` + eloUser + `,"model":"79m","maia_color":"white"}`
@@ -285,7 +285,7 @@ func TestMoveCacheReadThrough(t *testing.T) {
 	body := `{"fen":"` + startFEN + `","moves":[],"elo_maia":1600,"elo_user":1600,"model":"79m","maia_color":"white","cache_hash":"abc123","cache_key":"mk"}`
 	store := testStore(t)
 	wdl := [3]float64{0.2, 0.3, 0.5}
-	live := &fakePredictor{result: EngineResult{Move: "e2e4", Candidates: []Candidate{{Move: "e2e4", Policy: 0.6, WDL: wdl}}, WDL: wdl}}
+	live := &fakePredictor{result: MaiaResult{Move: "e2e4", Candidates: []MaiaCandidate{{Move: "e2e4", Policy: 0.6, WDL: wdl}}, WDL: wdl}}
 	s := &server{pool: NewEnginePool(live, live), store: store}
 	// Miss: predicts live, stores the row, reports miss.
 	w := httptest.NewRecorder()
@@ -310,7 +310,7 @@ func TestMoveCacheReadThrough(t *testing.T) {
 	}
 	// Degraded fallback answers are never persisted.
 	large := &fakePredictor{err: errors.New("79m failed")}
-	small := &fakePredictor{result: EngineResult{Move: "e2e4", Candidates: []Candidate{{Move: "e2e4", Policy: 0.6, WDL: wdl}}, WDL: wdl}}
+	small := &fakePredictor{result: MaiaResult{Move: "e2e4", Candidates: []MaiaCandidate{{Move: "e2e4", Policy: 0.6, WDL: wdl}}, WDL: wdl}}
 	degradedBody := `{"fen":"` + startFEN + `","moves":[],"elo_maia":1700,"elo_user":1600,"model":"79m","maia_color":"white","cache_hash":"def456","cache_key":"degraded"}`
 	w = httptest.NewRecorder()
 	(&server{pool: NewEnginePool(large, small), store: store}).move(w, httptest.NewRequest(http.MethodPost, "/move", strings.NewReader(degradedBody)))
@@ -327,11 +327,11 @@ func TestMoveCacheReadThrough(t *testing.T) {
 func TestMoveAnalysisAttachesDeltaWithoutStoring(t *testing.T) {
 	body := `{"fen":"` + startFEN + `","moves":[],"elo_maia":1600,"elo_user":1600,"model":"79m","maia_color":"white"}`
 	store := testStore(t)
-	seedMaia(t, &server{store: store}, EngineRequest{FEN: startFEN, SelfElo: 2400, OppoElo: 2400}, "79m",
+	seedMaia(t, &server{store: store}, MaiaRequest{FEN: startFEN, SelfElo: 2400, OppoElo: 2400}, "79m",
 		moveResponse{Move: "e2e4", WDL: [3]float64{.2, .3, .5}, ModelUsed: "79m",
 			TopMoves: []topMove{{Move: "e2e4", Prob: 1, WDL: [3]float64{.2, .3, .5}}}})
 	wdl := [3]float64{0.437, 0.063, 0.5}
-	live := &fakePredictor{result: EngineResult{Move: "e2e4", Candidates: []Candidate{{Move: "e2e4", Policy: 0.6, WDL: wdl}}, WDL: wdl}}
+	live := &fakePredictor{result: MaiaResult{Move: "e2e4", Candidates: []MaiaCandidate{{Move: "e2e4", Policy: 0.6, WDL: wdl}}, WDL: wdl}}
 	s := &server{pool: NewEnginePool(live, live), store: store}
 	w := httptest.NewRecorder()
 	s.moveAnalysis(w, httptest.NewRequest(http.MethodPost, "/move/analysis", strings.NewReader(body)))
@@ -352,7 +352,7 @@ func TestMoveAnalysisAttachesDeltaWithoutStoring(t *testing.T) {
 	}
 	// The persisted row stays baseline-free: baselines depend on which
 	// grading rows exist at serve time and would go stale frozen.
-	hash, _ := maiaIdentity(EngineRequest{FEN: startFEN, SelfElo: 1600, OppoElo: 1600}, "79m").coordinates()
+	hash, _ := maiaIdentity(MaiaRequest{FEN: startFEN, SelfElo: 1600, OppoElo: 1600}, "79m").coordinates()
 	entry, err := store.cacheGet(hash)
 	if err != nil {
 		t.Fatal(err)
@@ -368,7 +368,7 @@ func TestMoveAnalysisAttachesDeltaWithoutStoring(t *testing.T) {
 
 func TestMoveCacheGuards(t *testing.T) {
 	wdl := [3]float64{0.2, 0.3, 0.5}
-	live := &fakePredictor{result: EngineResult{Move: "e2e4", Candidates: []Candidate{{Move: "e2e4", Policy: 0.6, WDL: wdl}}, WDL: wdl}}
+	live := &fakePredictor{result: MaiaResult{Move: "e2e4", Candidates: []MaiaCandidate{{Move: "e2e4", Policy: 0.6, WDL: wdl}}, WDL: wdl}}
 	store := testStore(t)
 	s := &server{pool: NewEnginePool(live, live), store: store}
 	post := func(body string) *httptest.ResponseRecorder {
@@ -379,7 +379,7 @@ func TestMoveCacheGuards(t *testing.T) {
 	base := `{"fen":"` + startFEN + `","moves":[],"elo_maia":1600,"elo_user":1600,"model":"79m","maia_color":"white"`
 	seed := func(hash, value string) {
 		// Corruption fixtures bypass the server-owned writer deliberately.
-		hash, key := maiaIdentity(EngineRequest{FEN: startFEN, SelfElo: 1600, OppoElo: 1600}, "79m").coordinates()
+		hash, key := maiaIdentity(MaiaRequest{FEN: startFEN, SelfElo: 1600, OppoElo: 1600}, "79m").coordinates()
 		if _, err := store.cachePut(hash, "maia", key, value); err != nil {
 			t.Fatal(err)
 		}
