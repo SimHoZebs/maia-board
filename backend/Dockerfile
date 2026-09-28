@@ -10,7 +10,7 @@ FROM golang:1.27-bookworm@sha256:648f440f42a0958804efb24df176f806f9d353b41f1c062
 
 WORKDIR /src
 COPY backend/ ./
-RUN CGO_ENABLED=0 go build -trimpath -o /out/maia-board .
+RUN CGO_ENABLED=0 go build -trimpath -o /out/maia-board ./cmd/server
 
 FROM golang:1.27-bookworm@sha256:648f440f42a0958804efb24df176f806f9d353b41f1c0627f666428e40310f6b AS stockfish-build
 WORKDIR /stockfish
@@ -36,7 +36,7 @@ ENV HF_HOME=/models/huggingface \
     HF_HUB_CACHE=/models/huggingface/hub \
     PYTHONUNBUFFERED=1
 
-COPY backend/requirements.txt /tmp/requirements.txt
+COPY backend/workers/requirements.txt /tmp/requirements.txt
 RUN python -m pip install --no-cache-dir \
       --index-url ${TORCH_INDEX_URL} \
       "torch>=2,<3" \
@@ -46,10 +46,10 @@ RUN python -m pip install --no-cache-dir \
 
 WORKDIR /app
 COPY --from=build /out/maia-board /app/maia-board
-COPY backend/maia3_worker.py /app/maia3_worker.py
-COPY backend/stockfish_worker.py /app/stockfish_worker.py
-COPY backend/openings_lookup.py /app/openings_lookup.py
-COPY backend/openings_table.json /app/openings_table.json
+COPY backend/workers/maia3_worker.py /app/maia3_worker.py
+COPY backend/workers/stockfish_worker.py /app/stockfish_worker.py
+COPY backend/workers/openings_lookup.py /app/openings_lookup.py
+COPY backend/workers/openings_table.json /app/openings_table.json
 COPY --from=stockfish-build /stockfish/src/stockfish /app/stockfish
 COPY --from=stockfish-build /stockfish/Copying.txt /app/licenses/stockfish-COPYING
 COPY --from=stockfish-build /stockfish/source.tar.gz /app/licenses/stockfish-sf_19-source.tar.gz

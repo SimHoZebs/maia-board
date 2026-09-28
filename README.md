@@ -79,7 +79,7 @@ scripts/backend-perf.sh         # mock-engine backend perf matrix (no weights/GP
 node scripts/backend-perf-live.mjs --url <backend>  # live-engine latency (needs real server)
 scripts/serve.sh                # preview an existing build
 node scripts/chess.mjs "<fen>"  # position legality/SAN/UCI/material as JSON
-scripts/env-setup.sh            # Stockfish, Python venv, JRE + tla2tools bootstrap
+scripts/env-setup.sh            # Stockfish and Python venv bootstrap
 ```
 
 Browser fixtures mock engine responses. They do not exercise
@@ -142,9 +142,19 @@ Compose and Komodo configuration belong to that repository.
 | Location | Responsibility |
 | --- | --- |
 | `frontend/src/` | Routing, Play/Analyze/History state, chess rules and board rendering, evaluation scheduling, browser persistence |
-| `backend/` Go files | HTTP validation, SQLite games/cache, engine admission and process lifecycle |
-| `backend/maia3_worker.py` | Adapter to the pinned upstream Maia3 model API |
-| `backend/stockfish_worker.py` | History-aware position validation and native Stockfish search |
+| `backend/cmd/server/` | HTTP wiring: env config, route registration, process entrypoint |
+| `backend/internal/server/` | HTTP validation, batch orchestration, SQLite-backed handlers |
+| `backend/internal/store/` | SQLite games and evaluation-cache persistence |
+| `backend/internal/engine/` | Engine admission, Maia/Stockfish process lifecycle, value validation |
+| `backend/internal/sched/` | Priority-lane admission scheduler |
+| `backend/internal/evalcache/` | Cache identities, strict document decoding, shape gates |
+| `backend/internal/openings/` | ECO opening-book process boundary |
+| `backend/internal/chess/` | FEN/UCI/Elo/temperature validation |
+| `backend/internal/ipc/` | JSON-lines pipe bounds and worker diagnostics |
+| `backend/internal/apierror/` | Shared request-error type |
+| `backend/workers/maia3_worker.py` | Adapter to the pinned upstream Maia3 model API |
+| `backend/workers/stockfish_worker.py` | History-aware position validation and native Stockfish search |
+| `backend/workers/openings_lookup.py` | One-shot ECO opening-book lookup |
 | `backend/Dockerfile` | Combined build, pinned engine inputs and runtime dependencies |
 | `deployment/README.md` | Pointer to separately owned hosting configuration |
 

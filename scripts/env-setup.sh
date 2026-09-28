@@ -1,13 +1,11 @@
 #!/bin/sh
-# env-setup.sh — idempotent bootstrap: stockfish, python venv, JRE + tla2tools.jar.
+# env-setup.sh — idempotent bootstrap: stockfish and python venv.
 # Caches outside tracked source; skips what exists; prints versions.
-# Overrides: STOCKFISH_BINARY, MAIA_VENV, TLA2TOOLS_JAR.
+# Overrides: STOCKFISH_BINARY, MAIA_VENV.
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENV="${MAIA_VENV:-$HOME/.venvs/maia-board}"
 SF="${STOCKFISH_BINARY:-$ROOT/backend/bin/stockfish}"
-TLAJAR="${TLA2TOOLS_JAR:-$HOME/.cache/maia-board/tla2tools.jar}"
-TLA_VER="1.7.1"
 T=""
 trap 'rm -rf "$T"' EXIT
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -32,18 +30,8 @@ if have python3; then
   if [ -x "$VENV/bin/python" ]; then echo "cached: $VENV"
   else
     python3 -m venv "$VENV"
-    "$VENV/bin/pip" install -r "$ROOT/backend/requirements.txt"
+    "$VENV/bin/pip" install -r "$ROOT/backend/workers/requirements.txt"
     "$VENV/bin/pip" install "python-chess==1.999" "chess==1.11.2"
   fi
   "$VENV/bin/python" -c "import chess; print('python-chess', chess.__version__)"
 else echo "missing: install Python 3.12 with venv support, then rerun"; fi
-
-echo "### java + tla2tools ($TLAJAR)"
-if have java; then java -version 2>&1 | head -1
-else echo "missing: install a JRE (e.g. apt install default-jre), then rerun"; fi
-if [ -f "$TLAJAR" ]; then echo "cached: $TLAJAR"
-elif have curl; then
-  mkdir -p "$(dirname "$TLAJAR")"
-  curl -fL --retry 3 "https://github.com/tlaplus/tlaplus/releases/download/v$TLA_VER/tla2tools.jar" -o "$TLAJAR"
-  echo "downloaded: $TLAJAR"
-else echo "missing: install curl, or fetch tla2tools.jar v$TLA_VER into $TLAJAR"; fi

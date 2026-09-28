@@ -184,9 +184,13 @@ From `backend/`:
 ```sh
 CGO_ENABLED=0 go test ./...
 CGO_ENABLED=0 go vet ./...
-STOCKFISH_BINARY=/app/stockfish python3 -m unittest -v test_stockfish_worker test_engine_settings
-STOCKFISH_BINARY=/app/stockfish STOCKFISH_WORKER=stockfish_worker.py go test -v -run TestRealStockfishHTTPAndCancellation
+cd workers && STOCKFISH_BINARY=/app/stockfish python3 -m unittest -v test_stockfish_worker test_engine_settings
+STOCKFISH_BINARY=/app/stockfish go test ./internal/server/ -v -run TestRealStockfishHTTPAndCancellation
 ```
+
+Python discovery runs from `backend/workers/`; the Go suite runs from
+`backend/` (its `STOCKFISH_WORKER` default resolves to the workers dir
+relative to the test package).
 
 The Python modules combine mocked searches with actual helper subprocesses
 and the real native engine; real searches skip when `STOCKFISH_BINARY` is unset.
@@ -204,7 +208,7 @@ docker build --target stockfish-build -f backend/Dockerfile -t maia-board-stockf
 container=$(docker create maia-board-stockfish-check:engine)
 docker cp "$container:/stockfish/src/stockfish" /tmp/stockfish
 docker rm "$container"
-STOCKFISH_BINARY=/tmp/stockfish python3 -m unittest -v test_stockfish_worker test_engine_settings
+cd backend/workers && STOCKFISH_BINARY=/tmp/stockfish python3 -m unittest -v test_stockfish_worker test_engine_settings
 ```
 
 The same extraction also supports manual verification of

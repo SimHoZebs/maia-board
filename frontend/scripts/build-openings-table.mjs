@@ -3,12 +3,12 @@
 // source. Upstream TSVs carry (eco, name, pgn); EPD position keys are derived
 // here with the same chess.js semantics the game pipeline uses, so a row that
 // does not replay to a single legal line fails the build instead of shipping a
-// corrupt entry. Runtime lookup lives in backend/openings_lookup.py
+// corrupt entry. Runtime lookup lives in backend/workers/openings_lookup.py
 // (python-chess); the EPD contract both sides share is: FEN without move
 // counters, en-passant square only when a capture is actually legal.
 //
 // Usage (from frontend/, needs its node_modules for chess.js):
-//   node scripts/build-openings-table.mjs            # regenerate backend/openings_table.json
+//   node scripts/build-openings-table.mjs            # regenerate backend/workers/openings_table.json
 //   node scripts/build-openings-table.mjs --check    # CI: exit 1 when the artifact is stale
 //
 // Network: downloads a.tsv-e.tsv at PINNED_SHA (~3800 rows total).
@@ -21,12 +21,12 @@ import { Chess } from 'chess.js';
 const PINNED_SHA = '4b8622759e7ae6f93f011cc6c83a3823401ab45e';
 const PINNED_DATE = '2026-08-04';
 const VOLUMES = ['a', 'b', 'c', 'd', 'e'];
-const OUT_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'backend', 'openings_table.json');
+const OUT_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'backend', 'workers', 'openings_table.json');
 
 // EPD key: FEN without move counters, en-passant square only when a capture is
 // actually legal. chess.js already blanks stale squares; the flags check covers
 // the remaining pin-illegal case. Must stay identical to epd_key() in
-// backend/openings_lookup.py.
+// backend/workers/openings_lookup.py.
 function epdKey(fen) {
   const normalized = new Chess(fen).fen().split(' ');
   let ep = normalized[3];
@@ -125,7 +125,7 @@ const output = render(table, rows, collisions);
 if (check) {
   const current = readFileSync(OUT_PATH, 'utf8');
   if (current !== output) {
-    console.error('build-openings-table: backend/openings_table.json is stale — run node scripts/build-openings-table.mjs');
+    console.error('build-openings-table: backend/workers/openings_table.json is stale — run node scripts/build-openings-table.mjs');
     process.exit(1);
   }
   console.log(`build-openings-table: fresh (${table.size} positions, ${rows} rows, ${collisions} collisions)`);

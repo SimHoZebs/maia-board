@@ -64,15 +64,15 @@ hit as `{matches: [{ply, eco, name}], book_flags}` where `book_flags[i]` names
 the position after `moves[i]`. The book is defined from the standard start
 only: custom-start lines return empty matches and all-false flags, never an
 error. A missing table degrades the same way with `"degraded": true`.
-Chess truth lives in `openings_lookup.py` (python-chess); Go owns HTTP
-validation and the process boundary. The table is `openings_table.json`,
+Chess truth lives in `workers/openings_lookup.py` (python-chess); Go owns HTTP
+validation and the process boundary. The table is `workers/openings_table.json`,
 generated from the pinned
 [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings)
 TSVs (CC0). Regenerate after changing the pin (from `frontend/`, needs its
 `node_modules` for chess.js):
 
 ```sh
-node scripts/build-openings-table.mjs          # rewrite backend/openings_table.json
+node scripts/build-openings-table.mjs          # rewrite backend/workers/openings_table.json
 node scripts/build-openings-table.mjs --check  # fail when the artifact is stale
 ```
 
@@ -248,9 +248,10 @@ python3 -m venv /path/to/maia-test-venv
 /path/to/maia-test-venv/bin/python -m pip install python-chess==1.999 chess==1.11.2
 ```
 
-Use that interpreter for test discovery:
+Use that interpreter for test discovery from `backend/workers/`:
 
 ```sh
+cd backend/workers
 /path/to/maia-test-venv/bin/python -m unittest discover -v
 ```
 
@@ -266,7 +267,7 @@ Run it in an environment with the pinned Maia runtime dependencies and cached
 weights, such as the combined image with the test file supplied:
 
 ```sh
-MAIA3_TEST_MODEL=5m python -m unittest -v test_maia3_real
+cd backend/workers && MAIA3_TEST_MODEL=5m python -m unittest -v test_maia3_real
 ```
 
 That test requests local files only. It checks deterministic history-aware inference;

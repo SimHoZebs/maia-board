@@ -1,8 +1,5 @@
 test-results/
-# `go build ./...` drops the server binary into backend/.
-backend/backend
+# `go build ./cmd/server` from backend/ drops the server binary into backend/.
+backend/server
 # Crash dumps (e.g. frontend/core.*) are local diagnostics, never committed.
 core.*
-# TLC model-checker state dumps (spec/states/<timestamp>/) are reproducible
-# local output, never committed (one run exceeded GitHub's 100MB limit).
-spec/states/
