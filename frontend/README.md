@@ -6,7 +6,10 @@ legal moves and game-history rules. `ChessBoard.tsx` adapts Chessground, which o
 the board container's descendants while React owns the surrounding interface.
 
 See the [root README](../README.md) for product behavior and the definitions of
-FEN, UCI, ply, and PGN.
+FEN, UCI, ply, and PGN. Canonical terminology for position identity, eval
+pipeline stages, restore, transport/coordinator/flight, lanes, and limits lives
+in [spec/GLOSSARY.md](../spec/GLOSSARY.md) — this doc links there instead of
+re-defining.
 
 ## Commands
 

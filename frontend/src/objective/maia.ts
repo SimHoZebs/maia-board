@@ -200,8 +200,8 @@ export function fixedElo(): number | null {
 }
 
 // Bulk-restore descriptor for the lane. `settings` null means the source
-// needs no extra inference, so the second prime and batch entries stand
+// needs no extra inference, so the second restore and batch entries stand
 // down; callers check presence, never model kind.
-export function primeDescriptor(): { settings: SettingsInput | null; engines: Engine[]; suffix: string } {
+export function restoreDescriptor(): { settings: SettingsInput | null; engines: Engine[]; suffix: string } {
   return { settings: GRADING_MAIA_SETTINGS, engines: ['maia'], suffix: '|g2400' };
 }

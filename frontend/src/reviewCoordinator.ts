@@ -1,5 +1,11 @@
 import { MaiaApiError, requestMaiaAnalysis, requestMove, type MoveRequest, type MoveResponse } from './api';
 import { clampMaiaElo } from './BoardTools';
+// Canonical terms: see spec/GLOSSARY.md.
+// transport = shared JSON-POST sender (evaluationTransport); coordinator =
+// foreground scheduler (this class, at most one live request per engine,
+// latest-wins); flight = one tracked AbortController request (playFlight,
+// restore flights). Backend admission (admit → Scheduler.Acquire) has no
+// frontend symbol.
 import type { Evaluation } from './reviewMetrics';
 import { EvaluationStore, evaluationStore, fastReviewSettings, fetchEvaluation, reviewKey, resolveSettings, splitValueElos, stablePositionKey,
   type Engine, type EvaluationResult, type Job, type ReviewNode, type ReviewSettings, type SettingsInput } from './evaluationStore';

@@ -6,6 +6,7 @@ import { outcomeFromGame } from './reviewMetrics';
 import { outcomeEvaluation } from './outcomeEvaluation';
 import { clampMaiaElo } from './BoardTools';
 
+// Terms: see spec/GLOSSARY.md (position/line/posId/lineKey).
 export const START_FEN = new Chess().fen();
 export type Mode = 'play' | 'analysis' | 'history' | 'settings';
 export type Settings = { userColor: MaiaColor; eloMaia: number; eloUser: number; model: MaiaModel; temperature?: number };

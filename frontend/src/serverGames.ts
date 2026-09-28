@@ -1,4 +1,6 @@
 import type { StoredGame } from './domain';
+// Canonical term per spec/GLOSSARY.md: this module is the gameClient
+// (durable game requests), never the engine transport (evaluationTransport).
 import { isRecord } from './guards';
 import { restoreGame } from './storage';
 

@@ -1,5 +1,8 @@
 import { assertLegalUci, isApiErrorCode, MaiaApiError, parseMoveResponse, type MaiaModel, type MoveResponse } from './api';
 import { Chess } from 'chess.js';
+// Terms: see spec/GLOSSARY.md. restore = the one cache-fill op
+// (store.restore → coordinator.restore → restoreLookup).
+// reviewKey = posId + engine + settingsHash.
 import { applyUci, posId, type Timeline, type TimelineRow } from './domain';
 import { outcomeEvaluation } from './outcomeEvaluation';
 import { fetchJsonWithBusyRetry } from './evaluationTransport';
@@ -346,9 +349,10 @@ export class EvaluationStore {
         this.notify();
       }
     }
-    return this.primeCoverage(nodes, settings, engines);
+    return this.restoreCoverage(nodes, settings, engines);
   }
-  primeCoverage(nodes: ReviewNode[], settings: SettingsInput, engines: Engine[]): { total: number; covered: number } {
+  // Coverage: how much of the wanted set has settled rows.
+  restoreCoverage(nodes: ReviewNode[], settings: SettingsInput, engines: Engine[]): { total: number; covered: number } {
     const both = engines.includes('sf') && engines.includes('maia');
     return { total: nodes.length, covered: nodes.filter(node => both
       ? this.result('sf', node, resolveSettings(settings, node)) && (node.outcome || this.result('maia', node, resolveSettings(settings, node)))

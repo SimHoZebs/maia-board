@@ -2,7 +2,9 @@
 
 Conventions, routes, and error shapes. Stockfish search internals
 (policy, scores, reuse, timeouts) live in [STOCKFISH.md](STOCKFISH.md)
-and are not duplicated here.
+and are not duplicated here. Canonical terminology (position/line/reviewKey,
+evaluation vs batch reviews vs lookup, lanes) and the limits table live in
+[../spec/GLOSSARY.md](../spec/GLOSSARY.md).
 
 ## Envelope and limits
 

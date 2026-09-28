@@ -17,8 +17,8 @@ Status: `Pending` | `Accepted` | `Rejected` | `Needs-doc` (keep code, document i
 - [x] 9. Unify `useReview` / `usePlayFeedback` orchestration (Accepted)
 - [x] 10. Single transport + play `/move` through coordinator (Accepted)
 - [ ] 11. Single timeline selector / FEN-scan fan-out (active)
-- [ ] 12. Persistence writes behind repository only
-- [ ] 13. Verdict priority tables in one module (keep wording richness)
+- [x] 12. Persistence writes behind repository only (Accepted)
+- [x] 13. Verdict priority tables in one module (Accepted, order separate from wording)
 - [ ] 14. One opening subscription per workspace
 - [x] 15. Dissolve `state.ts` god reducer (Accepted — delete the file, split into slices)
 - [ ] 16. Tests / scripts / docs trim (this cleanup is the docs half)
@@ -234,6 +234,44 @@ Each panel was built to be self-sufficient (compute what you render from props),
 ### Open questions for you
 
 1. Panels staying independently testable matters to you — selectors as pure functions over the built timeline keep that. Any panel whose derivation you consider load-bearing-local and want excluded?
+
+## 12. Persistence writes behind repository only
+
+### Proposal in plain language
+
+Three separate code paths write to browser storage today. Terms used here: save means one call to `localStorage.setItem(key, text)`; lock means `navigator.locks.request(...)` so a second tab waits instead of overwriting; check before overwrite means reading the stored text and stopping if another tab changed it; corrupt means the stored text is not valid JSON or is missing required fields.
+
+1. Games in `frontend/src/gameRepository.ts:92-104` use lock, check before overwrite, and move corrupt entries to a recovery list the user can export.
+2. Preferences and snapshot in `frontend/src/useMaiaBoard.ts:134-156` and `:76-80` call `writeStorage()` directly with no lock and no check, using a local `lastPersisted` map to skip repeats.
+3. Batch reattach in `frontend/src/batchReview.ts:60-66` calls `setItem` directly with no lock and no check; errors are caught and ignored.
+
+Delete in `useMaiaBoard.ts:74-80` does two separate saves: update the game list, then clear the snapshot. If the browser closes or another tab saves between those two, the snapshot still names a deleted game.
+
+Proposal: one function owns lock, check before overwrite, save, and corrupt-data handling for all keys. Games, preferences, snapshot, and batch all call it. The function returns the error to the caller; each caller decides what to show. Games show a blocking error with export and retry; preferences show a small message; batch stays silent and resubmits. Same steps, different messages.
+
+### Guessed justification for the current shape
+
+The v2 game document was added without migrating preferences and batch state. Small preference writes went direct because adding repository methods per key looked like overhead. Batch reattach predates the repository and kept its existing path.
+
+### Decision
+
+Status: Accepted (2026-09-26). Consolidate to one shared write path; error handling differs by consumer.
+
+## 13. Verdict priority tables in one module
+
+### Proposal in plain language
+
+The one-sentence move description is decided in several files. `reviewMetrics.ts` holds `STANDALONE_RULES`, `NOTE_RULES`, `rarityVerdict()`, `effectiveQuality()`, and `alienUpgrade()`. `theory.ts` and `material.ts` supply facts. `useReviewPipeline.ts` rewrites engine-Critical in a second pass. Array order decides the winner: the first matching rule wins.
+
+Proposal: one module holds the ordered rule-name list. Each rule keeps its own match condition and wording. Changing the order edits the list only; changing wording edits one rule only. Wording stays specific; no collapse into generic text.
+
+### Guessed justification for the current shape
+
+Each verdict improvement was added where its data already lived. That kept each change small and testable.
+
+### Decision
+
+Status: Accepted (2026-09-26). Owner direction: priority order lives separate from rule wording. One module holds the ordered name list; rule content stays with each rule.
 
 ## 15. Dissolve `state.ts` god reducer
 

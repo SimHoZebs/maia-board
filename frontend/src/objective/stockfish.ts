@@ -104,8 +104,8 @@ export function fixedElo(): null {
 }
 
 // Bulk-restore descriptor for the lane. Null settings mean no extra
-// inference beyond the main prime: the second prime and batch entries
+// inference beyond the main restore: the second restore and batch entries
 // stand down, and coverage needs nothing more than the Stockfish rows.
-export function primeDescriptor(): { settings: SettingsInput | null; engines: Engine[]; suffix: string } {
+export function restoreDescriptor(): { settings: SettingsInput | null; engines: Engine[]; suffix: string } {
   return { settings: null, engines: [], suffix: '|sflane' };
 }

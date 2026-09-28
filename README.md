@@ -21,7 +21,9 @@ notation encodes a move as `e2e4` or `a7a8q` for promotion. **FEN**
 (Forsyth–Edwards Notation) describes one position, including the turn, castling
 rights, and move counters. **PGN** (Portable Game Notation) describes a game with
 its move sequence and metadata. A FEN alone cannot establish threefold repetition;
-analysis needs the move history from its starting position.
+analysis needs the move history from its starting position. Canonical terms for
+position/line/posId/reviewKey, eval stages, restore, lanes, and limits live in
+[spec/GLOSSARY.md](spec/GLOSSARY.md).
 
 ### Reading analysis
 

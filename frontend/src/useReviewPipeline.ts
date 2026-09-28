@@ -3,7 +3,7 @@ import type { MoveResponse } from './api';
 import { buildTimeline, legalPrefixLength, lineKeyFor, START_FEN, type StoredGame, type Timeline, type TimelineRow } from './domain';
 import type { State } from './state/index';
 import { ReviewCoordinator, resolveSettings, reviewKey, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings, type SettingsInput } from './reviewCoordinator';
-import { ensureLane, candidatesFor, laneError, laneFailures, laneKey, lanePending, lanePoints, laneRows, primeDescriptor } from './objective';
+import { ensureLane, candidatesFor, laneError, laneFailures, laneKey, lanePending, lanePoints, laneRows, restoreDescriptor } from './objective';
 import type { ObjectiveLane } from './qualities';
 import { useLineScope } from './useLineScope';
 import { useLookupRestore } from './useLookupRestore';
@@ -203,12 +203,12 @@ function useRestorePair(args: {
   prime: { key: string; error?: string } | null;
   gradePrime: { key: string; error?: string } | null;
   gradeKey: string;
-  lane: ReturnType<typeof primeDescriptor>;
+  lane: ReturnType<typeof restoreDescriptor>;
   laneReady: boolean;
   retryPrime: () => void;
 } {
   const { active, nodes, settings, coordinator, displayKey, priorityPlies } = args;
-  const lane = useMemo(() => primeDescriptor(), []);
+  const lane = useMemo(() => restoreDescriptor(), []);
   const [prime, setPrime] = useState<{ key: string; error?: string } | null>(null);
   const [gradePrime, setGradePrime] = useState<{ key: string; error?: string } | null>(null);
   const [primeAttempt, setPrimeAttempt] = useState(0);

@@ -1,5 +1,8 @@
 import type { Chess } from 'chess.js';
 import type { MoveResponse } from './api';
+// Pipeline terms: see spec/GLOSSARY.md.
+// evaluation → EngineGrade → Quality → verdict string via describeMove.
+// candidate = one ObjectiveCandidates entry.
 import type { DomainOutcome } from './domain';
 import type { NoveltyRef, TerminalKind } from './theory';
 import { fusePinWithMate, fusePinWithMaterial } from './material';

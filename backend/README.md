@@ -8,7 +8,9 @@ API; Go remains the HTTP boundary.
 ## Game and engine API
 
 The [root README](../README.md) defines FEN (a position), UCI coordinate moves,
-ply (one player's move), and PGN game notation.
+ply (one player's move), and PGN game notation. Canonical terminology for
+position identity, eval pipeline stages, restore/lookup/execute, lanes, and
+limits lives in [spec/GLOSSARY.md](../spec/GLOSSARY.md).
 
 `POST /move` accepts a history-aware Maia request:
 
