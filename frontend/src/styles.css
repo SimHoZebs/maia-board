@@ -184,11 +184,15 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .skeleton-bar { display: block; height: 12px; border-radius: 4px; background: linear-gradient(90deg, #333637 25%, #424646 50%, #333637 75%); background-size: 200% 100%; animation: skeleton-shimmer 1.2s ease-in-out infinite; }
 .skeleton-san { flex: 1; min-width: 0; }
 .skeleton-metric { width: 38px; flex: none; }
-.skeleton-verdict { margin: 0 0 12px; }
+.skeleton-verdict { margin: 0 0 12px; min-height: 21px; display: flex; align-items: center; }
 .skeleton-verdict .skeleton-bar { height: 14px; width: 92%; }
 @keyframes skeleton-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 .engine-duo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
-.move-verdict { margin: 0 0 12px; font-size: 14px; line-height: 1.5; }
+.move-verdict { margin: 0 0 12px; font-size: 14px; line-height: 1.5; min-height: 1.5em; }
+/* Reserved play verdict line: same box as a one-line verdict, blank so the
+   layout holds when the verdict shows on the user's move and clears on the
+   AI reply. */
+.play-verdict-empty { user-select: none; }
 .verdict-line { min-height: 0; min-width: 0; padding: 2px 6px; font-size: 13px; font-weight: 600; background: transparent; border-color: var(--line); border-radius: 4px; color: inherit; white-space: nowrap; }
 .verdict-line:hover:not(:disabled) { background: #3b3d3d; text-decoration: underline; }
 .engine-duo > section { min-width: 0; }
