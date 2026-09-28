@@ -6,7 +6,7 @@ import { initialState, reducer } from './state/index';
 import { KEYS } from './storage';
 import { buildTimeline, START_FEN, timelineBuildsForTests } from './domain';
 import { reviewKey, reviewNodes, stablePositionKey, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
-import { laneKey, lanePoints } from './objective/maia';
+import { laneKey, lanePoints } from './objective/grader';
 import type { ObjectiveLane } from './qualities';
 import { sfFixture } from './evaluationTestFixtures';
 import { defaultStockfishSettings } from './stockfishSettings';

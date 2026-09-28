@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { buildTimeline, defaultSettings, START_FEN } from './domain';
 import { EvaluationStore, fastReviewSettings, gradingMaiaKey, reviewKey, reviewNodes, type ReviewNode, type ReviewSettings } from './evaluationStore';
-import { laneKey, lanePoints } from './objective/maia';
+import { laneKey, lanePoints } from './objective/grader';
 import type { ObjectiveLane } from './qualities';
 import type { MoveResponse } from './api';
 import { defaultStockfishSettings } from './stockfishSettings';

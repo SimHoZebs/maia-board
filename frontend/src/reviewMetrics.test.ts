@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { Chess } from 'chess.js';
 import { alienUpgrade, ALIEN_MIN_GAP, classifyLoss, describeMove, effectiveQuality, isMateFor, isTinyRare, maiaRarity, moveAccuracy, outcomeExpected, reviewMove, secondPoolClause, sfTopGap, SEARCH_POLICY, terminalEvaluation, whiteExpected, whiteWin, type EngineGrade, type Evaluation, type ObjectiveGrade, type Quality, type Rarity } from './reviewMetrics';
-import { maiaExpected } from './objective/maia';
+import { maiaExpected } from './objective/winrate';
 const evaluation = (cp: number): Evaluation => ({ engine: 'Stockfish 19', search_policy: SEARCH_POLICY, score: { type: 'cp', value: cp }, depth: 14, best_move: 'e2e4', lines: [], terminal: null });
 const grading = (top: string | null, wdl: [number, number, number], afterExpected: number | null): ObjectiveGrade => ({
   top, expected: maiaExpected(wdl), afterExpected, beforePending: false, afterPending: false,

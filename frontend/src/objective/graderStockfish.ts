@@ -7,11 +7,11 @@ import {
 import type { ReviewCoordinator, SettingsInput } from '../reviewCoordinator';
 import { whiteWin, type Evaluation, type ObjectiveCandidates, type ObjectivePoint } from '../reviewMetrics';
 
-// Objective provider: pure-engine behavior. Every export here twins
-// ./maia.ts name-for-name; the rest of the system imports these names
-// through ./index (one line flips the source) and never branches on models.
-// Points re-derive from the Stockfish rows the hooks already resolve, so
-// this source needs no extra fetches anywhere.
+// Grader role, dormant alternate implementation: pure-engine behavior.
+// Same role surface as ./grader name-for-name; nothing imports this module
+// today. Wiring it in means pointing ./index here instead — no call-site
+// changes. Points re-derive from the Stockfish rows the hooks already
+// resolve, so this implementation needs no extra fetches anywhere.
 
 // One position's objective point from an evaluation, read from the mover's
 // perspective. Terminal outcome rows flow through the same score shapes as
@@ -21,12 +21,6 @@ export function sfPoint(evaluation: Evaluation | undefined, turn: 'white' | 'bla
   if (!evaluation) return { top: null, expected: null };
   const expected = turn === 'white' ? whiteWin(evaluation.score) : 100 - whiteWin(evaluation.score);
   return { top: evaluation.best_move, expected };
-}
-
-// No extra inference beyond Stockfish: the coordinators add no lane
-// (foreground, restore, batch, and coverage all skip on null).
-export function laneSettings(): null {
-  return null;
 }
 
 // Raw provider rows, node-aligned. The hook's own Stockfish evaluations

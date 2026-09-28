@@ -90,7 +90,9 @@ One pipeline, named by stage:
   exact (`selectDeltaParts` vs `maiaDisplayParts`).
 - `objective = {top, expected}` — request-time composition pattern over
   per-model caches, never a stored combined row (no backend route; frontend
-  composes). Provider switch changes fetches, never grading math. Backend
+  composes). The seam is role-keyed (`objective/grader`: grading;
+  `objective/winrate`: candidate-display math), not model-keyed — swapping
+  the grader implementation changes fetches, never grading math. Backend
   `wdlExpected` is the sole backend `expected` spelling; `whiteExpected` is
   frontend view only.
 

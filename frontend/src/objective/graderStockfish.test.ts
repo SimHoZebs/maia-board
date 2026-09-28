@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { Chess } from 'chess.js';
 import { SEARCH_POLICY, reviewMove, whiteWin, type Evaluation } from '../reviewMetrics';
-import { candidatesFor, fixedElo, sfPoint } from './stockfish';
+import { candidatesFor, fixedElo, sfPoint } from './graderStockfish';
 
 const evaluation = (cp: number, best = 'e2e4'): Evaluation => ({
   engine: 'Stockfish 19', search_policy: SEARCH_POLICY, score: { type: 'cp', value: cp },

@@ -48,11 +48,13 @@ backend URL to proxy `/move`, `/move/analysis`, `/evaluate`, `/evaluations/looku
   and legacy record readers. Preferences and analysis inputs are browser-local.
 - `reviewMetrics.ts` derives retrospective move grades from objective points
   (best move + mover-relative expected score), never from engine responses
-  directly. `src/objective/maia.ts` and `src/objective/stockfish.ts` expose
-  identical provider functions; `src/objective/index.ts` re-exports the
-   active one, so switching sources is a one-line import flip with no call
-   site changes. Current-position candidates and previous-move grading refer
-   to different positions.
+  directly. `src/objective/grader.ts` owns the grading role (best +
+  expected per position, currently Maia 2400); the dormant
+  `src/objective/graderStockfish.ts` implements the same role surface and is
+  wired in with a one-line change. `src/objective/winrate.ts` owns Maia
+  candidate-display math (winrate columns), imported directly by the panel.
+  Current-position candidates and previous-move grading refer
+  to different positions.
 - Two Maia lanes are load-bearing: game-level Maia (findability — "was it
   rare for this player," feeds rarity + candidate lists at game settings)
   and grading Maia 2400 (objective truth — "would 2400 consider it best").

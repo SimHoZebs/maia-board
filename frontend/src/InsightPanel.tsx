@@ -7,7 +7,7 @@ import { Chess } from "chess.js";
 import type { Review } from "./useReview";
 import { describeMove } from "./reviewMetrics";
 import { fixedElo, sourceLabel } from "./objective";
-import { deltaColumnTitle, formatWinrateDelta, maiaExpected, selectDeltaParts } from "./objective/maia";
+import { deltaColumnTitle, formatWinrateDelta, maiaExpected, selectDeltaParts } from "./objective/winrate";
 import { bestLinePreview, playedCapture } from "./material";
 import { verdictInputsForPly } from "./theory";
 import { useLineOpenings } from "./openings";
