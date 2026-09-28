@@ -317,6 +317,42 @@ func TestCountMisses(t *testing.T) {
 	}
 }
 
+func TestEntryRoles(t *testing.T) {
+	js := &ReviewJobs{}
+	line := batchLine{InitialFEN: startFEN, Moves: []string{}}
+	resolve := func(query lookupRequest) *batchEntry {
+		t.Helper()
+		entry, reqErr := js.resolveBatchEntryRequest(0, line, query)
+		if reqErr != nil {
+			t.Fatalf("resolve %+v: %s", query, reqErr.Message)
+		}
+		return entry
+	}
+	// Grading lane: Maia 2400/2400 on 79m shares the grading row.
+	grade := resolve(lookupRequest{Engine: "maia", FEN: startFEN, Ply: 0,
+		EloMaia: intPtr(2400), EloUser: intPtr(2400), Model: "79m"})
+	if grade.role != roleGrade {
+		t.Fatalf("2400/2400/79m role = %q, want grade", grade.role)
+	}
+	// Display lane: any other Maia settings.
+	display := resolve(lookupRequest{Engine: "maia", FEN: startFEN, Ply: 0,
+		EloMaia: intPtr(1500), EloUser: intPtr(1300), Model: "79m"})
+	if display.role != roleDisplay {
+		t.Fatalf("1500/1300/79m role = %q, want display", display.role)
+	}
+	// Small model never grades, even at 2400.
+	small := resolve(lookupRequest{Engine: "maia", FEN: startFEN, Ply: 0,
+		EloMaia: intPtr(2400), EloUser: intPtr(2400), Model: "5m"})
+	if small.role != roleDisplay {
+		t.Fatalf("2400/2400/5m role = %q, want display", small.role)
+	}
+	// Stockfish multiplexes mate/material/display through one lane.
+	sf := resolve(lookupRequest{Engine: "sf", FEN: startFEN, Ply: 0})
+	if sf.role != roleDisplay {
+		t.Fatalf("sf role = %q, want display", sf.role)
+	}
+}
+
 func TestOverCap(t *testing.T) {
 	if !overCap(8, 0, 0, 0, 0, 0, 0) {
 		t.Fatal("8 unfinished must be over cap")

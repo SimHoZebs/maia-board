@@ -133,6 +133,9 @@ Focus`, `POST /evaluate → Focus`, `POST /reviews → Batch`. Maia: one
 scheduler; Stockfish: two (interactive + batch, dedup per-scheduler).
 Non-preemptive, grant order `Play > Focus > Batch` within a scheduler.
 Batch shares fairly by rotation with dual admission caps (fail-visible 429).
+Batch entries carry `engine` (slot routing: which admission slot drains the
+entry) plus `role` (`grade` for grading-2400 Maia rows, `display` for
+everything else); runners stay engine-keyed, grading treatment reads the role.
 Frontend `ensure({priority})` = foreground pump; `restore` = settled rows.
 `supersede` (verb) = `ErrSuperseded`/`cancelLocked` mechanism; `join` =
 waiter path, `dedup-by-key` = key policy (empty key never joins).

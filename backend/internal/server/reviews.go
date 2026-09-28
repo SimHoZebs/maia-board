@@ -236,9 +236,23 @@ const (
 	batchFailed  batchStatus = "failed"
 )
 
+// Entry roles: grading vs display. The model (entry.engine) routes the
+// slot; the role names why the batch needs the row. "grade" is a grading
+// Maia 2400 entry: resolved identity equals the grading hash, so its row
+// doubles as the delta baseline other rows read at serve time. "display"
+// is everything else the batch fills (display-Maia policy rows, Stockfish
+// rows for material/mate/candidates). Stockfish multiplexes those uses
+// through one lane today; when it backs grading, its grading entries take
+// the grade role without touching the machinery below.
+const (
+	roleGrade   = "grade"
+	roleDisplay = "display"
+)
+
 type batchEntry struct {
 	index     int
-	engine    string
+	engine    string // slot routing: which admission slot drains this entry
+	role      string // treatment: roleGrade (grading-2400 row) or roleDisplay
 	evalReq   engine.EvaluationRequest
 	maiaReq   engine.MaiaRequest
 	maiaModel string
@@ -324,8 +338,8 @@ func (job *batchJob) complete(entry *batchEntry, errMsg string) {
 		}
 	}
 	job.mu.Unlock()
-	log.Printf("review-batch entry job=%s index=%d engine=%s status=%s duration_ms=%d err=%s",
-		job.id, entry.index, entry.engine, status, time.Since(entry.started).Milliseconds(), errMsg)
+	log.Printf("review-batch entry job=%s index=%d engine=%s role=%s status=%s duration_ms=%d err=%s",
+		job.id, entry.index, entry.engine, entry.role, status, time.Since(entry.started).Milliseconds(), errMsg)
 }
 
 // ReviewJobs runs whole-game batches over the shared engine schedulers
@@ -475,12 +489,23 @@ func (js *ReviewJobs) resolveBatchEntryRequest(index int, line batchLine, query 
 			return nil, &apierror.RequestError{Code: "invalid_request", Message: prefixMsg + reqErr.Message}
 		}
 		entry.evalReq = request
+		entry.role = roleDisplay
 	case "maia":
 		request, model, reqErr := resolveMaiaQuery(query, line.InitialFEN, prefix)
 		if reqErr != nil {
 			return nil, &apierror.RequestError{Code: "invalid_request", Message: prefixMsg + reqErr.Message}
 		}
 		entry.maiaReq, entry.maiaModel = request, model
+		entry.role = roleDisplay
+		// Grading lane, made explicit: a Maia entry whose resolved
+		// identity equals the grading hash shares the grading row other
+		// rows read as their delta baseline — including a 2400 display
+		// row, which dedups onto it by identity normalization.
+		entryHash, _ := engine.MaiaIdentity(request, model).Coordinates()
+		gradeHash, _ := maiaGradingHash(request)
+		if entryHash == gradeHash {
+			entry.role = roleGrade
+		}
 	default:
 		return nil, &apierror.RequestError{Code: "invalid_request", Message: fmt.Sprintf("requests[%d]: engine must be sf or maia", index)}
 	}
@@ -489,7 +514,7 @@ func (js *ReviewJobs) resolveBatchEntryRequest(index int, line batchLine, query 
 
 // entryHashes lists every cache identity the intake filter may read for one
 // entry: the exact SF identity plus larger-lines superset variants, or the
-// single Maia identity.
+// single Maia identity. Keyed by engine: identity shapes differ per model.
 func entryHashes(entry *batchEntry) []string {
 	if entry.engine == "sf" {
 		candidates := sfSupersetCandidates(entry.evalReq)
@@ -561,6 +586,7 @@ func (js *ReviewJobs) reviews(w http.ResponseWriter, r *http.Request) {
 		src := js.s.prefetch(hashes)
 		for _, entry := range entries {
 			var hit bool
+			// Engine-keyed: the cached read matches the entry's identity shape.
 			switch entry.engine {
 			case "sf":
 				_, hit = js.s.cachedSFFrom(src, entry.evalReq)
@@ -666,9 +692,12 @@ func (js *ReviewJobs) reviewByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// drain executes one engine lane at a time per engine type (matching the
-// single-slot engines) with the two types in parallel. Work runs on detached
-// contexts: a disconnected client neither stops the batch nor leaks its slot.
+// drain executes one slot lane at a time per engine (matching the
+// single-slot engines) with the two lanes in parallel. Lanes are
+// engine-keyed because slots are engine-owned; entry roles (grade vs
+// display) ride along for treatment, never for routing. Work runs on
+// detached contexts: a disconnected client neither stops the batch nor
+// leaks its slot.
 //
 // Batch yield: each entry holds its engine slot only for that entry. After
 // the write-through the slot is released before the next entry is admitted,
@@ -677,16 +706,16 @@ func (js *ReviewJobs) reviewByID(w http.ResponseWriter, r *http.Request) {
 func (js *ReviewJobs) drain(job *batchJob) {
 	started := time.Now()
 	var wg sync.WaitGroup
-	for _, engine := range []string{"sf", "maia"} {
-		engine := engine
-		if !job.hasPending(engine) {
+	for _, lane := range []string{"sf", "maia"} {
+		lane := lane
+		if !job.hasPending(lane) {
 			continue
 		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for _, entry := range job.entries {
-				if entry.engine != engine || !job.claim(entry) {
+				if entry.engine != lane || !job.claim(entry) {
 					continue
 				}
 				js.runEntry(job, entry)
@@ -712,11 +741,11 @@ func (js *ReviewJobs) drain(job *batchJob) {
 		job.id, progress.Done, progress.Failed, time.Since(started).Milliseconds())
 }
 
-func (job *batchJob) hasPending(engine string) bool {
+func (job *batchJob) hasPending(lane string) bool {
 	job.mu.Lock()
 	defer job.mu.Unlock()
 	for _, entry := range job.entries {
-		if entry.engine == engine && entry.status == batchPending {
+		if entry.engine == lane && entry.status == batchPending {
 			return true
 		}
 	}
@@ -743,7 +772,8 @@ func batchErrMessage(err error) string {
 }
 
 // runEntry executes one batch entry through the shared executor table.
-// Each entry holds its engine slot only for that entry; the slot is released
+// The runner is engine-keyed because the slot is engine-owned; the entry's
+// role does not route. Each entry holds its engine slot only for that entry; the slot is released
 // inside execute before the next entry is admitted, so interactive work waits
 // at most one batch op. Per-index completion (with job correlation) stays in
 // job.complete, which emits the per-entry timing line.
