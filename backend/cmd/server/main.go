@@ -3,9 +3,11 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"maia-board/backend/internal/engine"
@@ -23,6 +25,14 @@ func main() {
 	if !validDevice(device) {
 		log.Fatalf("invalid MAIA3_DEVICE %q: must be auto, cpu, or cuda[:N]", device)
 	}
+	largeWorkers, err := parseWorkerCount(getenv("MAIA3_WORKERS", "1"), "MAIA3_WORKERS")
+	if err != nil {
+		log.Fatalf("invalid MAIA3_WORKERS: %v", err)
+	}
+	fallbackModel, err := parseFallbackModel(getenv("MAIA3_FALLBACK_MODEL", "5m"))
+	if err != nil {
+		log.Fatalf("invalid MAIA3_FALLBACK_MODEL: %v", err)
+	}
 	idleTimeout, err := parseIdleTimeout(getenv("MAIA3_IDLE_TIMEOUT", "10m"))
 	if err != nil {
 		log.Fatalf("invalid MAIA3_IDLE_TIMEOUT: %v", err)
@@ -30,10 +40,22 @@ func main() {
 	port := getenv("PORT", "8080")
 	staticDir := getenv("STATIC_DIR", "/app/static")
 
-	large := engine.NewWorker("79m", workerCommand(python, workerPath, largeModel, device))
-	small := engine.NewWorker("5m", workerCommand(python, workerPath, smallModel, device))
+	large := engine.NewPool("79m", workerCommand(python, workerPath, largeModel, device), largeWorkers)
 	large.SetIdleTimeout(idleTimeout)
-	small.SetIdleTimeout(idleTimeout)
+	var small engine.Predictor
+	fallbackWorkers := 0
+	if fallbackModel != "off" {
+		smallWorkers, err := parseWorkerCount(getenv("MAIA3_FALLBACK_WORKERS", "1"), "MAIA3_FALLBACK_WORKERS")
+		if err != nil {
+			log.Fatalf("invalid MAIA3_FALLBACK_WORKERS: %v", err)
+		}
+		fallbackWorkers = smallWorkers
+		fallback := engine.NewPool(fallbackModel, workerCommand(python, workerPath, smallModel, device), smallWorkers)
+		fallback.SetIdleTimeout(idleTimeout)
+		small = fallback
+	} else if raw := os.Getenv("MAIA3_FALLBACK_WORKERS"); raw != "" {
+		log.Printf("MAIA3_FALLBACK_WORKERS=%q ignored: fallback is off", raw)
+	}
 	gameStore, err := store.NewGameStore(getenv("DB_PATH", "maia-board.db"))
 	if err != nil {
 		log.Fatalf("open game database: %v", err)
@@ -49,7 +71,7 @@ func main() {
 	}
 
 	address := ":" + port
-	log.Printf("maia-board listening on %s", address)
+	log.Printf("maia-board listening on %s (maia workers=%d fallback=%s workers=%d)", address, largeWorkers, fallbackModel, fallbackWorkers)
 	// Bounded reads keep slow clients from holding connections; no
 	// WriteTimeout because /reviews/:id/events streams heartbeats for the
 	// whole batch (minutes) and the timeout would cut long streams.
@@ -101,6 +123,38 @@ func validDevice(device string) bool {
 		return true
 	}
 	return false
+}
+
+// parseWorkerCount parses MAIA3_*_WORKERS: replica processes per model.
+// Empty selects 1 (historical single worker); values below 1 fail fast so a
+// typo never boots a pool that admits work it cannot serve.
+func parseWorkerCount(raw, name string) (int, error) {
+	if raw == "" {
+		return 1, nil
+	}
+	var n int
+	if _, err := fmt.Sscanf(raw, "%d", &n); err != nil || fmt.Sprintf("%d", n) != strings.TrimSpace(raw) {
+		return 0, fmt.Errorf("%s must be a positive integer, got %q", name, raw)
+	}
+	if n < 1 {
+		return 0, fmt.Errorf("%s must be a positive integer, got %q", name, raw)
+	}
+	return n, nil
+}
+
+// parseFallbackModel parses MAIA3_FALLBACK_MODEL: "5m" (default) keeps the
+// 79M→5M degraded fallback, "off" runs a single-model server where explicit
+// 5m requests are rejected and degraded responses are impossible. Anything
+// else fails fast so a typo never silently disables the safety net.
+func parseFallbackModel(raw string) (string, error) {
+	switch raw {
+	case "", "5m":
+		return "5m", nil
+	case "off":
+		return "off", nil
+	default:
+		return "", fmt.Errorf("must be 5m or off, got %q", raw)
+	}
 }
 
 // parseIdleTimeout parses MAIA3_IDLE_TIMEOUT: a Go duration ("10m", "1h")

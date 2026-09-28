@@ -194,4 +194,9 @@ Liveness plus Maia worker state. `GET` or `HEAD`.
 {"status": "ok|degraded|unavailable", "models": {"79m": {...}, "5m": {...}}}
 ```
 
-Returns 503 when both workers failed, 200 otherwise.
+Single-model servers (`MAIA3_FALLBACK_MODEL=off`) omit the `5m` entry and
+report `unavailable` when the primary failed. Returns 503 when every
+configured pool failed, 200 otherwise. Explicit `5m` requests on such
+servers are rejected with `400 invalid_model` (`/move`, `/move/analysis`)
+or `400 invalid_request` (batch entries); cached `5m` lookup rows still
+serve.

@@ -97,6 +97,10 @@ func (s *Server) serveMove(w http.ResponseWriter, r *http.Request, prio sched.Pr
 		return
 	}
 	model = validated
+	if s.pool != nil && !s.pool.Supports(model) {
+		writeAPIError(w, http.StatusBadRequest, "invalid_model", "model 5m is not enabled on this server")
+		return
+	}
 
 	// waitCtx dequeues on disconnect; execCtx stays detached so a granted op
 	// still validates and persists after the client goes away.

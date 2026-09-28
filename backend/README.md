@@ -30,6 +30,7 @@ For standard-start history, omit `initial_fen` or supply the standard starting
 FEN. Supply `initial_fen` explicitly for a custom starting position. The worker
 replays `moves` from that position and compares the result with `fen` before inference.
 Elo inputs accept 0–5000; model names are `79m` and `5m` (default `79m`).
+Single-model servers (`MAIA3_FALLBACK_MODEL=off`) reject explicit `5m`.
 Inference accepts at most 256 plies. Position history and FEN must describe the
 same board, and `maia_color` must match the side to move.
 
@@ -155,7 +156,7 @@ Every request resets both ratings, candidate count, and temperature. The worker
 validates positions and moves before invoking upstream, then validates legal
 candidates, probability ordering, and win/draw/loss values before replying.
 
-Each model worker has one serial operation slot. Admission waits at most 100 ms;
+Each model pool has one serial operation slot per replica. Admission waits at most 100 ms;
 identical deterministic work can join the running operation. Sampled play requests
 do not share results. Startup has a 300-second deadline and inference has a separate
 120-second deadline. A cancelled worker caller stops waiting while the operation
@@ -282,8 +283,11 @@ mock tests do not measure model quality or cold-loading performance.
 | `DB_PATH` | `maia-board.db` | SQLite database |
 | `PYTHON` | `python3` | Worker interpreter |
 | `MAIA3_WORKER` | `/app/maia3_worker.py` | Maia adapter |
-| `MAIA3_MODEL_79M` | `79m` | Large-model alias |
+| `MAIA3_MODEL_79M` | `79m` | Primary-model alias |
 | `MAIA3_MODEL_5M` | `5m` | Fallback-model alias |
+| `MAIA3_WORKERS` | `1` | Primary-model replica processes sharing one priority scheduler; raise on a big GPU for concurrent Play/Focus/Batch throughput (each replica duplicates weights + a CUDA context) |
+| `MAIA3_FALLBACK_MODEL` | `5m` | `5m` keeps the 79M→5M degraded fallback; `off` runs a single-model server where explicit 5m requests are rejected and degraded responses are impossible |
+| `MAIA3_FALLBACK_WORKERS` | `1` | Fallback-model replicas; ignored with a warning when fallback is off |
 | `MAIA3_DEVICE` | `auto` | Torch device for both Maia workers: `auto` (upstream default — CUDA when torch sees a GPU, else CPU), `cpu`, or `cuda[:N]`. CUDA also enables AMP; explicit `cpu` keeps AMP off. Invalid values fail fast at startup. |
 | `MAIA3_IDLE_TIMEOUT` | `10m` | Unused Maia worker lifetime: Go duration after which an idle model process is stopped to free GPU memory (`0` disables). The next request cold-starts it. Invalid values fail fast at startup. |
 | `STOCKFISH_WORKER` | `/app/stockfish_worker.py` | Stockfish adapter |

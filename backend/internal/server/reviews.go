@@ -495,6 +495,9 @@ func (js *ReviewJobs) resolveBatchEntryRequest(index int, line batchLine, query 
 		if reqErr != nil {
 			return nil, &apierror.RequestError{Code: "invalid_request", Message: prefixMsg + reqErr.Message}
 		}
+		if js.s != nil && js.s.pool != nil && !js.s.pool.Supports(model) {
+			return nil, &apierror.RequestError{Code: "invalid_request", Message: prefixMsg + "model 5m is not enabled on this server"}
+		}
 		entry.maiaReq, entry.maiaModel = request, model
 		entry.role = roleDisplay
 		// Grading lane, made explicit: a Maia entry whose resolved
@@ -692,8 +695,9 @@ func (js *ReviewJobs) reviewByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// drain executes one slot lane at a time per engine (matching the
-// single-slot engines) with the two lanes in parallel. Lanes are
+// drain executes one slot lane at a time per engine (sf stays single-lane;
+// the maia lane runs up to the pool's replica count in parallel) with the
+// two lanes in parallel. Lanes are
 // engine-keyed because slots are engine-owned; entry roles (grade vs
 // display) ride along for treatment, never for routing. Work runs on
 // detached contexts: a disconnected client neither stops the batch nor
@@ -702,7 +706,7 @@ func (js *ReviewJobs) reviewByID(w http.ResponseWriter, r *http.Request) {
 // Batch yield: each entry holds its engine slot only for that entry. After
 // the write-through the slot is released before the next entry is admitted,
 // so pumpLocked grants any waiting Play/Focus ticket next (Play>Focus>Batch).
-// Interactive work therefore waits at most one batch op.
+// Interactive work therefore waits at most for a running batch op to finish.
 func (js *ReviewJobs) drain(job *batchJob) {
 	started := time.Now()
 	var wg sync.WaitGroup
@@ -711,16 +715,22 @@ func (js *ReviewJobs) drain(job *batchJob) {
 		if !job.hasPending(lane) {
 			continue
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for _, entry := range job.entries {
-				if entry.engine != lane || !job.claim(entry) {
-					continue
+		workers := 1
+		if lane == "maia" {
+			workers = js.maiaConcurrency()
+		}
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for _, entry := range job.entries {
+					if entry.engine != lane || !job.claim(entry) {
+						continue
+					}
+					js.runEntry(job, entry)
 				}
-				js.runEntry(job, entry)
-			}
-		}()
+			}()
+		}
 	}
 	wg.Wait()
 	job.mu.Lock()
@@ -739,6 +749,16 @@ func (js *ReviewJobs) drain(job *batchJob) {
 	job.mu.Unlock()
 	log.Printf("review-batch finish job=%s done=%d failed=%d duration_ms=%d",
 		job.id, progress.Done, progress.Failed, time.Since(started).Milliseconds())
+}
+
+// maiaConcurrency bounds the maia drain lane: one worker per pool replica
+// so extra GPUs actually serve whole-line reviews. Non-pool predictors
+// (test fakes) count as 1, preserving historical single-lane behavior.
+func (js *ReviewJobs) maiaConcurrency() int {
+	if js == nil || js.s == nil || js.s.pool == nil {
+		return 1
+	}
+	return js.s.pool.MaiaParallelism()
 }
 
 func (job *batchJob) hasPending(lane string) bool {

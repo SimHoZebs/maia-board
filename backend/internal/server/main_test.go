@@ -88,8 +88,7 @@ func (f *prioRecorder) Predict(_ context.Context, _ context.Context, prio sched.
 }
 func (f *prioRecorder) WorkerStatus() engine.WorkerStatus { return engine.WorkerStatus{} }
 
-func TestMoveEndpointsAdmitOnSeparateLanes(t *testing.T) {
-	// /move (live replies) admits on Play, /move/analysis (retrospective
+func TestMoveEndpointsAdmitOnSeparateLanes(t *testing.T) { // /move (live replies) admits on Play, /move/analysis (retrospective
 	// analysis) on Focus, so a play move and its analysis queue instead of
 	// superseding each other on the shared slot.
 	wdl := [3]float64{0.2, 0.3, 0.5}
@@ -112,6 +111,23 @@ func TestMoveEndpointsAdmitOnSeparateLanes(t *testing.T) {
 	}
 	if len(rec.prios) != 2 || rec.prios[0] != sched.PriorityPlay || rec.prios[1] != sched.PriorityFocus {
 		t.Fatalf("lanes = %v, want [Play Focus]", rec.prios)
+	}
+}
+
+func TestMoveRejectsDisabledModel(t *testing.T) {
+	live := &fakePredictor{result: engineFixture("e2e4")}
+	s := &Server{pool: engine.NewEnginePool(live, nil), store: testStore(t)}
+	post := func(model string) *httptest.ResponseRecorder {
+		body := `{"fen":"` + startFEN + `","moves":[],"elo_maia":1600,"elo_user":1600,"model":"` + model + `","maia_color":"white"}`
+		w := httptest.NewRecorder()
+		s.move(w, httptest.NewRequest(http.MethodPost, "/move", strings.NewReader(body)))
+		return w
+	}
+	if w := post("79m"); w.Code != http.StatusOK {
+		t.Fatalf("enabled 79m: %d %s", w.Code, w.Body)
+	}
+	if w := post("5m"); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_model") {
+		t.Fatalf("disabled 5m: %d %s, want 400 invalid_model", w.Code, w.Body)
 	}
 }
 

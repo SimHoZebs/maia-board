@@ -256,16 +256,23 @@ func TestSchedulerContextCancelDropsQueued(t *testing.T) {
 func runningKey(s *Scheduler) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.running == nil {
+	if len(s.running) != 1 {
 		return ""
 	}
-	return s.running.key
+	for t := range s.running {
+		return t.key
+	}
+	return ""
 }
 
 func releaseRunning(t *testing.T, s *Scheduler) {
 	t.Helper()
 	s.mu.Lock()
-	r := s.running
+	var r *ticket
+	for t := range s.running {
+		r = t
+		break
+	}
 	s.mu.Unlock()
 	if r == nil {
 		t.Fatal("no running ticket to release")
@@ -358,6 +365,39 @@ func TestSchedulerBatchOrphanDrains(t *testing.T) {
 	}
 	if !s.Idle() {
 		t.Fatal("orphan group left residue")
+	}
+}
+
+// Capacity 2: two concurrent acquires both grant without a release; a
+// third queues until one frees.
+func TestSchedulerCapacityTwo(t *testing.T) {
+	s := NewSchedulerWithCapacity(2)
+	if got := s.Capacity(); got != 2 {
+		t.Fatalf("capacity = %d, want 2", got)
+	}
+	a := awaitGrant(t, enqueueAsync(s, PriorityBatch, "a", 1))
+	b := awaitGrant(t, enqueueAsync(s, PriorityBatch, "b", 1))
+	if s.Idle() {
+		t.Fatal("two running grants must not read idle")
+	}
+	queued := enqueueAsync(s, PriorityBatch, "c", 1)
+	select {
+	case <-queued:
+		t.Fatal("third acquire granted with no free slot")
+	case <-time.After(100 * time.Millisecond):
+	}
+	s.Release(a)
+	s.Release(awaitGrant(t, queued))
+	s.Release(b)
+	if !s.Idle() {
+		t.Fatal("capacity scheduler did not drain")
+	}
+}
+
+// Capacity clamps below 1 to single-slot.
+func TestSchedulerCapacityClamps(t *testing.T) {
+	if got := NewSchedulerWithCapacity(0).Capacity(); got != 1 {
+		t.Fatalf("capacity 0 clamped to %d, want 1", got)
 	}
 }
 

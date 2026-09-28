@@ -461,3 +461,154 @@ func TestPoolSweepIdleUnloadsBoth(t *testing.T) {
 	pool = NewEnginePool(&fakePredictor{}, &fakePredictor{})
 	pool.SweepIdle(time.Now())
 }
+
+func persistentPool(t *testing.T, count int) *Pool {
+	t.Helper()
+	t.Setenv("MAIA_JSON_HELPER", "1")
+	p := NewPool("test", []string{os.Args[0], "-test.run=^TestPersistentMaiaHelper$"}, count)
+	p.SetWaitsForTest(time.Second, 2*time.Second)
+	t.Cleanup(p.Close)
+	return p
+}
+
+// Two distinct deterministic requests overlap on a 2-replica pool: with one
+// slot the second would exhaust its 100ms sync wait against the 400ms
+// inference and report busy. Distinct OppoElo values keep separate dedup
+// keys so neither joins the other.
+func TestPoolServesDistinctRequestsConcurrently(t *testing.T) {
+	oldWait := SyncWaitFocus
+	SyncWaitFocus = 100 * time.Millisecond
+	defer func() { SyncWaitFocus = oldWait }()
+	p := persistentPool(t, 2)
+	type outcome struct {
+		result MaiaResult
+		err    error
+	}
+	first, second := make(chan outcome, 1), make(chan outcome, 1)
+	go func() {
+		result, release, err := p.Predict(context.Background(), context.Background(), sched.PriorityFocus, 0,
+			MaiaRequest{FEN: startFEN, SelfElo: 400, OppoElo: 1})
+		if release != nil {
+			release()
+		}
+		second <- outcome{result, err}
+	}()
+	go func() {
+		result, release, err := p.Predict(context.Background(), context.Background(), sched.PriorityFocus, 0,
+			MaiaRequest{FEN: startFEN, SelfElo: 400, OppoElo: 2})
+		if release != nil {
+			release()
+		}
+		first <- outcome{result, err}
+	}()
+	deadline := time.After(15 * time.Second)
+	o1, o2 := outcome{}, outcome{}
+	for i := 0; i < 2; i++ {
+		select {
+		case o := <-first:
+			o1 = o
+		case o := <-second:
+			o2 = o
+		case <-deadline:
+			t.Fatal("pool did not serve both requests")
+		}
+	}
+	if o1.err != nil || o2.err != nil {
+		t.Fatalf("concurrent pool requests failed: %v / %v", o1.err, o2.err)
+	}
+	moves := map[string]bool{o1.result.Move: true, o2.result.Move: true}
+	if !moves["e2e4"] || !moves["d2d4"] {
+		t.Fatalf("cross-talk: got %q and %q", o1.result.Move, o2.result.Move)
+	}
+}
+
+func TestPoolConstruction(t *testing.T) {
+	if got := NewPool("m", nil, 0).Size(); got != 1 {
+		t.Fatalf("count 0 clamped to %d, want 1", got)
+	}
+	p := NewPool("m", nil, 3)
+	if p.Size() != 3 || p.PoolSize() != 3 || p.Model() != "m" {
+		t.Fatalf("pool shape: size=%d model=%q", p.Size(), p.Model())
+	}
+	// No process starts at construction: aggregate state is unloaded.
+	if state := p.WorkerStatus().State; state != stateUnloaded {
+		t.Fatalf("fresh pool state = %s, want unloaded", state)
+	}
+}
+
+func TestEnginePoolMaiaParallelism(t *testing.T) {
+	if got := NewEnginePool(&fakePredictor{}, &fakePredictor{}).MaiaParallelism(); got != 2 {
+		t.Fatalf("fake pair parallelism = %d, want 2", got)
+	}
+	mixed := NewEnginePool(NewPool("79m", nil, 2), &fakePredictor{})
+	if got := mixed.MaiaParallelism(); got != 3 {
+		t.Fatalf("mixed parallelism = %d, want 3", got)
+	}
+}
+
+func TestEnginePoolSweepsPools(t *testing.T) {
+	p := persistentPool(t, 2)
+	p.SetIdleTimeout(time.Millisecond)
+	result, release, err := p.Predict(context.Background(), context.Background(), sched.PriorityFocus, 0,
+		MaiaRequest{FEN: startFEN})
+	if release != nil {
+		release()
+	}
+	if err != nil || result.Move != "e2e4" {
+		t.Fatalf("warmup: %+v %v", result, err)
+	}
+	for _, w := range p.workers {
+		backdateIdle(t, w, time.Hour)
+	}
+	NewEnginePool(p, &fakePredictor{}).SweepIdle(time.Now())
+	for i, w := range p.workers {
+		if w.WorkerStatus().State != stateUnloaded {
+			t.Fatalf("replica %d state = %s, want unloaded", i, w.WorkerStatus().State)
+		}
+	}
+}
+
+// A hard pool failure (empty command fails fast with a protocol error)
+// degrades to the fallback pool, releasing the primary grant first.
+func TestEnginePoolFallsBackAcrossPools(t *testing.T) {
+	primary := NewPool("79m", nil, 2)
+	fallback := &fakePredictor{result: engineFixture("e2e4")}
+	result, release, used, degraded, err := NewEnginePool(primary, fallback).Predict(
+		context.Background(), context.Background(), sched.PriorityFocus, 0, "79m", MaiaRequest{})
+	if release != nil {
+		release()
+	}
+	if err != nil || used != "5m" || !degraded || result.Move != "e2e4" || fallback.calls != 1 {
+		t.Fatalf("pool fallback: %+v %s %t %v", result, used, degraded, err)
+	}
+	if !primary.Idle() {
+		t.Fatal("primary pool retained its slot after fallback")
+	}
+}
+
+// Without a fallback pool the server is single-model: 79m hard failures
+// surface directly, explicit 5m is rejected, health reports one model, and
+// drain parallelism counts the primary only.
+func TestEnginePoolWithoutFallback(t *testing.T) {
+	primaryErr := errors.New("79m failed")
+	pool := NewEnginePool(&fakePredictor{err: primaryErr}, nil)
+	if !pool.Supports("79m") || pool.Supports("5m") {
+		t.Fatal("Supports must admit 79m and reject 5m without fallback")
+	}
+	_, _, _, _, err := pool.Predict(context.Background(), context.Background(), sched.PriorityFocus, 0, "79m", MaiaRequest{})
+	if !errors.Is(err, primaryErr) {
+		t.Fatalf("single-model 79m failure = %v, want %v", err, primaryErr)
+	}
+	if _, _, _, _, err := pool.Predict(context.Background(), context.Background(), sched.PriorityFocus, 0, "5m", MaiaRequest{}); err == nil {
+		t.Fatal("single-model 5m accepted")
+	}
+	failed := NewEnginePool(&fakePredictor{status: WorkerStatus{State: stateFailed}}, nil)
+	if status, models, code := failed.Health(); status != "unavailable" || code != 503 || len(models) != 1 {
+		t.Fatalf("single-model failed health = %s %d %v", status, code, models)
+	}
+	if got := NewEnginePool(NewPool("79m", nil, 2), nil).MaiaParallelism(); got != 2 {
+		t.Fatalf("single-pool parallelism = %d, want 2", got)
+	}
+	// Nil-safe sweeps never panic.
+	pool.SweepIdle(time.Now())
+}

@@ -6,6 +6,32 @@ import (
 	"time"
 )
 
+func TestParseFallbackModel(t *testing.T) {
+	for raw, want := range map[string]string{"5m": "5m", "off": "off", "": "5m"} {
+		got, err := parseFallbackModel(raw)
+		if err != nil || got != want {
+			t.Fatalf("parseFallbackModel(%q) = %q, %v; want %q", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{"none", "79m", "OFF", "0"} {
+		if _, err := parseFallbackModel(raw); err == nil {
+			t.Fatalf("parseFallbackModel(%q) accepted", raw)
+		}
+	}
+}
+func TestParseWorkerCount(t *testing.T) {
+	for raw, want := range map[string]int{"1": 1, "2": 2, "8": 8, "": 1} {
+		got, err := parseWorkerCount(raw, "MAIA3_79M_WORKERS")
+		if err != nil || got != want {
+			t.Fatalf("parseWorkerCount(%q) = %v, %v; want %v", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{"0", "-2", "two", "1.5", "1x"} {
+		if _, err := parseWorkerCount(raw, "MAIA3_79M_WORKERS"); err == nil {
+			t.Fatalf("parseWorkerCount(%q) accepted", raw)
+		}
+	}
+}
 func TestParseIdleTimeout(t *testing.T) {
 	for raw, want := range map[string]time.Duration{"10m": 10 * time.Minute, "30s": 30 * time.Second, "1h": time.Hour, "0": 0, "": 0} {
 		got, err := parseIdleTimeout(raw)

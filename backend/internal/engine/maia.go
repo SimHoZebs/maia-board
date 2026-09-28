@@ -91,9 +91,9 @@ type WorkerStatus struct {
 	LastError string      `json:"last_error,omitempty"`
 }
 
-// Predictor admits and runs one inference. Worker implements it; tests stub
-// it. Predict's release must be called exactly once after the caller
-// persists the result (nil when there is nothing to persist).
+// Predictor admits and runs one inference. Worker and Pool implement it;
+// tests stub it. Predict's release must be called exactly once after the
+// caller persists the result (nil when there is nothing to persist).
 type Predictor interface {
 	Predict(waitCtx, execCtx context.Context, prio sched.Priority, submitSeq uint64, request MaiaRequest) (MaiaResult, func(), error)
 	WorkerStatus() WorkerStatus
@@ -161,6 +161,12 @@ func (w *Worker) markUsed() {
 // gate the unload, with a lastActive re-check after the lock to avoid
 // evicting a request that arrived concurrently.
 func (w *Worker) tryUnloadIdle(now time.Time) bool {
+	return w.tryUnloadIdleWithIdle(now, w.sched.Idle)
+}
+
+// tryUnloadIdleWithIdle shares the eviction logic between standalone workers
+// (idle = own scheduler) and pool replicas (idle = pool scheduler).
+func (w *Worker) tryUnloadIdleWithIdle(now time.Time, idle func() bool) bool {
 	w.idleMu.Lock()
 	timeout := w.idleTimeout
 	last := w.lastActive
@@ -171,14 +177,14 @@ func (w *Worker) tryUnloadIdle(now time.Time) bool {
 	if now.Sub(last) < timeout {
 		return false
 	}
-	if !w.sched.Idle() {
+	if !idle() {
 		return false
 	}
 	if !w.mu.TryLock() {
 		return false
 	}
 	defer w.mu.Unlock()
-	if !w.sched.Idle() {
+	if !idle() {
 		return false
 	}
 	if w.proc == nil {
@@ -488,13 +494,212 @@ func SanitizeError(value string) string {
 	return value
 }
 
+// Pool is one inference responsibility carried out by N interchangeable
+// model processes. Replicas share a single multi-slot scheduler (one
+// priority queue, dedup map, and batch rotation cursor), so Play > Focus >
+// Batch ordering, same-key joins, and latest-wins semantics hold across
+// replicas exactly as they did for the historical single worker. The pool
+// implements Predictor, so EnginePool and all existing tests keep working:
+// production passes pools, tests keep passing fakes.
+//
+// Identity (cache/dedup keys) derives from the pool's model, never the
+// per-replica process name: replicas are fungible, and two replicas must
+// never treat the same deterministic work as different keys.
+type Pool struct {
+	model   string
+	workers []*Worker
+	sched   *sched.Scheduler
+	free    chan *Worker
+}
+
+// NewPool builds a responsibility pool of count identical model processes
+// from one base command. Count below 1 clamps to 1. A single replica keeps
+// the historical process name (the model); multiple replicas take
+// model-0, model-1, ... for diagnostics.
+func NewPool(model string, baseCommand []string, count int) *Pool {
+	if count < 1 {
+		count = 1
+	}
+	workers := make([]*Worker, 0, count)
+	for i := 0; i < count; i++ {
+		name := model
+		if count > 1 {
+			name = fmt.Sprintf("%s-%d", model, i)
+		}
+		workers = append(workers, NewWorker(name, append([]string(nil), baseCommand...)))
+	}
+	return &Pool{model: model, workers: workers, sched: sched.NewSchedulerWithCapacity(count), free: func() chan *Worker {
+		free := make(chan *Worker, count)
+		for _, w := range workers {
+			free <- w
+		}
+		return free
+	}()}
+}
+
+// Size reports the replica count.
+func (p *Pool) Size() int { return len(p.workers) }
+
+// PoolSize is the drain-parallelism seam: generic code sums it without
+// importing pool internals; fakes without it count as 1.
+func (p *Pool) PoolSize() int { return len(p.workers) }
+
+// Model reports the pool's model identity (cache/dedup key scope).
+func (p *Pool) Model() string { return p.model }
+
+// SetIdleTimeout configures GPU unload on every replica. Zero disables.
+func (p *Pool) SetIdleTimeout(d time.Duration) {
+	for _, w := range p.workers {
+		w.SetIdleTimeout(d)
+	}
+}
+
+// SetWaitsForTest shrinks startup/inference deadlines on every replica.
+func (p *Pool) SetWaitsForTest(startWait, moveWait time.Duration) {
+	for _, w := range p.workers {
+		w.SetWaitsForTest(startWait, moveWait)
+	}
+}
+
+// Close stops every replica process.
+func (p *Pool) Close() {
+	for _, w := range p.workers {
+		w.Close()
+	}
+}
+
+// Idle reports whether no operation is running or queued on the pool.
+func (p *Pool) Idle() bool { return p.sched.Idle() }
+
+// WorkerStatus aggregates replicas: failed only when every replica failed;
+// otherwise the best available state wins (ready > busy > starting >
+// unloaded), so one healthy replica keeps the model serving. LastError
+// carries the first non-empty replica diagnostic.
+func (p *Pool) WorkerStatus() WorkerStatus {
+	best := WorkerStatus{State: stateFailed}
+	rank := map[workerState]int{stateFailed: 0, stateUnloaded: 1, stateStarting: 2, stateBusy: 3, stateReady: 4}
+	for _, w := range p.workers {
+		status := w.WorkerStatus()
+		if rank[status.State] > rank[best.State] {
+			best.State = status.State
+		}
+		if best.LastError == "" && status.LastError != "" {
+			best.LastError = status.LastError
+		}
+	}
+	return best
+}
+
+// SweepIdle unloads replicas idle past their timeout. It never interrupts
+// running or queued work: a busy pool scheduler skips the sweep, and each
+// replica re-checks pool idleness under its operation lock.
+func (p *Pool) SweepIdle(now time.Time) {
+	if !p.sched.Idle() {
+		return
+	}
+	for _, w := range p.workers {
+		w.tryUnloadIdleWithIdle(now, p.sched.Idle)
+	}
+}
+
+// Predict admits through the shared scheduler, checks out a free replica,
+// then runs one inference. The release contract mirrors Worker.Predict: it
+// must be called exactly once after the caller persists the result (nil
+// when there is nothing to persist). A cancelled waiter leaves its replica
+// checked out until the reply drains, preserving warm processes and slots.
+func (p *Pool) Predict(waitCtx, execCtx context.Context, prio sched.Priority, submitSeq uint64, request MaiaRequest) (MaiaResult, func(), error) {
+	if err := waitCtx.Err(); err != nil {
+		return MaiaResult{}, nil, err
+	}
+	request.Moves = append([]string{}, request.Moves...)
+	data, err := json.Marshal(request)
+	if err != nil || len(data) > ipc.LineLimit {
+		return MaiaResult{}, nil, ErrInvalidPosition
+	}
+	key := ""
+	if request.Temperature == 0 {
+		key, _ = MaiaIdentity(request, p.model).Coordinates()
+	}
+	grant, err := Admit(waitCtx, prio, p.sched, key, submitSeq)
+	if err != nil {
+		return MaiaResult{}, nil, err
+	}
+	var w *Worker
+	select {
+	case w = <-p.free:
+	case <-execCtx.Done():
+		p.sched.Release(grant)
+		return MaiaResult{}, nil, execCtx.Err()
+	}
+	w.markUsed()
+	w.setBusy(true)
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			p.sched.Release(grant)
+			w.setBusy(false)
+			p.free <- w
+		})
+	}
+	op := &maiaInflight{key: key, grant: grant, done: make(chan struct{})}
+	go func() {
+		w.mu.Lock()
+		op.result, op.err = w.predictLocked(context.Background(), request)
+		w.mu.Unlock()
+		w.markUsed()
+		if op.abandoned.Load() {
+			release()
+		}
+		close(op.done)
+	}()
+	completed := func() (MaiaResult, func(), error) {
+		result := op.result
+		result.Candidates = append([]MaiaCandidate(nil), result.Candidates...)
+		if op.err != nil {
+			return MaiaResult{}, release, op.err
+		}
+		return result, release, nil
+	}
+	select {
+	case <-execCtx.Done():
+		select {
+		case <-op.done:
+			return completed()
+		default:
+			op.abandoned.Store(true)
+			return MaiaResult{}, nil, execCtx.Err()
+		}
+	case <-op.done:
+		return completed()
+	}
+}
+
+// EnginePool is the Maia inference responsibility: a primary pool with an
+// optional fallback pool (nil disables fallback for single-model servers).
+// Callers name a preferred model ("79m" or "5m"); explicit 5m enters at the
+// fallback directly, while 79m tries the primary first and degrades to the
+// fallback on hard operation failures (never for admission, validation, or
+// cancellation signals). Stockfish has no fallback; its responsibility
+// stays a bare pool elsewhere.
 type EnginePool struct{ large, small Predictor }
+
+// Supports reports whether model may run on this pool: 79m always, 5m only
+// when a fallback pool exists.
+func (p *EnginePool) Supports(model string) bool {
+	if model == "5m" {
+		return p != nil && p.small != nil
+	}
+	return true
+}
 
 func NewEnginePool(large, small Predictor) *EnginePool {
 	return &EnginePool{large: large, small: small}
 }
 func (p *EnginePool) Predict(waitCtx, execCtx context.Context, prio sched.Priority, submitSeq uint64, model string, request MaiaRequest) (MaiaResult, func(), string, bool, error) {
 	if model == "5m" {
+		if p.small == nil {
+			return MaiaResult{}, nil, "", false, errors.New("model 5m is not enabled on this server")
+		}
 		result, release, err := p.small.Predict(waitCtx, execCtx, prio, submitSeq, request)
 		return result, release, "5m", false, err
 	}
@@ -511,6 +716,9 @@ func (p *EnginePool) Predict(waitCtx, execCtx context.Context, prio sched.Priori
 	if errors.Is(err, ErrWorkerBusy) || errors.Is(err, ErrJoined) || errors.Is(err, sched.ErrSuperseded) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrPositionMismatch) || errors.Is(err, ErrInvalidPosition) || errors.Is(err, ErrNoLegalMoves) {
 		return MaiaResult{}, nil, "", false, err
 	}
+	if p.small == nil {
+		return MaiaResult{}, nil, "", false, err
+	}
 	result, release, fallbackErr := p.small.Predict(waitCtx, execCtx, prio, submitSeq, request)
 	if fallbackErr != nil {
 		if release != nil {
@@ -522,23 +730,63 @@ func (p *EnginePool) Predict(waitCtx, execCtx context.Context, prio sched.Priori
 }
 
 func (p *EnginePool) Health() (string, map[string]WorkerStatus, int) {
-	large, small := p.large.WorkerStatus(), p.small.WorkerStatus()
-	status, code := "ok", 200
-	if large.State == stateFailed && small.State == stateFailed {
-		status, code = "unavailable", 503
-	} else if large.State == stateFailed || small.State == stateFailed {
-		status = "degraded"
+	large := p.large.WorkerStatus()
+	models := map[string]WorkerStatus{"79m": large}
+	if p.small != nil {
+		small := p.small.WorkerStatus()
+		models["5m"] = small
+		status, code := "ok", 200
+		if large.State == stateFailed && small.State == stateFailed {
+			status, code = "unavailable", 503
+		} else if large.State == stateFailed || small.State == stateFailed {
+			status = "degraded"
+		}
+		return status, models, code
 	}
-	return status, map[string]WorkerStatus{"79m": large, "5m": small}, code
+	if large.State == stateFailed {
+		return "unavailable", models, 503
+	}
+	return "ok", models, 200
 }
 
 // SweepIdle unloads workers idle since before now minus their timeout,
 // freeing GPU memory. It is a no-op for predictors without idle support
-// (test fakes) and for timeouts <= 0.
+// (test fakes) and for timeouts <= 0. A nil fallback pool is skipped.
 func (p *EnginePool) SweepIdle(now time.Time) {
 	for _, pr := range []Predictor{p.large, p.small} {
+		if pr == nil {
+			continue
+		}
+		if s, ok := pr.(interface{ SweepIdle(time.Time) }); ok {
+			s.SweepIdle(now)
+			continue
+		}
 		if w, ok := pr.(interface{ tryUnloadIdle(time.Time) bool }); ok {
 			w.tryUnloadIdle(now)
 		}
 	}
+}
+
+// MaiaParallelism reports how many maia batch entries may run concurrently:
+// the summed replica counts of pool predictors, with non-pool predictors
+// (test fakes, standalone workers) counting as 1 and a disabled fallback
+// contributing 0. The batch drain spawns this many maia-lane workers so
+// extra replicas actually serve whole-line reviews instead of idling
+// behind a single drain loop.
+func (p *EnginePool) MaiaParallelism() int {
+	total := 0
+	for _, pr := range []Predictor{p.large, p.small} {
+		if pr == nil {
+			continue
+		}
+		if s, ok := pr.(interface{ PoolSize() int }); ok {
+			total += s.PoolSize()
+		} else {
+			total++
+		}
+	}
+	if total < 1 {
+		return 1
+	}
+	return total
 }

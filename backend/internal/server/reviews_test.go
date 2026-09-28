@@ -111,6 +111,16 @@ func TestBatchValidation(t *testing.T) {
 	}
 }
 
+func TestBatchRejectsDisabledModel(t *testing.T) {
+	large := &fakePredictor{result: engineFixture("e2e4")}
+	s := &Server{pool: engine.NewEnginePool(large, nil), evaluator: fakeEvaluator(t, "ok"), store: testStore(t)}
+	s.reviews = NewReviewJobs(s)
+	body := batchBody(fmt.Sprintf(`{"engine":"maia","ply":0,"fen":"%s","elo_maia":1500,"elo_user":1500,"model":"5m"}`, startFEN))
+	if code, _ := postBatch(t, s, body); code != 400 {
+		t.Fatalf("disabled 5m batch status %d, want 400", code)
+	}
+}
+
 func TestBatchDrainsAndPersists(t *testing.T) {
 	s := batchServer(t, "ok")
 	body := batchBody(sfBatchReq(), maiaBatchReq())

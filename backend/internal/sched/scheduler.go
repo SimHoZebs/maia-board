@@ -1,4 +1,4 @@
-// Package sched orders admission to a single-slot engine across three
+// Package sched orders admission to engine slots across three
 // priority lanes. It owns ordering and cancellation only; execution stays
 // with the caller.
 package sched
@@ -20,8 +20,8 @@ const (
 	PriorityBatch
 )
 
-// ErrSchedulerBusy maps to 503: the bounded admission wait expired while a
-// longer-than-expected operation held the single slot. Queues themselves are
+// ErrSchedulerBusy maps to 503: the bounded admission wait expired while
+// longer-than-expected operations held all slots. Queues themselves are
 // unbounded (interactive lanes latest-wins at depth 1, batch FIFO), so this
 // signals overload, never lane-full.
 var ErrSchedulerBusy = errors.New("engine scheduler is busy")
@@ -64,7 +64,7 @@ type Grant struct {
 	t *ticket
 }
 
-// Scheduler orders admission to a single-slot engine across three FIFO lanes.
+// Scheduler orders admission to engine slots across three FIFO lanes.
 // Lane derives from the endpoint (/move→Play, /move/analysis→Focus,
 // /evaluate→Focus, /reviews→Batch); the X-Priority header is ignored
 // (legacy clients may still send it). The /move vs /move/analysis split is
@@ -76,23 +76,46 @@ type Grant struct {
 // lifecycle. The zero value is unusable; use NewScheduler.
 //
 // Depths: Play 1 latest-wins, Focus 1 latest-wins (a new arrival replaces the
-// queued waiter, which gets ErrSuperseded and never consumes the slot),
+// queued waiter, which gets ErrSuperseded and never consumes a slot),
 // Batch unbounded FIFO. Dedup-by-key spans lanes within this scheduler
 // instance; empty keys never dedup. Stockfish runs two instances
 // (interactive + batch), so a Focus duplicate of in-flight Batch work
 // recomputes instead of joining; correctness is unaffected (last write wins).
-// Grant order is Play>Focus>Batch, non-preemptive (a grant waits at most one op).
+// Grant order is Play>Focus>Batch, non-preemptive (a grant waits at most for
+// a running op to finish).
+//
+// Capacity is the number of concurrent grants (engine slots behind this
+// scheduler). NewScheduler keeps the historical single-slot behavior;
+// pools build multi-slot schedulers with NewSchedulerWithCapacity so N
+// replicas share one priority queue, dedup map, and rotation cursor.
 type Scheduler struct {
 	mu          sync.Mutex
 	queues      [3][]*ticket
-	running     *ticket
+	running     map[*ticket]struct{}
+	capacity    int
 	byKey       map[string]*ticket
 	seq         uint64
 	batchCursor uint64 // last-served batch submitSeq, per scheduler (§1)
 }
 
 func NewScheduler() *Scheduler {
-	return &Scheduler{byKey: make(map[string]*ticket)}
+	return NewSchedulerWithCapacity(1)
+}
+
+// NewSchedulerWithCapacity builds a scheduler admitting up to n concurrent
+// operations. Values below 1 clamp to 1 (single-slot).
+func NewSchedulerWithCapacity(n int) *Scheduler {
+	if n < 1 {
+		n = 1
+	}
+	return &Scheduler{byKey: make(map[string]*ticket), running: make(map[*ticket]struct{}), capacity: n}
+}
+
+// Capacity reports the number of concurrent grants this scheduler admits.
+func (s *Scheduler) Capacity() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.capacity
 }
 
 // Acquire blocks until this key owns the slot, another caller completes the
@@ -189,11 +212,11 @@ func (s *Scheduler) Release(g *Grant) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.running != g.t {
+	if _, ok := s.running[g.t]; !ok {
 		return
 	}
 	g.t.state = ticketCompleted
-	s.running = nil
+	delete(s.running, g.t)
 	if g.t.key != "" {
 		delete(s.byKey, g.t.key)
 	}
@@ -233,7 +256,7 @@ func (s *Scheduler) removeLocked(target *ticket) {
 func (s *Scheduler) Idle() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.running != nil {
+	if len(s.running) != 0 {
 		return false
 	}
 	for prio := range s.queues {
@@ -244,40 +267,41 @@ func (s *Scheduler) Idle() bool {
 	return true
 }
 
-// pumpLocked grants the head of the highest-priority non-empty lane when the
-// slot is free. Play/Focus stay head-pick; the batch lane rotates across
-// submitSeq groups (§1): smallest submitSeq strictly greater than the cursor,
-// else smallest present (wrap); FIFO by global seq within a group. Sentinel 0
-// never matches the scan (sync tickets live in higher lanes anyway); a batch
-// grant with nonzero submitSeq advances the cursor, sync grants never touch
-// it. Drained groups vanish by absence. Callers hold s.mu.
+// pumpLocked grants queued tickets while free capacity remains. Play/Focus
+// stay head-pick; the batch lane rotates across submitSeq groups (§1):
+// smallest submitSeq strictly greater than the cursor, else smallest present
+// (wrap); FIFO by global seq within a group. Sentinel 0 never matches the
+// scan (sync tickets live in higher lanes anyway); a batch grant with
+// nonzero submitSeq advances the cursor, sync grants never touch it. Drained
+// groups vanish by absence. Callers hold s.mu.
 func (s *Scheduler) pumpLocked() {
-	if s.running != nil {
-		return
-	}
-	for prio := PriorityPlay; prio <= PriorityFocus; prio++ {
-		if len(s.queues[prio]) == 0 {
-			continue
+	for len(s.running) < s.capacity {
+		var t *ticket
+		found := false
+		for prio := PriorityPlay; prio <= PriorityFocus; prio++ {
+			if len(s.queues[prio]) == 0 {
+				continue
+			}
+			t = s.queues[prio][0]
+			s.queues[prio] = s.queues[prio][1:]
+			found = true
+			break
 		}
-		t := s.queues[prio][0]
-		s.queues[prio] = s.queues[prio][1:]
+		if !found {
+			if len(s.queues[PriorityBatch]) == 0 {
+				return
+			}
+			idx := s.pickBatchLocked()
+			t = s.queues[PriorityBatch][idx]
+			s.queues[PriorityBatch] = append(s.queues[PriorityBatch][:idx], s.queues[PriorityBatch][idx+1:]...)
+			if t.submitSeq != 0 {
+				s.batchCursor = t.submitSeq
+			}
+		}
 		t.state = ticketRunning
-		s.running = t
+		s.running[t] = struct{}{}
 		close(t.grant)
-		return
 	}
-	if len(s.queues[PriorityBatch]) == 0 {
-		return
-	}
-	idx := s.pickBatchLocked()
-	t := s.queues[PriorityBatch][idx]
-	s.queues[PriorityBatch] = append(s.queues[PriorityBatch][:idx], s.queues[PriorityBatch][idx+1:]...)
-	t.state = ticketRunning
-	s.running = t
-	if t.submitSeq != 0 {
-		s.batchCursor = t.submitSeq
-	}
-	close(t.grant)
 }
 
 // pickBatchLocked selects the batch queue index per the rotation rule.
