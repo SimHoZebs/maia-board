@@ -1,5 +1,5 @@
 import type { Square } from 'chess.js';
-import type { MaiaColor, MoveRequest, MoveResponse } from '../api';
+import type { SideColor, MoveRequest, MoveResponse } from '../api';
 import type { Analysis, BoardOrientationSetting, Insight, Mode, Settings, StoredGame } from '../domain';
 import type { OutboxOp } from '../serverGames';
 import type { StockfishSettings } from '../stockfishSettings';
@@ -7,7 +7,7 @@ import type { ArrowBasis, ArrowSettings, ArrowSettingsKey, ArrowStyle } from '..
 import type { BadgeLoading } from '../ReviewCharts';
 
 type Request = { id: number; mode: 'play'; payload: MoveRequest };
-export type Draft = Pick<Settings, 'eloMaia' | 'model'> & { userColor: 'white' | 'black' | 'random' };
+export type Draft = Pick<Settings, 'botElo' | 'model'> & { userColor: 'white' | 'black' | 'random' };
 export type PlayDraft = Draft & Pick<Settings, 'temperature'>;
 export type State = {
   mode: Mode; play: StoredGame; saved: StoredGame[];
@@ -45,4 +45,4 @@ export type Action =
   | { type: 'failure'; request: Request; error: unknown }
   | { type: 'retry' }
   | { type: 'sync'; saved: StoredGame[]; currentId: string | null; total: number | null; pending: OutboxOp[] };
-export type AnalysisSnapshot = { initialFen: string; moves: string[]; index: number; perspective: MaiaColor; ownGame: boolean; gameId?: string };
+export type AnalysisSnapshot = { initialFen: string; moves: string[]; index: number; perspective: SideColor; ownGame: boolean; gameId?: string };

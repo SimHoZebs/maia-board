@@ -7,7 +7,7 @@ import { Chess } from "chess.js";
 import type { Review } from "./useReview";
 import { describeMove } from "./reviewMetrics";
 import { fixedElo, sourceLabel } from "./objective";
-import { deltaColumnTitle, formatWinrateDelta, maiaExpected, selectDeltaParts } from "./objective/winrate";
+import { deltaColumnTitle, formatWinrateDelta, botExpected, selectDeltaParts } from "./objective/winrate";
 import { bestLinePreview, playedCapture } from "./material";
 import { verdictInputsForPly } from "./theory";
 import { useLineOpenings } from "./openings";
@@ -86,7 +86,7 @@ export function MoveAnalysis({
   // left, the objective source on the right. Each list judges the displayed
   // move with "(played)" marking from its before-position; at the root the
   // current position's lists describe the position.
-  const response = hasMove ? review.maia : review.maiaCurrent;
+  const response = hasMove ? review.bot : review.botCurrent;
   const node = review.nodes[hasMove ? focus : ply];
   const candidates = hasMove ? review.objectiveCandidates.focus : review.objectiveCandidates.current;
   // Pinned Elo shown as a locked dropdown in the objective heading; null
@@ -221,7 +221,7 @@ export function MoveAnalysis({
     parts: displayParts,
     kind,
   } = selectDeltaParts(
-    displayListed.map(candidate => ({ prob: candidate.prob, expected: maiaExpected(candidate.wdl), delta: candidate.delta ?? null })),
+    displayListed.map(candidate => ({ prob: candidate.prob, expected: botExpected(candidate.wdl), delta: candidate.delta ?? null })),
     response?.delta_baseline ?? null,
     beforeExpected,
     bestListed,
@@ -232,14 +232,14 @@ export function MoveAnalysis({
     beforeExpected,
     bestListed,
   );
-  // One header set for both Maia lanes: play probability (Users) plus
+  // One header set for both bot lanes: play probability (Users) plus
   // win-rate delta (TrendingDown): every row versus the previous position's
   // WDL. The display lane carries low-Elo policy with 2400 values; the
   // objective lane is 2400 throughout. The objective lane only gets it
-  // when the provider supplies probabilities (Maia policy share); a lane
+  // when the provider supplies probabilities (bot policy share); a lane
   // without them (Stockfish lines) keeps its single absolute-value column.
   const deltaTitle = deltaColumnTitle(kind);
-  const maiaListHeaders = {
+  const botListHeaders = {
     metric: <span title="Share of human play at this rating"><Users size={13} aria-hidden="true" /></span>,
     delta: <span title={deltaTitle}><TrendingDown size={13} aria-hidden="true" /></span>,
     label: `Probability of play, ${deltaTitle.charAt(0).toLowerCase()}${deltaTitle.slice(1)}`,
@@ -269,29 +269,29 @@ export function MoveAnalysis({
       )}
       <div className="engine-duo">
       <EngineSection
-        label="Maia analysis"
+        label="Bot analysis"
         titleId="insight-title"
         dotClass="source-display"
         title={
           <>
-            Maia •{" "}
+            Bot •{" "}
             <Rating
               inline
               id="analysis-rating"
-              label={review.maiaLocked ? "Maia rating (game Elo)" : "Maia rating"}
-              value={review.maiaLocked ? review.maiaElo : state.analysisSettings.eloMaia}
-              disabled={review.maiaLocked || review.progress?.running}
-              onChange={(eloMaia) =>
-                dispatch({ type: "analysis-settings", settings: { eloMaia } })
+              label={review.botLocked ? "Bot rating (game Elo)" : "Bot rating"}
+              value={review.botLocked ? review.botElo : state.analysisSettings.botElo}
+              disabled={review.botLocked || review.progress?.running}
+              onChange={(botElo) =>
+                dispatch({ type: "analysis-settings", settings: { botElo } })
               }
             />
           </>
         }
       >
-        {response?.degraded && <p role="status">Maia fallback results.</p>}
-        {review.maiaStale && (
+        {response?.degraded && <p role="status">Bot fallback results.</p>}
+        {review.botStale && (
           <p role="status">
-            Showing Maia {review.maiaElo} · updating to {review.maiaWantedElo}…
+            Showing bot {review.botElo} · updating to {review.botWantedElo}…
           </p>
         )}
         {response ? (
@@ -306,14 +306,14 @@ export function MoveAnalysis({
                 metric: displayParts[index].prob,
                 delta: displayParts[index].delta,
               }))}
-              headers={maiaListHeaders}
+              headers={botListHeaders}
               onPreview={(uci) => dispatch({ type: "preview", uci })}
               onClear={() => dispatch({ type: "preview", uci: null })}
               onSelect={exploreFromFocus}
             />
           </div>
         ) : displayLoading ? (
-          <SkeletonList label="Loading Maia moves" rows={3} />
+          <SkeletonList label="Loading bot moves" rows={3} />
         ) : (
           <p className="empty-copy">No analysis yet.</p>
         )}
@@ -323,7 +323,7 @@ export function MoveAnalysis({
         dotClass="source-objective"
         title={
           <>
-            Maia •{" "}
+            Bot •{" "}
             {objectiveElo !== null && (
               <Rating
                 inline
@@ -337,7 +337,7 @@ export function MoveAnalysis({
           </>
         }
       >
-        {candidates?.degraded && <p role="status">Maia3 fallback results.</p>}
+        {candidates?.degraded && <p role="status">Bot 2400 fallback results.</p>}
         {candidates ? (
           <div>
             <EngineCandidateList
@@ -352,7 +352,7 @@ export function MoveAnalysis({
                   delta: objectiveDelta.parts[index]?.delta ?? formatWinrateDelta(0),
                 }
                 : { uci: candidate.uci, metric: `${Math.round(candidate.expected)}%` }))}
-              headers={objectiveHasProb ? maiaListHeaders : {
+              headers={objectiveHasProb ? botListHeaders : {
                 metric: <span title="Expected win rate for the side to move"><TrendingDown size={13} aria-hidden="true" /></span>,
                 label: "Expected win rate for the side to move",
               }}

@@ -34,7 +34,7 @@ backend URL to proxy `/move`, `/move/analysis`, `/evaluate`, `/evaluations/looku
   The reducer mirrors the destination as an explicit execution context, synchronized
   before request effects run. Navigation and reducer actions cooperate when loading
   or resuming a game; the URL also restores analysis content on Back/Forward.
-- `state.ts` and `useMaiaBoard.ts` coordinate game actions and the active session.
+- `state.ts` and `useBotBoard.ts` coordinate game actions and the active session.
   Historical Play positions are read-only; returning to the tip follows live play.
 - `domain.ts` contains chess-domain data and rules. Full accumulated history is
   needed for repetition; a selected FEN cannot supply that history by itself.
@@ -49,15 +49,15 @@ backend URL to proxy `/move`, `/move/analysis`, `/evaluate`, `/evaluations/looku
 - `reviewMetrics.ts` derives retrospective move grades from objective points
   (best move + mover-relative expected score), never from engine responses
   directly. `src/objective/grader.ts` owns the grading role (best +
-  expected per position, currently Maia 2400); the dormant
+  expected per position, currently bot 2400); the dormant
   `src/objective/graderStockfish.ts` implements the same role surface and is
-  wired in with a one-line change. `src/objective/winrate.ts` owns Maia
+  wired in with a one-line change. `src/objective/winrate.ts` owns bot
   candidate-display math (winrate columns), imported directly by the panel.
   Current-position candidates and previous-move grading refer
   to different positions.
-- Two Maia lanes are load-bearing: game-level Maia (findability — "was it
+- Two bot lanes are load-bearing: game-level bot (findability — "was it
   rare for this player," feeds rarity + candidate lists at game settings)
-  and grading Maia 2400 (objective truth — "would 2400 consider it best").
+  and grading bot 2400 (objective truth — "would 2400 consider it best").
   Praise needs both; Stockfish keeps mate scores + rank-1 PV for material
   preview only.
 
@@ -94,7 +94,7 @@ backgrounding — a broken stream only costs speed.
 The server owns cache writes and repair. The frontend validates Stockfish's actual
 search policy before displaying a compatible result and limits displayed candidates
 without changing its provenance. A larger candidate search with the same time and
-depth is approximate reuse. Maia fallback results retain `model_used` and `degraded`
+depth is approximate reuse. Bot fallback results retain `model_used` and `degraded`
 so the interface can name the actual model.
 
 ### Game durability and recovery

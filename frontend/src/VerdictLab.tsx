@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { START_FEN } from './domain';
-import type { MaiaSide } from './material';
+import type { Side } from './material';
 import {
   applyPreset,
   buildLabVerdict,
@@ -125,7 +125,7 @@ export function VerdictLab() {
         <h1>Move verdict lab</h1>
         <p className="lab-intro">
           Raw engine numbers in, verdict out — through the real functions, never around them:
-          Maia shares → <code>maiaRarity</code>, cp scores + best flag + line gap →{' '}
+          Bot shares → <code>botRarity</code>, cp scores + best flag + line gap →{' '}
           <code>reviewMove</code> → <code>effectiveQuality</code> → <code>alienUpgrade</code>,
           then <code>verdictInputsForPly</code> → <code>describeMove</code>. Start positions
           use <code>{START_FEN}</code> unless a preset sets real FENs.
@@ -146,7 +146,7 @@ export function VerdictLab() {
                 <Field label="played UCI"><input type="text" value={state.playedUci} onChange={event => set({ playedUci: event.target.value })} /></Field>
                 <Field label="ply"><input type="number" min={0} value={state.ply} onChange={event => set({ ply: Number(event.target.value) })} /></Field>
                 <Field label="mover">
-                  <select value={state.mover} onChange={event => set({ mover: event.target.value as MaiaSide })}>
+                  <select value={state.mover} onChange={event => set({ mover: event.target.value as Side })}>
                     <option value="white">white</option>
                     <option value="black">black</option>
                   </select>
@@ -199,8 +199,8 @@ export function VerdictLab() {
               </p>
             </section>
 
-            <section className="lab-row" aria-label="Maia rarity">
-              <h2>Maia → rarity (real maiaRarity)</h2>
+            <section className="lab-row" aria-label="Bot rarity">
+              <h2>Bot → rarity (real botRarity)</h2>
               <div className="vlab-fields">
                 <LaneKnobs title="Own Elo lane" value={state.ownLane} onChange={ownLane => set({ ownLane })} />
                 <LaneKnobs title="2400 lane" value={state.lane2400} onChange={lane2400 => set({ lane2400 })} />

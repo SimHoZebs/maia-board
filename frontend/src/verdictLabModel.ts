@@ -1,13 +1,13 @@
 import { Chess } from 'chess.js';
 import { START_FEN, type DomainOutcome } from './domain';
-import type { MaiaColor } from './api';
+import type { SideColor } from './api';
 import type { MoveResponse } from './api';
 import {
   alienUpgrade,
   describeMove,
   effectiveQuality,
   isTinyRare,
-  maiaRarity,
+  botRarity,
   matchedRuleNames,
   reviewMove,
   secondPoolClause,
@@ -24,7 +24,7 @@ import { verdictInputsForPly, type VerdictFacts, type VerdictInputs } from './th
 // Lab knob state for the verdict test page (/dev/verdict-lab). The lab feeds
 // RAW engine numbers through the REAL threshold functions — nothing here
 // restates a band, grade, or cutoff by hand:
-// - Maia probs → maiaRarity (0.6 / 1/3 bands, 5% tiny leg)
+// - Bot probs → botRarity (0.6 / 1/3 bands, 5% tiny leg)
 // - SF cp scores + best flag + line gap → reviewMove (20/10/5 loss, Critical
 //   loss ≤ 1 + gap ≥ 10) → effectiveQuality → alienUpgrade (gap ≥ 30)
 // - FENs + outcome → verdictInputsForPly → describeMove
@@ -44,7 +44,7 @@ export type LabState = {
   san: string;
   playedUci: string;
   ply: number;
-  mover: MaiaColor;
+  mover: SideColor;
   beforeFen: string;
   afterFen: string;
   initialFen: string;
@@ -59,8 +59,8 @@ export type LabState = {
   line1Cp: number;
   line2Cp: number;
   singleLine: boolean;
-  // Raw Maia lanes. Each lane builds a two-entry policy list (top + played)
-  // so maiaRarity computes the real band from prob/topProb.
+  // Raw bot lanes. Each lane builds a two-entry policy list (top + played)
+  // so botRarity computes the real band from prob/topProb.
   ownLane: RarityLaneKnob;
   lane2400: RarityLaneKnob;
   // Rarity of the best reply in the own lane: 'same' reuses the played move,
@@ -122,7 +122,7 @@ export const DEFAULT_STATE: LabState = {
 };
 
 // Placeholder UCI for the non-played side of a synthetic policy list.
-// maiaRarity only matches move strings, never legality, so this never needs
+// botRarity only matches move strings, never legality, so this never needs
 // to be a real alternative.
 const OTHER_UCI = 'a2a3';
 const OTHER_UCI_2 = 'g1f3';
@@ -133,7 +133,7 @@ function laneResponse(
   extra: { move: string; prob: number }[] = [],
 ): Pick<MoveResponse, 'top_moves' | 'degraded'> {
   if (lane.mode === 'unknown') return { top_moves: [], degraded: true };
-  // wdl is unused by maiaRarity; a neutral triple keeps the TopMove shape.
+  // wdl is unused by botRarity; a neutral triple keeps the TopMove shape.
   const neutral = { wdl: [0.2, 0.6, 0.2] as [number, number, number] };
   const top_moves = [{ move: lane.mode === 'top' ? playedUci : OTHER_UCI, prob: lane.topProb, ...neutral }];
   if (lane.mode === 'listed') top_moves.push({ move: playedUci, prob: lane.prob, ...neutral });
@@ -188,15 +188,15 @@ function applyNoteOverride(mode: NoteMode, auto: string | null, manual: string):
 const UNREVIEWED: EngineGrade = { label: 'Unreviewed', accuracy: null, loss: null };
 
 export function buildLabVerdict(state: LabState): LabVerdict {
-  // Maia lanes through the real band math.
+  // Bot lanes through the real band math.
   const bestUci = state.bestUci.trim() ? state.bestUci.trim() : state.playedUci;
   const bestExtra = state.bestKind === 'tiny' ? [{ move: bestUci, prob: 0.03 }] : [];
   const ownResponse = laneResponse(state.ownLane, state.playedUci, bestExtra);
-  const rarity = maiaRarity(ownResponse, state.playedUci);
-  const rarity2400 = maiaRarity(laneResponse(state.lane2400, state.playedUci), state.playedUci);
+  const rarity = botRarity(ownResponse, state.playedUci);
+  const rarity2400 = botRarity(laneResponse(state.lane2400, state.playedUci), state.playedUci);
   const bestRarity = state.bestKind === 'same'
-    ? maiaRarity(ownResponse, state.playedUci)
-    : maiaRarity(ownResponse, bestUci);
+    ? botRarity(ownResponse, state.playedUci)
+    : botRarity(ownResponse, bestUci);
 
   // Stockfish grade through the real reviewMove. The before-position supplies
   // the legal-move count (Forced needs exactly 1); cp scores supply loss and

@@ -98,12 +98,12 @@ test('live play shows a fallback notice when the worker degrades', async ({ page
   await page.locator('#start-game').click();
   await clickSquare(page, 'e2');
   await clickSquare(page, 'e4');
-  await expect(page.getByRole('status').filter({ hasText: 'Maia3 fallback reply' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Fallback bot reply' })).toBeVisible();
   expect(requestedModel).toBe('79m');
   await expect.poll(() => [...app.store.games.values()][0]?.moves).toEqual(['e2e4', 'e7e5']);
   expect([...app.store.games.values()][0].model).toBe('79m');
   await page.getByRole('button', { name: 'Takeback', exact: true }).click();
-  await expect(page.getByText('Maia3 fallback reply', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Fallback bot reply', { exact: true })).toHaveCount(0);
   expect(app.errors).toEqual([]);
 });
 
@@ -114,7 +114,7 @@ test('legacy games seed read-only display without uploading', async ({ page }) =
   const app = await bootGames(page, { [KEYS.current]: game, [KEYS.saved]: [game] });
   await page.goto('http://maia.test/history');
   await expect(page.locator('.saved-game')).toHaveCount(1);
-  await expect(page.locator('.saved-game').first()).toContainText('White · Maia 1600');
+  await expect(page.locator('.saved-game').first()).toContainText('White · Bot 1600');
   await expect(page.locator('.sync-banner')).toHaveCount(0);
   await page.waitForTimeout(1000);
   expect(app.store.games.size).toBe(0);

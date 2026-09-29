@@ -35,19 +35,19 @@ export function PlayControls({ state, dispatch }: Props) {
   const content = <section id="play-controls" className="setup panel play-setup" aria-label="Game setup">
     {state.started && <h1>Start a new game?</h1>}
     <section className="setup-section" aria-labelledby="opponent-heading">
-      <h2 id="opponent-heading">Maia</h2>
-      <div className="maia-row">
-        <Rating value={setup.eloMaia} label="Elo" onChange={eloMaia => dispatch({ type: 'setup', draft: { eloMaia } })} />
+      <h2 id="opponent-heading">Bot</h2>
+      <div className="bot-row">
+        <Rating value={setup.botElo} label="Elo" onChange={botElo => dispatch({ type: 'setup', draft: { botElo } })} />
         <div className="temp-block">
           <h3 className="temp-subhead">Temperature <span className="temp-pill">{temperatureLabel(temperature)} · {temperature.toFixed(1)}</span></h3>
-          <label className="field temp-field" htmlFor="maia-temperature"><span className="visually-hidden">Maia temperature</span>
-            <input id="maia-temperature" type="range" min="0" max="2" step="0.1" value={temperature} onChange={e => dispatch({ type: 'setup', draft: { temperature: e.target.valueAsNumber } })} />
+          <label className="field temp-field" htmlFor="bot-temperature"><span className="visually-hidden">Bot temperature</span>
+            <input id="bot-temperature" type="range" min="0" max="2" step="0.1" value={temperature} onChange={e => dispatch({ type: 'setup', draft: { temperature: e.target.valueAsNumber } })} />
             <span className="temp-scale" aria-hidden="true"><span>Deterministic</span><span>Balanced</span><span>Creative</span></span>
           </label>
         </div>
       </div>
-      <p className="hint">Maia {setup.eloMaia} plays like a {strengthLabel(setup.eloMaia).toLowerCase()} human — mistakes included.</p>
-      <p className="hint">0 always takes Maia’s top move. 1 samples its natural spread; higher adds variety. Set per game.</p>
+      <p className="hint">Bot {setup.botElo} plays like a {strengthLabel(setup.botElo).toLowerCase()} human — mistakes included.</p>
+      <p className="hint">0 always takes Bot’s top move. 1 samples its natural spread; higher adds variety. Set per game.</p>
     </section>
     <section className="setup-section" aria-labelledby="side-heading">
       <h2 id="side-heading">Your side</h2>
@@ -56,7 +56,7 @@ export function PlayControls({ state, dispatch }: Props) {
     </section>
     <section className="setup-section" aria-labelledby="coaching-heading">
       <h2 id="coaching-heading">Coaching</h2>
-      <label className="toggle-card" htmlFor="feedback-enabled"><input id="feedback-enabled" type="checkbox" checked={state.feedback} onChange={event => dispatch({ type: 'feedback', enabled: event.target.checked })} /><span><strong>Evaluate my moves</strong><em>Grades each move after you commit it from Stockfish evals plus Maia's expectations — never hinted beforehand.</em></span></label>
+      <label className="toggle-card" htmlFor="feedback-enabled"><input id="feedback-enabled" type="checkbox" checked={state.feedback} onChange={event => dispatch({ type: 'feedback', enabled: event.target.checked })} /><span><strong>Evaluate my moves</strong><em>Grades each move after you commit it from Stockfish evals plus Bot's expectations — never hinted beforehand.</em></span></label>
       <label className="toggle-card" htmlFor="verdict-enabled"><input id="verdict-enabled" type="checkbox" checked={state.playVerdict} onChange={event => dispatch({ type: 'play-verdict', enabled: event.target.checked })} /><span><strong>Show move verdict</strong><em>One-line verdict under the move list once graded. Needs evaluation above.</em></span></label>
     </section>
     <div className="actions setup-actions"><Button id="start-game" variant="primary" onClick={() => dispatch({ type: 'new', id: newId(), createdAt: new Date().toISOString(), resolvedColor: resolveSide(setup.userColor) })}>{state.started ? 'Start new game' : 'Start game'}</Button>{state.started && <Button onClick={() => dispatch({ type: 'cancel-setup' })}>Cancel</Button>}</div>

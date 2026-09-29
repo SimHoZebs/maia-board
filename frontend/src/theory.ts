@@ -1,6 +1,6 @@
 import { Chess, type Square } from 'chess.js';
 import { applyUci, findKingSquare, uciFromMove, START_FEN } from './domain';
-import { exchangePlayedClaim, forkPlayedClaim, pinPlayedClaim, playedMoveGainNote, skewerPlayedClaim, type MaiaSide } from './material';
+import { exchangePlayedClaim, forkPlayedClaim, pinPlayedClaim, playedMoveGainNote, skewerPlayedClaim, type Side } from './material';
 import { createMoveFacts, type MoveFacts } from './moveFacts';
 import { openingAt, type OpeningMatch } from './openings';
 import type { DomainOutcome } from './domain';
@@ -203,7 +203,7 @@ export function underpromotionAvoidsStalemate(beforeFen: string, playedUci: stri
 export function forcesMateIn(
   beforeScore: Score | null | undefined,
   afterScore: Score | null | undefined,
-  mover: MaiaSide,
+  mover: Side,
 ): number | null {
   if (!beforeScore || !afterScore) return null;
   const side = mover === 'white' ? 'white' : 'black';
@@ -261,7 +261,7 @@ export function parriesMateNote(
   beforeFen: string,
   playedUci: string,
   afterScore: Score | null | undefined,
-  mover: MaiaSide,
+  mover: Side,
 ): string | null {
   if (!afterScore || isMateFor(afterScore, mover === 'white' ? 'black' : 'white')) return null;
   let before: Chess;
@@ -403,7 +403,7 @@ function pawnFileCounts(fen: string, color: 'w' | 'b'): number[] | null {
 // mover's own pawns: newly doubled files and newly isolated pawns. Null on
 // bad FENs. Counts may be negative when a move removes damage; callers only
 // report positive values.
-function newPawnDamage(beforeFen: string, afterFen: string, mover: MaiaSide): { doubled: number; isolated: number } | null {
+function newPawnDamage(beforeFen: string, afterFen: string, mover: Side): { doubled: number; isolated: number } | null {
   const color = mover === 'white' ? 'w' : 'b';
   const before = pawnFileCounts(beforeFen, color);
   const after = pawnFileCounts(afterFen, color);
@@ -422,7 +422,7 @@ function newPawnDamage(beforeFen: string, afterFen: string, mover: MaiaSide): { 
 // New pawn-structure damage from this move, observed on the mover's own
 // pawns: newly doubled files and newly isolated pawns. Observation only —
 // no 'no compensation' claim, which a board scan cannot prove.
-export function pawnDamageNote(beforeFen: string, afterFen: string, mover: MaiaSide): string | null {
+export function pawnDamageNote(beforeFen: string, afterFen: string, mover: Side): string | null {
   const damage = newPawnDamage(beforeFen, afterFen, mover);
   if (!damage) return null;
   const parts: string[] = [];
@@ -444,7 +444,7 @@ export function pawnDamageNote(beforeFen: string, afterFen: string, mover: MaiaS
 export function pawnDamageNoteSkippingBest(
   beforeFen: string,
   afterFen: string,
-  mover: MaiaSide,
+  mover: Side,
   playedUci: string,
   bestUci: string | null | undefined,
 ): string | null {
@@ -487,12 +487,12 @@ export type VerdictInputs = {
   openingMatches: OpeningMatch[];
   bookFlags: boolean[];
   initialFen: string;
-  mover: MaiaSide;
+  mover: Side;
   bestRarity?: Rarity | null;
   materialNote?: string | null;
   beforeScore?: Score | null;
   afterScore?: Score | null;
-  // Raw engine fact (reviewMove label === 'Critical'), before Maia-aware
+  // Raw engine fact (reviewMove label === 'Critical'), before bot-aware
   // translation. The translated Quality alone cannot recover it: Critical +
   // Expected and Top both display as Best.
   isCritical?: boolean | null;

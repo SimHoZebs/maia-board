@@ -3,7 +3,7 @@ import { applyUci } from './domain';
 import { createMoveFacts, TACTIC_VALUES, type ForkFacts, type ForkVictim, type MoveFacts, type PinFacts, type SkewerFacts } from './moveFacts';
 
 export type CapturedPiece = 'p' | 'n' | 'b' | 'r' | 'q';
-export type MaiaSide = 'white' | 'black';
+export type Side = 'white' | 'black';
 
 // Display order: most valuable first, bishops before knights on the 3-point tie.
 const SORT_ORDER: Record<CapturedPiece, number> = { q: 0, r: 1, b: 2, n: 3, p: 4 };
@@ -28,7 +28,7 @@ export function materialFromFen(fen: string): { white: number; black: number; di
   return { white, black, diff: white - black };
 }
 
-export function materialLeadFor(diff: number, color: MaiaSide): number {
+export function materialLeadFor(diff: number, color: Side): number {
   return color === 'white' ? diff : -diff;
 }
 
@@ -86,18 +86,18 @@ export function capturesFromLine(
   return { white: sortCaptured(white), black: sortCaptured(black) };
 }
 
-const GLYPHS: Record<MaiaSide, Record<CapturedPiece, string>> = {
+const GLYPHS: Record<Side, Record<CapturedPiece, string>> = {
   // Captured pieces keep their own color: white's strip shows black pieces.
   white: { p: '♟', n: '♞', b: '♝', r: '♜', q: '♛' },
   black: { p: '♙', n: '♘', b: '♗', r: '♖', q: '♕' },
 };
 
 // Glyph for a piece captured BY side (i.e. drawn in the victim's color).
-export const capturedGlyph = (by: MaiaSide, piece: CapturedPiece): string => GLYPHS[by === 'white' ? 'white' : 'black'][piece];
+export const capturedGlyph = (by: Side, piece: CapturedPiece): string => GLYPHS[by === 'white' ? 'white' : 'black'][piece];
 
 const PIECE_NAMES: Record<CapturedPiece, string> = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen' };
 
-export function capturedLabel(by: MaiaSide, pieces: readonly CapturedPiece[], lead: number): string {
+export function capturedLabel(by: Side, pieces: readonly CapturedPiece[], lead: number): string {
   const side = by === 'white' ? 'White' : 'Black';
   if (!pieces.length && lead <= 0) return `${side} has captured nothing`;
   const counts = new Map<CapturedPiece, number>();
@@ -169,7 +169,7 @@ function piecesText(pieces: CapturedPiece[]): string {
   if (parts.length <= 1) return parts[0] ?? '';
   return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 }
-export function bestLineMaterialNote(afterFen: string, pv: readonly string[] | undefined, mover: MaiaSide, windowPlies: number = DEFAULT_BEST_LINE_WINDOW, playedTake: CapturedPiece | null = null): string | null {
+export function bestLineMaterialNote(afterFen: string, pv: readonly string[] | undefined, mover: Side, windowPlies: number = DEFAULT_BEST_LINE_WINDOW, playedTake: CapturedPiece | null = null): string | null {
   const analyzed = analyzeBestLineWindow(afterFen, pv, mover, windowPlies);
   if (!analyzed) return null;
   return noteFromAnalysis(afterFen, analyzed, mover, playedTake);
@@ -182,7 +182,7 @@ export function bestLineMaterialNote(afterFen: string, pv: readonly string[] | u
 // offer a branch. The caller spawns these ucis as a branch rooted at
 // afterFen, landing on its first move so the punishment is on the board.
 export type BestLinePreview = { ucis: string[]; sans: string[]; text: string; note: string };
-export function bestLinePreview(afterFen: string, pv: readonly string[] | undefined, mover: MaiaSide, windowPlies: number = DEFAULT_BEST_LINE_WINDOW, playedTake: CapturedPiece | null = null): BestLinePreview | null {
+export function bestLinePreview(afterFen: string, pv: readonly string[] | undefined, mover: Side, windowPlies: number = DEFAULT_BEST_LINE_WINDOW, playedTake: CapturedPiece | null = null): BestLinePreview | null {
   const analyzed = analyzeBestLineWindow(afterFen, pv, mover, windowPlies);
   if (!analyzed) return null;
   // Even non-tactic windows carry a clickable line but no claim: the note
@@ -195,7 +195,7 @@ export function bestLinePreview(afterFen: string, pv: readonly string[] | undefi
 }
 
 type BestLineAnalysis = { ucis: string[]; oppCaptures: CapturedPiece[]; moverCaptures: CapturedPiece[]; oppSide: string; evenExchange: boolean };
-function noteFromAnalysis(afterFen: string, analyzed: BestLineAnalysis, mover: MaiaSide, playedTake: CapturedPiece | null = null): string | null {
+function noteFromAnalysis(afterFen: string, analyzed: BestLineAnalysis, mover: Side, playedTake: CapturedPiece | null = null): string | null {
   // Even exchanges stay silent in the generic composition (no newsworthy
   // swing) but still reach the tactic layer, which names proven even
   // fork/skewer swaps. Null propagates: preview and note stay in agreement.
@@ -247,12 +247,12 @@ const FORK_PLURALS: Record<Exclude<ForkVictim, 'k'>, string> = { q: 'queens', r:
 // the forced king evacuation is the stronger story. Detection runs on the
 // moved piece only (no discovered-attack attribution). An opening capture is
 // never tactic pressure. Illegal positions and bad FENs silence, never throw.
-function tacticNote(afterFen: string, analyzed: BestLineAnalysis, mover: MaiaSide): string | null {
+function tacticNote(afterFen: string, analyzed: BestLineAnalysis, mover: Side): string | null {
   if (analyzed.oppCaptures.length !== 1 || analyzed.moverCaptures.length > 1) return null;
   const firstUci = analyzed.ucis[0];
   if (typeof firstUci !== 'string' || firstUci.length === 5) return null;
   // The tactic belongs to the opponent of the mover (the victim side).
-  const forker: MaiaSide = mover === 'white' ? 'black' : 'white';
+  const forker: Side = mover === 'white' ? 'black' : 'white';
   const facts = createMoveFacts({ beforeFen: afterFen, playedUci: firstUci, mover: forker });
   if (!facts || facts.captured) return null;
   const victimColor = mover === 'white' ? 'w' : 'b';
@@ -327,7 +327,7 @@ function skewerWindowNote(san: string, side: string, skewer: SkewerFacts, analyz
 // +8 with no capture and would read as a false win (the promotion note owns
 // that story). The caller gates on praise grades, so a blunder capture that
 // hangs a bigger piece never earns this. Never throws.
-export function playedMoveGainNote(beforeFen: string, afterFen: string, playedUci: string, mover: MaiaSide): string | null {
+export function playedMoveGainNote(beforeFen: string, afterFen: string, playedUci: string, mover: Side): string | null {
   if (typeof playedUci !== 'string' || playedUci.length === 5) return null;
   let captured: CapturedPiece | null = null;
   try {
@@ -355,12 +355,12 @@ export function playedMoveGainNote(beforeFen: string, afterFen: string, playedUc
 // positive candidate. Same tight gates (moved piece only, no pawns, no
 // opening capture, no promotions). The caller gates on praise grades.
 // Never throws.
-export function playedMoveForkNote(beforeFen: string, playedUci: string, mover: MaiaSide): string | null {
+export function playedMoveForkNote(beforeFen: string, playedUci: string, mover: Side): string | null {
   const facts = createMoveFacts({ beforeFen, playedUci, mover });
   if (!facts) return null;
   return forkPlayedClaim(facts, mover);
 }
-export function forkPlayedClaim(facts: MoveFacts, mover: MaiaSide): string | null {
+export function forkPlayedClaim(facts: MoveFacts, mover: Side): string | null {
   const fork = facts.fork();
   if (!fork || fork.hanging) return null;
   const side = mover === 'white' ? "Black's" : "White's";
@@ -379,12 +379,12 @@ export function forkPlayedClaim(facts: MoveFacts, mover: MaiaSide): string | nul
 // slider (Rxe7+) tells the forced-evacuation story, not the fresh-win story —
 // the taken piece is never part of the claim, so unlike the fork no opening-
 // capture exclusion applies. Same praise-grade gating. Never throws.
-export function playedMoveSkewerNote(beforeFen: string, playedUci: string, mover: MaiaSide): string | null {
+export function playedMoveSkewerNote(beforeFen: string, playedUci: string, mover: Side): string | null {
   const facts = createMoveFacts({ beforeFen, playedUci, mover });
   if (!facts) return null;
   return skewerPlayedClaim(facts, mover);
 }
-export function skewerPlayedClaim(facts: MoveFacts, mover: MaiaSide): string | null {
+export function skewerPlayedClaim(facts: MoveFacts, mover: Side): string | null {
   const skewer = facts.skewer();
   if (!skewer || skewer.hanging) return null;
   const side = mover === 'white' ? "Black's" : "White's";
@@ -401,12 +401,12 @@ export function skewerPlayedClaim(facts: MoveFacts, mover: MaiaSide): string | n
 // candidate. Same tight gates (moved slider only, no pawns, no opening
 // capture, no promotions). The caller gates on praise grades; the negative
 // concessive path reuses the same claim through pinClaim. Never throws.
-export function playedMovePinNote(beforeFen: string, playedUci: string, mover: MaiaSide): string | null {
+export function playedMovePinNote(beforeFen: string, playedUci: string, mover: Side): string | null {
   const facts = createMoveFacts({ beforeFen, playedUci, mover });
   if (!facts) return null;
   return pinPlayedClaim(facts, mover);
 }
-export function pinPlayedClaim(facts: MoveFacts, mover: MaiaSide): string | null {
+export function pinPlayedClaim(facts: MoveFacts, mover: Side): string | null {
   const pin = facts.pin();
   if (!pin || pin.hanging) return null;
   const side = mover === 'white' ? "Black's" : "White's";
@@ -480,12 +480,12 @@ function formatSanLine(afterFen: string, sans: readonly string[]): string {
   return numbered.join(' ');
 }
 
-function analyzeBestLineWindow(afterFen: string, pv: readonly string[] | undefined, mover: MaiaSide, windowPlies: number = DEFAULT_BEST_LINE_WINDOW): BestLineAnalysis | null {
+function analyzeBestLineWindow(afterFen: string, pv: readonly string[] | undefined, mover: Side, windowPlies: number = DEFAULT_BEST_LINE_WINDOW): BestLineAnalysis | null {
   if (!pv || pv.length === 0) return null;
   const window = pv.slice(0, normalizeBestLineWindow(windowPlies));
   let game: Chess;
   try { game = new Chess(afterFen); } catch { return null; }
-  const opp: MaiaSide = mover === 'white' ? 'black' : 'white';
+  const opp: Side = mover === 'white' ? 'black' : 'white';
   const oppCaptures: CapturedPiece[] = [];
   const moverCaptures: CapturedPiece[] = [];
   let startDiff: number;

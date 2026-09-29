@@ -1,6 +1,6 @@
 import type { DrawBrushes } from '@lichess-org/chessground/draw';
 
-export type ArrowSettingsKey = 'actual' | 'maia' | 'objective' | 'candidate';
+export type ArrowSettingsKey = 'actual' | 'bot' | 'objective' | 'candidate';
 export type ArrowStyle = { color: string; width: number };
 export type ArrowSettings = Record<ArrowSettingsKey, ArrowStyle>;
 export type ArrowBasis = 'next' | 'past';
@@ -14,7 +14,7 @@ export const ARROW_WIDTH_MAX = 64;
 
 export const defaultArrowSettings: ArrowSettings = {
   actual: { color: '#ffffff', width: 12 },
-  maia: { color: '#ef4444', width: 8 },
+  bot: { color: '#ef4444', width: 8 },
   objective: { color: '#3b82f6', width: 4 },
   candidate: { color: '#d6b85c', width: 2 },
 };
@@ -38,25 +38,25 @@ export function normalizeArrowSettings(value: unknown): ArrowSettings {
   if (typeof value !== 'object' || value === null) return defaultArrowSettings;
   const record = value as Record<string, unknown>;
   // Legacy migration: the blue arrow was keyed 'stockfish' before the
-  // objective (Maia 2400) lane took over that slot.
+  // objective (bot 2400) lane took over that slot.
   const objectiveRaw = record.objective ?? record.stockfish;
   const next: ArrowSettings = {
     actual: normalizeStyle(record.actual, defaultArrowSettings.actual),
-    maia: normalizeStyle(record.maia, defaultArrowSettings.maia),
+    bot: normalizeStyle(record.bot, defaultArrowSettings.bot),
     objective: normalizeStyle(objectiveRaw, defaultArrowSettings.objective),
     candidate: normalizeStyle(record.candidate, defaultArrowSettings.candidate),
   };
-  return next.actual === defaultArrowSettings.actual && next.maia === defaultArrowSettings.maia
+  return next.actual === defaultArrowSettings.actual && next.bot === defaultArrowSettings.bot
     && next.objective === defaultArrowSettings.objective && next.candidate === defaultArrowSettings.candidate
     ? defaultArrowSettings : next;
 }
 
 export function sameArrowSettings(a: ArrowSettings, b: ArrowSettings): boolean {
-  return (['actual', 'maia', 'objective', 'candidate'] as const).every(key =>
+  return (['actual', 'bot', 'objective', 'candidate'] as const).every(key =>
     a[key].color === b[key].color && a[key].width === b[key].width);
 }
 
-// Opacities stay fixed (the request covers color + size only): actual, maia
+// Opacities stay fixed (the request covers color + size only): actual, bot
 // and objective share .45 so coincident arrows layer by width; the preview
 // candidate stays slightly stronger at .65.
 export function buildReviewBrushes(settings: ArrowSettings): DrawBrushes {
@@ -66,7 +66,7 @@ export function buildReviewBrushes(settings: ArrowSettings): DrawBrushes {
     blue: { key: 'b', color: '#003088', opacity: 1, lineWidth: 10 },
     yellow: { key: 'y', color: '#e68f00', opacity: 1, lineWidth: 10 },
     actual: { key: 'actual', color: settings.actual.color, opacity: 0.45, lineWidth: settings.actual.width },
-    maia: { key: 'maia', color: settings.maia.color, opacity: 0.45, lineWidth: settings.maia.width },
+    bot: { key: 'bot', color: settings.bot.color, opacity: 0.45, lineWidth: settings.bot.width },
     objective: { key: 'objective', color: settings.objective.color, opacity: 0.45, lineWidth: settings.objective.width },
     candidate: { key: 'candidate', color: settings.candidate.color, opacity: 0.65, lineWidth: settings.candidate.width },
   };

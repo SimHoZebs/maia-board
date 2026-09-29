@@ -21,7 +21,7 @@ it('defaults new games to 1 while preserving legacy and saved-game temperatures'
     state = reducer(state, { type: 'setup' });
     expect(state.setup?.temperature).toBe(1);
     state = reducer(state, { type: 'setup', draft: { temperature: .5 } });
-    state = reducer(state, { type: 'setup', draft: { eloMaia: 1700 } });
+    state = reducer(state, { type: 'setup', draft: { botElo: 1700 } });
     expect(state.setup?.temperature).toBe(.5);
     state = reducer(state, { type: 'cancel-setup' });
     expect(state.play.settings.temperature).toBe(temperature ?? 0);
@@ -57,7 +57,7 @@ it('restores and validates browser settings and legacy temperature', () => {
   expect(toStoredGame(row)?.settings.temperature).toBe(.7);
 });
 
-it('separates Stockfish cache identity while retaining Maia cache identity', () => {
+it('separates Stockfish cache identity while retaining bot cache identity', () => {
   const node = testNodes(START_FEN, [])[0];
   const settings = { ...defaultSettings, stockfish: defaultStockfishSettings };
   const changed = { ...settings, stockfish: { time_ms: 30000, lines: 5, depth: 40 } };
@@ -67,7 +67,7 @@ it('separates Stockfish cache identity while retaining Maia cache identity', () 
   expect(reviewKey('maia', node, changed)).toBe(reviewKey('maia', node, settings));
   // Coverage derives from these same keys: a settings change misses the old
   // rows without any parallel freshness record.
-  expect(reviewKey('sf', node, { ...settings, eloMaia: 1800 })).toBe(reviewKey('sf', node, settings));
+  expect(reviewKey('sf', node, { ...settings, botElo: 1800 })).toBe(reviewKey('sf', node, settings));
 });
 
 it('sends requested options and rejects a response from another search policy', async () => {

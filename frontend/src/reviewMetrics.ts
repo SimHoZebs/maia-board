@@ -19,20 +19,20 @@ export type Quality = { label: 'Forced' | 'Allowed mate' | 'Blunder' | 'Mistake'
 // - Top: played the engine's top move, but not critically.
 // - Holds: not the top move, yet nothing meaningful lost.
 export type EngineGrade = { label: 'Forced' | 'Allowed mate' | 'Blunder' | 'Mistake' | 'Inaccuracy' | 'Critical' | 'Top' | 'Holds' | 'Unreviewed'; accuracy: number | null; loss: number | null };
-// Additive Maia difficulty axis, measured against the top move rather than
+// Additive bot difficulty axis, measured against the top move rather than
 // 100%: r = prob(played) / prob(top). A 13% move under a 15% top (r = 0.87)
 // is the same band as the top itself, while a 12% rank-1 in a wide opening
 // is still Expected. Bands are r >= 3/5 (0.6) Expected, r >= 1/3 Uncommon,
 // else Rare: Qe3-like 9.5% under a 32% top (r ~= 0.30) reads Rare against
 // the majority, while f3-like 14.9% under a 34% top (r ~= 0.44) stays
-// Uncommon. Unlisted (outside Maia's top 5) is Absent by
-// construction; missing or degraded Maia data is Unknown and renders nothing.
+// Uncommon. Unlisted (outside the bot's top 5) is Absent by
+// construction; missing or degraded bot data is Unknown and renders nothing.
 export type Rarity = { label: 'Expected' | 'Uncommon' | 'Rare' | 'Absent' | 'Unknown'; r: number | null; prob: number | null; topProb: number | null };
-export function maiaRarity(maia: Pick<MoveResponse, 'top_moves' | 'degraded'> | undefined, played: string): Rarity {
-  if (!maia || maia.degraded || !Array.isArray(maia.top_moves) || maia.top_moves.length === 0) return { label: 'Unknown', r: null, prob: null, topProb: null };
-  const topProb = maia.top_moves[0].prob;
+export function botRarity(bot: Pick<MoveResponse, 'top_moves' | 'degraded'> | undefined, played: string): Rarity {
+  if (!bot || bot.degraded || !Array.isArray(bot.top_moves) || bot.top_moves.length === 0) return { label: 'Unknown', r: null, prob: null, topProb: null };
+  const topProb = bot.top_moves[0].prob;
   if (typeof topProb !== 'number' || !Number.isFinite(topProb) || topProb <= 0) return { label: 'Unknown', r: null, prob: null, topProb: null };
-  const found = maia.top_moves.find(candidate => candidate.move === played);
+  const found = bot.top_moves.find(candidate => candidate.move === played);
   if (!found || typeof found.prob !== 'number' || !Number.isFinite(found.prob)) return { label: 'Absent', r: null, prob: null, topProb };
   const r = found.prob / topProb;
   return { label: r >= 0.6 ? 'Expected' : r >= 1 / 3 ? 'Uncommon' : 'Rare', r, prob: found.prob, topProb };
@@ -44,20 +44,20 @@ export function maiaRarity(maia: Pick<MoveResponse, 'top_moves' | 'degraded'> | 
 // (Excellent/Great) meets findability (a critical move nobody's model
 // expects is an exceptional find); negative grades meet popularity (a
 // blunder the model saw coming is a common blunder). The candidate lists
-// below carry the Maia percentages; the verdict never repeats them.
+// below carry the bot percentages; the verdict never repeats them.
 // Praise gating lives in effectiveQuality, not reviewMove (which stays pure
-// engine so memo/cache keys never go stale on Maia changes). It translates
+// engine so memo/cache keys never go stale on bot changes). It translates
 // engine facts into displayed judgments:
 // - Critical + Absent or Rare-and-tiny (prob<5%) → Excellent (!!).
 //   The relative leg (Rare/Absent) blocks wide-opening inflation where the
-//   Maia top itself sits under 5% (r=1 there, not a find).
+//   bot top itself sits under 5% (r=1 there, not a find).
 // - Critical + Uncommon/Rare at >=5% → Great (!).
 // - Critical + Expected/Unknown → Best; Top → Best; Holds → Good.
 // - Excellent + tiny-at-own-Elo + tiny-at-2400 + decisive SF gap → Alien,
 //   via alienUpgrade after this translation (it needs the 2400 rarity and
 //   the SF top gap, which live outside the grade+rarity pair).
 // Unknown is transient/error only — callers hold the spinner while either
-// engine is pending, and SF-settled non-critical moves complete without Maia
+// engine is pending, and SF-settled non-critical moves complete without the bot
 // (fast path), so the cap never flickers a settled badge.
 export const EXCELLENT_MAX_PROB = 0.05;
 // Decisive-only-move gap for Alien, in mover-relative whiteWin points.
@@ -138,7 +138,7 @@ function rarityVerdict(quality: Quality, rarity: Rarity | undefined, bestRarity?
     return hardToAvoid(bestRarity) ?? `An unlisted ${negativeNoun(quality)}.`;
   }
   if (rarity.label === 'Expected') {
-    if (praise || holds) return `The natural choice.`;
+    if (praise || holds) return `A natural choice.`;
     return hardToAvoid(bestRarity) ?? `A common ${negativeNoun(quality)}.`;
   }
   if (rarity.label === 'Uncommon') {
@@ -153,7 +153,7 @@ function rarityVerdict(quality: Quality, rarity: Rarity | undefined, bestRarity?
   return hardToAvoid(bestRarity) ?? `A rare ${negativeNoun(quality)}.`;
 }
 // A mistake whose avoidance was itself a rare find at the player's own
-// level: the best move sat under 5% (Rare) or outside Maia's top choices
+// level: the best move sat under 5% (Rare) or outside the bot's top choices
 // (Absent), so the error was hard to avoid. Qualified to the player's pool:
 // with a second (2400) rarity lane in play, the bare phrase would read as
 // universal — the "anyone" upgrade lives in the planned best2400Rarity fact.
@@ -187,13 +187,13 @@ export function secondPoolClause(rarity: Rarity | undefined | null, rarity2400: 
   if (own === 'Expected' || own === 'Uncommon') return 'Stronger players rarely play this.';
   return 'Rare at every level.';
 }
-// Exact-agreement fusion: when both pools shun the move under the same word
-// (Rare/Rare, Absent/Absent), the head and the every-level clause merge into
-// one sentence ("A blunder rare at every level."). Mixed pools keep both
-// sentences — no single rarity word fits a disagreement. Null unless the
-// second-pool rule already fired (same grades, same clause), so priority
-// against material/pawn notes is unchanged: describeMove only consults this
-// on a second-pool win.
+// Exact-agreement fusion: when both pools shun the move (Rare/Absent
+// family), the head and the every-level clause merge into one sentence
+// ("A rare blunder at every level."). Absent/Absent keeps the unlisted
+// adjective; every other shunned pair (Rare/Rare, Rare/Absent,
+// Absent/Rare) reads rare. Null unless the second-pool rule already fired
+// (same grades, same clause), so priority against material/pawn notes is
+// unchanged: describeMove only consults this on a second-pool win.
 function fuseEveryLevel(
   quality: Quality | undefined,
   rarity: Rarity | undefined | null,
@@ -203,10 +203,10 @@ function fuseEveryLevel(
   const label = quality.label;
   if (label !== 'Blunder' && label !== 'Mistake' && label !== 'Inaccuracy') return null;
   const noun = negativeNoun(quality);
-  const article = noun === 'inaccuracy' ? 'An' : 'A';
-  if (rarity.label === 'Rare' && rarity2400.label === 'Rare') return `${article} ${noun} rare at every level.`;
-  if (rarity.label === 'Absent' && rarity2400.label === 'Absent') return `${article} ${noun} unlisted at every level.`;
-  return null;
+  const shunned = (value: string) => value === 'Rare' || value === 'Absent';
+  if (!shunned(rarity.label) || !shunned(rarity2400.label)) return null;
+  if (rarity.label === 'Absent' && rarity2400.label === 'Absent') return `An unlisted ${noun} at every level.`;
+  return `A rare ${noun} at every level.`;
 }
 // Decision list for the move verdict. Array order IS the priority: the
 // first matching rule wins, so reordering rules reorders the verdict. Each
@@ -215,7 +215,7 @@ function fuseEveryLevel(
 // alone with no novelty prefix and no second sentence; when none matches,
 // the quality × rarity synthesis below takes a novelty prefix and at most
 // one note rule. Returns null when there is nothing additive to say
-// (unreviewed, off-book without Maia data, or pre-first-move); the badges
+// (unreviewed, off-book without bot data, or pre-first-move); the badges
 // and charts already carry the grades.
 // materialNote is the best-line 3-ply swing supplied by the caller
 // (Mistake/Blunder only). pawnNote is the positional fallback when the
@@ -360,7 +360,7 @@ export type ObjectivePoint = {
 // Ranked candidate entries for one position: the objective list the panel
 // renders. Mover-relative expected score per choice, policy/score order,
 // plus the model identity behind the list for headings and fallback copy.
-// `prob` is the lane's play probability when the provider has one (Maia
+// `prob` is the lane's play probability when the provider has one (bot
 // policy share); lanes without one (Stockfish lines) omit it and the panel
 // falls back to the single absolute value.
 export type ObjectiveCandidates = {

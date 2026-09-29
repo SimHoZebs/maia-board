@@ -1,6 +1,6 @@
 import type { State } from './state/index';
 import { useReviewPipeline } from './useReviewPipeline';
-export { computeReviewQualities, gameIdentityFor, isMaiaPosition, translateReviewQualities,
+export { computeReviewQualities, gameIdentityFor, isBotPosition, translateReviewQualities,
   type RecordStatus, type ReviewQualitiesMemo, type ReviewQualitiesStats, type ReviewState } from './useReviewPipeline';
 
 // Thin adapter over the single review pipeline: the analysis room grades the

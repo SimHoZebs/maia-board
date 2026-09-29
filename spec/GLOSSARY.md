@@ -19,14 +19,14 @@ re-defining. One name per concept — no aliases.
 - `lineKey = posId(initialFen, full moves)` — content key for one line.
   Tuple-input: `lineKeyFor(initialFen, moves)`. Node-input wrapper:
   `lineKeyForNode(node)` (takes a ReviewNode, not a tuple). Pinned-settings
-  wrapper: `gradingMaiaKey(node)` (grading lane). Abort scopes
+  wrapper: `gradingBotKey(node)` (grading lane). Abort scopes
   (`{lineKey, gameId?}`) key foreground work by this. The same field name
   recurs for other owners: `PersistedBatch.lineKey` (batch identity,
   `batchReview.ts`) and the openings-cache local (openings fetch guard).
   See `frontend/src/domain.ts:lineKeyFor`.
 - `reviewKey = JSON([posId, engine, settingsHash])` — cache key for one engine
-  reading. `settingsHash` is `stockfishPolicy` for SF, `[eloMaia, eloUser,
-  model, valueElos?]` for Maia. See
+  reading. `settingsHash` is `stockfishPolicy` for SF, `[botElo, userElo,
+  model, valueElos?]` for the bot. See
   `frontend/src/evaluationStore.ts:reviewKey`.
 - `gameId` — durable user-game identity (saved games, current-game marker).
   Never cache identity. Deleting a game orphans nothing. `currentId` is the
@@ -48,7 +48,7 @@ re-defining. One name per concept — no aliases.
 One pipeline, named by stage:
 
 1. `evaluation` — one settled engine row. SF `Evaluation` (cp/mate + lines) or
-   Maia `MoveResponse` (top_moves + WDL). Stored in `evaluations_v2`, in-memory
+   Bot `MoveResponse` (top_moves + WDL). Stored in `evaluations_v2`, in-memory
    `EvaluationStore`, fetched via `/evaluate`, `/move/analysis`, or bulk.
 2. `EngineGrade` — engine-only judgment from loss/criticality
    (`Forced | Allowed mate | Blunder | Mistake | Inaccuracy | Critical | Top |
@@ -72,22 +72,22 @@ One pipeline, named by stage:
 ## Value representation
 
 - `expected` — mover-relative expected score 0–100. The only number grading
-  cutoffs (`classifyLoss 20/10/5`) read. Maia: `100*(win+0.5*draw)`. SF:
+  cutoffs (`classifyLoss 20/10/5`) read. Bot: `100*(win+0.5*draw)`. SF:
   `whiteWin(cp)` then pov-invert for Black.
 - `whiteExpected(turn, expected)` — White-relative view for bars/graphs.
   Converter table (same value, different boundaries — do not add variants):
-  `whiteWin(Score→mover)`, `maiaExpected(WDL→mover)`,
-  `whiteExpected(mover→white)`, `maiaWhiteWdl(mover WDL→white %)`,
+  `whiteWin(Score→mover)`, `botExpected(WDL→mover)`,
+  `whiteExpected(mover→white)`, `botWhiteWdl(mover WDL→white %)`,
   `outcomeExpected(terminal→mover)`.
 - `top` — objective best move (`top_moves[0].move` / `best_move`), null when
   degraded/missing/terminal. Backend asymmetry: SF `BestMove *string` nil for
-  terminal vs Maia `Move string + Degraded bool` — document, do not merge.
-- `score` — SF White-perspective `{cp|mate}`. `WDL` — Maia choosing-side
+  terminal vs Bot `Move string + Degraded bool` — document, do not merge.
+- `score` — SF White-perspective `{cp|mate}`. `WDL` — bot choosing-side
   `[loss, draw, win]`. Same position value, different projection.
 - `delta / baseline` — read-time derivation
   (`wdlExpected(candidate) − wdlExpected(grading-2400-row)`), never stored.
   Server-attached preferred (`delta_baseline` on served rows), local fallback
-  exact (`selectDeltaParts` vs `maiaDisplayParts`).
+  exact (`selectDeltaParts` vs `botDisplayParts`).
 - `objective = {top, expected}` — request-time composition pattern over
   per-model caches, never a stored combined row (no backend route; frontend
   composes). The seam is role-keyed (`objective/grader`: grading;
@@ -134,7 +134,7 @@ scheduler; Stockfish: two (interactive + batch, dedup per-scheduler).
 Non-preemptive, grant order `Play > Focus > Batch` within a scheduler.
 Batch shares fairly by rotation with dual admission caps (fail-visible 429).
 Batch entries carry `engine` (slot routing: which admission slot drains the
-entry) plus `role` (`grade` for grading-2400 Maia rows, `display` for
+entry) plus `role` (`grade` for grading-2400 bot rows, `display` for
 everything else); runners stay engine-keyed, grading treatment reads the role.
 Frontend `ensure({priority})` = foreground pump; `restore` = settled rows.
 `supersede` (verb) = `ErrSuperseded`/`cancelLocked` mechanism; `join` =
@@ -169,7 +169,7 @@ waiter path, `dedup-by-key` = key policy (empty key never joins).
   (`TACTIC_VALUES` owned by `moveFacts.ts`).
 - `openings` — named book from the server (`OpeningMatch` wire,
   `OpeningRef` display, `NoveltyRef` prior-book reference).
-- `rarity` — Maia sociology (`maiaRarity` bands 0.6/⅓, tiny <5%).
+- `rarity` — bot sociology (`botRarity` bands 0.6/⅓, tiny <5%).
 - `criticality` — engine-only `Critical/Top` fact before `effectiveQuality`.
   Precedence: opening/terminal > material > pawn > second-pool/praise.
 

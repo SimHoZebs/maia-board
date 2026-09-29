@@ -1,10 +1,10 @@
 import { expect, it } from 'vitest';
 import { Chess } from 'chess.js';
-import { alienUpgrade, ALIEN_MIN_GAP, classifyLoss, describeMove, effectiveQuality, isMateFor, isTinyRare, maiaRarity, moveAccuracy, outcomeExpected, reviewMove, secondPoolClause, sfTopGap, SEARCH_POLICY, terminalEvaluation, whiteExpected, whiteWin, type EngineGrade, type Evaluation, type ObjectiveGrade, type Quality, type Rarity } from './reviewMetrics';
-import { maiaExpected } from './objective/winrate';
+import { alienUpgrade, ALIEN_MIN_GAP, classifyLoss, describeMove, effectiveQuality, isMateFor, isTinyRare, botRarity, moveAccuracy, outcomeExpected, reviewMove, secondPoolClause, sfTopGap, SEARCH_POLICY, terminalEvaluation, whiteExpected, whiteWin, type EngineGrade, type Evaluation, type ObjectiveGrade, type Quality, type Rarity } from './reviewMetrics';
+import { botExpected } from './objective/winrate';
 const evaluation = (cp: number): Evaluation => ({ engine: 'Stockfish 19', search_policy: SEARCH_POLICY, score: { type: 'cp', value: cp }, depth: 14, best_move: 'e2e4', lines: [], terminal: null });
 const grading = (top: string | null, wdl: [number, number, number], afterExpected: number | null): ObjectiveGrade => ({
-  top, expected: maiaExpected(wdl), afterExpected, beforePending: false, afterPending: false,
+  top, expected: botExpected(wdl), afterExpected, beforePending: false, afterPending: false,
 });
 it('uses canonical white cp and preserves mate winner independent of distance', () => {
   expect(whiteWin({ type: 'cp', value: 0 })).toBe(50);
@@ -76,7 +76,7 @@ it('never allows mate on unavoidable or best-played mates, and forced still wins
   expect(forced.moves()).toHaveLength(1);
   expect(reviewMove(evaluation(-900), matedAfter, forced, 'h8h7').label).toBe('Forced');
 });
-const maia = (probs: [string, number][], degraded = false) => ({ top_moves: probs.map(([move, prob]) => ({ move, prob, wdl: [0.2, 0.3, 0.5] as [number, number, number] })), degraded });
+const bot = (probs: [string, number][], degraded = false) => ({ top_moves: probs.map(([move, prob]) => ({ move, prob, wdl: [0.2, 0.3, 0.5] as [number, number, number] })), degraded });
 it('reads a missed win that stays alive as Blunder by loss', () => {
   // winB ~90 (cp 600), winA 50 (cp 0): loss ~40 is Blunder damage even
   // though the mover is alive at 50. There is no Miss label: the engine
@@ -108,7 +108,7 @@ it('grades objective top play as Top even when Stockfish disagrees', () => {
   expect(grade.label).toBe('Top');
 });
 it('flags objective expected-score drops with shared cutoffs', () => {
-  // Flat SF pair (no engine loss) isolates the Maia axis: 80 -> 50.
+  // Flat SF pair (no engine loss) isolates the bot axis: 80 -> 50.
   const grade = reviewMove(evaluation(0), evaluation(0), new Chess(), 'd2d4', grading('e2e4', [0.1, 0.2, 0.7], 50));
   expect(grade.label).toBe('Blunder');
   expect(grade.loss).toBeCloseTo(30, 9);
@@ -184,7 +184,7 @@ it('tiers praise sentences across both Elo lanes and Stockfish agreement', () =>
   expect(describeMove({ san: 'Re8', quality: quality('Excellent'), rarity: tiny, rarity2400: tiny }))
     .toBe('An exceptional find. Even 2400s rarely play this.');
   expect(describeMove({ san: 'Re8', quality: quality('Great'), rarity: { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 }, rarity2400: tiny }))
-    .toBe('The natural choice. Even 2400s rarely play this.');
+    .toBe('A natural choice. Even 2400s rarely play this.');
   // Validated: SF-top Best that is tiny in both pools outranks blind-spot.
   expect(describeMove({ san: 'd5', quality: quality('Best'), rarity: tiny, rarity2400: tiny, isTop: true }))
     .toBe('A rare find. Stockfish agrees it is best.');
@@ -194,35 +194,35 @@ it('tiers praise sentences across both Elo lanes and Stockfish agreement', () =>
   expect(describeMove({ san: 'Nxh7+', quality: quality('Best'), rarity: tiny, isTop: true }))
     .toBe('A rare find.');
 });
-it('bands Maia rarity by ratio to the top move, not rank or absolute prob', () => {
+it('bands bot rarity by ratio to the top move, not rank or absolute prob', () => {
   // 13% under a 15% top is the same band as the top itself.
-  const close = maia([['e2e4', 0.15], ['d2d4', 0.13]]);
-  expect(maiaRarity(close, 'e2e4').label).toBe('Expected');
-  expect(maiaRarity(close, 'd2d4').label).toBe('Expected');
+  const close = bot([['e2e4', 0.15], ['d2d4', 0.13]]);
+  expect(botRarity(close, 'e2e4').label).toBe('Expected');
+  expect(botRarity(close, 'd2d4').label).toBe('Expected');
   // A 12% rank-1 in a wide position is still Expected.
-  expect(maiaRarity(maia([['e2e4', 0.12], ['d2d4', 0.05]]), 'e2e4').label).toBe('Expected');
-  expect(maiaRarity(maia([['e2e4', 0.4], ['d2d4', 0.15]]), 'd2d4').label).toBe('Uncommon');
-  expect(maiaRarity(maia([['e2e4', 0.4], ['d2d4', 0.05]]), 'd2d4').label).toBe('Rare');
+  expect(botRarity(bot([['e2e4', 0.12], ['d2d4', 0.05]]), 'e2e4').label).toBe('Expected');
+  expect(botRarity(bot([['e2e4', 0.4], ['d2d4', 0.15]]), 'd2d4').label).toBe('Uncommon');
+  expect(botRarity(bot([['e2e4', 0.4], ['d2d4', 0.05]]), 'd2d4').label).toBe('Rare');
   // Qe3-like 9.5% under a 32% top (r ~= 0.30) reads Rare against the
   // majority; f3-like 14.9% under a 34% top (r ~= 0.44) stays Uncommon.
-  expect(maiaRarity(maia([['f2f3', 0.32], ['h2h3', 0.28], ['d3d4', 0.11], ['e1e3', 0.095], ['d2f3', 0.08]]), 'e1e3').label).toBe('Rare');
-  expect(maiaRarity(maia([['h2h3', 0.34], ['f2f3', 0.149], ['d2f3', 0.14], ['d3d4', 0.13], ['g5f3', 0.06]]), 'f2f3').label).toBe('Uncommon');
-  expect(maiaRarity(close, 'g1f3').label).toBe('Absent');
-  expect(maiaRarity(maia([]), 'e2e4').label).toBe('Unknown');
-  expect(maiaRarity(undefined, 'e2e4').label).toBe('Unknown');
-  expect(maiaRarity(maia([['e2e4', 0.5]], true), 'e2e4').label).toBe('Unknown');
+  expect(botRarity(bot([['f2f3', 0.32], ['h2h3', 0.28], ['d3d4', 0.11], ['e1e3', 0.095], ['d2f3', 0.08]]), 'e1e3').label).toBe('Rare');
+  expect(botRarity(bot([['h2h3', 0.34], ['f2f3', 0.149], ['d2f3', 0.14], ['d3d4', 0.13], ['g5f3', 0.06]]), 'f2f3').label).toBe('Uncommon');
+  expect(botRarity(close, 'g1f3').label).toBe('Absent');
+  expect(botRarity(bot([]), 'e2e4').label).toBe('Unknown');
+  expect(botRarity(undefined, 'e2e4').label).toBe('Unknown');
+  expect(botRarity(bot([['e2e4', 0.5]], true), 'e2e4').label).toBe('Unknown');
 });
 it('verdicts only the quality-by-rarity synthesis, never the grade', () => {
   const quality = (label: Quality['label'], loss: number | null = 0): Quality => ({ label, accuracy: 100, loss });
   const rarity = (label: Rarity['label']): Rarity => ({ label, r: 1, prob: 0.4, topProb: 0.4 });
   expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity: rarity('Expected') }))
-    .toBe('The natural choice.');
+    .toBe('A natural choice.');
   expect(describeMove({ san: 'Nxh7+', quality: quality('Best'), rarity: rarity('Rare') }))
     .toBe('A rare find.');
   expect(describeMove({ san: 'Re8', quality: quality('Great'), rarity: rarity('Rare') }))
     .toBe('A rare find.');
   expect(describeMove({ san: 'Re8', quality: quality('Great'), rarity: rarity('Expected') }))
-    .toBe('The natural choice.');
+    .toBe('A natural choice.');
   expect(describeMove({ san: 'h3', quality: quality('Good'), rarity: rarity('Uncommon') }))
     .toBe('A meaningful minority that holds.');
   expect(describeMove({ san: 'Nxh7+', quality: quality('Excellent'), rarity: rarity('Rare') }))
@@ -245,23 +245,23 @@ it('verdicts only the quality-by-rarity synthesis, never the grade', () => {
 });
 it('keeps probabilities in the candidate lists, never in the verdict', () => {
   const quality: Quality = { label: 'Blunder', accuracy: 20, loss: 25 };
-  const rarity = maiaRarity(maia([['e2e4', .15], ['d2d4', .13]]), 'd2d4');
+  const rarity = botRarity(bot([['e2e4', .15], ['d2d4', .13]]), 'd2d4');
   const text = describeMove({ san: 'd4', quality: { ...quality, label: 'Best' }, rarity });
-  expect(text).toBe('The natural choice.');
+  expect(text).toBe('A natural choice.');
   expect(text).not.toMatch(/Maia|predicts|%/);
   expect(text).not.toMatch(/most|nobody|population/i);
-  const absent = describeMove({ san: 'Nf3', quality: { ...quality, label: 'Great' }, rarity: maiaRarity(maia([['e2e4', .15]]), 'g1f3') });
+  const absent = describeMove({ san: 'Nf3', quality: { ...quality, label: 'Great' }, rarity: botRarity(bot([['e2e4', .15]]), 'g1f3') });
   expect(absent).toBe('A genuine find.');
   expect(absent).not.toMatch(/brilliant|only good|impossible|nobody|Maia|%/i);
-  const absentBlunder = describeMove({ san: 'h4', quality, rarity: maiaRarity(maia([['e2e4', .15]]), 'h2h4') });
+  const absentBlunder = describeMove({ san: 'h4', quality, rarity: botRarity(bot([['e2e4', .15]]), 'h2h4') });
   expect(absentBlunder).toBe('An unlisted blunder.');
-  const absentExcellent = describeMove({ san: 'Re8', quality: { ...quality, label: 'Excellent' }, rarity: maiaRarity(maia([['e2e4', .15]]), 'e8e7') });
+  const absentExcellent = describeMove({ san: 'Re8', quality: { ...quality, label: 'Excellent' }, rarity: botRarity(bot([['e2e4', .15]]), 'e8e7') });
   expect(absentExcellent).toBe('An exceptional find.');
-  const absentGood = describeMove({ san: 'h3', quality: { ...quality, label: 'Good' }, rarity: maiaRarity(maia([['e2e4', .15]]), 'h2h3') });
+  const absentGood = describeMove({ san: 'h3', quality: { ...quality, label: 'Good' }, rarity: botRarity(bot([['e2e4', .15]]), 'h2h3') });
   expect(absentGood).toBe('An unlisted choice that holds.');
   expect(describeMove({ san: 'd4', quality, rarity: undefined })).toBeNull();
 });
-it('gates praise on Maia: Excellent needs absent-or-tiny, Expected/Unknown cap at Best', () => {
+it('gates praise on the bot: Excellent needs absent-or-tiny, Expected/Unknown cap at Best', () => {
   const critical: EngineGrade = { label: 'Critical', accuracy: 100, loss: 0 };
   const expected: Rarity = { label: 'Expected', r: 1, prob: 0.542, topProb: 0.542 };
   expect(effectiveQuality(critical, expected)?.label).toBe('Best');
@@ -277,7 +277,7 @@ it('gates praise on Maia: Excellent needs absent-or-tiny, Expected/Unknown cap a
   expect(effectiveQuality(critical, listed)?.label).toBe('Great');
   // Absent from the top 5 counts as 0%: exceptional.
   expect(effectiveQuality(critical, { label: 'Absent', r: null, prob: null, topProb: 0.5 })?.label).toBe('Excellent');
-  // No Maia evidence: no praise without a find.
+  // No bot evidence: no praise without a find.
   expect(effectiveQuality(critical, { label: 'Unknown', r: null, prob: null, topProb: null })?.label).toBe('Best');
   expect(effectiveQuality(critical, undefined)?.label).toBe('Best');
   // Top/Holds translate unconditionally: Best needs no difficulty proof.
@@ -325,7 +325,7 @@ it('notes when a mistake was hard to avoid because the best move was rare', () =
     .toBe('Hard to avoid at your level.');
   // Praise and holds never read the best-move axis.
   expect(describeMove({ san: 'Nf3', quality: { ...blunder, label: 'Best' }, rarity: expected, bestRarity: rareBest }))
-    .toBe('The natural choice.');
+    .toBe('A natural choice.');
   expect(describeMove({ san: 'h3', quality: { ...blunder, label: 'Good' }, rarity: uncommon, bestRarity: rareBest }))
     .toBe('A meaningful minority that holds.');
   // Shifted interval: a best move at r ~= 0.29 with prob < 5% is now Rare-tiny
@@ -380,18 +380,19 @@ it('appends second-pool sociology after the material consequence, never before i
   // Rare-everywhere fuses with the rare head into one sentence.
   const rare: Rarity = { label: 'Rare', r: 0.2, prob: 0.08, topProb: 0.4 };
   expect(describeMove({ san: 'h4', quality: blunder, rarity: rare, rarity2400: rare2400 }))
-    .toBe('A blunder rare at every level.');
-  // Exact agreement fuses; mixed pools keep both sentences.
+    .toBe('A rare blunder at every level.');
+  // Both pools shunning fuses; Absent/Absent keeps unlisted, other shunned
+  // pairs read rare.
   const absent: Rarity = { label: 'Absent', r: null, prob: null, topProb: 0.4 };
   const absent2400: Rarity = { label: 'Absent', r: null, prob: null, topProb: 0.4 };
   expect(describeMove({ san: 'h4', quality: blunder, rarity: absent, rarity2400: absent2400 }))
-    .toBe('A blunder unlisted at every level.');
+    .toBe('An unlisted blunder at every level.');
   expect(describeMove({ san: 'h4', quality: blunder, rarity: absent, rarity2400: rare2400 }))
-    .toBe('An unlisted blunder. Rare at every level.');
+    .toBe('A rare blunder at every level.');
   expect(describeMove({ san: 'h4', quality: blunder, rarity: rare, rarity2400: absent2400 }))
-    .toBe('A rare blunder. Rare at every level.');
+    .toBe('A rare blunder at every level.');
   expect(describeMove({ san: 'd5', quality: { ...blunder, label: 'Inaccuracy' }, rarity: rare, rarity2400: rare2400 }))
-    .toBe('An inaccuracy rare at every level.');
+    .toBe('A rare inaccuracy at every level.');
   // Agreement cells read exactly as before (no 2400 sentence).
   expect(describeMove({ san: 'Qh5', quality: blunder, rarity: expected, rarity2400: expected }))
     .toBe('A common blunder.');
@@ -404,7 +405,7 @@ it('bright-spots praise that is rare here but standard upstairs', () => {
     .toBe('A rare find. Stronger players play this regularly.');
   // Natural everywhere stays a single sentence; Holds stays quiet by design.
   expect(describeMove({ san: 'Nf3', quality: quality('Best'), rarity: expected, rarity2400: expected }))
-    .toBe('The natural choice.');
+    .toBe('A natural choice.');
   expect(describeMove({ san: 'h3', quality: quality('Good'), rarity: rare, rarity2400: expected }))
     .toBe('A rarely played choice that holds.');
 });
@@ -467,7 +468,7 @@ it('appends the positive why only for praise grades', () => {
   const rarityOf = (label: Rarity['label']): Rarity => ({ label, r: 1, prob: 0.4, topProb: 0.4 });
   const rarity = rarityOf('Expected');
   expect(describeMove({ san: 'exd5', quality: quality('Best'), rarity, positiveNote: 'Wins a pawn.' }))
-    .toBe('The natural choice. Wins a pawn.');
+    .toBe('A natural choice. Wins a pawn.');
   expect(describeMove({ san: 'Nd4', quality: quality('Great'), rarity: rarityOf('Rare'), positiveNote: "Nd4 forks Black's bishop and queen." }))
     .toBe("A rare find. Nd4 forks Black's bishop and queen.");
   expect(describeMove({
@@ -477,7 +478,7 @@ it('appends the positive why only for praise grades', () => {
   expect(describeMove({
     san: 'exd5', quality: quality('Best'), rarity,
     novelty: { priorName: 'Caro-Kann Defense', priorEco: 'B12' }, positiveNote: 'Wins a pawn.',
-  })).toBe('Leaves Caro-Kann Defense book. The natural choice. Wins a pawn.');
+  })).toBe('Leaves Caro-Kann Defense book. A natural choice. Wins a pawn.');
   // Negative grades, forced moves, and terminals never take the note.
   expect(describeMove({ san: 'exd5', quality: quality('Blunder'), rarity, positiveNote: 'Wins a pawn.' }))
     .toBe('A common blunder.');
@@ -492,9 +493,9 @@ it('appends the mate-parry why only for praise grades', () => {
   const quality = (label: Quality['label']): Quality => ({ label, accuracy: 100, loss: 0 });
   const rarity: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
   expect(describeMove({ san: 'g6', quality: quality('Best'), rarity, positiveNote: 'Parries Qxg7#.' }))
-    .toBe('The natural choice. Parries Qxg7#.');
+    .toBe('A natural choice. Parries Qxg7#.');
   expect(describeMove({ san: 'Re5', quality: quality('Good'), rarity, positiveNote: 'Avoids mate in one.' }))
-    .toBe('The natural choice. Avoids mate in one.');
+    .toBe('A natural choice. Avoids mate in one.');
   // A parrying blunder stays a blunder story, never a defensive story.
   expect(describeMove({ san: 'g6', quality: quality('Blunder'), rarity, positiveNote: 'Parries Qxg7#.' }))
     .toBe('A common blunder.');
@@ -559,7 +560,7 @@ it('falls back to the pawn note when the material window is silent', () => {
     .toBe('A common blunder. This line wins a pawn for Black.');
   // Praise and allowed mates never take positional notes.
   expect(describeMove({ san: 'Nf3', quality: quality('Good'), rarity, pawnNote: 'Doubles a pawn.' }))
-    .toBe('The natural choice.');
+    .toBe('A natural choice.');
   expect(describeMove({ san: 'fxg3', quality: quality('Allowed mate'), rarity, pawnNote: 'Doubles a pawn.' }))
     .toBe('A common move that allows mate.');
 });

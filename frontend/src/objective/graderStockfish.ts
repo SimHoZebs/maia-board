@@ -35,7 +35,7 @@ export function laneRows(
 
 // Node-aligned objective points. Stockfish rows carry no WDL triple, so the
 // bar falls back to the single expected value (white/black only, no draw
-// segment). The null keeps the shape identical to the Maia twin.
+// segment). The null keeps the shape identical to the twin.
 export function lanePoints(
   rows: (Evaluation | undefined)[],
   nodes: ReviewNode[],
@@ -48,7 +48,7 @@ export function lanePoints(
 
 // Ranked candidate list for the panel: the engine lines with per-line
 // mover-relative expectations. Terminal rows carry no lines, so the panel
-// falls back to the outcome there — same contract as the Maia twin.
+// falls back to the outcome there — same contract as the twin.
 export function candidatesFor(
   row: Evaluation | undefined,
   node: ReviewNode,

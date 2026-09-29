@@ -1,8 +1,8 @@
 import { Chess } from 'chess.js';
 import { fetchJsonWithBusyRetry } from './evaluationTransport';
 import { isRecord } from './guards';
-export type MaiaColor = 'white' | 'black';
-export type MaiaModel = '79m' | '5m';
+export type SideColor = 'white' | 'black';
+export type BotModel = '79m' | '5m';
 
 export type MoveRequest = {
   fen: string;
@@ -11,8 +11,8 @@ export type MoveRequest = {
   elo_user: number;
   value_elo_maia?: number;
   value_elo_user?: number;
-  model: MaiaModel;
-  maia_color: MaiaColor;
+  model: BotModel;
+  maia_color: SideColor;
   initial_fen?: string;
   temperature?: number;
 };
@@ -30,7 +30,7 @@ export type MoveResponse = {
   move: string;
   top_moves: TopMove[];
   wdl: [number, number, number];
-  model_used: MaiaModel;
+  model_used: BotModel;
   degraded: boolean;
   // Server-attached delta baseline (before-position 2400 point). Absent
   // when no grading row existed at serve time.
@@ -59,13 +59,13 @@ export type ApiErrorCode =
   | 'superseded'
   | 'unknown';
 
-export class MaiaApiError extends Error {
+export class BotApiError extends Error {
   readonly code: ApiErrorCode;
   readonly status?: number;
 
   constructor(code: ApiErrorCode, message: string, status?: number) {
     super(message);
-    this.name = 'MaiaApiError';
+    this.name = 'BotApiError';
     this.code = code;
     this.status = status;
   }
@@ -73,7 +73,7 @@ export class MaiaApiError extends Error {
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-function isModel(value: unknown): value is MaiaModel {
+function isModel(value: unknown): value is BotModel {
   return value === '79m' || value === '5m';
 }
 
@@ -95,7 +95,7 @@ function isWdlTuple(value: unknown): value is [number, number, number] {
 }
 
 // Single legality source for engine responses. Returns the legal set; callers
-// throw their own domain error (MaiaApiError vs incomplete-evaluation Error)
+// throw their own domain error (BotApiError vs incomplete-evaluation Error)
 // so wire error types stay unchanged.
 export function legalUciSet(fen: string): Set<string> {
   return new Set(new Chess(fen).moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`));
@@ -104,23 +104,23 @@ export function assertLegalUci(moves: string[], fen: string): void {
   const legal = legalUciSet(fen);
   for (const move of moves) if (!legal.has(move)) throw new Error(`Illegal UCI move: ${move}`);
 }
-export function parseMoveResponse(value: unknown, expected?: { model: MaiaModel; fen: string; temperature?: number }): MoveResponse {
+export function parseMoveResponse(value: unknown, expected?: { model: BotModel; fen: string; temperature?: number }): MoveResponse {
   if (!isRecord(value) || typeof value.move !== 'string' || !uci.test(value.move) || !isModel(value.model_used) || typeof value.degraded !== 'boolean') {
-    throw new MaiaApiError('unknown', 'Maia returned an incomplete response.');
+    throw new BotApiError('unknown', 'Bot returned an incomplete response.');
   }
   if (!isTopMoves(value.top_moves)) {
-    throw new MaiaApiError('unknown', 'Maia returned invalid candidate moves.');
+    throw new BotApiError('unknown', 'Bot returned invalid candidate moves.');
   }
   const candidates = value.top_moves;
   const sum = candidates.reduce((total, candidate) => total + candidate.prob, 0);
-  if (sum <= 0 || sum > 1.000001 || candidates.some((candidate, index) => index > 0 && candidate.prob > candidates[index - 1].prob + 1e-7)) throw new MaiaApiError('unknown', 'Maia returned invalid candidate probabilities.');
+  if (sum <= 0 || sum > 1.000001 || candidates.some((candidate, index) => index > 0 && candidate.prob > candidates[index - 1].prob + 1e-7)) throw new BotApiError('unknown', 'Bot returned invalid candidate probabilities.');
   if (!isWdlTuple(value.wdl)) {
-    throw new MaiaApiError('unknown', 'Maia returned invalid WDL data.');
+    throw new BotApiError('unknown', 'Bot returned invalid WDL data.');
   }
   const wdl = value.wdl;
   if (expected) {
-    if (value.model_used !== expected.model && !(expected.model === '79m' && value.model_used === '5m' && value.degraded)) throw new MaiaApiError('unknown', 'Maia returned a different model.');
-    if (value.degraded !== (value.model_used !== expected.model)) throw new MaiaApiError('unknown', 'Maia returned inconsistent fallback identity.');
+    if (value.model_used !== expected.model && !(expected.model === '79m' && value.model_used === '5m' && value.degraded)) throw new BotApiError('unknown', 'Bot returned a different model.');
+    if (value.degraded !== (value.model_used !== expected.model)) throw new BotApiError('unknown', 'Bot returned inconsistent fallback identity.');
     if (!expected.temperature && value.move !== candidates[0].move) {
       // Upstream argmax and topk may order equal logits differently. Preserve
       // its selected move when the highest policies tie, mirroring the
@@ -129,10 +129,10 @@ export function parseMoveResponse(value: unknown, expected?: { model: MaiaModel;
       const selected = candidates.find(candidate => candidate.move === value.move);
       const tied = selected ? Math.abs(selected.prob - candidates[0].prob) <= 1e-7
         : candidates.length === 5 && Math.abs(candidates[4].prob - candidates[0].prob) <= 1e-7;
-      if (!tied) throw new MaiaApiError('unknown', 'Maia returned an inconsistent selected move.');
+      if (!tied) throw new BotApiError('unknown', 'Bot returned an inconsistent selected move.');
     }
     try { assertLegalUci([value.move, ...value.top_moves.map(candidate => candidate.move)], expected.fen); }
-    catch { throw new MaiaApiError('unknown', 'Maia returned an illegal candidate move.'); }
+    catch { throw new BotApiError('unknown', 'Bot returned an illegal candidate move.'); }
   }
   return {
     move: value.move,
@@ -183,21 +183,21 @@ export async function requestMove(payload: MoveRequest, fetchImpl: FetchLike = f
   // Do not send analysis here: sharing one depth-1 latest-wins lane would
   // supersede the queued live reply every move — analysis has its own
   // endpoint below.
-  return postMaia('/move', payload, fetchImpl, signal);
+  return postBot('/move', payload, fetchImpl, signal);
 }
 
-export type MaiaAnalysisRequest = Omit<MoveRequest, 'temperature'>;
+export type BotAnalysisRequest = Omit<MoveRequest, 'temperature'>;
 
-export async function requestMaiaAnalysis(payload: MaiaAnalysisRequest, fetchImpl: FetchLike = fetch, signal?: AbortSignal): Promise<MoveResponse & { cached?: boolean }> {
+export async function requestBotAnalysis(payload: BotAnalysisRequest, fetchImpl: FetchLike = fetch, signal?: AbortSignal): Promise<MoveResponse & { cached?: boolean }> {
   // Lane is endpoint-implied: POST /move/analysis → Focus (retrospective
   // analysis). Same payload shape as /move minus sampling. The split is
   // load-bearing: analysis fires alongside the live reply every move, so it
   // queues behind the reply on Focus instead of superseding it on Play —
   // do not route analysis through requestMove.
-  return postMaia('/move/analysis', payload, fetchImpl, signal);
+  return postBot('/move/analysis', payload, fetchImpl, signal);
 }
 
-async function postMaia(path: '/move' | '/move/analysis', payload: MoveRequest | MaiaAnalysisRequest, fetchImpl: FetchLike, signal?: AbortSignal): Promise<MoveResponse & { cached?: boolean }> {
+async function postBot(path: '/move' | '/move/analysis', payload: MoveRequest | BotAnalysisRequest, fetchImpl: FetchLike, signal?: AbortSignal): Promise<MoveResponse & { cached?: boolean }> {
   let response: Response;
   let body: unknown;
   try {
@@ -211,36 +211,36 @@ async function postMaia(path: '/move' | '/move/analysis', payload: MoveRequest |
       throw new DOMException('Aborted', 'AbortError');
     }
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
-    if (error instanceof MaiaApiError) throw error;
-    throw new MaiaApiError('server_unreachable', 'The Maia server could not be reached.');
+    if (error instanceof BotApiError) throw error;
+    throw new BotApiError('server_unreachable', 'The bot server could not be reached.');
   }
   if (body === null || body === undefined) {
     // fetchJson returns null only when the body was unreadable; an abort
     // surfaces as AbortError above, so this is a genuine wire error.
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    throw new MaiaApiError('unknown', 'The Maia server returned unreadable data.', response!.status);
+    throw new BotApiError('unknown', 'The bot server returned unreadable data.', response!.status);
   }
   if (!response.ok) {
     const code = parseErrorCode(body);
-    const message = isRecord(body) && typeof body.message === 'string' ? body.message : 'The Maia server rejected this position.';
-    throw new MaiaApiError(code, message, response.status);
+    const message = isRecord(body) && typeof body.message === 'string' ? body.message : 'The bot server rejected this position.';
+    throw new BotApiError(code, message, response.status);
   }
   const parsed = parseMoveResponse(body, payload);
   return response.headers.get('X-Eval-Cache') === 'hit' ? { ...parsed, cached: true } : parsed;
 }
 
 export function readableApiError(error: unknown): string {
-  if (!(error instanceof MaiaApiError)) return 'Something went wrong while contacting Maia.';
+  if (!(error instanceof BotApiError)) return 'Something went wrong while contacting the bot.';
   switch (error.code) {
     case 'server_unreachable':
     case 'engine_unavailable':
-      return 'Maia is unreachable. Check that the server is running on your LAN.';
+      return 'Bot is unreachable. Check that the server is running on your LAN.';
     case 'engine_busy':
-      return 'Maia is busy. Wait a moment and try again.';
+      return 'Bot is busy. Wait a moment and try again.';
     case 'superseded':
       return 'A newer request replaced this position.';
     case 'not_maia_turn':
-      return 'Maia is not on move in this position.';
+      return 'Bot is not on move in this position.';
     case 'game_over':
       return 'This position has no legal moves.';
     case 'position_mismatch':
@@ -254,12 +254,12 @@ export function readableApiError(error: unknown): string {
     case 'missing_elo':
       return 'The Elo settings are invalid. Choose both ratings before trying again.';
     case 'invalid_maia_color':
-      return 'The Maia side setting is invalid. Choose White or Black and try again.';
+      return 'The bot side setting is invalid. Choose White or Black and try again.';
     case 'invalid_request':
     case 'invalid_json':
     case 'invalid_model':
     case 'method_not_allowed':
-      return 'The Maia server could not read this request.';
+      return 'The bot server could not read this request.';
     default:
       return error.message;
   }

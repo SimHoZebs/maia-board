@@ -23,7 +23,7 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
   // Best-move selection shared by both engines: stay on the main test
   // line while it is legal, else fall back to the first legal move. The
   // /move branch historically shares this preferred override (not raw
-  // moves[0]); keep it so mocked Maia play follows the PGN under test.
+  // moves[0]); keep it so mocked bot play follows the PGN under test.
   const bestMove = (payload: any) => {
     const game = replay(payload.moves, payload.initial_fen);
     const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
@@ -70,7 +70,7 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
     const extra = second === pgn ? [] : [{ move: second, prob: .25, wdl }];
     return { move: pgn, top_moves: [{ move: pgn, prob: .6, wdl }, ...extra], wdl, model_used: '79m', degraded: false };
   };
-  const maiaOrGrade = (payload: any) => payload.elo_maia === 2400 ? gradeValue(payload) : maiaValue(payload);
+  const botOrGrade = (payload: any) => payload.elo_maia === 2400 ? gradeValue(payload) : maiaValue(payload);
   const sfValue = (payload: any) => {
     const game = replay(payload.moves, payload.initial_fen);
     const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
@@ -86,7 +86,7 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
     if (!job || job.filed) return;
     job.filed = true;
     for (const request of job.requests) {
-      cache.set(request.engine, request, request.engine === 'maia' ? maiaOrGrade(request) : sfValue(request));
+      cache.set(request.engine, request, request.engine === 'maia' ? botOrGrade(request) : sfValue(request));
     }
   };
   page.on('pageerror', error => errors.push(error.message));
@@ -133,7 +133,7 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
         await route.fulfill({ json: hit.value, headers: { 'X-Eval-Cache': 'hit' } });
         return;
       }
-      const value = path === '/evaluate' ? sfValue(payload) : maiaOrGrade(payload);
+      const value = path === '/evaluate' ? sfValue(payload) : botOrGrade(payload);
       cache.set(engine, payload, value);
       await route.fulfill({ json: value }); return;
     }
@@ -164,10 +164,10 @@ test('standalone FEN shows current candidates and clears correct-frame previews'
   const fen = '4k3/8/8/8/8/8/4P3/4K3 w - - 0 23';
   await page.goto(`http://maia.test/analyze?fen=${encodeURIComponent(fen)}`);
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 1');
-  const maia = page.getByRole('region', { name: 'Maia analysis', exact: true });
-  await expect(maia.getByRole('button', { name: 'Explore e4', exact: true })).toBeVisible();
-  const candidate = maia.getByRole('button', { name: 'Explore e3', exact: true });
-  await expect(maia.getByRole('button').first()).toBeVisible();
+  const bot = page.getByRole('region', { name: 'Bot analysis', exact: true });
+  await expect(bot.getByRole('button', { name: 'Explore e4', exact: true })).toBeVisible();
+  const candidate = bot.getByRole('button', { name: 'Explore e3', exact: true });
+  await expect(bot.getByRole('button').first()).toBeVisible();
   const preview = page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]');
   await candidate.hover();
   await expect(preview).toHaveCount(1);
@@ -177,10 +177,10 @@ test('standalone FEN shows current candidates and clears correct-frame previews'
   await expect(preview).toHaveCount(1);
   await page.getByRole('button', { name: 'Analyze entire game' }).focus();
   await expect(preview).toHaveCount(0);
-  await maia.getByRole('button', { name: 'Explore e4', exact: true }).click();
+  await bot.getByRole('button', { name: 'Explore e4', exact: true }).click();
   await expect(page.locator('.move-cell')).toContainText('23. e4');
-  await expect(maia.getByRole('button', { name: 'Explore e4 (played) from before this move', exact: true })).toBeVisible();
-  await maia.getByRole('button').first().hover();
+  await expect(bot.getByRole('button', { name: 'Explore e4 (played) from before this move', exact: true })).toBeVisible();
+  await bot.getByRole('button').first().hover();
   await expect(preview).toHaveCount(0);
   expect(app.errors).toEqual([]);
 });
@@ -195,8 +195,8 @@ test('root shows the fallback notice without model parameters', async ({ page })
   });
   await page.goto('http://maia.test/analyze?moves=');
   await expect(page.locator('#objective-rating')).toHaveValue('2400');
-  await expect(page.locator('section[aria-label="Maia analysis"]').getByText('Maia fallback results.', { exact: true })).toBeVisible();
-  await expect(page.getByText('Maia3 fallback results.', { exact: true })).toBeVisible();
+  await expect(page.locator('section[aria-label="Bot analysis"]').getByText('Bot fallback results.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Bot 2400 fallback results.', { exact: true })).toBeVisible();
   expect(app.errors).toEqual([]);
 });
 
@@ -501,7 +501,7 @@ test('server-cached positions skip inference after reload', async ({ page }) => 
   const app = await bootReview(page);
   await expect(page.locator('#objective-rating')).toHaveValue('2400');
   // Both engines at the before/current pair must finish before reloading:
-  // fast+full Stockfish plus display and grading Maia rows.
+  // fast+full Stockfish plus display and grading bot rows.
   await expect.poll(() => app.evaluations.size).toBe(8);
   const calls = app.requests.length;
   await page.reload();
@@ -533,7 +533,7 @@ test('partially evicted analysis restores cached positions and gates the rest', 
   const app = await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
-  // Evict every Maia row server-side: Stockfish stays cached.
+  // Evict every bot row server-side: Stockfish stays cached.
   const evicted = [...app.evaluations].filter(([, entry]) => entry.engine === 'maia').map(([hash]) => hash);
   expect(evicted.length).toBeGreaterThan(0);
   for (const hash of evicted) app.evaluations.delete(hash);
@@ -545,7 +545,7 @@ test('partially evicted analysis restores cached positions and gates the rest', 
   // against the instant prime filing it — order decides whether the viewed
   // pair's fast row fetches live. Wait past the debounce for prime coverage
   // (candidates prove the viewed pair landed) so the measured window starts
-  // settled; intent unchanged (resubmit must cover evicted Maia rows with
+  // settled; intent unchanged (resubmit must cover evicted bot rows with
   // zero new Stockfish inference).
   await expect(page.locator('.candidate-list li').first()).toBeVisible();
   await page.waitForTimeout(600);
@@ -553,7 +553,7 @@ test('partially evicted analysis restores cached positions and gates the rest', 
   const jobsBefore = app.batches.size;
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
-  // Every evicted Maia position is gated behind the new batch: the fresh
+  // Every evicted bot position is gated behind the new batch: the fresh
   // submit must cover each evicted row (foreground only primes the viewed
   // position, so per-request inference is the wrong place to look for them).
   // Set membership instead of exact counts: the insight single and the
@@ -580,7 +580,7 @@ test('changed analysis settings gate the missing positions behind a new batch', 
 });
 test('mixed arrow sources retain their own endpoints', async ({ page }, info) => {
   await bootReview(page);
-  // Display Maia and objective (2400) lanes share /move/analysis: split by elo so the
+  // Display bot and objective (2400) lanes share /move/analysis: split by elo so the
   // white actual, red display, and blue objective arrows diverge.
   await page.route('http://maia.test/move**', route => {
     const body = route.request().postDataJSON();
@@ -707,7 +707,7 @@ test('evaluation bar follows rendered board dimensions on resize and fractional 
   await context.close();
 });
 
-test('terminal repetition skips Maia and keeps the local draw result', async ({ page }) => {
+test('terminal repetition skips the bot and keeps the local draw result', async ({ page }) => {
   const app = await bootReview(page, '1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. Ng1 Ng8');
   await expect(page.locator('.balance-track')).toHaveAccessibleName('Draw · White 0% · Draw 100% · Black 0% · estimated White winning chance 50%');
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
@@ -732,10 +732,10 @@ test('explored branches keep the original line badges', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   // Mainline badges settled: two Best, one Mistake, one Blunder.
   await expect(page.locator('.move-cell .quality-best')).toHaveCount(2);
-  // Branch from the root via the second Maia candidate.
+  // Branch from the root via the second bot candidate.
   await page.locator('#analysis-first').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 5');
-  const candidates = page.locator('section[aria-label="Maia analysis"] li:not(.candidate-header) .candidate-reading');
+  const candidates = page.locator('section[aria-label="Bot analysis"] li:not(.candidate-header) .candidate-reading');
   await expect(candidates).toHaveCount(2);
   await candidates.nth(1).click();
   await expect(page.locator('.original-move')).toHaveCount(4);
@@ -774,7 +774,7 @@ test('custom arrow colors and widths repaint shafts and heads', async ({ page })
   await page.evaluate(key => {
     localStorage.setItem(key, JSON.stringify({
       actual: { color: '#00ff00', width: 64 },
-      maia: { color: '#ff00ff', width: 32 },
+      bot: { color: '#ff00ff', width: 32 },
       objective: { color: '#0000ff', width: 16 },
       candidate: { color: '#d6b85c', width: 2 },
     }));
@@ -791,7 +791,7 @@ test('custom arrow colors and widths repaint shafts and heads', async ({ page })
   expect(heads).toEqual(expect.arrayContaining(['#00ff00', '#ff00ff', '#0000ff']));
   // Settings controls reflect and persist the seeded values.
   await page.locator('#mode-settings').click();
-  await expect(page.locator('#arrow-maia-color')).toHaveValue('#ff00ff');
+  await expect(page.locator('#arrow-bot-color')).toHaveValue('#ff00ff');
   await expect(page.locator('#arrow-actual-width')).toHaveValue('64');
   await page.locator('#arrow-objective-width-number').fill('20');
   await expect.poll(() => page.evaluate(key => JSON.parse(localStorage.getItem(key)!).objective.width, KEYS.arrows)).toBe(20);

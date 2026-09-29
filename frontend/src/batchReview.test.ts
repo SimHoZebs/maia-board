@@ -3,14 +3,14 @@ import { buildTimeline, START_FEN } from './domain';
 import { BatchGoneError, BATCH_PERSIST_KEY, buildBatchItems, buildBatchLine,
   clearPersistedBatch, fetchBatchStatus, hashBatchKeys, parseBatchRetryDelayMs, readPersistedBatch, submitBatch, subscribeBatchEvents,
   writePersistedBatch, type BatchEventSource, type BatchProgress } from './batchReview';
-import { MaiaApiError } from './api';
+import { BotApiError } from './api';
 import { jsonResponse } from './evaluationTestFixtures';
 import { requestBodyText } from './testUtils';
 import { reviewNodes } from './evaluationStore';
 import type { ReviewSettings } from './evaluationStore';
 import { defaultStockfishSettings } from './stockfishSettings';
 
-const settings: ReviewSettings = { eloMaia: 1600, eloUser: 1600, model: '79m', stockfish: defaultStockfishSettings };
+const settings: ReviewSettings = { botElo: 1600, userElo: 1600, model: '79m', stockfish: defaultStockfishSettings };
 const nodes = reviewNodes(buildTimeline(START_FEN, ['e2e4', 'e7e5']));
 const items = () => buildBatchItems(nodes, settings);
 const line = () => buildBatchLine(nodes);
@@ -34,20 +34,20 @@ describe('buildBatchItems', () => {
     expect(new Set(built.map(item => item.key)).size).toBe(6);
   });
   it('appends one grading-maia entry per node, collapsing identical keys', () => {
-    const grading = { eloMaia: 2400, eloUser: 2400, model: '79m' as const };
+    const grading = { botElo: 2400, userElo: 2400, model: '79m' as const };
     const built = buildBatchItems(nodes, settings, ['sf', 'maia'], grading);
     expect(built).toHaveLength(9);
     expect(built.map(item => item.engine)).toEqual(['sf', 'maia', 'maia', 'sf', 'maia', 'maia', 'sf', 'maia', 'maia']);
     expect(new Set(built.map(item => item.key)).size).toBe(9);
     expect(built[2].request).toMatchObject({ engine: 'maia', elo_maia: 2400, elo_user: 2400, model: '79m' });
-    // Analysis already at the grading identity: no duplicate Maia entries.
+    // Analysis already at the grading identity: no duplicate bot entries.
     const same = buildBatchItems(nodes, { ...grading, stockfish: defaultStockfishSettings }, ['sf', 'maia'], grading);
     expect(same).toHaveLength(6);
     expect(new Set(same.map(item => item.key)).size).toBe(6);
   });
   it('sends display policy-X with 2400 values and dedups explicit-equal 2400', () => {
-    const grading = { eloMaia: 2400, eloUser: 2400, model: '79m' as const };
-    const display800 = { eloMaia: 800, eloUser: 800, valueEloMaia: 2400, valueEloUser: 2400, model: '79m' as const,
+    const grading = { botElo: 2400, userElo: 2400, model: '79m' as const };
+    const display800 = { botElo: 800, userElo: 800, valueBotElo: 2400, valueUserElo: 2400, model: '79m' as const,
       stockfish: defaultStockfishSettings };
     const built = buildBatchItems(nodes, display800, ['sf', 'maia'], grading);
     const displayReq = built.find(item => item.engine === 'maia' && (item.request as { elo_maia: number }).elo_maia === 800)?.request;
@@ -56,7 +56,7 @@ describe('buildBatchItems', () => {
     const keys = new Set(built.map(item => item.key));
     expect(keys.size).toBe(built.length);
     // Explicit-equal 2400 display settings collapse onto the grading identity.
-    const display2400 = { eloMaia: 2400, eloUser: 2400, valueEloMaia: 2400, valueEloUser: 2400, model: '79m' as const,
+    const display2400 = { botElo: 2400, userElo: 2400, valueBotElo: 2400, valueUserElo: 2400, model: '79m' as const,
       stockfish: defaultStockfishSettings };
     const collapsed = buildBatchItems(nodes, display2400, ['sf', 'maia'], grading);
     expect(collapsed).toHaveLength(6);
@@ -111,7 +111,7 @@ describe('submitBatch 429 backpressure', () => {
     const sleep = vi.fn(async () => undefined);
     const fetcher = vi.fn<typeof fetch>(async () => response429('1'));
     const error = await submitBatch(items(), line(), fetcher, sleep).then(() => null, error => error);
-    expect(error).toBeInstanceOf(MaiaApiError);
+    expect(error).toBeInstanceOf(BotApiError);
     expect(error.code).toBe('engine_busy');
     expect(error.status).toBe(429);
     expect(fetcher).toHaveBeenCalledTimes(2);
@@ -140,7 +140,7 @@ describe('429 skew into the old generic path', () => {
   it('handles a 429 in generic status reads without crashing', async () => {
     const fetcher = vi.fn<typeof fetch>(async () => response429(null, { code: 'busy', message: 'slow down' }));
     const error = await fetchBatchStatus('job1', fetcher).then(() => null, error => error);
-    expect(error).toBeInstanceOf(MaiaApiError);
+    expect(error).toBeInstanceOf(BotApiError);
     expect(error.message).toBe('slow down');
     expect(error.status).toBe(429);
   });
@@ -211,7 +211,7 @@ describe('subscribeBatchEvents', () => {
     FakeSource.instances = [];
     const failed = subscribeBatchEvents('job1', () => undefined, new AbortController().signal, FakeSource as unknown as new (url: string) => BatchEventSource);
     sourceFor().fail();
-    await expect(failed).rejects.toBeInstanceOf(MaiaApiError);
+    await expect(failed).rejects.toBeInstanceOf(BotApiError);
   });
   it('stops on abort', async () => {
     FakeSource.instances = [];
@@ -256,7 +256,7 @@ describe('batch persistence', () => {
     writePersistedBatch({ jobId: 'job1', lineKey: 'lineA', keysHash: hash, total: keys.length });
     const stored = readPersistedBatch()!;
     // Same line but different settings produce different keys: no reattach.
-    const other = buildBatchItems(nodes, { ...settings, eloMaia: 2000 });
+    const other = buildBatchItems(nodes, { ...settings, botElo: 2000 });
     expect(hashBatchKeys(other.map(item => item.key))).not.toBe(stored.keysHash);
   });
 });

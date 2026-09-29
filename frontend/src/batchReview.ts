@@ -1,4 +1,4 @@
-import { MaiaApiError, parseErrorCode } from './api';
+import { BotApiError, parseErrorCode } from './api';
 import { postJson, readJsonBody } from './evaluationTransport';
 import { isNonNegativeInt, isRecord, isStringMap } from './guards';
 import { evaluationRequest, batchLineFor, resolveSettings, reviewKey, type BatchLine, type Engine, type ReviewNode, type SettingsInput } from './evaluationStore';
@@ -135,25 +135,25 @@ export function buildBatchItems(nodes: ReviewNode[], settings: SettingsInput, en
   return items;
 }
 
-function errorFromBody(response: Response, body: unknown, fallback: string): MaiaApiError {
+function errorFromBody(response: Response, body: unknown, fallback: string): BotApiError {
   const record = isRecord(body) ? body : null;
   const code = record ? parseErrorCode(record) : 'unknown';
   const message = record && typeof record.message === 'string' ? record.message : fallback;
-  return new MaiaApiError(code, message, response.status);
+  return new BotApiError(code, message, response.status);
 }
 
-async function readError(response: Response, fallback: string): Promise<MaiaApiError> {
+async function readError(response: Response, fallback: string): Promise<BotApiError> {
   return errorFromBody(response, await readJsonBody(response), fallback);
 }
 
 function parseProgress(body: unknown): BatchProgress {
   // Reject, don't default: silently zeroed done/failed/total would paint a
   // confident progress bar over unknown state (the blank-badge lie family).
-  // Callers already surface MaiaApiError through the batch error paths.
+  // Callers already surface BotApiError through the batch error paths.
   if (!isRecord(body) || typeof body.job_id !== 'string'
     || !isNonNegativeInt(body.total) || !isNonNegativeInt(body.done) || !isNonNegativeInt(body.failed)
     || typeof body.finished !== 'boolean' || (body.errors !== undefined && !isStringMap(body.errors))) {
-    throw new MaiaApiError('unknown', 'The review server returned unreadable data.');
+    throw new BotApiError('unknown', 'The review server returned unreadable data.');
   }
   return { job_id: body.job_id, total: body.total, done: body.done, failed: body.failed, finished: body.finished,
     ...(body.errors === undefined ? {} : { errors: body.errors }) };
@@ -164,7 +164,7 @@ function parseSubmitted(body: unknown, status?: number): BatchSubmitted {
   // totals would misreport batch size instead of failing visibly.
   if (!isRecord(body) || typeof body.job_id !== 'string'
     || !isNonNegativeInt(body.total) || !isNonNegativeInt(body.cached) || !isNonNegativeInt(body.pending)) {
-    throw new MaiaApiError('unknown', 'The review server returned unreadable data.', status);
+    throw new BotApiError('unknown', 'The review server returned unreadable data.', status);
   }
   return { job_id: body.job_id, total: body.total, cached: body.cached, pending: body.pending };
 }
@@ -185,7 +185,7 @@ export async function submitBatch(items: BatchItem[], line: BatchLine, fetchImpl
   // ply. 429 wait-once backpressure below is per-endpoint policy and stays
   // here; per-endpoint codes ride the shared error map (errorFromBody).
   const postOnce = () => postJson(fetchImpl, '/reviews', { line, requests: items.map(item => item.request) })
-    .catch(() => { throw new MaiaApiError('server_unreachable', 'The review server could not be reached.'); });
+    .catch(() => { throw new BotApiError('server_unreachable', 'The review server could not be reached.'); });
   const readSuccess = ({ response, body }: { response: Response; body: unknown }): BatchSubmitted => {
     if (!response.ok) throw errorFromBody(response, body, 'The review server rejected this batch.');
     return parseSubmitted(body, response.status);
@@ -197,7 +197,7 @@ export async function submitBatch(items: BatchItem[], line: BatchLine, fetchImpl
     await sleepImpl(parseBatchRetryDelayMs(first.response.headers?.get('Retry-After') ?? null));
     const second = await postOnce();
     if (second.response.status === 429) {
-      throw new MaiaApiError('engine_busy', 'The review servers are busy. Try again shortly.', 429);
+      throw new BotApiError('engine_busy', 'The review servers are busy. Try again shortly.', 429);
     }
     return readSuccess(second);
   }
@@ -206,7 +206,7 @@ export async function submitBatch(items: BatchItem[], line: BatchLine, fetchImpl
 
 export async function fetchBatchStatus(jobId: string, fetchImpl: FetchLike = fetch): Promise<BatchProgress> {
   const response = await fetchImpl(`/reviews/${jobId}`, { method: 'GET' })
-    .catch(() => { throw new MaiaApiError('server_unreachable', 'The review server could not be reached.'); });
+    .catch(() => { throw new BotApiError('server_unreachable', 'The review server could not be reached.'); });
   if (response.status === 404) throw new BatchGoneError();
   if (!response.ok) throw await readError(response, 'The review server rejected this batch.');
   return parseProgress(await readJsonBody(response));
@@ -228,7 +228,7 @@ export async function subscribeBatchEvents(
 ): Promise<void> {
   if (signal.aborted) return;
   if (typeof createSource !== 'function') {
-    throw new MaiaApiError('server_unreachable', 'The review stream broke mid-batch.');
+    throw new BotApiError('server_unreachable', 'The review stream broke mid-batch.');
   }
   await new Promise<void>((resolve, reject) => {
     let settled = false;
@@ -266,7 +266,7 @@ export async function subscribeBatchEvents(
       if (settled || signal.aborted) return;
       settled = true;
       cleanup();
-      reject(new MaiaApiError('server_unreachable', 'The review stream broke mid-batch.'));
+      reject(new BotApiError('server_unreachable', 'The review stream broke mid-batch.'));
     };
     signal.addEventListener('abort', onAbort, { once: true });
   });

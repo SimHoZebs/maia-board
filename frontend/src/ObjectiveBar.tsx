@@ -111,7 +111,7 @@ export function ObjectiveBar({
   // (mate distance survives here and in the verdict), then terminal
   // outcomes, then the objective expectation. The bar never shows
   // centipawns: scores are White winning chances from human-like play.
-  // The WDL triple (Maia lane) splits the bar into white/draw/black
+  // The WDL triple (bot lane) splits the bar into white/draw/black
   // segments with a percentage per side; without it (Stockfish lane) the
   // bar falls back to white/black only.
   const display = objectiveReading(turn, expected, wdl ?? null, mate ?? null, outcome ?? null);

@@ -149,7 +149,7 @@ test('client sim: boot, play, review batch, scrub, hover, branch, history', asyn
       id: `perf-seed-${i}`,
       createdAt: '2026-09-10T00:00:00Z',
       moves: seedLine.slice(0, 8 + (i % 16)),
-      settings: { userColor: 'white', eloMaia: 1600, eloUser: 1600, model: '79m' },
+      settings: { userColor: 'white', botElo: 1600, userElo: 1600, model: '79m' },
     })),
     currentId: null, pending: [], recovery: [],
   };
@@ -398,7 +398,7 @@ test('client sim: boot, play, review batch, scrub, hover, branch, history', asyn
     deepBootSummary = stats;
   });
 
-  // 1. Play random legal moves via real board clicks, one Maia reply each.
+  // 1. Play random legal moves via real board clicks, one bot reply each.
   const playRng = mulberry32(SEED ^ 0x9e3779b9);
   await timed('play: boot to setup screen', async () => {
     const commitsBefore = await commitMark();
@@ -507,7 +507,7 @@ test('client sim: boot, play, review batch, scrub, hover, branch, history', asyn
   await timed('analysis: rating change foreground', async () => {
     const commitsBefore = await commitMark();
     await page.locator('#analysis-rating').selectOption('1800');
-    await expect(page.getByRole('heading', { name: 'Maia • 1800', exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('heading', { name: 'Bot • 1800', exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText('updating to 1800')).toHaveCount(0);
     await settleFrames();
     const stats = summarize(await commitSlice(commitsBefore));

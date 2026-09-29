@@ -64,12 +64,12 @@ describe('feedback settings', () => {
 });
 
 describe('timeline-backed move feedback', () => {
-  const settings: ReviewSettings = { eloMaia: 1600, eloUser: 1600, model: '79m', stockfish: defaultStockfishSettings };
+  const settings: ReviewSettings = { botElo: 1600, userElo: 1600, model: '79m', stockfish: defaultStockfishSettings };
   const timeline = buildTimeline(START_FEN, ['e2e4', 'e7e5', 'g1f3', 'b8c6']);
   const nodes = reviewNodes(timeline);
   const values = new Map(nodes.map(node => [stablePositionKey(node), sfFixture(node.fen)]));
   const lookup = (node: ReviewNode) => values.get(stablePositionKey(node));
-  const compute = (prev: PlayQualitiesMemo | null = null, overrides: Partial<Parameters<typeof computePlayQualities>[0]> = {}) => computePlayQualities({ gameId: 'game', timeline, userColor: 'white', settings, sfLookup: lookup, maiaLookup: () => undefined, sfPending: new Set(), maiaPending: new Set(), prev, ...overrides });
+  const compute = (prev: PlayQualitiesMemo | null = null, overrides: Partial<Parameters<typeof computePlayQualities>[0]> = {}) => computePlayQualities({ gameId: 'game', timeline, userColor: 'white', settings, sfLookup: lookup, botLookup: () => undefined, sfPending: new Set(), botPending: new Set(), prev, ...overrides });
 
   it('grades only the user side and reuses raw verdicts across unrelated cache updates', () => {
     const first = compute(), stats = { reviews: 0 };
@@ -111,23 +111,23 @@ describe('timeline-backed move feedback', () => {
     const result = compute(null, { timeline: custom, userColor: 'black', sfLookup: node => sfFixture(node.fen) });
     expect(result.qualities[0]).toBeDefined();
   });
-  it('settles non-critical badges without Maia but holds engine-critical praise for it', () => {
+  it('settles non-critical badges without the bot but holds engine-critical praise for it', () => {
     const line = buildTimeline(START_FEN, ['e2e4']);
     const [beforeNode, afterNode] = reviewNodes(line);
     const critical = { ...sfFixture(beforeNode.fen), best_move: 'e2e4', score: { type: 'cp' as const, value: 50 },
       lines: [{ move: 'e2e4', score: { type: 'cp' as const, value: 50 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp' as const, value: -300 }, depth: 12 }] };
     const held = { ...sfFixture(afterNode.fen), score: { type: 'cp' as const, value: 50 } };
     const sfLookup = (node: ReviewNode) => node.ply === 0 ? critical : held;
-    const maiaKey = reviewKey('maia', beforeNode, settings);
+    const botKey = reviewKey('maia', beforeNode, settings);
     const absent = { move: 'd2d4', top_moves: [{ move: 'd2d4', prob: 0.4, wdl: [0.2, 0.3, 0.5] as [number, number, number] }], wdl: [0.2, 0.3, 0.5] as [number, number, number], model_used: '79m' as const, degraded: false };
     const expected = { ...absent, top_moves: [{ move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] as [number, number, number] }, { move: 'd2d4', prob: 0.4, wdl: [0.2, 0.3, 0.5] as [number, number, number] }] };
-    const base = { gameId: 'praise', timeline: line, userColor: 'white' as const, settings, sfLookup, maiaLookup: (_node: ReviewNode) => undefined, sfPending: new Set<string>(), maiaPending: new Set<string>(), prev: null };
-    // Maia still queued: spinner, not a provisional Best.
-    expect(computePlayQualities({ ...base, maiaPending: new Set([maiaKey]) }).qualities[0]?.label).toBe('Unreviewed');
-    // Maia absent from the top 5 with a critical engine gap: Excellent.
-    expect(computePlayQualities({ ...base, maiaLookup: () => absent }).qualities[0]?.label).toBe('Excellent');
-    // Maia expects it: Best.
-    expect(computePlayQualities({ ...base, maiaLookup: () => expected }).qualities[0]?.label).toBe('Best');
+    const base = { gameId: 'praise', timeline: line, userColor: 'white' as const, settings, sfLookup, botLookup: (_node: ReviewNode) => undefined, sfPending: new Set<string>(), botPending: new Set<string>(), prev: null };
+    // Bot still queued: spinner, not a provisional Best.
+    expect(computePlayQualities({ ...base, botPending: new Set([botKey]) }).qualities[0]?.label).toBe('Unreviewed');
+    // Bot absent from the top 5 with a critical engine gap: Excellent.
+    expect(computePlayQualities({ ...base, botLookup: () => absent }).qualities[0]?.label).toBe('Excellent');
+    // Bot expects it: Best.
+    expect(computePlayQualities({ ...base, botLookup: () => expected }).qualities[0]?.label).toBe('Best');
   });
   it('grades play negatives from the objective lane, holding the spinner while pending', () => {
     const line = buildTimeline(START_FEN, ['e2e4']);
@@ -139,7 +139,7 @@ describe('timeline-backed move feedback', () => {
     const grade = (top: string, wdl: [number, number, number]) =>
       ({ move: top, top_moves: [{ move: top, prob: 0.4, wdl: [0.2, 0.3, 0.5] as [number, number, number] }], wdl, model_used: '79m' as const, degraded: false });
     const base = { gameId: 'grading', timeline: line, userColor: 'white' as const, settings, sfLookup,
-      maiaLookup: (_node: ReviewNode) => undefined, sfPending: new Set<string>(), maiaPending: new Set<string>(), prev: null };
+      botLookup: (_node: ReviewNode) => undefined, sfPending: new Set<string>(), botPending: new Set<string>(), prev: null };
     const laneNodes = reviewNodes(line);
     const laneFor = (rows: (Parameters<typeof lanePoints>[0][number])[], pending: Set<string>): ObjectiveLane => ({
       points: lanePoints(rows, laneNodes),
@@ -161,27 +161,27 @@ describe('wantedPlayPair', () => {
 
   const pairNodes = (moves: string[]) => reviewNodes(buildTimeline(START_FEN, moves));
   it('selects nothing without nodes or without a move to grade', () => {
-    expect(wantedPlayPair([], 'white')).toEqual({ sfNodes: [], maiaNode: null });
-    expect(wantedPlayPair(pairNodes([]), 'white')).toEqual({ sfNodes: [], maiaNode: null });
-    expect(wantedPlayPair(pairNodes([]), 'black')).toEqual({ sfNodes: [], maiaNode: null });
+    expect(wantedPlayPair([], 'white')).toEqual({ sfNodes: [], botNode: null });
+    expect(wantedPlayPair(pairNodes([]), 'white')).toEqual({ sfNodes: [], botNode: null });
+    expect(wantedPlayPair(pairNodes([]), 'black')).toEqual({ sfNodes: [], botNode: null });
   });
-  it('grades the newest move: SF pair plus Maia for a user mover', () => {
+  it('grades the newest move: SF pair plus the bot for a user mover', () => {
     const nodes = pairNodes(['e2e4']);
-    expect(wantedPlayPair(nodes, 'white')).toEqual({ sfNodes: [nodes[0], nodes[1]], maiaNode: nodes[0] });
+    expect(wantedPlayPair(nodes, 'white')).toEqual({ sfNodes: [nodes[0], nodes[1]], botNode: nodes[0] });
   });
-  it('skips the Maia fetch when the newest move is the opponent reply', () => {
+  it('skips the bot fetch when the newest move is the opponent reply', () => {
     const nodes = pairNodes(['e2e4', 'e7e5']);
     const pair = wantedPlayPair(nodes, 'white');
     expect(pair.sfNodes).toEqual([nodes[1], nodes[2]]);
-    expect(pair.maiaNode).toBeNull();
+    expect(pair.botNode).toBeNull();
   });
   it('mirrors sides for black', () => {
     const mover = pairNodes(['e2e4']);
-    expect(wantedPlayPair(mover, 'black').maiaNode).toBeNull();
+    expect(wantedPlayPair(mover, 'black').botNode).toBeNull();
     const replied = pairNodes(['e2e4', 'e7e5']);
     const pair = wantedPlayPair(replied, 'black');
     expect(pair.sfNodes).toEqual([replied[1], replied[2]]);
-    expect(pair.maiaNode).toBe(replied[1]);
+    expect(pair.botNode).toBe(replied[1]);
   });
 });
 
@@ -219,7 +219,7 @@ describe('play retry offline/exhaustion helpers', () => {
 });
 
 describe('settled badges only use labels the badge can render', () => {
-  const settings: ReviewSettings = { eloMaia: 1600, eloUser: 1600, model: '79m', stockfish: defaultStockfishSettings };
+  const settings: ReviewSettings = { botElo: 1600, userElo: 1600, model: '79m', stockfish: defaultStockfishSettings };
   const glyphs = new Set(Object.keys(qualityGlyphs));
   // Engine Top (best move, no drama) and Holds (not best, nothing lost):
   // a line with no Critical anywhere must still translate both, or the
@@ -232,12 +232,12 @@ describe('settled badges only use labels the badge can render', () => {
   const holdsAfter: Evaluation = { ...holdsBefore, score: { type: 'cp', value: 48 }, lines: holdsBefore.lines.map(line => ({ ...line })) };
   it('translates Top to Best and Holds to Good in play without any Critical', () => {
     const top = computePlayQualities({ gameId: 'glyphs', timeline: buildTimeline(START_FEN, ['e2e4']), userColor: 'white', settings,
-      sfLookup: node => node.ply === 0 ? topBefore : topAfter, maiaLookup: () => undefined,
-      sfPending: new Set(), maiaPending: new Set(), prev: null });
+      sfLookup: node => node.ply === 0 ? topBefore : topAfter, botLookup: () => undefined,
+      sfPending: new Set(), botPending: new Set(), prev: null });
     expect(top.qualities[0]?.label).toBe('Best');
     const holds = computePlayQualities({ gameId: 'glyphs', timeline: buildTimeline(START_FEN, ['d2d4']), userColor: 'white', settings,
-      sfLookup: node => node.ply === 0 ? holdsBefore : holdsAfter, maiaLookup: () => undefined,
-      sfPending: new Set(), maiaPending: new Set(), prev: null });
+      sfLookup: node => node.ply === 0 ? holdsBefore : holdsAfter, botLookup: () => undefined,
+      sfPending: new Set(), botPending: new Set(), prev: null });
     expect(holds.qualities[0]?.label).toBe('Good');
     for (const quality of [...top.qualities, ...holds.qualities]) {
       if (quality && quality.label !== 'Unreviewed') expect(glyphs.has(quality.label)).toBe(true);
@@ -250,8 +250,8 @@ describe('settled badges only use labels the badge can render', () => {
       evaluations: [holdsBefore, holdsAfter], settingsForNode: () => settings, pending: new Set(), prev: null });
     expect(raw.qualities[0]?.label).toBe('Holds');
     const qualities = translateReviewQualities({ grades: raw.qualities, nodes,
-      maiaResults: [undefined, undefined], rarities: [undefined, undefined],
-      settingsForNode: () => settings, isMaiaPending: () => false });
+      botResults: [undefined, undefined], rarities: [undefined, undefined],
+      settingsForNode: () => settings, isBotPending: () => false });
     expect(qualities[0]?.label).toBe('Good');
     if (qualities[0] && qualities[0].label !== 'Unreviewed') expect(glyphs.has(qualities[0].label)).toBe(true);
   });

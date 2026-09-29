@@ -5,7 +5,7 @@ import { sameLine, type UrlLine } from '../analysisUrl';
 import { KEYS, loadSettings, readStorage } from '../storage';
 import { mergeSync } from '../serverGames';
 import { readGameRepository } from '../gameRepository';
-import { currentPosition, commitMove, maiaTurn, queueRequest, transition } from './shared';
+import { currentPosition, commitMove, botTurn, queueRequest, transition } from './shared';
 import { initialDisplayState } from './display';
 import { newPlayDraft } from './play';
 import { readSnapshot } from './analysis';
@@ -15,7 +15,7 @@ import { reduceAnalysis } from './analysis';
 import type { Action, State } from './types';
 
 const sameSettings = (a: Settings, b: Settings) => a.userColor === b.userColor && a.model === b.model
-  && a.eloMaia === b.eloMaia && a.eloUser === b.eloUser && (a.temperature ?? 0) === (b.temperature ?? 0);
+  && a.botElo === b.botElo && a.userElo === b.userElo && (a.temperature ?? 0) === (b.temperature ?? 0);
 
 export function initialState(mode: Mode = 'play', urlLine?: UrlLine, repository = readGameRepository()): State {
   const restored = repository.games.find(game => game.id === repository.currentId);
@@ -51,10 +51,10 @@ export function initialState(mode: Mode = 'play', urlLine?: UrlLine, repository 
   }
   const state: State = { mode, play: restored ?? { id: newId(), createdAt: new Date().toISOString(), moves: [], settings },
     started: !!restored, setup: restored ? null : newPlayDraft(settings), viewedPly: null,
-    saved: repository.games, analysis, analysisSettings: { eloMaia: settings.eloMaia, model: settings.model, userColor: settings.userColor }, analysisLoaded, importing: !analysisLoaded, analysisSourceId,
+    saved: repository.games, analysis, analysisSettings: { botElo: settings.botElo, model: settings.model, userColor: settings.userColor }, analysisLoaded, importing: !analysisLoaded, analysisSourceId,
     ...initialDisplayState(),
     inputs, flipped: false, preview: null, promotion: null, insight: null, error: '', request: null, revision: 0 };
-  return mode === 'play' && maiaTurn(state) ? queueRequest(state) : state;
+  return mode === 'play' && botTurn(state) ? queueRequest(state) : state;
 }
 
 // Root reducer: spanning navigation (mode/move/promote/view/step), cross-line
@@ -94,13 +94,13 @@ function reduceRoot(state: State, action: Action): State | undefined {
       try { analysis = loadLine('', play.moves.join(' ')); }
       catch { return { ...state, error: 'Could not load this game.' }; }
       // Analysis defaults to the Elo the game was played at, so the first
-      // review reuses play-time Maia compute instead of re-inferring at a
+      // review reuses play-time bot compute instead of re-inferring at a
       // stale global rating. Changing the rating later only affects the
-      // user's own moves (see useReviewPipeline); Maia's moves stay pinned. The
+      // user's own moves (see useReviewPipeline); the bot's moves stay pinned. The
       // source id is always the game id (not null) so the pinned Elo survives
       // starting a new game while the analysis stays open.
       return transition(state, { mode: 'analysis', analysis: { ...analysis, perspective: play.settings.userColor, ownGame: true }, analysisLoaded: true, importing: false, analysisSourceId: action.id ?? play.id,
-        analysisSettings: { ...state.analysisSettings, eloMaia: play.settings.eloMaia, model: play.settings.model } }, false);
+        analysisSettings: { ...state.analysisSettings, botElo: play.settings.botElo, model: play.settings.model } }, false);
     }
     case 'delete': {
       const saved = state.saved.filter(game => game.id !== action.id);

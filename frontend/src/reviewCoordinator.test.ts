@@ -2,20 +2,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Chess } from 'chess.js';
 import { buildTimeline, START_FEN, timelineBuildsForTests } from './domain';
 import { EvaluationStore, ReviewCoordinator, fastReviewSettings, fastStockfishSettings, reviewKey, reviewNodes, parseEvaluation, type ReviewSettings } from './reviewCoordinator';
-import { GRADING_MAIA_SETTINGS } from './evaluationStore';
+import { GRADING_BOT_SETTINGS } from './evaluationStore';
 import { defaultStockfishSettings, stockfishPolicy } from './stockfishSettings';
-import { jsonResponse, maiaFixture, sfFixture } from './evaluationTestFixtures';
+import { jsonResponse, botFixture, sfFixture } from './evaluationTestFixtures';
 import { hangingResponse, requestBodyText } from './testUtils';
 import { withDeadline } from './evaluationTransport';
 
-const settings: ReviewSettings = { eloMaia: 1600, eloUser: 1600, model: '79m', stockfish: defaultStockfishSettings };
+const settings: ReviewSettings = { botElo: 1600, userElo: 1600, model: '79m', stockfish: defaultStockfishSettings };
 const nodes = reviewNodes(buildTimeline(START_FEN, ['e2e4', 'e7e5', 'g1f3']));
 const flush = async () => { for (let n = 0; n < 80; n++) await Promise.resolve(); };
 function liveFetch() {
   return vi.fn<typeof fetch>(async (url, init) => {
     const body = JSON.parse(requestBodyText(init));
     if (url === '/evaluations/lookup') return jsonResponse({ results: [] });
-    return jsonResponse(url === '/evaluate' ? sfFixture(body.fen, body.settings) : maiaFixture(body.fen, body.model));
+    return jsonResponse(url === '/evaluate' ? sfFixture(body.fen, body.settings) : botFixture(body.fen, body.model));
   });
 }
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -46,9 +46,9 @@ describe('timeline-backed restoration', () => {
   it('restores sparse indexes, rejects wrong-model rows, and retries only the missing keys', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(jsonResponse({ results: [
       { index: 0, value: sfFixture(nodes[0].fen) },
-      { index: 1, value: maiaFixture(nodes[0].fen, '5m') },
-      { index: 3, value: maiaFixture(nodes[1].fen) },
-      { index: 999, value: maiaFixture(nodes[0].fen) },
+      { index: 1, value: botFixture(nodes[0].fen, '5m') },
+      { index: 3, value: botFixture(nodes[1].fen) },
+      { index: 999, value: botFixture(nodes[0].fen) },
     ] })).mockResolvedValue(jsonResponse({ results: [] }));
     const coordinator = new ReviewCoordinator(fetcher);
     await coordinator.ensure(nodes.slice(0, 2), settings, { signal: new AbortController().signal });
@@ -61,7 +61,7 @@ describe('timeline-backed restoration', () => {
     expect(fetcher.mock.calls.every(([url]) => url === '/evaluations/lookup')).toBe(true);
   });
   it('restore hits report full coverage without extra requests', async () => {
-    const fetcher = vi.fn<typeof fetch>(async (_url, init) => jsonResponse({ results: JSON.parse(requestBodyText(init)).requests.map((r: { engine: string; fen: string }, index: number) => ({ index, value: r.engine === 'sf' ? sfFixture(r.fen) : maiaFixture(r.fen) })) }));
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => jsonResponse({ results: JSON.parse(requestBodyText(init)).requests.map((r: { engine: string; fen: string }, index: number) => ({ index, value: r.engine === 'sf' ? sfFixture(r.fen) : botFixture(r.fen) })) }));
     const coordinator = new ReviewCoordinator(fetcher);
     expect(await coordinator.ensure(nodes, settings, { signal: new AbortController().signal })).toEqual({ covered: 4, total: 4 });
     expect(fetcher).toHaveBeenCalledTimes(1);
@@ -292,7 +292,7 @@ describe('workspace coordinator', () => {
     expect(coordinator.isPending('sf', nodes[0], settings)).toBe(false);
     expect(coordinator.isPending('maia', nodes[0], settings)).toBe(false);
     expect(coordinator.sfPendingKeys().size).toBe(0);
-    expect(coordinator.maiaPendingKeys().size).toBe(0);
+    expect(coordinator.botPendingKeys().size).toBe(0);
 
   });
   it('bounds structured busy retries while leaving unavailable errors immediately retriable', async () => {
@@ -319,11 +319,11 @@ describe('workspace coordinator', () => {
 });
 
 describe('identity and provenance', () => {
-  it('keys reuse shared history across extensions/takebacks and distinguish repetitions, starts and Maia settings', () => {
+  it('keys reuse shared history across extensions/takebacks and distinguish repetitions, starts and bot settings', () => {
     const nodes = reviewNodes(buildTimeline(START_FEN, ['e2e4', 'e7e5', 'g1f3']));
     const extended = reviewNodes(buildTimeline(START_FEN, ['e2e4', 'e7e5', 'g1f3', 'b8c6']));
     expect(reviewKey('sf', nodes[2], settings)).toBe(reviewKey('sf', extended[2], settings));
-    expect(reviewKey('maia', nodes[0], settings)).not.toBe(reviewKey('maia', nodes[0], { ...settings, eloUser: 1700 }));
+    expect(reviewKey('maia', nodes[0], settings)).not.toBe(reviewKey('maia', nodes[0], { ...settings, userElo: 1700 }));
     expect(reviewKey('maia', nodes[0], settings)).not.toBe(reviewKey('maia', nodes[0], { ...settings, model: '5m' }));
     const repeated = reviewNodes(buildTimeline(START_FEN, ['g1f3', 'g8f6', 'f3g1', 'f6g8']));
     expect(reviewKey('sf', repeated[0], settings)).not.toBe(reviewKey('sf', repeated[4], settings));
@@ -380,10 +380,10 @@ describe('identity and provenance', () => {
     // arrays fail before any field access.
     for (const body of [null, undefined, 'x', 42, []]) expect(() => parseEvaluation(body)).toThrow('incomplete');
   });
-  it('new requested identities never expose previously settled Maia rows', async () => {
+  it('new requested identities never expose previously settled bot rows', async () => {
     const fetcher = liveFetch(), coordinator = new ReviewCoordinator(fetcher);
     coordinator.ensure([nodes[0]], settings, { priority: true }); await flush();
-    expect(coordinator.result('maia', nodes[0], { ...settings, eloMaia: 2000 })).toBeUndefined();
+    expect(coordinator.result('maia', nodes[0], { ...settings, botElo: 2000 })).toBeUndefined();
     expect(coordinator.result('maia', nodes[1], settings)).toBeUndefined();
 
   });
@@ -428,7 +428,7 @@ describe('fast-then-refine', () => {
     expect(coordinator.provisionalSfResult(target, settings)?.lines).toHaveLength(2);
   });
   it('appended grading ensure preserves queued display jobs and cascades in lane order', async () => {
-    // Regression: the grading lane shares the maia queue under different
+    // Regression: the grading lane shares the bot queue under different
     // keys. Its ensure must append (never wipe the queued display current),
     // and held display jobs must not starve it — completions cascade FIFO.
     const line = reviewNodes(buildTimeline(START_FEN, ['e2e4', 'e7e5', 'g1f3', 'g8f6', 'f1c4']));
@@ -440,7 +440,7 @@ describe('fast-then-refine', () => {
       started.push(key);
       if (url === '/move/analysis') {
         await new Promise<void>(resolve => resolvers.set(key, resolve));
-        return jsonResponse(maiaFixture(body.fen, body.model));
+        return jsonResponse(botFixture(body.fen, body.model));
       }
       return jsonResponse(sfFixture(body.fen, body.settings));
     });
@@ -448,7 +448,7 @@ describe('fast-then-refine', () => {
     const scope = new AbortController().signal;
     const targets = [line[4], line[5]];
     coordinator.ensure(targets, settings, { priority: true, signal: scope, fastFirst: true });
-    coordinator.ensure(targets, GRADING_MAIA_SETTINGS, { priority: true, engines: ['maia'], signal: scope, append: true });
+    coordinator.ensure(targets, GRADING_BOT_SETTINGS, { priority: true, engines: ['maia'], signal: scope, append: true });
     await flush();
     expect(started).toContain('maia:1600:4');
     expect(started).toContain('maia:1600:5');

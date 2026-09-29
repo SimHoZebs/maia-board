@@ -10,7 +10,7 @@ import { stockfishPolicy } from '../src/stockfishSettings';
 // whole-line server batch is out of this path: any POST /reviews during
 // these specs is a regression — fail it on contact.
 type Behavior = { evaluateFailuresRemaining: number; evaluateAlwaysFail?: boolean; lookup?: 'miss' | 'incremental' };
-type Hits = { reviews: string[]; evaluates: any[]; maiaEvals: any[]; playMoves: any[]; lookups: any[] };
+type Hits = { reviews: string[]; evaluates: any[]; botEvals: any[]; playMoves: any[]; lookups: any[] };
 
 function sfEvaluation(fen: string, settings: any) {
   const policy = stockfishPolicy(settings);
@@ -20,7 +20,7 @@ function sfEvaluation(fen: string, settings: any) {
   return { engine: 'Stockfish 19', search_policy: policy, depth: 12, terminal: null, best_move: legal[0] ?? null, score, lines: legal.map(move => ({ move, score, depth: 12 })) };
 }
 
-function maiaEvaluation(fen: string, payload: any) {
+function botEvaluation(fen: string, payload: any) {
   const game = new Chess(fen);
   const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
   const preferred = payload.maia_color === 'black' && legal.includes('e7e5') ? 'e7e5' : legal[0];
@@ -29,7 +29,7 @@ function maiaEvaluation(fen: string, payload: any) {
 
 async function bootPlay(page: Page, behavior: Behavior) {
   const errors: string[] = [];
-  const hits: Hits = { reviews: [], evaluates: [], maiaEvals: [], playMoves: [], lookups: [] };
+  const hits: Hits = { reviews: [], evaluates: [], botEvals: [], playMoves: [], lookups: [] };
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(({ feedbackKey }) => {
     localStorage.setItem(feedbackKey, JSON.stringify(true));
@@ -51,7 +51,7 @@ async function bootPlay(page: Page, behavior: Behavior) {
         // Empty cache: every badge must settle through foreground fetches.
         await route.fulfill({ json: { results: [] } }); return;
       }
-      // Incremental fill with a delay longer than Maia's mocked reply, so
+      // Incremental fill with a delay longer than the bot's mocked reply, so
       // the older line's lookup is still in flight when the reply lands: the
       // first lookup answers its whole line as if it cached what it
       // computed, later ones answer solely the new tail. Shared rows
@@ -60,7 +60,7 @@ async function bootPlay(page: Page, behavior: Behavior) {
       await new Promise(resolve => setTimeout(resolve, 600));
       const tip = Math.max(...requests.map((body: any) => body.moves.length));
       const results = requests.flatMap((body: any, index: number) =>
-        first || body.moves.length === tip ? [{ index, value: body.engine === 'sf' ? sfEvaluation(body.fen, body.settings) : maiaEvaluation(body.fen, body) }] : []);
+        first || body.moves.length === tip ? [{ index, value: body.engine === 'sf' ? sfEvaluation(body.fen, body.settings) : botEvaluation(body.fen, body) }] : []);
       await route.fulfill({ json: { results } }); return;
     }
     if (path === '/evaluate') {
@@ -74,9 +74,9 @@ async function bootPlay(page: Page, behavior: Behavior) {
     }
     if (path === '/move' || path === '/move/analysis') {
       const payload = route.request().postDataJSON();
-      // Play replies carry a temperature; foreground Maia evals do not.
-      (payload.temperature !== undefined ? hits.playMoves : hits.maiaEvals).push(payload);
-      await route.fulfill({ json: maiaEvaluation(payload.fen, payload) }); return;
+      // Play replies carry a temperature; foreground bot evals do not.
+      (payload.temperature !== undefined ? hits.playMoves : hits.botEvals).push(payload);
+      await route.fulfill({ json: botEvaluation(payload.fen, payload) }); return;
     }
     if (path.startsWith('/reviews')) {
       hits.reviews.push(`${route.request().method()} ${path}`);
@@ -155,13 +155,13 @@ test('foreground maia evals only cover the user mover', async ({ page }) => {
   const app = await bootPlay(page, { evaluateFailuresRemaining: 0 });
   await startAndPlayNf3(page);
   await expect(page.locator(settledBadges)).toHaveCount(1, { timeout: 20000 });
-  // Play replies name Maia's color; the user is the other side, and every
-  // display-lane Maia eval must name the user's side (the mover it
+  // Play replies name the bot's color; the user is the other side, and every
+  // display-lane bot eval must name the user's side (the mover it
   // translates). The 2400 grading lane reads both endpoints of the move,
   // including the opponent-turn after-position.
   const userColor = app.hits.playMoves[0].maia_color === 'white' ? 'black' : 'white';
-  const display = app.hits.maiaEvals.filter(payload => payload.elo_maia !== 2400);
-  const grading = app.hits.maiaEvals.filter(payload => payload.elo_maia === 2400);
+  const display = app.hits.botEvals.filter(payload => payload.elo_maia !== 2400);
+  const grading = app.hits.botEvals.filter(payload => payload.elo_maia === 2400);
   expect(display.length).toBeGreaterThan(0);
   for (const payload of display) expect(payload.maia_color).toBe(userColor);
   expect(grading.length).toBeGreaterThan(0);

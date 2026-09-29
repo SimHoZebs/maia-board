@@ -3,7 +3,7 @@ import { analysisLength, applyUci, loadLine, parseSquare, uciFromMove } from '..
 import { sameLine } from '../analysisUrl';
 import { KEYS, readStorage } from '../storage';
 import { currentPosition, commitMove, transition } from './shared';
-import { clampMaiaElo } from '../BoardTools';
+import { clampBotElo } from '../BoardTools';
 import type { Action, AnalysisSnapshot, State } from './types';
 
 // Analysis slice: the reviewed line (cursor, branches, importer inputs) plus
@@ -31,7 +31,7 @@ export function snapshotOf(analysis: State['analysis'], gameId?: string): Analys
 export function reduceAnalysis(state: State, action: Action): State | undefined {
   switch (action.type) {
     case 'analysis-settings': return transition(state, { analysisSettings: { ...state.analysisSettings, ...action.settings,
-      ...(action.settings.eloMaia === undefined ? {} : { eloMaia: clampMaiaElo(action.settings.eloMaia) }) } }, false);
+      ...(action.settings.botElo === undefined ? {} : { botElo: clampBotElo(action.settings.botElo) }) } }, false);
     case 'explore': {
       if (state.mode !== 'analysis' || !state.analysisLoaded || state.promotion) return state;
       if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(action.uci)) return state;

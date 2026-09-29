@@ -1,25 +1,25 @@
 import { expect, it } from 'vitest';
-import { deltaBaseline, deltaColumnTitle, formatWinrateDelta, maiaDisplayParts, maiaExpected, maiaPoint, maiaWhiteWdl, selectDeltaParts } from './winrate';
+import { deltaBaseline, deltaColumnTitle, formatWinrateDelta, botDisplayParts, botExpected, botPoint, botWhiteWdl, selectDeltaParts } from './winrate';
 
 it('reads mover-relative expected scores from WDL triples', () => {
-  expect(maiaExpected([0.2, 0.3, 0.5])).toBeCloseTo(65, 9);
-  expect(maiaExpected([0, 0, 1])).toBe(100);
-  expect(maiaExpected([1, 0, 0])).toBe(0);
+  expect(botExpected([0.2, 0.3, 0.5])).toBeCloseTo(65, 9);
+  expect(botExpected([0, 0, 1])).toBe(100);
+  expect(botExpected([1, 0, 0])).toBe(0);
 });
 
 it('converts mover-relative WDL triples to white-relative percentages', () => {
-  expect(maiaWhiteWdl([0.2, 0.3, 0.5], 'white')).toEqual({ white: 50, draw: 30, black: 20 });
-  expect(maiaWhiteWdl([0.2, 0.3, 0.5], 'black')).toEqual({ white: 20, draw: 30, black: 50 });
+  expect(botWhiteWdl([0.2, 0.3, 0.5], 'white')).toEqual({ white: 50, draw: 30, black: 20 });
+  expect(botWhiteWdl([0.2, 0.3, 0.5], 'black')).toEqual({ white: 20, draw: 30, black: 50 });
 });
 
 it('names the objective top only from clean responses', () => {
-  expect(maiaPoint(undefined)).toEqual({ top: null, expected: null });
-  expect(maiaPoint({ top_moves: [{ move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], degraded: false }))
+  expect(botPoint(undefined)).toEqual({ top: null, expected: null });
+  expect(botPoint({ top_moves: [{ move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], degraded: false }))
     .toEqual({ top: 'e2e4', expected: 65 });
   // Degraded rows still carry an expectation (shown, not graded).
-  expect(maiaPoint({ top_moves: [{ move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], degraded: true }))
+  expect(botPoint({ top_moves: [{ move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], degraded: true }))
     .toEqual({ top: null, expected: 65 });
-  expect(maiaPoint({ top_moves: [], wdl: [0.2, 0.3, 0.5], degraded: false }))
+  expect(botPoint({ top_moves: [], wdl: [0.2, 0.3, 0.5], degraded: false }))
     .toEqual({ top: null, expected: 65 });
 });
 
@@ -31,8 +31,8 @@ it('formats winrate deltas with one decimal and a zero guard', () => {
 });
 
 it('falls back to delta vs best winrate without a baseline', () => {
-  expect(maiaDisplayParts([])).toEqual([]);
-  const parts = maiaDisplayParts([
+  expect(botDisplayParts([])).toEqual([]);
+  const parts = botDisplayParts([
     { move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] },
     { move: 'd2d4', prob: 0.3, wdl: [0.5, 0.3, 0.2] },
   ]);
@@ -44,7 +44,7 @@ it('falls back to delta vs best winrate without a baseline', () => {
 });
 
 it('falls back to the best winrate, not policy order', () => {
-  const parts = maiaDisplayParts([
+  const parts = botDisplayParts([
     { move: 'e2e4', prob: 0.5, wdl: [0.5, 0.3, 0.2] },
     { move: 'd2d4', prob: 0.3, wdl: [0.2, 0.3, 0.5] },
   ]);
@@ -58,7 +58,7 @@ it('falls back to the best winrate, not policy order', () => {
 it('prices the display list against the before-position winrate (gain)', () => {
   // Before-position 2400 winrate is 33; candidates at 70 and 66 read as
   // gains of +37 and +33 for the side to move.
-  const parts = maiaDisplayParts(
+  const parts = botDisplayParts(
     [
       { move: 'f6f7', prob: 0.87, wdl: [0.14, 0.32, 0.54] },
       { move: 'e7e6', prob: 0.12, wdl: [0.18, 0.32, 0.5] },
@@ -84,34 +84,34 @@ it('titles the column from the baseline source', () => {
 });
 
 it('wires the panel assembly over real startpos data: top defines the bar', () => {
-  // Live Maia 2400 startpos row: the position triple IS e2e4's triple.
+  // Live bot 2400 startpos row: the position triple IS e2e4's triple.
   const posWdl: [number, number, number] = [0.437, 0.063, 0.5];
   const topMoves: { move: string; prob: number; wdl: [number, number, number] }[] = [
     { move: 'e2e4', prob: 0.466, wdl: posWdl },
     { move: 'd2d4', prob: 0.335, wdl: [0.435, 0.066, 0.499] },
     { move: 'g1f3', prob: 0.083, wdl: [0.427, 0.07, 0.503] },
   ];
-  const before = maiaExpected(posWdl);
-  expect(before).toBe(maiaExpected(topMoves[0].wdl));
-  const best = Math.max(...topMoves.map(candidate => maiaExpected(candidate.wdl)));
+  const before = botExpected(posWdl);
+  expect(before).toBe(botExpected(topMoves[0].wdl));
+  const best = Math.max(...topMoves.map(candidate => botExpected(candidate.wdl)));
   const { baseline, kind } = deltaBaseline(before, best);
   expect(kind).toBe('before');
-  const parts = maiaDisplayParts(topMoves, baseline);
+  const parts = botDisplayParts(topMoves, baseline);
   expect(parts[0]).toEqual({ prob: '47%', delta: '0.0%' });
   expect(parts[2]).toEqual({ prob: '8%', delta: '+0.7%' });
 });
 
 it('keeps deltas side-to-move-relative: Black gains read positive', () => {
-  // Live Maia 2400 row after 1. e4, Black to move: c5 defines 47.0, e5
+  // Live bot 2400 row after 1. e4, Black to move: c5 defines 47.0, e5
   // reaches 48.1 — good for the mover, so positive.
   const topMoves: { move: string; prob: number; wdl: [number, number, number] }[] = [
     { move: 'c7c5', prob: 0.378, wdl: [0.5, 0.06, 0.44] },
     { move: 'e7e5', prob: 0.175, wdl: [0.488, 0.062, 0.45] },
   ];
-  const before = maiaExpected(topMoves[0].wdl);
+  const before = botExpected(topMoves[0].wdl);
   const { baseline, kind } = deltaBaseline(before, null);
   expect(kind).toBe('before');
-  const parts = maiaDisplayParts(topMoves, baseline);
+  const parts = botDisplayParts(topMoves, baseline);
   expect(parts[0]).toEqual({ prob: '38%', delta: '0.0%' });
   expect(parts[1]).toEqual({ prob: '18%', delta: '+1.1%' });
 });

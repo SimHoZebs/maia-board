@@ -66,7 +66,7 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
     }
     if (path === '/move' || path === '/move/analysis') {
       const payload = route.request().postDataJSON();
-      // Objective lane (fixed Maia 2400) auto-fulfills: these specs
+      // Objective lane (fixed bot 2400) auto-fulfills: these specs
       // choreograph the display lane by holding its routes open, so the
       // objective list settles in the background and bars, badges, and the
       // panel never block on it here. Fulfilled rows are filed into the
@@ -283,7 +283,7 @@ test('Back retires pending analysis; remounts refetch retired rows once and neve
   expect(app.errors).toEqual([]);
 });
 
-test('/ redirects and resumes restored Maia turn exactly once', async ({ page }) => {
+test('/ redirects and resumes restored bot turn exactly once', async ({ page }) => {
   const app = await boot(page, { [KEYS.current]: record(['e2e4']) }, false, '/');
   await expect(page).toHaveURL('http://maia.test/play');
   await expect.poll(() => app.requests.length).toBe(1);
@@ -411,7 +411,7 @@ async function screenshot(page: Page, path: string) {
 }
 
 for (const color of ['white', 'black'] as const) for (const drag of [false, true]) {
-  test(`${color}: ${drag ? 'drag' : 'click'}, Maia reply, takeback and flip`, async ({ page }) => {
+  test(`${color}: ${drag ? 'drag' : 'click'}, bot reply, takeback and flip`, async ({ page }) => {
     const app = await boot(page, { [KEYS.settings]: { ...defaultSettings, userColor: color } });
     if (color === 'black') { await app.reply(0, 'e2e4'); await piece(page, 'e4', 'white pawn'); }
     const before = color === 'black' ? 1 : 0;
@@ -438,7 +438,7 @@ for (const drag of [false, true]) {
   test(`invalid ${drag ? 'drag' : 'click'} snaps back to the original square`, async ({ page }) => {
     const app = await boot(page);
     // e2-e5 is not a legal pawn move: the piece must end up back on e2,
-    // no Maia request may fire, and no move may persist.
+    // no bot request may fire, and no move may persist.
     await move(page, 'e2', 'e5', drag);
     await piece(page, 'e2', 'white pawn');
     await piece(page, 'e5', null);
@@ -530,7 +530,7 @@ test('analysis load, navigation, copy, request history, stale reply and mode reu
     }
   }
   await expect(page.locator('#insight-content')).toBeVisible();
-  await expect(page.locator('section[aria-label="Maia analysis"] h2')).toContainText('Maia');
+  await expect(page.locator('section[aria-label="Bot analysis"] h2')).toContainText('Bot');
   await expect(page.locator('#analysis-rating')).toHaveValue('1600');
   await page.locator('#mode-play').click();
   await expect(page.locator('#takeback')).toBeVisible();
@@ -569,11 +569,11 @@ test('pending takeback/new game/mode/settings transitions reject obsolete replie
   await expect.poll(() => app.requests.length).toBe(3);
   await app.reply(1, 'e7e5'); await expect(page.locator('.turn-indicator')).toHaveText('Thinking…');
   await page.locator('#new-game').click();
-  await page.locator('#elo-maia').selectOption('1800');
+  await page.locator('#bot-elo').selectOption('1800');
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   expect(app.requests).toHaveLength(3);
   await page.locator('#new-game').click();
-  await page.locator('#elo-maia').selectOption('2000');
+  await page.locator('#bot-elo').selectOption('2000');
   await page.locator('#start-game').click(); await app.reply(2, 'e7e5');
   await expect.poll(() => currentMoves(page)).toEqual([]);
   await expect(page.locator('.turn-indicator')).toHaveText('To move');
@@ -585,7 +585,7 @@ test('busy retries are bounded, then manual retry recovers controls', async ({ p
   const app = await boot(page);
   await move(page, 'e2', 'e4');
   for (let index = 0; index < 3; index++) await app.reply(index, undefined, 503);
-  await expect(page.locator('#error-banner')).toContainText('Maia is busy. Wait a moment and try again.');
+  await expect(page.locator('#error-banner')).toContainText('Bot is busy. Wait a moment and try again.');
   await expect(page.locator('#retry-request')).toBeVisible();
   await expect(page.locator('.turn-indicator')).not.toHaveText('Thinking…');
   await page.locator('#retry-request').click();
@@ -678,7 +678,7 @@ test('setup disappears; draft cancel preserves a reply arriving while historical
   const app = await boot(page, {}, false);
   await expect(page.locator('#play-controls')).toBeVisible();
   expect(app.requests).toHaveLength(0);
-  await page.locator('#elo-maia').selectOption('1800');
+  await page.locator('#bot-elo').selectOption('1800');
   await page.locator('#start-game').click();
   await expect(page.locator('#play-controls')).toHaveCount(0);
   await expect(page.locator('.insight-panel, .saved-panel, .turn-chip, .stage-heading')).toHaveCount(0);
@@ -690,7 +690,7 @@ test('setup disappears; draft cancel preserves a reply arriving while historical
   await move(page, 'd2', 'd4');
   expect(await currentMoves(page)).toEqual(['e2e4']);
   await page.locator('#new-game').click();
-  await page.locator('#elo-maia').selectOption('2200');
+  await page.locator('#bot-elo').selectOption('2200');
   await app.reply(0, 'e7e5');
   await page.keyboard.press('Escape');
   await expect(page.locator('#new-game')).toBeFocused();
@@ -699,7 +699,7 @@ test('setup disappears; draft cancel preserves a reply arriving while historical
   await page.locator('#analysis-last').click();
   await piece(page, 'e5', 'black pawn');
   expect(app.requests).toHaveLength(1);
-  await expect(page.locator('.player-strip').filter({ hasText: 'Maia' })).toContainText('1800');
+  await expect(page.locator('.player-strip').filter({ hasText: 'Bot' })).toContainText('1800');
 });
 
 test('analysis candidate preview, independent rating, branch replay and PGN copies', async ({ page }, testInfo) => {
@@ -713,9 +713,9 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   await app.reply(0, 'b8c6', 200, [{ move: 'b8c6', prob: .4, wdl: [0.2, 0.3, 0.5] }, { move: 'g8f6', prob: .15, wdl: [0.2, 0.3, 0.5] }]);
   // Header row shares .candidate-reading, so scope to data rows; both
   // candidates share one winrate, hence identical 0.0% deltas.
-  await expect(page.locator('section[aria-label="Maia analysis"] li:not(.candidate-header) .candidate-reading')).toHaveText(['Played, Nc640%0.0%', 'Nf615%0.0%']);
+  await expect(page.locator('section[aria-label="Bot analysis"] li:not(.candidate-header) .candidate-reading')).toHaveText(['Played, Nc640%0.0%', 'Nf615%0.0%']);
   await expect(page.locator('.win-hero')).toHaveCount(0);
-  await expect(page.locator('section[aria-label="Maia analysis"] .candidate-list')).toContainText('Nc6');
+  await expect(page.locator('section[aria-label="Bot analysis"] .candidate-list')).toContainText('Nc6');
   await expect(page.locator('.balance-track')).toHaveAccessibleName(/White 50%.*Draw 30%.*Black 20%.*estimated White winning chance 65%/);
   await expect(page.locator('.balance-white-tag')).toHaveText('50%');
   await expect(page.locator('.balance-draw-tag')).toHaveText('30%');
@@ -724,7 +724,7 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(0);
   await piece(page, 'g8', 'black knight');
   await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
-  await expect(page.locator('section[aria-label="Maia analysis"] .candidate-list')).toContainText('Nc6');
+  await expect(page.locator('section[aria-label="Bot analysis"] .candidate-list')).toContainText('Nc6');
   await screenshot(page, testInfo.outputPath('analysis-candidates-desktop.png'));
   await page.getByRole('button', { name: 'Explore Nf6' }).click();
   await piece(page, 'f6', 'black knight');
@@ -734,7 +734,7 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(0);
   await move(page, 'f1', 'c4');
   // Either branch move can win the 200ms foreground race. A parked
-  // intermediate tip holds the Maia lanes (the fixture holds routes
+  // intermediate tip holds the bot lanes (the fixture holds routes
   // open), so answer held requests until the tip fires.
   const full = ['e2e4', 'e7e5', 'g1f3', 'g8f6', 'f1c4'];
   const replied = new Set([0]);
@@ -749,13 +749,13 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   expect(tip).toBeGreaterThanOrEqual(1);
   expect(replay(app.requests[tip].payload.moves).fen()).toBe(app.requests[tip].payload.fen);
   await app.reply(tip, 'b8c6');
-  // Resolve the focus single too, so the focus Maia list paints at the old
+  // Resolve the focus single too, so the focus bot list paints at the old
   // identity (priming the stale-while-revalidating display below).
   const focusMoves = ['e2e4', 'e7e5', 'g1f3', 'g8f6'];
   await expect.poll(() => app.requests.some(r => r.payload.moves.join() === focusMoves.join())).toBe(true);
   const focusIdx = app.requests.findIndex((r, i) => !replied.has(i) && r.payload.moves.join() === focusMoves.join());
   if (focusIdx >= 0) { replied.add(focusIdx); await app.reply(focusIdx); }
-  await expect(page.locator('section[aria-label="Maia analysis"] .candidate-list')).toBeVisible();
+  await expect(page.locator('section[aria-label="Bot analysis"] .candidate-list')).toBeVisible();
   // Let the display commit flush before changing the rating.
   await page.waitForTimeout(250);
   await expect(page.locator('#analysis-rating')).toBeVisible();
@@ -776,7 +776,7 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   await app.reply(app.requests.map((r, i) => (r.payload.elo_maia === 2000 ? i : -1)).filter(i => i >= 0).at(-1)!);
   // The display list follows the reference Elo; the objective heading
   // holds steady across the switch.
-  await expect(page.locator('section[aria-label="Maia analysis"] h2')).toContainText('Maia');
+  await expect(page.locator('section[aria-label="Bot analysis"] h2')).toContainText('Bot');
   await expect(page.locator('#objective-rating')).toHaveValue('2400');
   await expect(page.locator('#analysis-rating')).toHaveValue('2000');
   expect(app.requests.some(r => r.payload.elo_maia === 2000 && r.payload.elo_user === 2000)).toBe(true);
@@ -790,7 +790,7 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 6');
   await piece(page, 'g8', 'black knight');
   await page.locator('#mode-play').click();
-  await expect(page.locator('.player-strip').filter({ hasText: 'Maia' })).toContainText('1600');
+  await expect(page.locator('.player-strip').filter({ hasText: 'Bot' })).toContainText('1600');
   expect(app.errors).toEqual([]);
 });
 
@@ -809,7 +809,7 @@ test('history review, resume, copy, delete, and just-finished game review', asyn
   await page.locator('#mode-history').click();
   const cards = page.locator('.saved-game');
   await expect(cards).toHaveCount(2);
-  await expect(cards.first()).toContainText('White · Maia 1600');
+  await expect(cards.first()).toContainText('White · Bot 1600');
   await expect(cards.first().getByRole('button', { name: 'Resume' })).toHaveCount(0);
   await cards.first().getByRole('button', { name: 'Copy PGN' }).click();
   await expect(page.locator('.saved-panel [role="status"]')).toHaveText('PGN copied to clipboard');
@@ -838,7 +838,7 @@ test('analysis entry sources and input keyboard isolation', async ({ page }) => 
   await expect(page).toHaveURL('http://maia.test/analyze?moves=d2d4,d7d5');
   await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 3');
   // Arrow keys on the rating select must not step the board. Step back to
-  // a user move first: on Maia's own moves the rating locks (disabled) by
+  // a user move first: on the bot's own moves the rating locks (disabled) by
   // design, and a disabled control cannot take focus at all.
   await page.locator('#analysis-prev').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 3');
@@ -875,7 +875,7 @@ test('analysis entry sources and input keyboard isolation', async ({ page }) => 
   // The drained startpos reply already seeded this focus row (same node, same
   // settings), so the focus single is a memory hit and fires no request.
   await expect(page.locator('.win-hero')).toHaveCount(0);
-  await expect(page.locator('section[aria-label="Maia analysis"] .candidate-list')).toContainText('e4');
+  await expect(page.locator('section[aria-label="Bot analysis"] .candidate-list')).toContainText('e4');
 });
 
 test('tapping a history game opens its analysis', async ({ page }) => {
@@ -1118,7 +1118,7 @@ for (const width of [320, 390]) {
     const toolbar = await page.locator('.move-navigation button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { y: r.y, width: r.width, height: r.height }; }));
     for (const box of toolbar) { expect(box.y).toBe(toolbar[0].y); expect(box.width).toBe(40); expect(box.height).toBe(40); }
     await expect(page.locator('#insight-title #analysis-rating')).toBeVisible();
-    await expect(page.locator('#analysis-rating')).toHaveAccessibleName('Maia rating');
+    await expect(page.locator('#analysis-rating')).toHaveAccessibleName('Bot rating');
     await expect(page.locator('.insight-panel summary')).toHaveCount(0);
     await expect(page.getByText('Original', { exact: true })).toHaveCount(0);
     await expect(page.getByText('Exploring', { exact: true })).toHaveCount(0);

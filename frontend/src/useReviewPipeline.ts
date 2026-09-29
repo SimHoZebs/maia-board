@@ -9,8 +9,8 @@ import { useLineScope } from './useLineScope';
 import { useLookupRestore } from './useLookupRestore';
 import { useServerBatch } from './useServerBatch';
 import { computeLineQualities, type UnifiedMemo } from './qualities';
-import { alienUpgrade, effectiveQuality, maiaRarity, sfTopGap, type EngineGrade, type Evaluation, type ObjectivePoint, type Quality, type Rarity } from './reviewMetrics';
-import { selectMaiaDisplay, type MaiaDisplayEntry } from './maiaDisplay';
+import { alienUpgrade, effectiveQuality, botRarity, sfTopGap, type EngineGrade, type Evaluation, type ObjectivePoint, type Quality, type Rarity } from './reviewMetrics';
+import { selectBotDisplay, type BotDisplayEntry } from './botDisplay';
 
 // Configuration expressing room differences, not architecture. One pipeline
 // owns coordinator + scope + restore + grading + translation for both rooms;
@@ -25,7 +25,7 @@ export type PipelineRoom = 'analysis' | 'play';
 
 export type RecordStatus = { state: 'checking' | 'fresh' | 'none' };
 export type ReviewState = 'loading' | 'partial' | 'complete' | 'failed';
-export function isMaiaPosition(row: Pick<TimelineRow, 'turn' | 'outcome'>, userColor: 'white' | 'black', ownGame: boolean): boolean {
+export function isBotPosition(row: Pick<TimelineRow, 'turn' | 'outcome'>, userColor: 'white' | 'black', ownGame: boolean): boolean {
   return ownGame && row.outcome === null && row.turn !== userColor;
 }
 // Saved-game identity for a line: the reviewed game when ids match, else the
@@ -55,22 +55,22 @@ export function computeReviewQualities(args: {
 // QualityBadge, which has no glyph for them and would render an empty gray
 // box. Pure for tests; the hook supplies lookups from the coordinator.
 export function translateReviewQualities(args: {
-  grades: (EngineGrade | undefined)[]; nodes: ReviewNode[]; maiaResults: (MoveResponse | undefined)[];
-  rarities: (ReturnType<typeof maiaRarity> | undefined)[]; settingsForNode: (node: ReviewNode) => ReviewSettings;
-  isMaiaPending: (node: ReviewNode, settings: ReviewSettings) => boolean;
+  grades: (EngineGrade | undefined)[]; nodes: ReviewNode[]; botResults: (MoveResponse | undefined)[];
+  rarities: (ReturnType<typeof botRarity> | undefined)[]; settingsForNode: (node: ReviewNode) => ReviewSettings;
+  isBotPending: (node: ReviewNode, settings: ReviewSettings) => boolean;
   // Peak-praise inputs for the Alien upgrade (analysis room only): the
   // played move's rarity at 2400 plus the mover-relative SF top gap per ply.
   // Omitted → pre-Alien behavior exactly (Play room, existing tests).
   alien?: { rarity2400: (Rarity | undefined)[]; sfGap: (number | null)[] };
 }): (Quality | undefined)[] {
-  const { grades, nodes, maiaResults, rarities, settingsForNode, isMaiaPending, alien } = args;
+  const { grades, nodes, botResults, rarities, settingsForNode, isBotPending, alien } = args;
   return grades.map((grade, ply) => {
     const base = (() => {
       if (grade?.label !== 'Critical') return effectiveQuality(grade, undefined);
       const node = nodes[ply];
-      const maia = maiaResults[ply];
-      if (!maia) {
-        return node && isMaiaPending(node, settingsForNode(node))
+      const bot = botResults[ply];
+      if (!bot) {
+        return node && isBotPending(node, settingsForNode(node))
           ? { label: 'Unreviewed' as const, accuracy: null, loss: null }
           : effectiveQuality(grade, { label: 'Unknown', r: null, prob: null, topProb: null });
       }
@@ -88,7 +88,7 @@ export type PlayFeedback = {
   timeline: Timeline;
   nodes: ReviewNode[];
   evaluations: (Evaluation | undefined)[];
-  maiaResults: (MoveResponse | undefined)[];
+  botResults: (MoveResponse | undefined)[];
   objectivePoints: (ObjectivePoint | undefined)[];
   engineGrades: (EngineGrade | undefined)[];
   settings: ReviewSettings;
@@ -97,17 +97,17 @@ export type PlayQualitiesMemo = UnifiedMemo;
 export type PlayQualitiesStats = { reviews: number };
 
 // Newest move's grading endpoints. Stockfish needs the before/after pair;
-// Maia only ever translates the mover's node (pass 2 below), and only
-// user-side moves display, so opponent movers skip the Maia fetch.
-export function wantedPlayPair(nodes: ReviewNode[], userColor: 'white' | 'black'): { sfNodes: ReviewNode[]; maiaNode: ReviewNode | null } {
+// the bot only ever translates the mover's node (pass 2 below), and only
+// user-side moves display, so opponent movers skip the bot fetch.
+export function wantedPlayPair(nodes: ReviewNode[], userColor: 'white' | 'black'): { sfNodes: ReviewNode[]; botNode: ReviewNode | null } {
   // No moves yet means nothing to grade: the first move's own pair fetch
-  // covers the root, so starting empty keeps the lane free for Maia's reply.
-  if (nodes.length < 2) return { sfNodes: [], maiaNode: null };
+  // covers the root, so starting empty keeps the lane free for the bot's reply.
+  if (nodes.length < 2) return { sfNodes: [], botNode: null };
   const after = nodes[nodes.length - 1];
   const before = nodes[nodes.length - 2];
   return {
     sfNodes: before !== after ? [before, after] : [after],
-    maiaNode: before.turn === userColor ? before : null,
+    botNode: before.turn === userColor ? before : null,
   };
 }
 
@@ -152,17 +152,17 @@ const PRAISE_PENDING: Quality = { label: 'Unreviewed', accuracy: null, loss: nul
 
 export function computePlayQualities(args: {
   gameId: string; timeline: Timeline; userColor: 'white' | 'black'; settings: ReviewSettings;
-  sfLookup: (node: ReviewNode) => Evaluation | undefined; maiaLookup: (node: ReviewNode) => MoveResponse | undefined;
+  sfLookup: (node: ReviewNode) => Evaluation | undefined; botLookup: (node: ReviewNode) => MoveResponse | undefined;
   objective?: ObjectiveLane;
-  sfPending: Set<string>; maiaPending: Set<string>; prev: PlayQualitiesMemo | null; stats?: PlayQualitiesStats;
+  sfPending: Set<string>; botPending: Set<string>; prev: PlayQualitiesMemo | null; stats?: PlayQualitiesStats;
 }): { qualities: (Quality | undefined)[]; memo: PlayQualitiesMemo; grades: (EngineGrade | undefined)[] } {
-  const { gameId, timeline, userColor, settings, sfLookup, maiaLookup, objective, sfPending, maiaPending, prev, stats } = args;
+  const { gameId, timeline, userColor, settings, sfLookup, botLookup, objective, sfPending, botPending, prev, stats } = args;
   const nodes = reviewNodes(timeline);
   // Pass 1 stays engine-fact grading (memo-safe: keys never see objective
   // identity): negatives read the objective lane, praise still translates
   // engine-Critical below. Pass 2 translates only engine-Critical into
   // displayed praise; everything else settles the badge on the objective
-  // lane and reads display Maia for its sentence only when cheap.
+  // lane and reads the display bot for its sentence only when cheap.
   const sf = computeLineQualities({ scope: `${gameId}|${userColor}`, moves: [...timeline.moves], nodes,
     evaluations: nodes.map(sfLookup), settingsForNode: () => settings,
     active: node => node.turn === userColor, pending: sfPending, prev, stats, objective });
@@ -176,13 +176,13 @@ export function computePlayQualities(args: {
     if (grade?.label !== 'Critical') return effectiveQuality(grade, undefined);
     const node = nodes[index];
     const move = timeline.moves[index];
-    const maia = node ? maiaLookup(node) : undefined;
-    if (!maia) {
-      return node && maiaPending.has(reviewKey('maia', node, settings))
+    const bot = node ? botLookup(node) : undefined;
+    if (!bot) {
+      return node && botPending.has(reviewKey('maia', node, settings))
         ? { ...PRAISE_PENDING }
         : effectiveQuality(grade, { label: 'Unknown', r: null, prob: null, topProb: null });
     }
-    return effectiveQuality(grade, maiaRarity(maia, move));
+    return effectiveQuality(grade, botRarity(bot, move));
   });
   return { qualities, memo: sf.memo, grades: sf.qualities };
 }
@@ -240,40 +240,40 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   const scope = useLineScope(lineKey);
   const timeline = useMemo(() => buildTimeline(state.analysis.initialFen, moves), [lineKey]);
   const nodes = useMemo(() => reviewNodes(timeline), [timeline]);
-  const settingsKey = JSON.stringify([state.analysisSettings.eloMaia, state.analysisSettings.model, state.stockfish]);
+  const settingsKey = JSON.stringify([state.analysisSettings.botElo, state.analysisSettings.model, state.stockfish]);
   // Display lane: policy at the selected Elo, values at 2400-vs-2400 so the
   // left move list shows what X would play with 2400-level winrates.
   // settingsHash/evaluationRequest normalize explicit-equal values away, so
   // a 2400 selection dedups with the grading lane.
-  const settings: ReviewSettings = useMemo(() => ({ eloMaia: state.analysisSettings.eloMaia, eloUser: state.analysisSettings.eloMaia,
-    valueEloMaia: 2400, valueEloUser: 2400, model: state.analysisSettings.model, stockfish: state.stockfish }), [settingsKey]);
+  const settings: ReviewSettings = useMemo(() => ({ botElo: state.analysisSettings.botElo, userElo: state.analysisSettings.botElo,
+    valueBotElo: 2400, valueUserElo: 2400, model: state.analysisSettings.model, stockfish: state.stockfish }), [settingsKey]);
   const mainLine = state.analysis.branchFromPly === null;
   const ownGame = state.analysis.ownGame && mainLine;
   const gameForLine = ownGame ? gameIdentityFor(state.analysisSourceId, state.saved, state.play) : null;
-  const pinnedKey = gameForLine ? JSON.stringify([gameForLine.settings.eloMaia, gameForLine.settings.eloUser, gameForLine.settings.model, gameForLine.settings.userColor]) : '';
+  const pinnedKey = gameForLine ? JSON.stringify([gameForLine.settings.botElo, gameForLine.settings.userElo, gameForLine.settings.model, gameForLine.settings.userColor]) : '';
   const userColor = gameForLine?.settings.userColor;
-  // On own-game mainlines, Maia positions retain the saved game identity for
+  // On own-game mainlines, bot positions retain the saved game identity for
   // policy (what was actually played) but share the 2400 value anchor so all
   // displayed winrates stay comparable. User positions and explored branches
   // use adjustable analysis settings.
   const settingsForNode = useMemo(() => {
-    const pinned = gameForLine ? { eloMaia: gameForLine.settings.eloMaia, eloUser: gameForLine.settings.eloUser,
-      valueEloMaia: 2400, valueEloUser: 2400, model: gameForLine.settings.model, stockfish: state.stockfish } : null;
-    return (node: ReviewNode): ReviewSettings => pinned && userColor && isMaiaPosition(node, userColor, ownGame) ? pinned : settings;
+    const pinned = gameForLine ? { botElo: gameForLine.settings.botElo, userElo: gameForLine.settings.userElo,
+      valueBotElo: 2400, valueUserElo: 2400, model: gameForLine.settings.model, stockfish: state.stockfish } : null;
+    return (node: ReviewNode): ReviewSettings => pinned && userColor && isBotPosition(node, userColor, ownGame) ? pinned : settings;
   }, [settings, pinnedKey, userColor, ownGame]);
   // Mainline game identity for the continuation pass, gated on the line
   // instead of the view: ownGame flips false inside a branch, which would
-  // unpin saved-game Maia settings and cap Critical continuation badges at
-  // Best instead of the Maia-aware badge the mainline showed. Keep the
+  // unpin saved-game bot settings and cap Critical continuation badges at
+  // Best instead of the bot-aware badge the mainline showed. Keep the
   // resolver below in sync with settingsForNode above.
   const mainGameForLine = state.analysis.ownGame ? gameIdentityFor(state.analysisSourceId, state.saved, state.play) : null;
-  const mainPinnedKey = mainGameForLine ? JSON.stringify([mainGameForLine.settings.eloMaia, mainGameForLine.settings.eloUser, mainGameForLine.settings.model, mainGameForLine.settings.userColor]) : '';
+  const mainPinnedKey = mainGameForLine ? JSON.stringify([mainGameForLine.settings.botElo, mainGameForLine.settings.userElo, mainGameForLine.settings.model, mainGameForLine.settings.userColor]) : '';
   const mainUserColor = mainGameForLine?.settings.userColor;
   const mainlineSettingsForNode = useMemo(() => {
-    const pinned = mainGameForLine ? { eloMaia: mainGameForLine.settings.eloMaia, eloUser: mainGameForLine.settings.eloUser,
-      valueEloMaia: 2400, valueEloUser: 2400, model: mainGameForLine.settings.model, stockfish: state.stockfish } : null;
+    const pinned = mainGameForLine ? { botElo: mainGameForLine.settings.botElo, userElo: mainGameForLine.settings.userElo,
+      valueBotElo: 2400, valueUserElo: 2400, model: mainGameForLine.settings.model, stockfish: state.stockfish } : null;
     const mainOwnGame = state.analysis.ownGame;
-    return (node: ReviewNode): ReviewSettings => pinned && mainUserColor && isMaiaPosition(node, mainUserColor, mainOwnGame) ? pinned : settings;
+    return (node: ReviewNode): ReviewSettings => pinned && mainUserColor && isBotPosition(node, mainUserColor, mainOwnGame) ? pinned : settings;
   }, [settings, mainPinnedKey, mainUserColor, state.analysis.ownGame]);
   const combinedKey = `${settingsKey}|${pinnedKey}|${ownGame}`;
   const currentPly = Math.max(0, Math.min(state.analysis.index, nodes.length - 1));
@@ -281,12 +281,12 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   const currentNode = nodes[currentPly], focusNode = nodes[focusPly];
   const currentSettings = settingsForNode(currentNode);
   const focusSettings = focusNode ? settingsForNode(focusNode) : settings;
-  const focusIsMaia = !!focusNode && !!userColor && isMaiaPosition(focusNode, userColor, ownGame);
+  const focusIsBot = !!focusNode && !!userColor && isBotPosition(focusNode, userColor, ownGame);
   const tooLong = timeline.moves.length > 256;
 
   // Eagerness (analysis): debounce + batch-wait. Current and previous
-  // Stockfish grade the displayed move. Maia's focus grades that move;
-  // current-position Maia supplies forward candidates. Signal-abort is the
+  // Stockfish grade the displayed move. The bot's focus grades that move;
+  // the current-position bot supplies forward candidates. Signal-abort is the
   // only foreground cancel path: a line change aborts the scope, a ply
   // change replaces the queue latest-wins.
   useEffect(() => {
@@ -329,7 +329,7 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   // Known transient: a 1-line provisional can understate Critical (gap needs
   // before.lines[1]) and converge to Critical/Excellent/Great on full refine.
   const evaluations = useMemo(() => nodes.map(node => coordinator.provisionalSfResult(node, settingsForNode(node))), [nodes, settingsForNode, version, coordinator]);
-  const maiaResults = useMemo(() => nodes.map(node => coordinator.result('maia', node, settingsForNode(node))), [nodes, settingsForNode, version, coordinator]);
+  const botResults = useMemo(() => nodes.map(node => coordinator.result('maia', node, settingsForNode(node))), [nodes, settingsForNode, version, coordinator]);
   // Objective points for the active source. Row reads and point
   // conversion both live in the provider module; provisional Stockfish rows
   // keep first paint fast while coverage below still requires exact rows
@@ -362,13 +362,13 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     previous.current = result.memo;
     return result;
   }, [timeline, nodes, evaluations, settingsForNode, objectiveLane, version, coordinator]);
-  const rarities = useMemo(() => timeline.moves.map((move, ply) => maiaRarity(maiaResults[ply], move)), [timeline, maiaResults]);
+  const rarities = useMemo(() => timeline.moves.map((move, ply) => botRarity(botResults[ply], move)), [timeline, botResults]);
   // Played-move rarity at 2400 (objective lane policy): the second praise
   // axis. Missing/degraded objective rows yield undefined → Unknown downstream,
   // which never qualifies for tiers (absent evidence is not evidence).
   const rarity2400 = useMemo(() => timeline.moves.map((move, ply) => {
     const row = objectiveRows[ply];
-    return row ? maiaRarity(row, move) : undefined;
+    return row ? botRarity(row, move) : undefined;
   }), [timeline, objectiveRows]);
   // Mover-relative Stockfish top gap per ply, for the Alien upgrade only.
   const sfGap = useMemo(() => nodes.map((node, ply) => sfTopGap(evaluations[ply]?.lines, node.turn)),
@@ -376,26 +376,26 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   // Best-move rarity per ply: for mistakes, avoidance difficulty is the
   // rarity of the move they had to find, not the one they played. UCI-level
   // only (no SAN plumbing — the engine candidate list already names it), so
-  // verdicts stay text-only and badges untouched. Missing best_move or Maia
+  // verdicts stay text-only and badges untouched. Missing best_move or bot
   // yields undefined, which reads as standard wording.
-  // Badges show the Maia-aware judgment translated from engine facts
+  // Badges show the bot-aware judgment translated from engine facts
   // (Critical/Top/Holds → Excellent/Great/Best/Good). Praise needs hard-find
-  // evidence; Expected/Unknown cap at Best. Engine-critical praise with Maia
+  // evidence; Expected/Unknown cap at Best. Engine-critical praise with the bot
   // still in flight holds the spinner instead of flashing a provisional
-  // Best; SF-settled non-critical moves complete without Maia (fast path).
+  // Best; SF-settled non-critical moves complete without the bot (fast path).
   // (The translated array is fresh per call; raw memo reuse underneath is
   // what avoids recompute.)
-  const qualities = useMemo(() => translateReviewQualities({ grades: computed.qualities, nodes, maiaResults, rarities,
-    settingsForNode, isMaiaPending: (node, settings) => coordinator.isPending('maia', node, settings),
+  const qualities = useMemo(() => translateReviewQualities({ grades: computed.qualities, nodes, botResults, rarities,
+    settingsForNode, isBotPending: (node, settings) => coordinator.isPending('maia', node, settings),
     alien: { rarity2400, sfGap } }),
-  [computed.qualities, rarities, rarity2400, sfGap, maiaResults, nodes, settingsForNode, version, coordinator]);
+  [computed.qualities, rarities, rarity2400, sfGap, botResults, nodes, settingsForNode, version, coordinator]);
   const bestRarities = useMemo(() => timeline.moves.map((_move, ply) => {
     // Avoidance difficulty is the findability of the objective best move
     // at the displayed (user) level, not the engine best.
     const best = objectivePoints[ply]?.top ?? evaluations[ply]?.best_move;
-    const maia = maiaResults[ply];
-    return best && maia ? maiaRarity(maia, best) : undefined;
-  }), [timeline, evaluations, objectivePoints, maiaResults]);
+    const bot = botResults[ply];
+    return best && bot ? botRarity(bot, best) : undefined;
+  }), [timeline, evaluations, objectivePoints, botResults]);
   // Mainline display qualities for the original-line continuation rendered
   // under an explored branch. MovesPanel draws that continuation from the
   // mainline while review.qualities aligns with the branch timeline, so
@@ -414,13 +414,13 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     const mainTimeline = buildTimeline(state.analysis.initialFen, state.analysis.moves);
     const mainNodes = reviewNodes(mainTimeline);
     const mainSf = mainNodes.map(node => coordinator.provisionalSfResult(node, mainlineSettingsForNode(node)));
-    const mainMaiaResults = mainNodes.map(node => coordinator.result('maia', node, mainlineSettingsForNode(node)));
+    const mainBotResults = mainNodes.map(node => coordinator.result('maia', node, mainlineSettingsForNode(node)));
     const mainObjectiveRows = laneRows(mainNodes, { coordinator, sfEvaluations: mainSf });
     const mainPoints = lanePoints(mainObjectiveRows, mainNodes);
-    const mainRarities = mainTimeline.moves.map((move, ply) => maiaRarity(mainMaiaResults[ply], move));
+    const mainRarities = mainTimeline.moves.map((move, ply) => botRarity(mainBotResults[ply], move));
     const mainRarity2400 = mainTimeline.moves.map((move, ply) => {
       const row = mainObjectiveRows[ply];
-      return row ? maiaRarity(row, move) : undefined;
+      return row ? botRarity(row, move) : undefined;
     });
     const mainSfGap = mainNodes.map((node, ply) => sfTopGap(mainSf[ply]?.lines, node.turn));
     const mainGrades = computeReviewQualities({ line: mainTimeline, nodes: mainNodes, evaluations: mainSf,
@@ -431,13 +431,13 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
         keyFor: (node: ReviewNode) => laneKey(node, mainlineSettingsForNode),
       } });
     mainlinePrevious.current = mainGrades.memo;
-    return translateReviewQualities({ grades: mainGrades.qualities, nodes: mainNodes, maiaResults: mainMaiaResults,
-      rarities: mainRarities, settingsForNode: mainlineSettingsForNode, isMaiaPending: (node, settings) => coordinator.isPending('maia', node, settings),
+    return translateReviewQualities({ grades: mainGrades.qualities, nodes: mainNodes, botResults: mainBotResults,
+      rarities: mainRarities, settingsForNode: mainlineSettingsForNode, isBotPending: (node, settings) => coordinator.isPending('maia', node, settings),
       alien: { rarity2400: mainRarity2400, sfGap: mainSfGap } });
   }, [state.analysis.branchFromPly, state.analysis.moves, state.analysis.initialFen, mainlineSettingsForNode, version, coordinator]);
   // Coverage is completeness (badges + sentences), not badge readiness:
-  // badges fast-path, but progress stays partial until both Maia lanes land
-  // for every non-outcome node: display Maia for the sentence, objective
+  // badges fast-path, but progress stays partial until both bot lanes land
+  // for every non-outcome node: the display bot for the sentence, objective
   // points for the badge. Exact full SF only — fast provisional rows never
   // count toward completeness (the objective-point check additionally
   // requires presence, and SF-sourced points always accompany exact rows
@@ -445,22 +445,22 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   const laneReady = restorePair.lane === null || gradeRestore?.key === restorePair.gradeKey;
   const restoresReady = displayRestore?.key === restoreKey && laneReady;
   const coverage = useMemo(() => active && restoresReady ? { total: nodes.length,
-    covered: nodes.filter((node, ply) => coordinator.result('sf', node, settingsForNode(node)) && (node.outcome || maiaResults[ply]) && (node.outcome || objectivePoints[ply] !== undefined)).length } : null,
-  [active, restoresReady, nodes, settingsForNode, maiaResults, objectivePoints, version, coordinator]);
+    covered: nodes.filter((node, ply) => coordinator.result('sf', node, settingsForNode(node)) && (node.outcome || botResults[ply]) && (node.outcome || objectivePoints[ply] !== undefined)).length } : null,
+  [active, restoresReady, nodes, settingsForNode, botResults, objectivePoints, version, coordinator]);
   const recordStatus: RecordStatus = { state: !active || tooLong ? 'none' : displayRestore?.key !== restoreKey || !laneReady ? 'checking' : coverage?.covered === coverage?.total ? 'fresh' : 'none' };
-  const priorFocus = useRef<MaiaDisplayEntry | null>(null);
-  const displayed = selectMaiaDisplay(active ? focusNode : undefined, focusSettings, active ? maiaResults[focusPly] : undefined, priorFocus.current,
+  const priorFocus = useRef<BotDisplayEntry | null>(null);
+  const displayed = selectBotDisplay(active ? focusNode : undefined, focusSettings, active ? botResults[focusPly] : undefined, priorFocus.current,
     active && !!focusNode && coordinator.isPending('maia', focusNode, focusSettings));
   // Render-phase carry-forward (no effect): the note is fully determined by
   // this render (fresh, same-position reuse, or nothing), so banking it here
   // removes the one-commit lag of the effect version. Read runs first, so
   // the fallback stays yesterday's answer; the position-ID check inside
-  // selectMaiaDisplay discards a note from an abandoned concurrent render.
+  // selectBotDisplay discards a note from an abandoned concurrent render.
   priorFocus.current = displayed.entry ?? null;
-  const maia = displayed.entry?.result;
+  const bot = displayed.entry?.result;
   // Forward candidates only expose the requested key. The focus panel can
   // retain a same-position previous identity with its explicit stale label.
-  const maiaCurrent = active ? maiaResults[currentPly] : undefined;
+  const botCurrent = active ? botResults[currentPly] : undefined;
   const currentError = active ? coordinator.error('sf', currentNode, currentSettings) : undefined;
   const error = currentError || (active && focusNode ? coordinator.error('sf', focusNode, focusSettings) || coordinator.error('maia', focusNode, focusSettings) : undefined)
     || (active ? coordinator.error('maia', currentNode, currentSettings) : undefined)
@@ -476,7 +476,7 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   return { timeline, nodes, evaluations, qualities, rarities, rarity2400, bestRarities, mainlineQualities, coverage,
     // Objective lane (provider points per position): the bar, graphs, and
     // score copy read this; move grades already derive from it. The
-    // display-Maia results above stay on the selected Elo for rarity and
+    // display-bot results above stay on the selected Elo for rarity and
     // wording; Stockfish evaluations stay for material, mate, and praise.
     objective: objectivePoints,
     objectiveError: (node: ReviewNode | undefined) => laneError(coordinator, node),
@@ -492,11 +492,11 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     // Display responses for the left candidate list (the human-population
     // view at the selected Elo). The stale-aware focus entry keeps the old
     // list visible under its banner while the new Elo fetches.
-    maia, maiaCurrent,
-    maiaElo: displayed.entry?.eloMaia ?? focusSettings.eloMaia,
-    maiaWantedElo: focusSettings.eloMaia,
-    maiaStale: displayed.stale, maiaPending: displayed.pending, maiaLocked: focusIsMaia,
-    gameElo: gameForLine?.settings.eloMaia, error, currentError,
+    bot, botCurrent,
+    botElo: displayed.entry?.botElo ?? focusSettings.botElo,
+    botWantedElo: focusSettings.botElo,
+    botStale: displayed.stale, botPending: displayed.pending, botLocked: focusIsBot,
+    gameElo: gameForLine?.settings.botElo, error, currentError,
     progress: batch.progress, recordStatus, reviewState, scope, lineKey, start: batch.start,
     retry: () => { coordinator.retry(); batch.retry(); if (displayRestore?.error || gradeRestore?.error) restorePair.retryRestore(); }, tooLong };
 }
@@ -512,7 +512,7 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   }, [movesKey]);
   const settingsKey = JSON.stringify(state.stockfish);
   const playSettings = state.play.settings;
-  const settings: ReviewSettings = useMemo(() => ({ eloMaia: playSettings.eloMaia, eloUser: playSettings.eloUser, model: playSettings.model, stockfish: state.stockfish }), [settingsKey, playSettings.eloMaia, playSettings.eloUser, playSettings.model]);
+  const settings: ReviewSettings = useMemo(() => ({ botElo: playSettings.botElo, userElo: playSettings.userElo, model: playSettings.model, stockfish: state.stockfish }), [settingsKey, playSettings.botElo, playSettings.userElo, playSettings.model]);
   const userColor = playSettings.userColor;
   const gameId = state.play.id;
   const lineKey = useMemo(() => lineKeyFor(START_FEN, moves), [movesKey]);
@@ -526,14 +526,14 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   // Eagerness (play): foreground fetch on move. Latest-wins per engine: a
   // newer move replaces queued older work, and the server batch is out of
   // this path entirely — no per-ply submit, no cancel/resubmit churn, no 409
-  // races with ourselves. Play (POST /move → Play lane) and Maia analysis
+  // races with ourselves. Play (POST /move → Play lane) and bot analysis
   // (POST /move/analysis → Focus lane) queue on the shared slot with Play
   // priority instead of superseding each other.
   useEffect(() => {
     if (!active || tooLong || !pair.sfNodes.length) return;
     coordinator.ensure(pair.sfNodes, settings, { priority: true, engines: ['sf'], signal: scope.signal });
-    if (pair.maiaNode) {
-      coordinator.ensure([pair.maiaNode], settings, { priority: true, engines: ['maia'], signal: scope.signal });
+    if (pair.botNode) {
+      coordinator.ensure([pair.botNode], settings, { priority: true, engines: ['maia'], signal: scope.signal });
       ensureLane(coordinator, pair.sfNodes, scope.signal);
     }
   }, [coordinator, active, tooLong, pair, settings, scope]);
@@ -557,13 +557,13 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   // no longer covers the failed node) must still heal, or its badge blanks
   // until the next move. Buckets bound the fires; the coordinator skips
   // already-settled keys at the pump, so a sweep re-fetches only misses.
-  const retryTargets: { key: string; sf: ReviewNode[]; maia: ReviewNode[]; lane: ReviewNode[]; restore: boolean } = useMemo(() => {
-    if (!active || tooLong) return { key: '', sf: [], maia: [], lane: [], restore: false };
+  const retryTargets: { key: string; sf: ReviewNode[]; bot: ReviewNode[]; lane: ReviewNode[]; restore: boolean } = useMemo(() => {
+    if (!active || tooLong) return { key: '', sf: [], bot: [], lane: [], restore: false };
     const sf = new Map<string, ReviewNode>();
     for (const node of [...pair.sfNodes, ...nodes]) sf.set(reviewKey('sf', node, settings), node);
-    const maia = new Map<string, ReviewNode>();
-    if (pair.maiaNode) maia.set(reviewKey('maia', pair.maiaNode, settings), pair.maiaNode);
-    for (const node of nodes) maia.set(reviewKey('maia', node, settings), node);
+    const bot = new Map<string, ReviewNode>();
+    if (pair.botNode) bot.set(reviewKey('maia', pair.botNode, settings), pair.botNode);
+    for (const node of nodes) bot.set(reviewKey('maia', node, settings), node);
     // Objective-lane failures sweep through the provider module; the
     // Stockfish twin reports none (the main sweep above already covers it).
     const seen = new Set<string>();
@@ -574,12 +574,12 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     }
     const laneFailed = laneFailures(laneCandidates, coordinator);
     const sfFailed = [...sf.values()].filter(node => coordinator.error('sf', node, settings));
-    const maiaFailed = [...maia.values()].filter(node => coordinator.error('maia', node, settings));
+    const botFailed = [...bot.values()].filter(node => coordinator.error('maia', node, settings));
     const restoreFailed = (displayRestore?.key === restoreBaseKey && !!displayRestore.error) || (restorePair.lane.settings !== null && gradeRestore?.key === restorePair.gradeKey && !!gradeRestore.error);
-    const parts = [...sfFailed.map(node => reviewKey('sf', node, settings)), ...maiaFailed.map(node => reviewKey('maia', node, settings)),
+    const parts = [...sfFailed.map(node => reviewKey('sf', node, settings)), ...botFailed.map(node => reviewKey('maia', node, settings)),
       ...laneFailed.map(node => laneKey(node, () => settings))];
     if (restoreFailed) parts.push('restore');
-    return { key: parts.sort().join('|'), sf: sfFailed, maia: maiaFailed, lane: laneFailed, restore: restoreFailed };
+    return { key: parts.sort().join('|'), sf: sfFailed, bot: botFailed, lane: laneFailed, restore: restoreFailed };
   }, [active, tooLong, pair, nodes, settings, version, coordinator, displayRestore, gradeRestore, restoreBaseKey, restorePair.gradeKey, restorePair.lane]);
   const attempts = useRef(new Map<string, number>());
   const [sustainedError, setSustainedError] = useState<string | undefined>(undefined);
@@ -621,14 +621,14 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
       attempts.current.set(bucket, (attempts.current.get(bucket) ?? 0) + 1);
       // Re-issuing is enough: the coordinator clears failures for desired
       // jobs and skips already-settled ones at the pump.
-      const { sf, maia, lane, restore: restoreFailed } = latestRetry.current;
+      const { sf, bot, lane, restore: restoreFailed } = latestRetry.current;
       if (!latestRetry.current.key) {
         setSustainedError(undefined);
       } else if (hasExhaustedPlayRetries(attempts.current.get(bucket) ?? 0)) {
         setSustainedError(playExhaustedError(true, attempts.current.get(bucket) ?? 0));
       }
       if (sf.length) coordinator.ensure(sf, settings, { priority: true, engines: ['sf'], signal: scope.signal });
-      if (maia.length) coordinator.ensure(maia, settings, { priority: true, engines: ['maia'], signal: scope.signal });
+      if (bot.length) coordinator.ensure(bot, settings, { priority: true, engines: ['maia'], signal: scope.signal });
       if (lane.length) ensureLane(coordinator, lane, scope.signal);
       if (restoreFailed) retryRestore();
     }, FOREGROUND_RETRY_MS);
@@ -649,7 +649,7 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
       const sc = latestScope.current;
       if (sc.signal.aborted) return;
       if (targets.sf.length) coordinator.ensure(targets.sf, s, { priority: true, engines: ['sf'], signal: sc.signal });
-      if (targets.maia.length) coordinator.ensure(targets.maia, s, { priority: true, engines: ['maia'], signal: sc.signal });
+      if (targets.bot.length) coordinator.ensure(targets.bot, s, { priority: true, engines: ['maia'], signal: sc.signal });
       if (targets.lane.length) ensureLane(coordinator, targets.lane, sc.signal);
       if (targets.restore) retryRestore();
     };
@@ -657,13 +657,13 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     return () => window.removeEventListener('online', onOnline);
   }, [coordinator, retryRestore]);
   const previous = useRef<PlayQualitiesMemo | null>(null);
-  const sfPending = coordinator.sfPendingKeys(), maiaPending = coordinator.maiaPendingKeys();
+  const sfPending = coordinator.sfPendingKeys(), botPending = coordinator.botPendingKeys();
   // Objective lane for the active source, built from full-timeline rows so
   // indexes align with the pure grader's internal nodes below.
   const fullNodes = useMemo(() => reviewNodes(timeline), [timeline]);
   const evaluations = useMemo(() => fullNodes.map(node => coordinator.result('sf', node, settings) as Evaluation | undefined),
     [fullNodes, settings, version, coordinator]);
-  const maiaResults = useMemo(() => fullNodes.map(node => coordinator.result('maia', node, settings)),
+  const botResults = useMemo(() => fullNodes.map(node => coordinator.result('maia', node, settings)),
     [fullNodes, settings, version, coordinator]);
   const lane: ObjectiveLane = useMemo(() => ({
     points: lanePoints(laneRows(fullNodes, { coordinator, sfEvaluations: evaluations }), fullNodes),
@@ -675,9 +675,9 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   // recompute.
   const computed = useMemo(() => {
     const result = active ? computePlayQualities({ gameId, timeline, userColor, settings,
-      sfLookup: node => coordinator.result('sf', node, settings), maiaLookup: node => coordinator.result('maia', node, settings),
+      sfLookup: node => coordinator.result('sf', node, settings), botLookup: node => coordinator.result('maia', node, settings),
       objective: lane,
-      sfPending, maiaPending, prev: previous.current }) : null;
+      sfPending, botPending, prev: previous.current }) : null;
     previous.current = result?.memo ?? null;
     return result;
   },
@@ -689,7 +689,7 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   // coordinator keeps sole ownership of its queues.
   return {
     active, qualities: computed?.qualities ?? [], error: sustainedError,
-    timeline, nodes: fullNodes, evaluations, maiaResults,
+    timeline, nodes: fullNodes, evaluations, botResults,
     objectivePoints: lane.points, engineGrades: computed?.grades ?? [],
     settings,
   };

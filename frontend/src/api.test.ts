@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { MaiaApiError, parseMoveResponse, readableApiError, requestMaiaAnalysis, requestMove } from './api';
+import { BotApiError, parseMoveResponse, readableApiError, requestBotAnalysis, requestMove } from './api';
 import { START_FEN } from './domain';
-import { maiaFixture } from './evaluationTestFixtures';
+import { botFixture } from './evaluationTestFixtures';
 import { requestBodyText } from './testUtils';
 
 const payload = {
@@ -42,15 +42,15 @@ describe('requestMove', () => {
     }), { status: 400 }));
 
     const error = await requestMove(payload, fetchImpl).catch((value: unknown) => value);
-    if (!(error instanceof MaiaApiError)) throw error;
-    expect(error).toBeInstanceOf(MaiaApiError);
+    if (!(error instanceof BotApiError)) throw error;
+    expect(error).toBeInstanceOf(BotApiError);
     expect(error.code).toBe('not_maia_turn');
-    expect(readableApiError(error)).toBe('Maia is not on move in this position.');
+    expect(readableApiError(error)).toBe('Bot is not on move in this position.');
   });
 
   it('maps network failures to server unreachable', async () => {
     const error = await requestMove(payload, vi.fn().mockRejectedValue(new Error('offline'))).catch((value: unknown) => value);
-    if (!(error instanceof MaiaApiError)) throw error;
+    if (!(error instanceof BotApiError)) throw error;
     expect(error.code).toBe('server_unreachable');
   });
 
@@ -70,7 +70,7 @@ describe('requestMove', () => {
       headers: expect.not.objectContaining({ 'X-Priority': expect.anything() }),
     }));
     fetchImpl.mockClear();
-    await requestMaiaAnalysis(payload, fetchImpl);
+    await requestBotAnalysis(payload, fetchImpl);
     expect(fetchImpl).toHaveBeenCalledWith('/move/analysis', expect.objectContaining({
       headers: expect.not.objectContaining({ 'X-Priority': expect.anything() }),
     }));
@@ -79,29 +79,29 @@ describe('requestMove', () => {
   it('preserves the scheduler 409 code without retrying it', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 'superseded', message: 'superseded' }), { status: 409 }));
     const error = await requestMove(payload, fetchImpl).catch((value: unknown) => value);
-    if (!(error instanceof MaiaApiError)) throw error;
-    expect(error).toBeInstanceOf(MaiaApiError);
+    if (!(error instanceof BotApiError)) throw error;
+    expect(error).toBeInstanceOf(BotApiError);
     expect(error.code).toBe('superseded');
     // retryBusy only retries engine_busy: exactly one attempt here.
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(readableApiError(new MaiaApiError('superseded', 'x'))).toBe('A newer request replaced this position.');
+    expect(readableApiError(new BotApiError('superseded', 'x'))).toBe('A newer request replaced this position.');
   });
 
   it.each([
     ['invalid_elo', 'The Elo settings are invalid. Choose both ratings before trying again.'],
     ['missing_elo', 'The Elo settings are invalid. Choose both ratings before trying again.'],
-    ['invalid_maia_color', 'The Maia side setting is invalid. Choose White or Black and try again.'],
-    ['invalid_request', 'The Maia server could not read this request.'],
-    ['invalid_json', 'The Maia server could not read this request.'],
-    ['invalid_model', 'The Maia server could not read this request.'],
-    ['method_not_allowed', 'The Maia server could not read this request.'],
+    ['invalid_maia_color', 'The bot side setting is invalid. Choose White or Black and try again.'],
+    ['invalid_request', 'The bot server could not read this request.'],
+    ['invalid_json', 'The bot server could not read this request.'],
+    ['invalid_model', 'The bot server could not read this request.'],
+    ['method_not_allowed', 'The bot server could not read this request.'],
   ] as const)('maps %s to curated copy', (code, message) => {
-    expect(readableApiError(new MaiaApiError(code, 'raw server message'))).toBe(message);
+    expect(readableApiError(new BotApiError(code, 'raw server message'))).toBe(message);
   });
 });
 
-describe('native Maia response validation', () => {
-  const valid = maiaFixture(START_FEN);
+describe('native bot response validation', () => {
+  const valid = botFixture(START_FEN);
   it.each([NaN, Infinity, -0.1, 1.1])('rejects out-of-bound candidate and WDL probability %s', prob => {
     expect(() => parseMoveResponse({ ...valid, top_moves: [{ move: 'e2e4', prob, wdl: [0.2, 0.3, 0.5] }] })).toThrow();
     expect(() => parseMoveResponse({ ...valid, wdl: [prob, 0, 1] })).toThrow();
@@ -153,7 +153,7 @@ describe('native Maia response validation', () => {
   });
   it('does not issue client repair writes for invalid cache hits', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ ...valid, top_moves: [] }), { headers: { 'X-Eval-Cache': 'hit' } }));
-    await expect(requestMove(payload, fetcher)).rejects.toBeInstanceOf(MaiaApiError);
+    await expect(requestMove(payload, fetcher)).rejects.toBeInstanceOf(BotApiError);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetcher.mock.calls[0][0]).toBe('/move');
     expect(JSON.parse(requestBodyText(fetcher.mock.calls[0][1]))).not.toHaveProperty('cache_hash');

@@ -23,7 +23,7 @@ function setup(moveUci = 'e2e4') {
   const timeline = buildTimeline(START_FEN, [moveUci]);
   const nodes = reviewNodes(timeline);
   const evaluations = nodes.map(node => sfFixture(node.fen));
-  const maia = {
+  const bot = {
     move: moveUci,
     top_moves: [{ move: moveUci, prob: 0.5, wdl: [0.2, 0.3, 0.5] as [number, number, number] }],
     wdl: [0.2, 0.3, 0.5] as [number, number, number],
@@ -36,10 +36,10 @@ function setup(moveUci = 'e2e4') {
     timeline,
     nodes,
     evaluations,
-    maiaResults: [maia, undefined],
+    botResults: [bot, undefined],
     objectivePoints: [{ top: moveUci, expected: 60 }, { top: 'e7e5', expected: 50 }],
     engineGrades: [{ label: 'Top', accuracy: 100, loss: 0 }],
-    settings: { eloMaia: 1600, eloUser: 1600, model: '79m', stockfish: defaultStockfishSettings },
+    settings: { botElo: 1600, userElo: 1600, model: '79m', stockfish: defaultStockfishSettings },
   };
   const base = initialState();
   const state: State = {
@@ -57,7 +57,7 @@ describe('PlayVerdict', () => {
   it('renders the synthesis verdict for the viewed user move', () => {
     const { state, feedback } = setup();
     const html = renderToStaticMarkup(createElement(PlayVerdict, { state, feedback }));
-    expect(html).toContain('The natural choice.');
+    expect(html).toContain('A natural choice.');
     expect(html).toContain('move-verdict');
   });
 

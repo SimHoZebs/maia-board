@@ -7,7 +7,7 @@ export function readStorage<T>(key: string): T | undefined {
   // the generic without an assertion. Every caller validates downstream —
   // restoreGame (saved/current games), normalizeSettings (settings),
   // normalizeStockfishSettings / === true checks (state.ts), and key-specific
-  // narrowing (useMaiaBoard.ts) — so no `as` cast is needed or allowed here.
+  // narrowing (useBotBoard.ts) — so no `as` cast is needed or allowed here.
   try { const value = localStorage.getItem(key); return value ? JSON.parse(value) : undefined; }
   catch { return undefined; }
 }
@@ -21,11 +21,11 @@ export function writeStorage(key: string, value: unknown): Error | undefined {
 function toSettingsInput(value: unknown): Partial<Settings> | undefined {
   if (!isRecord(value)) return undefined;
   const input: Partial<Settings> = {};
-  const { userColor, model, eloMaia, eloUser, temperature } = value;
+  const { userColor, model, botElo, userElo, temperature } = value;
   if (userColor === 'black' || userColor === 'white') input.userColor = userColor;
   if (model === '5m' || model === '79m') input.model = model;
-  if (typeof eloMaia === 'number') input.eloMaia = eloMaia;
-  if (typeof eloUser === 'number') input.eloUser = eloUser;
+  if (typeof botElo === 'number') input.botElo = botElo;
+  if (typeof userElo === 'number') input.userElo = userElo;
   if (typeof temperature === 'number') input.temperature = temperature;
   return input;
 }

@@ -88,8 +88,8 @@ export function SavedGames({
                     })}
                   </time>
                   <h2>
-                    {sideName(game.settings.userColor)} · Maia{" "}
-                    {game.settings.eloMaia}
+                    {sideName(game.settings.userColor)} · Bot{" "}
+                    {game.settings.botElo}
                   </h2>
                   <p>
                     {result}

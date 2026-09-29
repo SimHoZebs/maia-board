@@ -1,24 +1,24 @@
 import type { MoveResponse } from '../api';
 import type { ObjectivePoint } from '../reviewMetrics';
 
-// Winrate math + candidate-display formatting for Maia-model rows. Serves
+// Winrate math + candidate-display formatting for bot-model rows. Serves
 // the candidate-display responsibility (winrate columns in the panel),
 // not the grading role: InsightPanel imports this directly regardless of
 // which implementation backs the grader. One position's objective point
-// from a Maia response lives here too, since it is pure WDL arithmetic.
+// from a bot response lives here too, since it is pure WDL arithmetic.
 
 // One position's objective point. A degraded response still carries an
 // expectation (shown, not graded); only a clean top move names the best.
-export function maiaPoint(response: Pick<MoveResponse, 'top_moves' | 'wdl' | 'degraded'> | undefined): ObjectivePoint {
+export function botPoint(response: Pick<MoveResponse, 'top_moves' | 'wdl' | 'degraded'> | undefined): ObjectivePoint {
   if (!response) return { top: null, expected: null };
   const top = !response.degraded && typeof response.top_moves?.[0]?.move === 'string' ? response.top_moves[0].move : null;
-  return { top, expected: maiaExpected(response.wdl) };
+  return { top, expected: botExpected(response.wdl) };
 }
 
 // Expected score from a mover-relative WDL triple [loss, draw, win]. WDL
 // compresses extremes relative to engine win%, so identical cutoffs flag
 // fewer moves — that leniency is the point, not a bug.
-export function maiaExpected(wdl: MoveResponse['wdl']): number {
+export function botExpected(wdl: MoveResponse['wdl']): number {
   const [loss, draw, win] = wdl;
   return 100 * (win + 0.5 * draw);
 }
@@ -27,13 +27,13 @@ export function maiaExpected(wdl: MoveResponse['wdl']): number {
 // [loss, draw, win]. Turn decides which side the win/loss belong to; draws
 // are side-neutral. The bar renders these three segments; expected score
 // stays win + draw/2 for grading.
-export function maiaWhiteWdl(wdl: MoveResponse['wdl'], turn: 'white' | 'black'): { white: number; draw: number; black: number } {
+export function botWhiteWdl(wdl: MoveResponse['wdl'], turn: 'white' | 'black'): { white: number; draw: number; black: number } {
   const [loss, draw, win] = wdl;
   return turn === 'white'
     ? { white: win * 100, draw: draw * 100, black: loss * 100 }
     : { white: loss * 100, draw: draw * 100, black: win * 100 };
 }
-// Display values for the Maia analysis list: policy share plus winrate delta
+// Display values for the bot analysis list: policy share plus winrate delta
 // vs a caller-supplied baseline. The standard caller passes the objective
 // (2400) before-position winrate so every row answers gain-versus-before
 // from 2400's perspective; without one the delta falls back to the best
@@ -50,12 +50,12 @@ export function formatWinrateDelta(delta: number): string {
   return delta > 0 ? `+${rounded}%` : `${rounded}%`;
 }
 
-export function maiaDisplayParts(topMoves: MoveResponse['top_moves'], baseline?: number | null): { prob: string; delta: string }[] {
+export function botDisplayParts(topMoves: MoveResponse['top_moves'], baseline?: number | null): { prob: string; delta: string }[] {
   if (topMoves.length === 0) return [];
-  const best = baseline ?? Math.max(...topMoves.map(candidate => maiaExpected(candidate.wdl)));
+  const best = baseline ?? Math.max(...topMoves.map(candidate => botExpected(candidate.wdl)));
   return topMoves.map(candidate => ({
     prob: `${Math.round(candidate.prob * 100)}%`,
-    delta: formatWinrateDelta(maiaExpected(candidate.wdl) - best),
+    delta: formatWinrateDelta(botExpected(candidate.wdl) - best),
   }));
 }
 
@@ -99,7 +99,7 @@ export function selectDeltaParts(
       kind: server.kind,
     };
   }
-  // Local fallback: identical arithmetic to maiaDisplayParts, over expected
+  // Local fallback: identical arithmetic to botDisplayParts, over expected
   // values (objective entries carry no WDL). Kept exact by shared tests.
   if (rows.length === 0) {
     const { baseline, kind } = deltaBaseline(beforeExpected, bestListed);

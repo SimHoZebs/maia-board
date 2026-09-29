@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MaiaApiError } from './api';
+import { BotApiError } from './api';
 import { ReviewCoordinator } from './reviewCoordinator';
 import { initialState, reducer, snapshotOf, type Action, type State } from './state/index';
 import { KEYS, readStorage, writeStorage } from './storage';
@@ -42,13 +42,13 @@ function firePlayRequest(request: State['request'], flight: FlightRef, commit: (
       error => {
         if (flight.current !== record) return;
         flight.current = null;
-        commit({ type: 'failure', request, error: error instanceof DOMException ? new MaiaApiError('server_unreachable', 'The Maia server could not be reached.') : error });
+        commit({ type: 'failure', request, error: error instanceof DOMException ? new BotApiError('server_unreachable', 'The bot server could not be reached.') : error });
       },
     );
   });
 }
 
-export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
+export function useBotBoard(mode: Mode, urlLine?: UrlLine) {
   const [repository] = useState(() => new GameRepository());
   const [state, setState] = useState(() => initialState(mode, urlLine, repository.snapshot()));
   const current = useRef(state);
@@ -86,7 +86,7 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
     // rides along with the same dispatch — no separate effect needed).
     firePlayRequest(next.request, flight, dispatch, playCoordinator);
   }, [repository, sync, playCoordinator]);
-  // Boot + unmount: a restored game with Maia to move carries a request from
+  // Boot + unmount: a restored game with the bot to move carries a request from
   // initialState that no dispatch may ever produce (e.g. history sync fails
   // or returns nothing new), so the mount pass fires it directly — the
   // same-id guard makes the later sync dispatch a no-op, and StrictMode
@@ -106,7 +106,7 @@ export function useMaiaBoard(mode: Mode, urlLine?: UrlLine) {
   // unload / saved navigations through their own actions. There is no
   // render-phase correction, so `current` stays dispatch-owned (updated
   // beside every setState above) and every request — including one queued
-  // by entering play with Maia to move — fires through firePlayRequest in
+  // by entering play with the bot to move — fires through firePlayRequest in
   // dispatch itself. No sync or backstop effects needed.
 
   useEffect(() => {

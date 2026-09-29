@@ -1,4 +1,4 @@
-import { assertLegalUci, isApiErrorCode, MaiaApiError, parseMoveResponse, type MaiaModel, type MoveResponse } from './api';
+import { assertLegalUci, isApiErrorCode, BotApiError, parseMoveResponse, type BotModel, type MoveResponse } from './api';
 import { Chess } from 'chess.js';
 // Terms: see spec/GLOSSARY.md. restore = the one cache-fill op
 // (store.restore → coordinator.restore → restoreLookup).
@@ -9,7 +9,7 @@ import { fetchJsonWithBusyRetry } from './evaluationTransport';
 import { isRecord, isStringArray, isStockfishSettings } from './guards';
 import type { Evaluation, Score } from './reviewMetrics';
 import { defaultStockfishSettings, stockfishPolicy, type StockfishSettings } from './stockfishSettings';
-import { clampMaiaElo } from './BoardTools';
+import { clampBotElo } from './BoardTools';
 
 export type ReviewNode = TimelineRow & { timeline: Timeline; initialFen: string };
 // Rows are exposed directly as frozen plain objects. No wrapper class or
@@ -18,21 +18,21 @@ export type ReviewNode = TimelineRow & { timeline: Timeline; initialFen: string 
 export function reviewNodes(timeline: Timeline): ReviewNode[] {
   return timeline.rows.map(row => Object.freeze({ ...row, timeline, initialFen: timeline.initialFen }));
 }
-export type ReviewSettings = { eloMaia: number; eloUser: number; model: MaiaModel; stockfish?: StockfishSettings;
-  // Split evaluation: policy ordering at (eloMaia, eloUser), candidate WDL
-  // values at (valueEloMaia, valueEloUser). Omitted (or equal to policy)
+export type ReviewSettings = { botElo: number; userElo: number; model: BotModel; stockfish?: StockfishSettings;
+  // Split evaluation: policy ordering at (botElo, userElo), candidate WDL
+  // values at (valueBotElo, valueUserElo). Omitted (or equal to policy)
   // means legacy symmetric evaluation. The analysis display lane sets both
   // to 2400 so low-Elo move lists carry 2400-vs-2400 winrates.
-  valueEloMaia?: number; valueEloUser?: number };
+  valueBotElo?: number; valueUserElo?: number };
 export type Engine = 'sf' | 'maia';
-// Objective grading lane: Maia 2400/2400 on the strong model. This is the
+// Objective grading lane: bot 2400/2400 on the strong model. This is the
 // "Stockfish seat" for retrospective grades (Option 1): negative labels
-// derive from its WDL loss while the adjustable display Maia owns rarity and
+// derive from its WDL loss while the adjustable display bot owns rarity and
 // wording. A frozen singleton so batch hashes and effect identities never
-// churn; reviewKey already disambiguates it from display-Maia rows by Elo.
-export const GRADING_MAIA_SETTINGS: ReviewSettings = Object.freeze({ eloMaia: 2400, eloUser: 2400, model: '79m' });
-export function gradingMaiaKey(node: ReviewNode): string {
-  return reviewKey('maia', node, GRADING_MAIA_SETTINGS);
+// churn; reviewKey already disambiguates it from display-bot rows by Elo.
+export const GRADING_BOT_SETTINGS: ReviewSettings = Object.freeze({ botElo: 2400, userElo: 2400, model: '79m' });
+export function gradingBotKey(node: ReviewNode): string {
+  return reviewKey('maia', node, GRADING_BOT_SETTINGS);
 }
 export type SettingsInput = ReviewSettings | ((node: ReviewNode) => ReviewSettings);
 export const resolveSettings = (input: SettingsInput, node: ReviewNode): ReviewSettings => typeof input === 'function' ? input(node) : input;
@@ -71,21 +71,22 @@ function prefixOf(node: ReviewNode): string[] {
 }
 // Normalized split coordinates: explicit value Elos equal to policy Elos
 // collapse to omitted so 2400 display rows dedup with the grading lane and
-// legacy keys keep hitting. Mirrors backend maiaIdentity normalization.
-export function splitValueElos(settings: ReviewSettings): { valueEloMaia?: number; valueEloUser?: number } {
-  const policyMaia = clampMaiaElo(settings.eloMaia), policyUser = clampMaiaElo(settings.eloUser);
-  const valueMaia = settings.valueEloMaia === undefined ? undefined : clampMaiaElo(settings.valueEloMaia);
-  const valueUser = settings.valueEloUser === undefined ? undefined : clampMaiaElo(settings.valueEloUser);
+// legacy keys keep hitting. Mirrors the backend maiaIdentity normalization
+// (backend wire name, unchanged).
+export function splitValueElos(settings: ReviewSettings): { valueBotElo?: number; valueUserElo?: number } {
+  const policyBot = clampBotElo(settings.botElo), policyUser = clampBotElo(settings.userElo);
+  const valueBot = settings.valueBotElo === undefined ? undefined : clampBotElo(settings.valueBotElo);
+  const valueUser = settings.valueUserElo === undefined ? undefined : clampBotElo(settings.valueUserElo);
   return {
-    ...(valueMaia !== undefined && valueMaia !== policyMaia ? { valueEloMaia: valueMaia } : {}),
-    ...(valueUser !== undefined && valueUser !== policyUser ? { valueEloUser: valueUser } : {}),
+    ...(valueBot !== undefined && valueBot !== policyBot ? { valueBotElo: valueBot } : {}),
+    ...(valueUser !== undefined && valueUser !== policyUser ? { valueUserElo: valueUser } : {}),
   };
 }
 export function settingsHash(engine: Engine, settings: ReviewSettings): string {
   if (engine === 'sf') return stockfishPolicy(settings.stockfish);
   const split = splitValueElos(settings);
-  return JSON.stringify([clampMaiaElo(settings.eloMaia), clampMaiaElo(settings.eloUser), settings.model,
-    ...(split.valueEloMaia !== undefined || split.valueEloUser !== undefined ? [split.valueEloMaia ?? null, split.valueEloUser ?? null] : [])]);
+  return JSON.stringify([clampBotElo(settings.botElo), clampBotElo(settings.userElo), settings.model,
+    ...(split.valueBotElo !== undefined || split.valueUserElo !== undefined ? [split.valueBotElo ?? null, split.valueUserElo ?? null] : [])]);
 }
 export function stablePositionKey(node: ReviewNode): string {
   return posId(node.initialFen, prefixOf(node));
@@ -112,9 +113,9 @@ export function evaluationRequest(engine: Engine, node: ReviewNode, settings: Re
   }
   const split = splitValueElos(settings);
   return { engine, ply: node.ply, fen: node.fen, pos_hash: stablePositionKey(node),
-    elo_maia: clampMaiaElo(settings.eloMaia), elo_user: clampMaiaElo(settings.eloUser), model: settings.model,
-    ...(split.valueEloMaia !== undefined ? { value_elo_maia: split.valueEloMaia } : {}),
-    ...(split.valueEloUser !== undefined ? { value_elo_user: split.valueEloUser } : {}) };
+    elo_maia: clampBotElo(settings.botElo), elo_user: clampBotElo(settings.userElo), model: settings.model,
+    ...(split.valueBotElo !== undefined ? { value_elo_maia: split.valueBotElo } : {}),
+    ...(split.valueUserElo !== undefined ? { value_elo_user: split.valueUserElo } : {}) };
 }
 
 const uci = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
@@ -231,7 +232,7 @@ export async function fetchEvaluation(node: ReviewNode, signal: AbortSignal, fet
     const record: unknown = body;
     const code: unknown = isRecord(record) ? record.code : undefined;
     const message: unknown = isRecord(record) ? record.message : undefined;
-    throw new MaiaApiError(isApiErrorCode(code) ? code : 'unknown',
+    throw new BotApiError(isApiErrorCode(code) ? code : 'unknown',
       typeof message === 'string' ? message : `Stockfish request failed (${response.status}).`, response.status);
   }
   const parsed = parseEvaluation(body, settings, undefined, node.fen);
@@ -262,7 +263,7 @@ export class EvaluationStore {
     if (found === undefined) return undefined;
     // Keys embed the engine, so a mismatch is unreachable; drop it rather
     // than hand back a wrongly-typed row. Presence shape discriminates:
-    // only Maia rows carry top_moves.
+    // only bot rows carry top_moves.
     if (engine === 'sf') return 'top_moves' in found ? undefined : found;
     return 'top_moves' in found ? found : undefined;
   }

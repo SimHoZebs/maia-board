@@ -1,6 +1,6 @@
 import { Chess, type Square } from 'chess.js';
 import { applyUci, findKingSquare } from './domain';
-import type { CapturedPiece, MaiaSide } from './material';
+import type { CapturedPiece, Side } from './material';
 
 // Shared move facts for the verdict tactic layer. One parse per position:
 // the played move is applied once up front, and the expensive geometry
@@ -85,7 +85,7 @@ export type RecaptureFacts = {
 };
 
 export type MoveFacts = {
-  mover: MaiaSide;
+  mover: Side;
   from: Square;
   to: Square;
   san: string;
@@ -319,7 +319,7 @@ function captureOf(beforeFen: string, uci: string): { piece: CapturedPiece; squa
 export function createMoveFacts(args: {
   beforeFen: string;
   playedUci: string;
-  mover: MaiaSide;
+  mover: Side;
   prevBeforeFen?: string | null;
   prevUci?: string | null;
 }): MoveFacts | null {

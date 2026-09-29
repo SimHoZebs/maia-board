@@ -2,7 +2,7 @@ import { Chess, type Square } from 'chess.js';
 import { toGroundColor } from '../board-colors';
 import { analysisLine, extendLine, lineRecord, oppositeColor, START_FEN, type Position } from '../domain';
 import type { Evaluation } from '../reviewMetrics';
-import { clampMaiaElo } from '../BoardTools';
+import { clampBotElo } from '../BoardTools';
 import type { State } from './types';
 
 // Cross-slice board mechanics shared by the play, analysis, and root
@@ -11,18 +11,18 @@ export function currentPosition(state: State): Position & { initialFen?: string;
   if (state.mode === 'analysis') return analysisLine(state.analysis);
   return lineRecord(state.play.moves.slice(0, state.viewedPly ?? state.play.moves.length));
 }
-// Memoized per moves reference: repeated reads in one render (maiaTurn,
+// Memoized per moves reference: repeated reads in one render (botTurn,
 // queueRequest, transition) share one tip lookup instead of re-walking.
-const maiaTurnMemo = new WeakMap<readonly string[], { userColor: string; resigned: boolean; result: boolean }>();
-export function maiaTurn(state: State): boolean {
+const botTurnMemo = new WeakMap<readonly string[], { userColor: string; resigned: boolean; result: boolean }>();
+export function botTurn(state: State): boolean {
   if (!state.started || state.play.result === 'resigned') return false;
-  const cached = maiaTurnMemo.get(state.play.moves);
+  const cached = botTurnMemo.get(state.play.moves);
   if (cached && cached.userColor === state.play.settings.userColor && !cached.resigned) return cached.result;
   // The tip record resolves history-aware terminality once per line (repetition
   // needs full history); side-to-move is position-only and safe to parse.
   const record = lineRecord(state.play.moves);
   const result = toGroundColor(new Chess(record.fen).turn()) !== state.play.settings.userColor && record.terminal === null;
-  maiaTurnMemo.set(state.play.moves, { userColor: state.play.settings.userColor, resigned: false, result });
+  botTurnMemo.set(state.play.moves, { userColor: state.play.settings.userColor, resigned: false, result });
   return result;
 }
 type PlayRequest = NonNullable<State['request']>;
@@ -30,9 +30,9 @@ let lastQueuedRequest: { key: string; request: PlayRequest } | null = null;
 export function queueRequest(state: State): State {
   const position = lineRecord(state.play.moves);
   const settings = state.play.settings;
-  if (position.moves.length > 256) return { ...state, request: null, error: 'Maia inference supports at most 256 plies.' };
+  if (position.moves.length > 256) return { ...state, request: null, error: 'Bot inference supports at most 256 plies.' };
   const request: PlayRequest = { id: state.revision, mode: 'play', payload: {
-    fen: position.fen, moves: position.moves, elo_maia: clampMaiaElo(settings.eloMaia), elo_user: clampMaiaElo(settings.eloUser), model: settings.model,
+    fen: position.fen, moves: position.moves, elo_maia: clampBotElo(settings.botElo), elo_user: clampBotElo(settings.userElo), model: settings.model,
     maia_color: oppositeColor(settings.userColor), temperature: settings.temperature ?? 0,
   } };
   // Identical work must yield an identical request object: concurrent
@@ -50,7 +50,7 @@ export function queueRequest(state: State): State {
 }
 export function transition(state: State, changes: Partial<State>, resumePlay = true): State {
   const next = { ...state, ...changes, revision: state.revision + 1, request: null, promotion: null, preview: null, insight: null, error: '' };
-  return resumePlay && next.mode === 'play' && maiaTurn(next) ? queueRequest(next) : next;
+  return resumePlay && next.mode === 'play' && botTurn(next) ? queueRequest(next) : next;
 }
 export function withPlay(state: State, play: State['play']): State {
   const existed = state.saved.some(game => game.id === play.id);

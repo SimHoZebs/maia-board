@@ -1,43 +1,43 @@
 import { Chess, SQUARES, type Square } from 'chess.js';
 import type { Key } from '@lichess-org/chessground/types';
-import type { MaiaColor, MaiaModel, MoveResponse } from './api';
+import type { SideColor, BotModel, MoveResponse } from './api';
 import type { Evaluation } from './reviewMetrics';
 import { outcomeFromGame } from './reviewMetrics';
 import { outcomeEvaluation } from './outcomeEvaluation';
-import { clampMaiaElo } from './BoardTools';
+import { clampBotElo } from './BoardTools';
 
 // Terms: see spec/GLOSSARY.md (position/line/posId/lineKey).
 export const START_FEN = new Chess().fen();
 export type Mode = 'play' | 'analysis' | 'history' | 'settings';
-export type Settings = { userColor: MaiaColor; eloMaia: number; eloUser: number; model: MaiaModel; temperature?: number };
+export type Settings = { userColor: SideColor; botElo: number; userElo: number; model: BotModel; temperature?: number };
 export type Position = { fen: string; moves: string[]; sanMoves: string[]; lastMove?: [Key, Key] };
-export type Analysis = { initialFen: string; moves: string[]; sanMoves: string[]; index: number; branchFromPly: number | null; branchMoves: string[]; perspective: MaiaColor; ownGame: boolean };
+export type Analysis = { initialFen: string; moves: string[]; sanMoves: string[]; index: number; branchFromPly: number | null; branchMoves: string[]; perspective: SideColor; ownGame: boolean };
 export type Insight = { response: MoveResponse; fen: string; mode: Mode };
 export type StoredGame = { id: string; createdAt: string; moves: string[]; settings: Settings; result?: 'resigned' };
-export const defaultSettings: Settings = { userColor: 'white', eloMaia: 1600, eloUser: 1600, model: '79m', temperature: 1 };
-export const oppositeColor = (color: MaiaColor): MaiaColor => color === 'white' ? 'black' : 'white';
-export type BoardOrientationSetting = 'auto' | MaiaColor;
+export const defaultSettings: Settings = { userColor: 'white', botElo: 1600, userElo: 1600, model: '79m', temperature: 1 };
+export const oppositeColor = (color: SideColor): SideColor => color === 'white' ? 'black' : 'white';
+export type BoardOrientationSetting = 'auto' | SideColor;
 export function normalizeBoardOrientation(stored: unknown): BoardOrientationSetting {
   return stored === 'white' || stored === 'black' ? stored : 'auto';
 }
 // Base orientation comes from the setting; 'auto' means the player's own
 // color faces them (play userColor, analysis perspective). The manual flip
 // button inverts whatever the setting resolved to.
-export function resolveBoardOrientation(setting: BoardOrientationSetting, autoColor: MaiaColor, flipped: boolean): MaiaColor {
+export function resolveBoardOrientation(setting: BoardOrientationSetting, autoColor: SideColor, flipped: boolean): SideColor {
   const base = setting === 'auto' ? autoColor : setting;
   return flipped ? oppositeColor(base) : base;
 }
-export const sideName = (color: MaiaColor) => color === 'white' ? 'White' : 'Black';
+export const sideName = (color: SideColor) => color === 'white' ? 'White' : 'Black';
 export const newId = () => typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 export function normalizeSettings(stored?: Partial<Settings> | null): Settings {
   const elo = (value: unknown, fallback: number) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 5000 ? value : fallback;
-  // Opponent/analysis Maia strength never leaves the trained range (a stored
+  // Opponent bot strength never leaves the trained range (a stored
   // 400 still conditions, displays, and caches as 800); the player's own
   // identity stays raw for the coming global-Elo pass.
-  const maiaElo = (value: unknown, fallback: number) => clampMaiaElo(elo(value, fallback));
+  const botElo = (value: unknown, fallback: number) => clampBotElo(elo(value, fallback));
   return { userColor: stored?.userColor === 'black' ? 'black' : 'white', model: stored?.model === '5m' ? '5m' : '79m',
-    eloMaia: maiaElo(stored?.eloMaia, 1600), eloUser: elo(stored?.eloUser, elo(stored?.eloMaia, 1600)),
+    botElo: botElo(stored?.botElo, 1600), userElo: elo(stored?.userElo, elo(stored?.botElo, 1600)),
     temperature: typeof stored?.temperature === 'number' && Number.isFinite(stored.temperature) && stored.temperature >= 0 && stored.temperature <= 2 ? stored.temperature : 0 };
 }
 
@@ -165,7 +165,7 @@ export function findKingSquare(game: Chess, color: 'w' | 'b'): Square | null {
   }
   return null;
 }
-export function kingSquare(fen: string, color: MaiaColor): Key | undefined {
+export function kingSquare(fen: string, color: SideColor): Key | undefined {
   let game: Chess;
   try { game = new Chess(fen); }
   catch { return undefined; }
@@ -190,7 +190,7 @@ export type TimelineRow = {
   lastMove: [Key, Key] | undefined;
 };
 export type Timeline = { initialFen: string; moves: string[]; rows: TimelineRow[] };
-export type DomainOutcome = { kind: 'checkmate'; winner: MaiaColor } | { kind: 'draw' };
+export type DomainOutcome = { kind: 'checkmate'; winner: SideColor } | { kind: 'draw' };
 const timelineCache = new Map<string, Timeline>();
 const TIMELINE_CACHE_LIMIT = 64;
 function touchTimeline(key: string, timeline: Timeline) {

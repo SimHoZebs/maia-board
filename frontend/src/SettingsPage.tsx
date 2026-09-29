@@ -44,8 +44,8 @@ export function SettingsPage({ state, dispatch }: Props) {
   ];
   const arrowRows: { key: ArrowSettingsKey; label: string }[] = [
     { key: 'actual', label: 'Game move' },
-    { key: 'maia', label: 'Maia at your rating' },
-    { key: 'objective', label: 'Maia 2400 reference' },
+    { key: 'bot', label: 'Bot at your rating' },
+    { key: 'objective', label: 'Bot 2400 reference' },
     { key: 'candidate', label: 'Lookahead' },
   ];
   return <section className="engine-settings panel" aria-labelledby="settings-title">

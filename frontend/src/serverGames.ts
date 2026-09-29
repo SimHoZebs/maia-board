@@ -38,7 +38,7 @@ function isServerGameArray(value: unknown): value is ServerGame[] {
 export function toStoredGame(row: ServerGame): StoredGame | undefined {
   const base = restoreGame({
     id: row.id, createdAt: row.created_at, moves: row.moves,
-    settings: { userColor: row.user_color, eloMaia: row.elo_maia, eloUser: row.elo_user, model: row.model, temperature: row.temperature },
+    settings: { userColor: row.user_color, botElo: row.elo_maia, userElo: row.elo_user, model: row.model, temperature: row.temperature },
     ...(row.result === 'resigned' ? { result: 'resigned' } : {}),
   });
   return base;
@@ -47,7 +47,7 @@ export function toStoredGame(row: ServerGame): StoredGame | undefined {
 function toPayload(game: StoredGame, current: boolean) {
   return {
     id: game.id, created_at: game.createdAt, user_color: game.settings.userColor,
-    elo_maia: game.settings.eloMaia, elo_user: game.settings.eloUser,
+    elo_maia: game.settings.botElo, elo_user: game.settings.userElo,
     model: game.settings.model, moves: game.moves, current, temperature: game.settings.temperature ?? 0,
     ...(game.result === 'resigned' ? { result: 'resigned' } : {}),
   };

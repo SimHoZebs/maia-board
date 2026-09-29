@@ -5,7 +5,7 @@ import { fetchEvaluation } from './reviewCoordinator';
 import { loadLine } from './domain';
 import { testNodes } from './testUtils';
 import { initialState, reducer } from './state/index';
-import { MaiaApiError } from './api';
+import { BotApiError } from './api';
 
 const local = () => {
   const data = new Map<string, string>();
@@ -32,12 +32,12 @@ describe('ErrorBoundary', () => {
 });
 
 describe('play request manual retry', () => {
-  it('re-queues Maia after a failure without auto-looping', () => {
+  it('re-queues the bot after a failure without auto-looping', () => {
     local();
     let state = reducer(initialState(), { type: 'new', id: 'g', createdAt: '2026-09-10' });
     state = reducer(state, { type: 'move', from: 'e2', to: 'e4' });
     const request = state.request!;
-    state = reducer(state, { type: 'failure', request, error: new MaiaApiError('engine_busy', 'busy') });
+    state = reducer(state, { type: 'failure', request, error: new BotApiError('engine_busy', 'busy') });
     expect(state.request).toBeNull();
     expect(state.error).toContain('busy');
     const retried = reducer(state, { type: 'retry' });

@@ -75,7 +75,7 @@ export function ReviewCharts({ review, ply, sans, onView, side }: { review: Revi
     const mover = beforeNode ? beforeNode.turn : null;
     const outOfScope = !!side && mover !== side;
     // Objective track: provider White winning chances; terminal positions
-    // synthesize from the outcome since Maia never infers game-over nodes.
+    // synthesize from the outcome since the bot never infers game-over nodes.
     // A Stockfish-seen forced mate pins the ends (mate display survives in
     // the copy even though centipawns are gone from the UI).
     const mate = evaluation && evaluation.score.type === 'mate' ? evaluation.score : null;

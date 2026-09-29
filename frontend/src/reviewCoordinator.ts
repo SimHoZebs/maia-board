@@ -1,5 +1,5 @@
-import { MaiaApiError, requestMaiaAnalysis, requestMove, type MoveRequest, type MoveResponse } from './api';
-import { clampMaiaElo } from './BoardTools';
+import { BotApiError, requestBotAnalysis, requestMove, type MoveRequest, type MoveResponse } from './api';
+import { clampBotElo } from './BoardTools';
 // Canonical terms: see spec/GLOSSARY.md.
 // transport = shared JSON-POST sender (evaluationTransport); coordinator =
 // foreground coordinator (this class, at most one live request per engine,
@@ -104,7 +104,7 @@ export class ReviewCoordinator {
       // Fast-then-refine (foreground focus/current only, never bulk restore):
       // queue fast MPV1 jobs ahead of the full MPV2 jobs on the sf lane so
       // rank-1 lands first (~250ms) and the full list refines after (~750ms).
-      // Maia lanes queue once as before. Skip fast when full already settles
+      // Bot lanes queue once as before. Skip fast when full already settles
       // (no extra fetch) or when fast already settles (queue full only).
       const useFast = fastFirst && wanted.includes('sf');
       if (useFast) {
@@ -136,7 +136,7 @@ export class ReviewCoordinator {
       }
       // Latest-wins within this workspace: the new set replaces queued work
       // for the same engines, unless append keeps both (the grading lane
-      // shares the maia queue with display Maia under different keys, so a
+      // shares the bot queue with the display bot under different keys, so a
       // grading ensure must not wipe queued display jobs or vice versa).
       // Flight work continues either way (non-preemptive server slot).
       if (!append) for (const engine of wanted) this.pending[engine].clear();
@@ -217,7 +217,7 @@ export class ReviewCoordinator {
   sfPendingKeys(): Set<string> {
     return this.pendingKeys('sf');
   }
-  maiaPendingKeys(): Set<string> {
+  botPendingKeys(): Set<string> {
     return this.pendingKeys('maia');
   }
   private pendingKeys(engine: Engine): Set<string> {
@@ -261,7 +261,7 @@ export class ReviewCoordinator {
       // set and always lands — the content-keyed store makes landing safe,
       // and takebacks may reuse the same rows.
       if (!this.foregroundFlights[engine].has(flight)) return;
-      // execute resolves sf jobs with Evaluations and maia jobs with
+      // execute resolves sf jobs with Evaluations and bot jobs with
       // MoveResponses; presence of top_moves discriminates the union so each
       // lane stores a proven shape. A mismatch is unreachable — drop it
       // rather than poison the content-keyed store.
@@ -276,7 +276,7 @@ export class ReviewCoordinator {
       if (!this.foregroundFlights[engine].has(flight) || flight.controller.signal.aborted) return;
       // A superseded focus request was replaced by a newer one; the newer
       // request covers the position, so this is not a failure to surface.
-      if (error instanceof MaiaApiError && error.code === 'superseded') return;
+      if (error instanceof BotApiError && error.code === 'superseded') return;
       // Fast failure never blocks the full refine and never surfaces: drop
       // the fast queue entry so the lane advances to the full job next.
       // error() reads only the full key, so nothing surfaces. Without the
@@ -299,14 +299,14 @@ export class ReviewCoordinator {
     const prefix = job.node.timeline.moves.slice(0, job.node.ply);
     const split = splitValueElos(job.settings);
     const valueElos = {
-      ...(split.valueEloMaia !== undefined ? { value_elo_maia: split.valueEloMaia } : {}),
-      ...(split.valueEloUser !== undefined ? { value_elo_user: split.valueEloUser } : {}),
+      ...(split.valueBotElo !== undefined ? { value_elo_maia: split.valueBotElo } : {}),
+      ...(split.valueUserElo !== undefined ? { value_elo_user: split.valueUserElo } : {}),
     };
     // Retrospective analysis rides the Focus lane (POST /move/analysis),
     // never the play lane — it fires alongside the live reply every move
     // and queues behind it instead of superseding it.
-    return requestMaiaAnalysis({ fen: job.node.fen, moves: prefix, initial_fen: job.node.initialFen,
-      elo_maia: clampMaiaElo(job.settings.eloMaia), elo_user: clampMaiaElo(job.settings.eloUser),
+    return requestBotAnalysis({ fen: job.node.fen, moves: prefix, initial_fen: job.node.initialFen,
+      elo_maia: clampBotElo(job.settings.botElo), elo_user: clampBotElo(job.settings.userElo),
       ...valueElos,
       model: job.settings.model, maia_color: job.node.turn }, this.fetcher, signal);
   }

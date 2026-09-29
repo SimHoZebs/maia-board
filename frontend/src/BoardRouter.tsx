@@ -16,7 +16,7 @@ import type { Mode } from "./domain";
 import { loadLine } from "./domain";
 import { NotFound } from "./NotFound";
 import type { Action, State } from "./state/index";
-import { useMaiaBoard } from "./useMaiaBoard";
+import { useBotBoard } from "./useBotBoard";
 import { SyncContext } from "./syncStore";
 import { analysisPath, analysisSearch, parseAnalysisSearch, sameLine } from "./analysisUrl";
 import { RegionRecorder } from "./perfCommits";
@@ -85,7 +85,7 @@ export function BoardRouter() {
     () => (mode === "analysis" ? parseAnalysisSearch(search) : undefined),
     [mode, search],
   );
-  const { state, dispatch: boardDispatch, sync } = useMaiaBoard(mode, urlLine);
+  const { state, dispatch: boardDispatch, sync } = useBotBoard(mode, urlLine);
   // Loaded analyses own their URL: the address bar carries the game's content
   // (normalized FEN + UCI moves), so each game is linkable and Back walks games.
   // One effect serves both directions. A mismatch alone cannot tell a stale URL

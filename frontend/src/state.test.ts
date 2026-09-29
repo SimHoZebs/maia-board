@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Chess } from 'chess.js';
-import { MaiaApiError, type MoveResponse } from './api';
+import { BotApiError, type MoveResponse } from './api';
 import { absoluteWdl, analysisLine, buildTimeline, defaultSettings, exportExplored, exportLine, extendLine, legalPrefixLength, lineRecord, lineRecordMissesForTests, loadLine, positionOf, replay, resetLineRecordsForTests, resetTimelinesForTests, resultTextForTip, retreatLine, START_FEN, terminalFlags, timelineBuildsForTests } from './domain';
 import { testNodes } from './testUtils';
 import { computeReviewQualities, type ReviewQualitiesMemo, type ReviewQualitiesStats } from './useReview';
@@ -38,7 +38,7 @@ describe('request ownership', () => {
     expect(reducer(accepted, { type: 'takeback' }).insight).toBeNull();
     expect(reducer(accepted, { type: 'new', id: 'fresh', createdAt: '2026-09-14' }).insight).toBeNull();
   });
-  it.each(['play', 'analysis', 'history'] as const)('initializes %s before deciding whether to resume Maia', mode => {
+  it.each(['play', 'analysis', 'history'] as const)('initializes %s before deciding whether to resume the bot', mode => {
     const game = { id: 'pending', createdAt: '2026-09-10', moves: ['e2e4'], settings: defaultSettings };
     localStorage.setItem(KEYS.current, JSON.stringify(game));
     const state = initialState(mode);
@@ -56,15 +56,15 @@ describe('request ownership', () => {
     const next = reducer(old, { type: 'saved', id: 'b' });
     expect(next.request!.payload.fen).toBe(old.request!.payload.fen);
     expect(reducer(next, { type: 'reply', request: old.request!, response })).toBe(next);
-    expect(reducer(next, { type: 'failure', request: old.request!, error: new MaiaApiError('engine_busy', 'busy') })).toBe(next);
+    expect(reducer(next, { type: 'failure', request: old.request!, error: new BotApiError('engine_busy', 'busy') })).toBe(next);
     expect(reducer(next, { type: 'reply', request: next.request!, response }).play.moves).toEqual(['e2e4', 'e7e5']);
   });
-  it('rejects illegal Maia moves without changing authoritative history and settles pending', () => {
+  it('rejects illegal bot moves without changing authoritative history and settles pending', () => {
     const state = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
     const next = reducer(state, { type: 'reply', request: state.request!, response: { ...response, move: 'e7e4' } });
     expect(next.play.moves).toEqual(['e2e4']);
     expect(next.request).toBeNull();
-    expect(next.error).toBe('Maia returned an illegal move.');
+    expect(next.error).toBe('Bot returned an illegal move.');
   });
   it('empty takeback replaces the saved record rather than resurrecting undone moves', () => {
     const played = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
@@ -76,7 +76,7 @@ describe('request ownership', () => {
 
 describe('task lifecycles', () => {
   it('waits for Start and commits one rating atomically', () => {
-    const setup = reducer(initialState(), { type: 'setup', draft: { userColor: 'black', eloMaia: 1800 } });
+    const setup = reducer(initialState(), { type: 'setup', draft: { userColor: 'black', botElo: 1800 } });
     expect(setup.request).toBeNull();
     expect(reducer(setup, { type: 'move', from: 'e2', to: 'e4' }).play.moves).toEqual([]);
     const game = reducer(setup, { type: 'new', id: 'new', createdAt: 'today' });
@@ -86,26 +86,26 @@ describe('task lifecycles', () => {
   it('historical navigation and setup cancel preserve a live reply', () => {
     const pending = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
     let state = reducer(pending, { type: 'view', ply: 0 });
-    state = reducer(state, { type: 'setup', draft: { eloMaia: 2000 } });
+    state = reducer(state, { type: 'setup', draft: { botElo: 2000 } });
     expect(state.request).toBe(pending.request);
     state = reducer(state, { type: 'reply', request: pending.request!, response });
     state = reducer(state, { type: 'cancel-setup' });
     expect(state.play.moves).toEqual(['e2e4', 'e7e5']);
     expect(currentPosition(state).moves).toEqual([]);
-    expect(state.play.settings.eloMaia).toBe(1600);
+    expect(state.play.settings.botElo).toBe(1600);
     expect(currentPosition(reducer(state, { type: 'view', ply: null })).moves).toEqual(state.play.moves);
   });
   it('analysis ratings retire play requests and leave analysis inference to its owner', () => {
     const playing = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
     const request = playing.request!;
     let state = reducer(playing, { type: 'review' });
-    state = reducer(state, { type: 'analysis-settings', settings: { eloMaia: 2200 } });
+    state = reducer(state, { type: 'analysis-settings', settings: { botElo: 2200 } });
     expect(state.request).toBeNull();
     expect(state.insight).toBeNull();
     expect(reducer(state, { type: 'reply', request, response })).toBe(state);
     expect(state.request).toBeNull();
-    expect(state.analysisSettings.eloMaia).toBe(2200);
-    expect(state.play.settings.eloMaia).toBe(1600);
+    expect(state.analysisSettings.botElo).toBe(2200);
+    expect(state.play.settings.botElo).toBe(1600);
   });
   it('keeps original mainline while replaying and editing one multi-ply branch', () => {
     let state = reducer(started(), { type: 'mode', mode: 'analysis' });
@@ -284,17 +284,17 @@ describe('task lifecycles', () => {
     expect(reviewed.analysis.ownGame).toBe(true);
   });
   it('defaults analysis Elo/model to the reviewed game and pins its source', () => {
-    const game = { id: 'elo-game', createdAt: '2026-09-10', moves: ['e2e4', 'e7e5'], settings: { ...defaultSettings, eloMaia: 2000, eloUser: 2000, model: '5m' as const } };
+    const game = { id: 'elo-game', createdAt: '2026-09-10', moves: ['e2e4', 'e7e5'], settings: { ...defaultSettings, botElo: 2000, userElo: 2000, model: '5m' as const } };
     const base = { ...initialState(), saved: [game] };
-    expect(base.analysisSettings.eloMaia).toBe(1600);
+    expect(base.analysisSettings.botElo).toBe(1600);
     const reviewed = reducer(base, { type: 'review', id: 'elo-game' });
-    expect(reviewed.analysisSettings.eloMaia).toBe(2000);
+    expect(reviewed.analysisSettings.botElo).toBe(2000);
     expect(reviewed.analysisSettings.model).toBe('5m');
     expect(reviewed.analysisSourceId).toBe('elo-game');
     // Reviewing the live game without an id still seeds from play settings.
     const live = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
     const liveReviewed = reducer(live, { type: 'review' });
-    expect(liveReviewed.analysisSettings.eloMaia).toBe(live.play.settings.eloMaia);
+    expect(liveReviewed.analysisSettings.botElo).toBe(live.play.settings.botElo);
     expect(liveReviewed.analysisSourceId).toBe(live.play.id);
   });
   it('maps choosing-side WDL to absolute colors for both request turns', () => {
@@ -305,7 +305,7 @@ describe('task lifecycles', () => {
 
 describe('legacy storage and analysis', () => {
   it('restores all four v1 formats including non-menu Elo values', () => {
-    const settings = { ...defaultSettings, eloMaia: 1701, eloUser: 1512, model: '5m' };
+    const settings = { ...defaultSettings, botElo: 1701, userElo: 1512, model: '5m' };
     localStorage.setItem(KEYS.current, JSON.stringify({ id: 'old', createdAt: '2026-01-01', moves: ['d2d4', 'd7d5'], settings }));
     localStorage.setItem(KEYS.settings, JSON.stringify(settings));
     localStorage.setItem(KEYS.analysis, JSON.stringify({ fen: '', pgn: '1. e4 e5' }));
@@ -341,8 +341,8 @@ describe('server sync', () => {
   it('preserves live request identity and historical cursor on same-tip hydration', () => {
     const live = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
     const viewing = reducer(live, { type: 'view', ply: 0 });
-    const { userColor, model, eloMaia, eloUser, temperature } = viewing.play.settings;
-    const hydratedGame = { ...viewing.play, settings: { temperature, model, eloUser, eloMaia, userColor } };
+    const { userColor, model, botElo, userElo, temperature } = viewing.play.settings;
+    const hydratedGame = { ...viewing.play, settings: { temperature, model, userElo, botElo, userColor } };
     const next = reducer(viewing, { type: 'sync', saved: [hydratedGame], currentId: viewing.play.id, pending: [], total: 1 });
     expect(next.request).toBe(live.request);
     expect(next.viewedPly).toBe(0);
@@ -351,7 +351,7 @@ describe('server sync', () => {
     expect(hydrated.request).toBeNull();
     expect(hydrated.error).toBe(failed.error);
   });
-  it('adopts the server current game and requeues a Maia turn', () => {
+  it('adopts the server current game and requeues a bot turn', () => {
     const state = reducer(initialState(), {
       type: 'sync', saved: [serverGame('s', ['e2e4'])], currentId: 's', total: 1, pending: [],
     });
@@ -406,7 +406,7 @@ describe('resign', () => {
     expect(resigned.play.result).toBe('resigned');
     expect(resigned.request).toBeNull();
     expect(resigned.saved[0].result).toBe('resigned');
-    // Stale Maia reply is rejected by request identity.
+    // Stale bot reply is rejected by request identity.
     expect(reducer(resigned, { type: 'reply', request: pending.request!, response })).toBe(resigned);
     expect(reducer(resigned, { type: 'move', from: 'd2', to: 'd4' })).toBe(resigned);
     expect(reducer(resigned, { type: 'takeback' })).toBe(resigned);
@@ -558,7 +558,7 @@ describe('line records', () => {
     state = reducer(state, { type: 'reply', request: state.request!, response });
     state = reducer(state, { type: 'move', from: 'g1', to: 'f3' });
     const warm = lineRecordMissesForTests();
-    // Black (Maia) to move: takeback removes one ply from a cached prefix.
+    // Black (bot) to move: takeback removes one ply from a cached prefix.
     state = reducer(state, { type: 'takeback' });
     expect(state.play.moves).toEqual(['e2e4', 'e7e5']);
     expect(lineRecordMissesForTests()).toBe(warm);
@@ -689,7 +689,7 @@ describe('canonical timeline', () => {
 });
 
 describe('review qualities incremental', () => {
-  const settings = { eloMaia: 1600, eloUser: 1600, model: '79m' as const };
+  const settings = { botElo: 1600, userElo: 1600, model: '79m' as const };
   const evaluation = (move: string, value: number): Evaluation => ({
     engine: 'Stockfish 19', search_policy: 'sf19-n100k-ms750-mpv2-t4-h128-v3', depth: 12, terminal: null, best_move: move,
     score: { type: 'cp', value },
