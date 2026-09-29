@@ -30,14 +30,19 @@ export function resolveBoardOrientation(setting: BoardOrientationSetting, autoCo
 export const sideName = (color: SideColor) => color === 'white' ? 'White' : 'Black';
 export const newId = () => typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-export function normalizeSettings(stored?: Partial<Settings> | null): Settings {
+// Pre-rename stored keys. Read-only migration source: new keys win, legacy
+// fills only when absent. Never written — values persist under the new keys
+// on the next save.
+type LegacySettingsKeys = { eloMaia?: unknown; eloUser?: unknown };
+export function normalizeSettings(stored?: (Partial<Settings> & LegacySettingsKeys) | null): Settings {
   const elo = (value: unknown, fallback: number) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 5000 ? value : fallback;
   // Opponent bot strength never leaves the trained range (a stored
   // 400 still conditions, displays, and caches as 800); the player's own
   // identity stays raw for the coming global-Elo pass.
   const botElo = (value: unknown, fallback: number) => clampBotElo(elo(value, fallback));
+  const storedBotElo = stored?.botElo ?? stored?.eloMaia;
   return { userColor: stored?.userColor === 'black' ? 'black' : 'white', model: stored?.model === '5m' ? '5m' : '79m',
-    botElo: botElo(stored?.botElo, 1600), userElo: elo(stored?.userElo, elo(stored?.botElo, 1600)),
+    botElo: botElo(storedBotElo, 1600), userElo: elo(stored?.userElo ?? stored?.eloUser, elo(storedBotElo, 1600)),
     temperature: typeof stored?.temperature === 'number' && Number.isFinite(stored.temperature) && stored.temperature >= 0 && stored.temperature <= 2 ? stored.temperature : 0 };
 }
 

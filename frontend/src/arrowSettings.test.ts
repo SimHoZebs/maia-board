@@ -40,6 +40,10 @@ describe('arrow settings', () => {
   it('migrates the legacy stockfish key to the objective slot', () => {
     expect(normalizeArrowSettings({ stockfish: { color: '#00ff00', width: 64 } }).objective).toEqual({ color: '#00ff00', width: 64 });
   });
+  it('migrates the legacy maia key to the bot slot, preferring the new key', () => {
+    expect(normalizeArrowSettings({ maia: { color: '#00ff00', width: 64 } }).bot).toEqual({ color: '#00ff00', width: 64 });
+    expect(normalizeArrowSettings({ bot: { color: '#0000ff', width: 16 }, maia: { color: '#00ff00', width: 64 } }).bot).toEqual({ color: '#0000ff', width: 16 });
+  });
   it('accepts the full cell-width ceiling and canonicalizes hex case', () => {
     const settings = normalizeArrowSettings({ actual: { color: '#FFFFFF', width: 64 }, bot: { color: '#ef4444', width: 1 } });
     expect(settings.actual).toEqual({ color: '#ffffff', width: 64 });

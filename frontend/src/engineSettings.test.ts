@@ -4,7 +4,7 @@ import { initialState, reducer } from './state/index';
 import { defaultStockfishSettings, normalizeStockfishSettings, stockfishPolicy, STOCKFISH_STORAGE_KEY } from './stockfishSettings';
 import { fetchEvaluation, reviewKey, ReviewCoordinator } from './reviewCoordinator';
 import { toStoredGame } from './serverGames';
-import { KEYS } from './storage';
+import { KEYS, restoreGame } from './storage';
 import { requestBodyText, testNodes } from './testUtils';
 beforeEach(() => {
   const values = new Map<string, string>();
@@ -53,6 +53,14 @@ it('restores and validates browser settings and legacy temperature', () => {
   expect(normalizeStockfishSettings({ time_ms: Infinity, lines: 0, depth: 41 })).toEqual(defaultStockfishSettings);
   expect(normalizeSettings({ temperature: NaN }).temperature).toBe(0);
   expect(normalizeSettings({ temperature: 2 }).temperature).toBe(2);
+  // Pre-rename stored keys migrate read-only; new keys win when both exist.
+  expect(normalizeSettings({ eloMaia: 1800, eloUser: 1700 }).botElo).toBe(1800);
+  expect(normalizeSettings({ eloMaia: 1800, eloUser: 1700 }).userElo).toBe(1700);
+  expect(normalizeSettings({ botElo: 1400, eloMaia: 1800 }).botElo).toBe(1400);
+  // Saved games stored under the old keys restore with their ratings intact.
+  const legacy = restoreGame({ id: 'legacy', createdAt: '2026-09-11T00:00:00Z', moves: [], settings: { userColor: 'black', eloMaia: 1800, eloUser: 1700, model: '79m' } });
+  expect(legacy?.settings.botElo).toBe(1800);
+  expect(legacy?.settings.userElo).toBe(1700);
   const row = { id: 'a', created_at: '2026-09-11T00:00:00Z', updated_at: 'now', user_color: 'white', elo_maia: 1600, elo_user: 1600, model: '79m', moves: [], temperature: .7 };
   expect(toStoredGame(row)?.settings.temperature).toBe(.7);
 });

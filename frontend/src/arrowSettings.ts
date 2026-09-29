@@ -38,11 +38,12 @@ export function normalizeArrowSettings(value: unknown): ArrowSettings {
   if (typeof value !== 'object' || value === null) return defaultArrowSettings;
   const record = value as Record<string, unknown>;
   // Legacy migration: the blue arrow was keyed 'stockfish' before the
-  // objective (bot 2400) lane took over that slot.
+  // objective (bot 2400) lane took over that slot; the red arrow was keyed
+  // 'maia' before the role rename. New keys win when both are present.
   const objectiveRaw = record.objective ?? record.stockfish;
   const next: ArrowSettings = {
     actual: normalizeStyle(record.actual, defaultArrowSettings.actual),
-    bot: normalizeStyle(record.bot, defaultArrowSettings.bot),
+    bot: normalizeStyle(record.bot ?? record.maia, defaultArrowSettings.bot),
     objective: normalizeStyle(objectiveRaw, defaultArrowSettings.objective),
     candidate: normalizeStyle(record.candidate, defaultArrowSettings.candidate),
   };
