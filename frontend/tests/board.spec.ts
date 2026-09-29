@@ -1233,7 +1233,11 @@ test('analysis keeps one scrolling main row and adds height only for a branch', 
   await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
   await page.locator('#analysis-first').click();
   for (const [from, to] of [['d2', 'd4'], ['d7', 'd5'], ['c2', 'c4'], ['e7', 'e6'], ['b1', 'c3'], ['g8', 'f6'], ['c1', 'g5'], ['f8', 'e7'], ['e2', 'e3'], ['e8', 'g8']]) await move(page, from, to);
-  expect(await list.evaluate(el => el.clientHeight)).toBe(height + 32);
+  // The branch-point (64px: one 32px branch row over the origin row)
+  // replaces the 40px single-row floor: the flushed move-list padding (no
+  // vertical padding since the stacked-panel layout) means the list grows by
+  // 24, not a full row.
+  expect(await list.evaluate(el => el.clientHeight)).toBe(height + 24);
   const mainRows = await list.locator('.original-move').evaluateAll(elements => elements.map(el => el.getBoundingClientRect().y));
   const branchRows = await list.locator('.variation-line .move-cell').evaluateAll(elements => elements.map(el => el.getBoundingClientRect().y));
   expect(new Set(mainRows).size).toBe(1);

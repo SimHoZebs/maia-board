@@ -5,7 +5,7 @@ import { replay } from '../src/domain';
 import { stockfishPolicy } from '../src/stockfishSettings';
 import { EvaluationFixture } from './evaluation-fixture';
 
-for (const width of [360, 1440]) test(`engine settings and Play temperature at ${width}px`, async ({ page }, info) => {
+for (const width of [320, 360, 1440]) test(`engine settings and Play temperature at ${width}px`, async ({ page }, info) => {
   await page.setViewportSize({ width, height: 900 });
   const requests: { path: string; body: any }[] = [];
   const errors: string[] = [];

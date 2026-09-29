@@ -57,10 +57,13 @@ async function bootPlay(page: Page, behavior: Behavior) {
       // computed, later ones answer solely the new tail. Shared rows
       // therefore arrive only via the older lookup — which must be allowed
       // to land after the reply instead of being aborted with the change.
+      // Entries carry only ply (line ships once per POST); singles carry the
+      // full prefix, so resolve the tip either way.
       await new Promise(resolve => setTimeout(resolve, 600));
-      const tip = Math.max(...requests.map((body: any) => body.moves.length));
+      const plyOf = (body: any) => body.moves !== undefined ? body.moves.length : body.ply;
+      const tip = Math.max(...requests.map(plyOf));
       const results = requests.flatMap((body: any, index: number) =>
-        first || body.moves.length === tip ? [{ index, value: body.engine === 'sf' ? sfEvaluation(body.fen, body.settings) : botEvaluation(body.fen, body) }] : []);
+        first || plyOf(body) === tip ? [{ index, value: body.engine === 'sf' ? sfEvaluation(body.fen, body.settings) : botEvaluation(body.fen, body) }] : []);
       await route.fulfill({ json: { results } }); return;
     }
     if (path === '/evaluate') {

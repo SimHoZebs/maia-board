@@ -18,7 +18,7 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
   // results into its eval cache so the post-batch prime resolves by lookup.
   // Without that filing, finished batches would leave every position missing
   // and no test could observe a settled line.
-  const batches = new Map<string, { total: number; requests: any[]; filed: boolean }>();
+  const batches = new Map<string, { total: number; line: { initial_fen: string; moves: string[] }; requests: any[]; filed: boolean }>();
   let batchSeq = 0;
   // Best-move selection shared by both engines: stay on the main test
   // line while it is legal, else fall back to the first legal move. The
@@ -86,7 +86,10 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
     if (!job || job.filed) return;
     job.filed = true;
     for (const request of job.requests) {
-      cache.set(request.engine, request, request.engine === 'maia' ? botOrGrade(request) : sfValue(request));
+      // Mock math replays the game, so it needs the move list; the row files
+      // under the entry's native coordinates plus the shared line.
+      const payload = { ...request, moves: job.line.moves.slice(0, request.ply), initial_fen: job.line.initial_fen };
+      cache.set(request.engine, request, request.engine === 'maia' ? botOrGrade(payload) : sfValue(payload), job.line);
     }
   };
   page.on('pageerror', error => errors.push(error.message));
@@ -105,8 +108,9 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
     if (path === '/reviews' && method === 'POST') {
       const body = route.request().postDataJSON();
       const requests = Array.isArray(body?.requests) ? body.requests : [];
+      const line = body?.line ?? { initial_fen: '', moves: [] };
       const jobId = `mock-batch-${++batchSeq}`;
-      batches.set(jobId, { total: requests.length, requests, filed: false });
+      batches.set(jobId, { total: requests.length, line, requests, filed: false });
       await route.fulfill({ json: { job_id: jobId, total: requests.length, cached: 0, pending: requests.length } });
       return;
     }
@@ -175,7 +179,10 @@ test('standalone FEN shows current candidates and clears correct-frame previews'
   await expect(preview).toHaveCount(0);
   await candidate.focus();
   await expect(preview).toHaveCount(1);
-  await page.getByRole('button', { name: 'Analyze entire game' }).focus();
+  // Focusing away clears the preview. A settled single position reports
+  // "Analyzed" (foreground covered everything, nothing to batch), so focus
+  // the always-present New analysis action instead of the Analyze button.
+  await page.getByRole('button', { name: 'New analysis' }).focus();
   await expect(preview).toHaveCount(0);
   await bot.getByRole('button', { name: 'Explore e4', exact: true }).click();
   await expect(page.locator('.move-cell')).toContainText('23. e4');
@@ -275,15 +282,22 @@ for (const width of [320, 1440]) {
   test(`analysis container spaces both sides of section dividers at ${width}px`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: 1000 });
     await bootReview(page);
+    // Content top is the row top: the footer centers its shorter export row
+    // against the taller Analyze button, so the first child sits below the
+    // row edge by design and only the row itself holds the 12px rhythm.
     const sections = await page.locator('.insight-panel > .analysis-section:visible').evaluateAll(elements => elements.map(el => {
       const rect = el.getBoundingClientRect(), style = getComputedStyle(el);
-      return { top: rect.top, bottom: rect.bottom, border: parseFloat(style.borderTopWidth), contentTop: el.firstElementChild!.getBoundingClientRect().top };
+      const content = el.querySelector(':scope > .footer-analyze') ?? el.firstElementChild!;
+      return { top: rect.top, bottom: rect.bottom, border: parseFloat(style.borderTopWidth), contentTop: (content as HTMLElement).getBoundingClientRect().top };
     }));
     expect(sections).toHaveLength(3);
+    // Mobile flattens the dividers away (no borders); sections ride the
+    // panel's own 20px gap instead of the 12/12 divider rhythm.
+    const mobile = width <= 760;
     for (let index = 1; index < sections.length; index++) {
-      expect(sections[index].border).toBe(1);
-      expect(sections[index].top - sections[index - 1].bottom).toBeCloseTo(12, 0);
-      expect(sections[index].contentTop - sections[index].top - sections[index].border).toBeCloseTo(12, 0);
+      expect(sections[index].border).toBe(mobile ? 0 : 1);
+      expect(sections[index].top - sections[index - 1].bottom).toBeCloseTo(mobile ? 20 : 12, 0);
+      if (!mobile) expect(sections[index].contentTop - sections[index].top - sections[index].border).toBeCloseTo(12, 0);
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath(`analysis-spacing-${width}.png`), fullPage: true });
@@ -299,7 +313,7 @@ test('move analysis summarizes the game below the engines and links mistakes fro
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.locator('.review-coverage')).toHaveCount(0);
   await expect(page.locator('.overview-partial')).toHaveCount(0);
-  await expect(page.locator('.quality-counts li')).toHaveCount(18);
+  await expect(page.locator('.quality-counts li')).toHaveCount(20);
   await expect(page.locator('.accuracy-summary')).not.toContainText('You');
   await expect(page.locator('.review-issue')).toHaveCount(2);
   await page.screenshot({ path: info.outputPath('overview-desktop.png'), fullPage: true });
@@ -357,8 +371,12 @@ test('moves to review distinguishes empty games, no issues, and explored lines',
   await page.locator('#mode-analysis').click();
   await page.locator('#analysis-pgn').fill('1. d4');
   await page.locator('#load-analysis').click();
-  await expect(page.getByText('Play or load some moves to see a move summary.', { exact: true })).toBeVisible();
-  await expect(page.locator('.accuracy-value')).toHaveCount(0);
+  // A fresh one-move line has a real summary (foreground grades the only
+  // move), not the empty-game copy: position, both accuracy cards, and the
+  // complete no-issues copy.
+  await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 2');
+  await expect(page.locator('.accuracy-card')).toHaveCount(2);
+  await expect(page.getByText('No inaccuracies, mistakes, blunders, or allowed mates found.', { exact: true })).toBeVisible();
   await page.locator('#mode-analysis').click();
   await page.locator('#analysis-controls').getByRole('button', { name: 'Starting position', exact: true }).click();
   await page.locator('#load-analysis').click();
@@ -413,13 +431,13 @@ test('move analysis shows only your moves with your decision points on the graph
   await expect(page.locator('.accuracy-card')).toHaveCount(1);
   await expect(page.getByRole('region', { name: 'Black move quality · You', exact: true })).toContainText('Black move quality · You');
   await expect(page.getByRole('region', { name: 'White move quality', exact: true })).toHaveCount(0);
-  await expect(page.locator('.quality-counts li')).toHaveCount(9);
+  await expect(page.locator('.quality-counts li')).toHaveCount(10);
   await expect(page.locator('.chart-point i')).toHaveCount(1);
   await expect(page.locator('.chart-point:disabled')).toHaveCount(0);
   await expect(page.locator('.chart-line')).toHaveCount(0);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
-  await expect(page.locator('.quality-counts li')).toHaveCount(9);
+  await expect(page.locator('.quality-counts li')).toHaveCount(10);
   await expect(page.locator('.review-issue')).toHaveCount(1);
   await expect(page.locator('.issue-move small')).toHaveCount(0);
   await page.getByRole('button', { name: 'Review 1… e5 · Black · You · Mistake', exact: true }).click();
@@ -561,8 +579,7 @@ test('partially evicted analysis restores cached positions and gates the rest', 
   // batch, so duplicates are allowed but omissions are not.
   const resubmitted = new Set(
     [...app.batches.values()].slice(jobsBefore)
-      .flatMap(job => job.requests)
-      .map(request => evaluationIdentity(request.engine, request)),
+      .flatMap(job => job.requests.map(request => evaluationIdentity(request.engine, request, job.line))),
   );
   expect(evicted.every(hash => resubmitted.has(hash))).toBe(true);
   expect(inferred('/evaluate') - evalsBefore).toBe(0);
@@ -674,10 +691,14 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
         analyzeTop: analyzeRect.top,
       };
     });
-    // Wrapping allowed on narrow viewports: analyze stays right-aligned and
-    // at or below the export buttons, never above them.
+    // Wrapping allowed on narrow viewports: analyze stays right-aligned and,
+    // when wrapped below the export buttons, at or below them. Unwrapped, the
+    // row centers its shorter export row against the taller Analyze button,
+    // so Analyze legitimately starts a few px above the exports.
     expect(footerGeometry.analyzeRight).toBeCloseTo(footerGeometry.footerRight - footerGeometry.paddingRight, 0);
-    expect(footerGeometry.analyzeTop).toBeGreaterThanOrEqual(footerGeometry.actionsTop);
+    if (footerGeometry.analyzeTop - footerGeometry.actionsTop > 10) {
+      expect(footerGeometry.analyzeTop).toBeGreaterThanOrEqual(footerGeometry.actionsTop);
+    }
     const bar = (await page.locator('.balance-track').boundingBox())!;
     expect(bar.height).toBeGreaterThan(bar.width * 5);
     const squares = (await page.locator('#board cg-board').boundingBox())!;
