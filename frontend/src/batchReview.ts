@@ -221,7 +221,7 @@ export async function fetchBatchStatus(jobId: string, fetchImpl: FetchLike = fet
 // (the caller then refetches status, which maps gone jobs to BatchGoneError,
 // and falls back to polling). A caller abort is the normal unsubscribe path
 // and resolves silently, never a failure.
-export type BatchEventSource = Pick<EventSource, 'onmessage' | 'onerror' | 'close'>;
+export type BatchEventSource = Pick<EventSource, 'onmessage' | 'onerror' | 'close' | 'addEventListener' | 'removeEventListener'>;
 export async function subscribeBatchEvents(
   jobId: string, onProgress: (progress: BatchProgress) => void, signal: AbortSignal,
   createSource: new (url: string) => BatchEventSource = globalThis.EventSource,
@@ -236,6 +236,7 @@ export async function subscribeBatchEvents(
     const cleanup = () => {
       source.onmessage = null;
       source.onerror = null;
+      source.removeEventListener('progress', handleEvent as EventListener);
       source.close();
       signal.removeEventListener('abort', onAbort);
     };
@@ -245,7 +246,12 @@ export async function subscribeBatchEvents(
       cleanup();
       resolve();
     };
-    source.onmessage = (event) => {
+    // The server frames every tick as `event: progress` (see API.md). A
+    // native EventSource dispatches named events to their listener, NOT to
+    // onmessage (which only sees unnamed frames), so subscribing to
+    // onmessage alone drops every live tick in a real browser. Listen for
+    // the named event; onmessage stays as a fallback for bare bodies.
+    const handleEvent = (event: MessageEvent) => {
       if (settled || signal.aborted) return;
       let envelope: unknown;
       try { envelope = JSON.parse(event.data); } catch { return; }
@@ -262,6 +268,8 @@ export async function subscribeBatchEvents(
         resolve();
       }
     };
+    source.onmessage = handleEvent;
+    source.addEventListener('progress', handleEvent as EventListener);
     source.onerror = () => {
       if (settled || signal.aborted) return;
       settled = true;

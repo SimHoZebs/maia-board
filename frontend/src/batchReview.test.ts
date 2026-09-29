@@ -182,12 +182,27 @@ describe('subscribeBatchEvents', () => {
     onerror: ((event: Event) => void) | null = null;
     closed = false;
     url: string;
+    private listeners = new Map<string, Set<(event: MessageEvent) => void>>();
     constructor(url: string) {
       this.url = url;
       FakeSource.instances.push(this);
     }
     close() { this.closed = true; }
-    emit(data: unknown) { this.onmessage?.({ data: JSON.stringify(data) } as MessageEvent); }
+    addEventListener(type: string, listener: (event: MessageEvent) => void) {
+      let set = this.listeners.get(type);
+      if (!set) { set = new Set(); this.listeners.set(type, set); }
+      set.add(listener);
+    }
+    removeEventListener(type: string, listener: (event: MessageEvent) => void) {
+      this.listeners.get(type)?.delete(listener);
+    }
+    // Real browsers dispatch `event: progress` frames to the named listener,
+    // never to onmessage — so emit() models the server framing exactly.
+    emit(data: unknown) {
+      const event = { data: JSON.stringify(data) } as MessageEvent;
+      for (const listener of this.listeners.get('progress') ?? []) listener(event);
+    }
+    emitBare(data: unknown) { this.onmessage?.({ data: JSON.stringify(data) } as MessageEvent); }
     fail() { this.onerror?.({} as Event); }
   }
   const sourceFor = () => {
@@ -205,6 +220,16 @@ describe('subscribeBatchEvents', () => {
     source.emit({ progress: progress({ done: 6, finished: true }) });
     await done;
     expect(seen.map(update => update.done)).toEqual([2, 6]);
+    expect(source.closed).toBe(true);
+  });
+  it('still accepts unnamed frames via the onmessage fallback', async () => {
+    FakeSource.instances = [];
+    const seen: BatchProgress[] = [];
+    const done = subscribeBatchEvents('job1', update => { seen.push(update); }, new AbortController().signal, FakeSource as unknown as new (url: string) => BatchEventSource);
+    const source = sourceFor();
+    source.emitBare({ progress: progress({ done: 3, finished: true }) });
+    await done;
+    expect(seen.map(update => update.done)).toEqual([3]);
     expect(source.closed).toBe(true);
   });
   it('rejects on stream error so the caller refetches ground-truth status', async () => {
