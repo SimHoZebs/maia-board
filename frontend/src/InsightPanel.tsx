@@ -421,7 +421,7 @@ export function InsightPanel({
         )}
       </div>
       )}
-      <div className="analysis-section">
+      <div className="analysis-section analysis-section--summary">
         <MoveAnalysis state={state} dispatch={dispatch} review={review} />
         <ReviewSummary
           review={review}

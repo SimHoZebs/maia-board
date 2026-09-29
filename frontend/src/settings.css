@@ -1,11 +1,11 @@
-.engine-settings { max-width: 640px; margin: 24px auto; padding: clamp(16px, 3vw, 28px); }
-.settings-eyebrow { color: var(--accent); font-size: 11px; letter-spacing: .16em; margin: 0 0 8px; }
-.engine-settings h1 { font-size: 22px; margin-bottom: 4px; }
-.settings-subhead { font-size: 16px; margin: 20px 0 4px; }
+.engine-settings { max-width: 640px; margin: 24px auto; padding: clamp(16px, 3vw, 28px); display: flex; flex-direction: column; gap: 20px; }
+.settings-eyebrow { color: var(--accent); font-size: 11px; letter-spacing: .16em; margin: 0; }
+.engine-settings h1 { font-size: 22px; margin: 0; }
+.settings-subhead { font-size: 16px; margin: 0; }
 .settings-check { display: flex; align-items: center; gap: 10px; font-size: 14px; min-height: 44px; cursor: pointer; }
 .settings-check input { width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
 .settings-check span { font-size: 12px; color: var(--muted); }
-.badge-carousel { display: flex; align-items: stretch; gap: 4px; margin-top: 12px; }
+.badge-carousel { display: flex; align-items: stretch; gap: 4px; margin: 0; }
 .badge-nav { flex: none; align-self: center; width: 40px; height: 40px; min-width: 40px; display: inline-flex; align-items: center; justify-content: center; padding: 4px; border-color: transparent; background: transparent; }
 .badge-viewport { flex: 1; min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 4px; background: #202122; }
 .badge-track { display: flex; height: 100%; transition: transform 0.3s ease; }
@@ -13,13 +13,13 @@
 .badge-slide .move-cell { font-size: 15px; }
 .badge-slide strong { font-size: 13px; }
 .badge-slide > span:last-child { font-size: 11px; color: var(--muted); text-align: center; line-height: 1.4; }
-.badge-dots { display: flex; gap: 0; justify-content: center; margin-top: 4px; }
+.badge-dots { display: flex; gap: 0; justify-content: center; margin: 0; }
 .badge-dots button { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; min-width: 32px; min-height: 32px; padding: 0; background: transparent; border-color: transparent; }
 .badge-dots button i { width: 8px; height: 8px; border-radius: 50%; background: #555758; }
 .badge-dots button[aria-current="true"] i { background: var(--accent); }
-.engine-settings .field { margin: 4px 0; }
-.settings-control p { color: var(--muted); line-height: 1.6; font-size: 13px; margin: 2px 0 0; }
-.settings-control { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.engine-settings .field { margin: 0; }
+.settings-control p { color: var(--muted); line-height: 1.6; font-size: 13px; margin: 0; }
+.settings-control { display: flex; flex-direction: column; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 /* Search-limit sentences: each row reads as a sentence with its values inline,
    so the time budget never appears as a bare confusing number. Wraps on phones. */
 .settings-limit-rows { display: grid; gap: 4px; }
@@ -30,9 +30,10 @@
 #stockfish-time, #stockfish-time-cap { width: 78px; }
 #stockfish-depth { width: 64px; }
 .settings-limit-row span { color: inherit; }
-/* One-line setting rows: name left, control right. The slider below its name
+/* One-line setting rows: name left, control right (wrapping below on narrow
+   screens so neither squeezes). The slider below its name
    is the only exception — it needs the full width to stay usable. */
-.engine-settings .field--row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0; }
+.engine-settings .field--row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; row-gap: 8px; margin: 0; }
 .settings-control .field--row > .field-label { font-size: 14px; color: inherit; }
 /* Segmented choice for small discrete sets (candidate lines 1–5): one row,
    natively keyboard-accessible radios, no full-width slider needed. */
@@ -48,16 +49,16 @@
 .engine-settings input[type=number] { width: 120px; }
 .engine-settings input[type=range] { width: 100%; accent-color: var(--accent); }
 /* Review-arrow rows: label above, color + thickness + value on one wrap row. */
-.arrow-row { display: grid; gap: 6px; margin: 10px 0; }
+.arrow-row { display: grid; gap: 6px; margin: 0; }
 .arrow-inputs { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .arrow-inputs input[type=color] { width: 40px; height: 32px; padding: 2px; border: 1px solid var(--line); border-radius: 6px; background: transparent; }
 .arrow-inputs input[type=range] { flex: 1; min-width: 140px; }
 .arrow-inputs input[type=number] { width: 72px; }
-.settings-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 16px; }
+.settings-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0; }
 .settings-footer span { color: var(--muted); font-size: 12px; }
 /* Live decorative previews: mirror the committed value, never carry meaning
    alone (controls already name every value accessibly). */
-.setting-preview { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+.setting-preview { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0; }
 /* Consolidated display preview: one live demo board (king + pawn) carrying
    the real review arrows. Fixed small size so it never pushes layout. */
 .display-preview { align-items: flex-start; }
