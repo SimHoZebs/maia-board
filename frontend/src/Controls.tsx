@@ -11,23 +11,55 @@ import { Rating, copyText } from './BoardTools';
 import { useFlash } from './useFlash';
 
 export type Props = { state: State; dispatch: Dispatch<Action> };
+
+function strengthLabel(elo: number): string {
+  if (elo < 1100) return 'Learning';
+  if (elo < 1500) return 'Casual';
+  if (elo < 1800) return 'Club';
+  if (elo < 2100) return 'Strong';
+  return 'Elite';
+}
+
+function temperatureLabel(temperature: number): string {
+  if (temperature <= 0) return 'Deterministic';
+  if (temperature <= 0.7) return 'Focused';
+  if (temperature <= 1.2) return 'Balanced';
+  if (temperature <= 1.7) return 'Creative';
+  return 'Wild';
+}
+
 export function PlayControls({ state, dispatch }: Props) {
   if (!state.setup || state.mode !== 'play') return null;
-  const content = <section id="play-controls" className="setup panel">
-    <h1>{state.started ? 'Start a new game?' : 'Play Maia'}</h1>
-    <Rating value={state.setup.eloMaia} onChange={eloMaia => dispatch({ type: 'setup', draft: { eloMaia } })} />
-    <fieldset><legend>Your side</legend><div className="side-options">{(['white', 'black', 'random'] as const).map(color => <label key={color}><input type="radio" name="user-color" checked={state.setup!.userColor === color} onChange={() => dispatch({ type: 'setup', draft: { userColor: color } })} />{color === 'random' ? <Dices size={18} aria-hidden="true" className="side-icon" /> : <ChessKing size={18} aria-hidden="true" className={`side-icon side-icon-${color}`} />}{color === 'random' ? 'Random' : sideName(color)}</label>)}</div></fieldset>
-    <details className="advanced-config"><summary>Advanced</summary>
-      <label className="field" htmlFor="maia-temperature">Maia temperature <output>{(state.setup.temperature ?? 0).toFixed(1)}</output>
-        <input id="maia-temperature" type="range" min="0" max="2" step="0.1" value={state.setup.temperature ?? 0} onChange={e => dispatch({ type: 'setup', draft: { temperature: e.target.valueAsNumber } })} />
-      </label>
-      <p>0 always chooses Maia’s highest-probability move. 1 samples its original probabilities; higher values add more variety. Applies to this new game.</p>
-    </details>
-    <label className="feedback-setup" htmlFor="feedback-enabled"><input id="feedback-enabled" type="checkbox" checked={state.feedback} onChange={event => dispatch({ type: 'feedback', enabled: event.target.checked })} /> Evaluate my moves with Stockfish after I play them</label>
-    <p>Retrospective only: your move is evaluated after you commit it, never hinted beforehand.</p>
-    <label className="feedback-setup" htmlFor="verdict-enabled"><input id="verdict-enabled" type="checkbox" checked={state.playVerdict} onChange={event => dispatch({ type: 'play-verdict', enabled: event.target.checked })} /> Show move verdict while playing</label>
-    <p>Shows the verdict sentence under the move list once your move is evaluated. Requires move evaluation above.</p>
-    <div className="actions"><Button id="start-game" variant="primary" onClick={() => dispatch({ type: 'new', id: newId(), createdAt: new Date().toISOString(), resolvedColor: resolveSide(state.setup!.userColor) })}>{state.started ? 'Start new game' : 'Start game'}</Button>{state.started && <Button onClick={() => dispatch({ type: 'cancel-setup' })}>Cancel</Button>}</div>
+  const setup = state.setup;
+  const temperature = setup.temperature ?? 0;
+  const content = <section id="play-controls" className="setup panel play-setup" aria-label="Game setup">
+    {state.started && <h1>Start a new game?</h1>}
+    <section className="setup-section" aria-labelledby="opponent-heading">
+      <h2 id="opponent-heading">Maia</h2>
+      <div className="maia-row">
+        <Rating value={setup.eloMaia} label="Elo" onChange={eloMaia => dispatch({ type: 'setup', draft: { eloMaia } })} />
+        <div className="temp-block">
+          <h3 className="temp-subhead">Temperature <span className="temp-pill">{temperatureLabel(temperature)} · {temperature.toFixed(1)}</span></h3>
+          <label className="field temp-field" htmlFor="maia-temperature"><span className="visually-hidden">Maia temperature</span>
+            <input id="maia-temperature" type="range" min="0" max="2" step="0.1" value={temperature} onChange={e => dispatch({ type: 'setup', draft: { temperature: e.target.valueAsNumber } })} />
+            <span className="temp-scale" aria-hidden="true"><span>Deterministic</span><span>Balanced</span><span>Creative</span></span>
+          </label>
+        </div>
+      </div>
+      <p className="hint">Maia {setup.eloMaia} plays like a {strengthLabel(setup.eloMaia).toLowerCase()} human — mistakes included.</p>
+      <p className="hint">0 always takes Maia’s top move. 1 samples its natural spread; higher adds variety. Set per game.</p>
+    </section>
+    <section className="setup-section" aria-labelledby="side-heading">
+      <h2 id="side-heading">Your side</h2>
+      <div className="side-options side-segmented" role="radiogroup" aria-labelledby="side-heading">{(['white', 'black', 'random'] as const).map(color => <label key={color} data-active={setup.userColor === color}><input type="radio" name="user-color" checked={setup.userColor === color} onChange={() => dispatch({ type: 'setup', draft: { userColor: color } })} />{color === 'random' ? <Dices size={18} aria-hidden="true" className="side-icon" /> : <ChessKing size={18} aria-hidden="true" className={`side-icon side-icon-${color}`} />}<span>{color === 'random' ? 'Random' : sideName(color)}</span></label>)}</div>
+      {setup.userColor === 'random' && <p className="hint">A coin flip decides your color when the game starts.</p>}
+    </section>
+    <section className="setup-section" aria-labelledby="coaching-heading">
+      <h2 id="coaching-heading">Coaching</h2>
+      <label className="toggle-card" htmlFor="feedback-enabled"><input id="feedback-enabled" type="checkbox" checked={state.feedback} onChange={event => dispatch({ type: 'feedback', enabled: event.target.checked })} /><span><strong>Evaluate my moves</strong><em>Grades each move after you commit it from Stockfish evals plus Maia's expectations — never hinted beforehand.</em></span></label>
+      <label className="toggle-card" htmlFor="verdict-enabled"><input id="verdict-enabled" type="checkbox" checked={state.playVerdict} onChange={event => dispatch({ type: 'play-verdict', enabled: event.target.checked })} /><span><strong>Show move verdict</strong><em>One-line verdict under the move list once graded. Needs evaluation above.</em></span></label>
+    </section>
+    <div className="actions setup-actions"><Button id="start-game" variant="primary" onClick={() => dispatch({ type: 'new', id: newId(), createdAt: new Date().toISOString(), resolvedColor: resolveSide(setup.userColor) })}>{state.started ? 'Start new game' : 'Start game'}</Button>{state.started && <Button onClick={() => dispatch({ type: 'cancel-setup' })}>Cancel</Button>}</div>
   </section>;
   return state.started ? <Dialog title="Start a new game?" onCancel={() => dispatch({ type: 'cancel-setup' })}>{content}</Dialog> : content;
 }

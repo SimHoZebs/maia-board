@@ -40,13 +40,18 @@ for (const width of [360, 1440]) test(`engine settings and Play temperature at $
     await route.fulfill({ body: await readFile(resolve('dist-browser', file)), contentType: file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html' });
   });
   await page.goto('http://maia.test/play');
+  // Temperature lives in the visible Maia section, never in a collapsed <details>.
+  await expect(page.locator('#play-controls details')).toHaveCount(0);
+  // The rating dropdown is the single strength control; the hint mirrors it.
+  await page.locator('#elo-maia').selectOption('1400');
+  await expect(page.locator('#elo-maia')).toHaveValue('1400');
+  await expect(page.locator('#play-controls')).toContainText('Maia 1400 plays like a casual human');
   // Header tabs hide on phones (the bottom-bar menu owns navigation there),
   // so navigate whichever way the current viewport offers.
   const gotoMode = async (mode: string) => {
     if (await page.locator(`#mode-${mode}`).isVisible()) await page.locator(`#mode-${mode}`).click();
     else { await page.locator('#mobile-menu').click(); await page.locator(`#mobile-mode-${mode}`).click(); }
   };
-  await page.getByText('Advanced', { exact: true }).click();
   await page.locator('#maia-temperature').fill('0.7');
   await page.getByRole('radio', { name: 'Black', exact: true }).check();
   await page.screenshot({ path: info.outputPath('play-advanced.png') });

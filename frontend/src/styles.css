@@ -347,3 +347,41 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .source-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }.source-display { background: #ef4444; }.source-objective { background: #3b82f6; }.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }.win-hero { display: flex; align-items: baseline; gap: 8px; margin: 8px 0 2px; }.win-hero strong { font-size: 21px; font-weight: 750; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }.win-hero span { font-size: 12px; color: var(--muted); }
 .insight-panel .engine-duo section h2 { font-size: 14px; }
 @media (max-width: 760px) { .insight-panel { max-height: none; overflow: visible; }.side-options { gap: 5px; }.side-options label { padding: 0 8px; font-size: 13px; } }
+/* Modern play-setup modal: Maia / side / coaching sections.
+   Keeps the #play-controls / #elo-maia / #start-game IDs the specs
+   assert on. */
+.dialog { position: relative; }
+.dialog-close { position: absolute; top: 10px; right: 10px; width: 36px; height: 36px; min-width: 36px; min-height: 36px; display: inline-flex; align-items: center; justify-content: center; border-color: transparent; background: transparent; color: var(--muted); border-radius: 6px; font-size: 15px; }
+.dialog-close:hover:not(:disabled) { background: #3b3d3d; color: inherit; }
+.dialog-close:focus-visible { outline: 2px solid #d2dfbd; outline-offset: 2px; }
+.play-setup { display: grid; gap: 18px; }
+.play-setup h1 { margin: 0; }
+.temp-subhead { margin: 8px 0 0; font-size: 12px; font-weight: 600; color: inherit; }
+/* Maia controls: Elo select (9 options) takes 1/4, temperature slider 3/4, hints below. */
+.maia-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 3fr); gap: 16px; align-items: start; }
+.maia-row .field { margin: 0; }
+/* Match the Temperature h3: same size and weight so the two labels read as one row. */
+.maia-row .field > span { font-size: 12px; font-weight: 600; }
+.maia-row .temp-subhead { margin: 0; }
+.maia-row .temp-block { display: grid; gap: 8px; min-width: 0; }
+@media (max-width: 560px) { .maia-row { grid-template-columns: minmax(0, 1fr); } }
+.setup-section { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.setup-section h2 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.setup-section .field { margin: 0; }
+.setup-section .hint, .play-setup .hint { margin: 0; font-size: 12px; line-height: 1.55; }
+.temp-pill { display: inline-block; margin-left: 8px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; font-size: 11px; letter-spacing: 0; text-transform: none; color: inherit; background: #202122; font-variant-numeric: tabular-nums; }
+.temp-field input[type=range] { width: 100%; min-height: 32px; height: 32px; accent-color: var(--accent); }
+.temp-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+.side-segmented { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.side-segmented label { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 48px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; font-size: 13px; flex: 1; }
+.side-segmented label[data-active="true"] { border-color: var(--accent); background: #414b35; color: #e6f0d5; }
+.side-segmented input { width: 16px; height: 16px; min-height: 16px; accent-color: var(--accent); flex: none; }
+.toggle-card { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; font-size: 14px; margin: 0; }
+.toggle-card + .toggle-card { margin-top: 8px; }
+.toggle-card:has(:checked) { border-color: #899d6b; background: #414b3533; }
+.toggle-card input { width: 18px; height: 18px; min-height: 18px; margin-top: 2px; accent-color: var(--accent); flex: none; }
+.toggle-card span { display: grid; gap: 2px; }
+.toggle-card strong { font-size: 13px; }
+.toggle-card em { font-style: normal; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.setup-actions { margin-top: 2px; }
+.setup-actions .primary { min-height: 44px; font-size: 14px; flex: 1; }
