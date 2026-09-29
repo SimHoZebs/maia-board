@@ -288,9 +288,10 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
      it: drop it from the bar to keep the bar short and mis-tap-proof. */
   .bottom-ui .notation #analysis-index { display: none; }
   .player-strip { height: 34px; font-size: 13px; }
-  .panel.insight-panel { margin-top: 0; width: 100%; padding: 6px 0 0; }
-  .insight-panel > .analysis-section { padding: 0 14px; }
-  .insight-panel > .analysis-section.analysis-footer-section { padding-bottom: 14px; }
+  .panel.insight-panel { margin: 0; width: 100%; padding: 0; background: transparent; border: 0; border-radius: 0; gap: 20px; }
+  .insight-panel > .analysis-section { padding: 0; }
+  .insight-panel > .analysis-section ~ .analysis-section { border-top: 0; padding-top: 0; }
+  .insight-panel > .analysis-section.analysis-footer-section { padding-bottom: 0; }
   .insight-panel .engine-duo section h2 { font-size: 13px; }
   .win-hero strong { font-size: 18px; }
   .win-hero span { font-size: 11px; }
