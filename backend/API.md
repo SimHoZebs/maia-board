@@ -137,10 +137,12 @@ is the status read).
 
 ## GET /reviews/:id/events (SSE)
 
-Streams `event: progress` with the status JSON as `data`, starting
-with a snapshot so reconnects reconcile via `GET /reviews/:id` +
-bulk lookup. Heartbeat `:ping` every 15 s; stream ends when
-`finished: true`. `Content-Type: text/event-stream`, no buffering.
+Streams `event: progress` with the bare batch status JSON as `data` (same
+shape as `GET /reviews/:id`, no wrapper), starting with a snapshot so
+reconnects reconcile via `GET /reviews/:id` + bulk lookup. The server keeps
+no replay buffer and ignores Last-Event-ID; counters are cumulative so the
+latest tick supersedes earlier ones. Heartbeat `:ping` every 15 s; stream
+ends when `finished: true`. `Content-Type: text/event-stream`, no buffering.
 Errors: `404 not_found`, `405 method_not_allowed`.
 
 ## GET /games, POST /games

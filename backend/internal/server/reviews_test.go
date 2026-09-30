@@ -295,7 +295,7 @@ func seedFakeJob(js *ReviewJobs, id string, finished bool, sfN, largeN, smallN i
 			e.status = batchDone
 		}
 	}
-	job := &batchJob{id: id, createdAt: "seed", entries: entries, subs: make(map[chan []byte]struct{}), finished: finished}
+	job := &batchJob{id: id, createdAt: "seed", entries: entries, subs: make(map[chan batchProgress]struct{}), finished: finished}
 	if finished {
 		job.done = len(entries)
 	}

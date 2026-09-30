@@ -281,9 +281,8 @@ type batchJob struct {
 	done      int
 	failed    int
 	finished  bool
-	eventID   int
 	mu        sync.Mutex
-	subs      map[chan []byte]struct{}
+	subs      map[chan batchProgress]struct{}
 }
 
 func (job *batchJob) progressLocked() batchProgress {
@@ -326,14 +325,10 @@ func (job *batchJob) complete(entry *batchEntry, errMsg string) {
 			job.failed++
 		}
 	}
-	job.eventID++
-	payload, _ := json.Marshal(map[string]any{
-		"id": job.eventID, "event": "progress", "progress": job.progressLocked(),
-		"index": entry.index, "status": string(entry.status),
-	})
+	progress := job.progressLocked()
 	for sub := range job.subs {
 		select {
-		case sub <- payload:
+		case sub <- progress:
 		default:
 		}
 	}
@@ -647,7 +642,7 @@ func (js *ReviewJobs) reviews(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		job := &batchJob{id: id, createdAt: time.Now().UTC().Format(time.RFC3339Nano),
-			entries: entries, subs: make(map[chan []byte]struct{})}
+			entries: entries, subs: make(map[chan batchProgress]struct{})}
 		job.done = cached
 		js.jobs[id] = job
 		js.order = append(js.order, id)
@@ -736,13 +731,9 @@ func (js *ReviewJobs) drain(job *batchJob) {
 	job.mu.Lock()
 	job.finished = true
 	progress := job.progressLocked()
-	job.eventID++
-	payload, _ := json.Marshal(map[string]any{
-		"id": job.eventID, "event": "progress", "progress": progress,
-	})
 	for sub := range job.subs {
 		select {
-		case sub <- payload:
+		case sub <- progress:
 		default:
 		}
 	}
@@ -822,8 +813,10 @@ func (js *ReviewJobs) runEntry(job *batchJob, entry *batchEntry) {
 }
 
 // reviewEvents streams live progress as server-sent events. The opening
-// progress makes reconnects self-healing: a client that sees an event-id gap
-// restores with GET status + bulk lookup instead of trusting the stream.
+// snapshot makes reconnects self-healing: the client reconciles via
+// GET status + bulk lookup instead of trusting the stream. Counters are
+// cumulative, so the latest tick supersedes earlier ones; the server keeps
+// no replay buffer and ignores Last-Event-ID.
 func (js *ReviewJobs) reviewEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET is required")
@@ -849,25 +842,25 @@ func (js *ReviewJobs) reviewEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
-	sub := make(chan []byte, 16)
+	sub := make(chan batchProgress, 16)
 	job.mu.Lock()
 	job.subs[sub] = struct{}{}
-	snapshot, eventID := job.progressLocked(), job.eventID
+	snapshot := job.progressLocked()
 	job.mu.Unlock()
 	defer func() {
 		job.mu.Lock()
 		delete(job.subs, sub)
 		job.mu.Unlock()
 	}()
-	send := func(id int, progress batchProgress) bool {
-		payload, _ := json.Marshal(map[string]any{"id": id, "event": "progress", "progress": progress})
-		if _, err := fmt.Fprintf(w, "id: %d\nevent: progress\ndata: %s\n\n", id, payload); err != nil {
+	send := func(progress batchProgress) bool {
+		payload, _ := json.Marshal(progress)
+		if _, err := fmt.Fprintf(w, "event: progress\ndata: %s\n\n", payload); err != nil {
 			return false
 		}
 		flusher.Flush()
 		return true
 	}
-	if !send(eventID, snapshot) {
+	if !send(snapshot) {
 		return
 	}
 	if snapshot.Finished {
@@ -884,18 +877,11 @@ func (js *ReviewJobs) reviewEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			flusher.Flush()
-		case payload := <-sub:
-			var envelope struct {
-				ID       int           `json:"id"`
-				Progress batchProgress `json:"progress"`
-			}
-			if err := json.Unmarshal(payload, &envelope); err != nil {
-				continue
-			}
-			if !send(envelope.ID, envelope.Progress) {
+		case update := <-sub:
+			if !send(update) {
 				return
 			}
-			if envelope.Progress.Finished {
+			if update.Finished {
 				return
 			}
 		}

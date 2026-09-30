@@ -221,7 +221,12 @@ export async function fetchBatchStatus(jobId: string, fetchImpl: FetchLike = fet
 // (the caller then refetches status, which maps gone jobs to BatchGoneError,
 // and falls back to polling). A caller abort is the normal unsubscribe path
 // and resolves silently, never a failure.
-export type BatchEventSource = Pick<EventSource, 'onmessage' | 'onerror' | 'close' | 'addEventListener' | 'removeEventListener'>;
+//
+// Wire shape: the server frames every tick as `event: progress` with the
+// bare BatchProgress as `data` (no wrapper). Native EventSource dispatches
+// named events to their listener, not to onmessage, so only the named
+// listener is subscribed.
+export type BatchEventSource = Pick<EventSource, 'onerror' | 'close' | 'addEventListener' | 'removeEventListener'>;
 export async function subscribeBatchEvents(
   jobId: string, onProgress: (progress: BatchProgress) => void, signal: AbortSignal,
   createSource: new (url: string) => BatchEventSource = globalThis.EventSource,
@@ -234,7 +239,6 @@ export async function subscribeBatchEvents(
     let settled = false;
     const source = new createSource(`/reviews/${jobId}/events`);
     const cleanup = () => {
-      source.onmessage = null;
       source.onerror = null;
       source.removeEventListener('progress', handleEvent as EventListener);
       source.close();
@@ -246,21 +250,10 @@ export async function subscribeBatchEvents(
       cleanup();
       resolve();
     };
-    // The server frames every tick as `event: progress` (see API.md). A
-    // native EventSource dispatches named events to their listener, NOT to
-    // onmessage (which only sees unnamed frames), so subscribing to
-    // onmessage alone drops every live tick in a real browser. Listen for
-    // the named event; onmessage stays as a fallback for bare bodies.
     const handleEvent = (event: MessageEvent) => {
       if (settled || signal.aborted) return;
-      let envelope: unknown;
-      try { envelope = JSON.parse(event.data); } catch { return; }
-      const record = isRecord(envelope) ? envelope : null;
-      // The server wraps ticks as {progress}; accept a bare progress body
-      // too so a missed wrap never drops a live tick (status restores).
-      const body: unknown = record?.progress ?? envelope;
       let progress: BatchProgress;
-      try { progress = parseProgress(body); } catch { return; }
+      try { progress = parseProgress(JSON.parse(event.data)); } catch { return; }
       onProgress(progress);
       if (progress.finished) {
         settled = true;
@@ -268,7 +261,6 @@ export async function subscribeBatchEvents(
         resolve();
       }
     };
-    source.onmessage = handleEvent;
     source.addEventListener('progress', handleEvent as EventListener);
     source.onerror = () => {
       if (settled || signal.aborted) return;
