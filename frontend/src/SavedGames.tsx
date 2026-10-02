@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   exportLine,
   loadLine,
@@ -13,7 +13,7 @@ import type { Action, State } from "./state/index";
 import { copyText } from "./BoardTools";
 import { Button, IconButton } from "./components";
 import { Dialog } from "./Dialog";
-import { Check, Copy, Play, Trash2 } from "lucide-react";
+import { ArrowUpDown, Check, ChevronDown, ChessPawn, Copy, Play, Trash2, Trophy, type LucideIcon } from "lucide-react";
 import { BoardThumbnail } from "./BoardThumbnail";
 import { useSyncSnapshot, useSyncStore } from "./syncStore";
 import { useFlash } from "./useFlash";
@@ -29,6 +29,100 @@ function userOutcome(game: StoredGame, result: string): 'win' | 'loss' | 'draw' 
   return winner === game.settings.userColor ? 'win' : 'loss';
 }
 
+type Outcome = 'win' | 'loss' | 'draw' | 'unfinished';
+
+const RESULT_OPTIONS = [
+  { value: 'win', label: 'Wins' },
+  { value: 'loss', label: 'Losses' },
+  { value: 'draw', label: 'Draws' },
+  { value: 'unfinished', label: 'Unfinished' },
+] as const;
+
+const SIDE_OPTIONS = [
+  { value: 'white', label: 'White' },
+  { value: 'black', label: 'Black' },
+] as const;
+
+// Dropdown multi-select: a trigger button summarizing the selection opens a
+// checkbox menu. Outside pointerdown and Escape close it (Escape refocuses
+// the trigger), mirroring the mobile page menu's dismissal.
+function MultiSelect<T extends string>({
+  id,
+  label,
+  Icon,
+  options,
+  selected,
+  onChange,
+  layout = 'stacked',
+}: {
+  id: string;
+  label: string;
+  Icon: LucideIcon;
+  options: readonly { value: T; label: string }[];
+  selected: readonly T[];
+  onChange: (next: T[]) => void;
+  layout?: 'stacked' | 'inline';
+}) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: PointerEvent) => {
+      if (root.current && !(event.target instanceof Node && root.current.contains(event.target))) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setOpen(false); trigger.current?.focus(); }
+    };
+    document.addEventListener('pointerdown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open ]);
+  const toggle = (value: T) => {
+    const order = new Map(options.map((option, index) => [option.value, index] as const));
+    const next = selected.includes(value) ? selected.filter(item => item !== value) : [...selected, value];
+    next.sort((a, b) => order.get(a)! - order.get(b)!);
+    onChange(next);
+  };
+  const summary = selected.length === options.length
+    ? 'All'
+    : selected.length === 0
+      ? 'None'
+      : options.filter(option => selected.includes(option.value)).map(option => option.label).join(', ');
+  return <div className="field multi-filter" ref={root}>
+    <span id={`${id}-label`} title={label}><Icon size={14} aria-hidden="true" /><span className="visually-hidden">{label}</span></span>
+    <button
+      type="button"
+      id={id}
+      ref={trigger}
+      className="multi-filter-trigger"
+      aria-haspopup="true"
+      aria-expanded={open}
+      aria-controls={`${id}-menu`}
+      aria-labelledby={`${id}-label ${id}`}
+      onClick={() => setOpen(value => !value)}
+    >
+      <span className="multi-filter-value">{summary}</span>
+      <ChevronDown size={16} aria-hidden="true" />
+    </button>
+    {open && <div className={`multi-filter-menu${layout === 'inline' ? ' multi-filter-menu--inline' : ''}`} id={`${id}-menu`} role="group" aria-label={label}>
+      {options.map(option => (
+        <label key={option.value}>
+          <input
+            type="checkbox"
+            checked={selected.includes(option.value)}
+            onChange={() => toggle(option.value)}
+          />
+          {option.label}
+        </label>
+      ))}
+    </div>}
+  </div>;
+}
+
 export function SavedGames({
   state,
   dispatch,
@@ -41,8 +135,8 @@ export function SavedGames({
   const [deleting, setDeleting] = useState<string | null>(null);
   const [copiedId, flashCopied] = useFlash<string>();
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
-  const [resultFilter, setResultFilter] = useState<'all' | 'win' | 'loss' | 'draw' | 'unfinished'>('all');
-  const [sideFilter, setSideFilter] = useState<'all' | 'white' | 'black'>('all');
+  const [resultSelection, setResultSelection] = useState<Outcome[]>(['win', 'loss', 'draw', 'unfinished']);
+  const [sideSelection, setSideSelection] = useState<('white' | 'black')[]>(['white', 'black']);
   // Sync display reads come from the isolated history-sync store, so the
   // "Syncing…" indicator never re-renders the board through game state.
   const sync = useSyncStore();
@@ -54,8 +148,8 @@ export function SavedGames({
     const result = game.result === 'resigned' ? storedGameResult(game) : resultTextForTip(position.fen, position.terminal);
     return { game, position, result, outcome: userOutcome(game, result) };
   }).filter(({ game, outcome }) =>
-    (resultFilter === 'all' || outcome === resultFilter) &&
-    (sideFilter === 'all' || game.settings.userColor === sideFilter),
+    resultSelection.includes(outcome) &&
+    sideSelection.includes(game.settings.userColor),
   ).sort((a, b) => {
     const time = (iso: string) => {
       const parsed = Date.parse(iso);
@@ -63,7 +157,7 @@ export function SavedGames({
     };
     const delta = time(a.game.createdAt) - time(b.game.createdAt);
     return sortOrder === 'newest' ? -delta : delta;
-  }), [state.saved, resultFilter, sideFilter, sortOrder]);
+  }), [state.saved, resultSelection, sideSelection, sortOrder]);
   const copyGame = (game: { id: string; moves: string[] }) =>
     void copyText(exportLine(loadLine("", game.moves.join(" ")))).then(
       (ok) => {
@@ -92,31 +186,30 @@ export function SavedGames({
       )}
       {state.saved.length > 0 && (
         <div className="saved-controls" role="group" aria-label="Sort and filter games">
-          <label className="field" htmlFor="history-sort">
-            <span>Sort</span>
+          <label className="field" htmlFor="history-sort" title="Sort">
+            <span><ArrowUpDown size={14} aria-hidden="true" /><span className="visually-hidden">Sort</span></span>
             <select id="history-sort" value={sortOrder} onChange={event => setSortOrder(event.target.value as 'newest' | 'oldest')}>
               <option value="newest">Newest first</option>
               <option value="oldest">Oldest first</option>
             </select>
           </label>
-          <label className="field" htmlFor="history-result-filter">
-            <span>Result</span>
-            <select id="history-result-filter" value={resultFilter} onChange={event => setResultFilter(event.target.value as 'all' | 'win' | 'loss' | 'draw' | 'unfinished')}>
-              <option value="all">All results</option>
-              <option value="win">Wins</option>
-              <option value="loss">Losses</option>
-              <option value="draw">Draws</option>
-              <option value="unfinished">Unfinished</option>
-            </select>
-          </label>
-          <label className="field" htmlFor="history-side-filter">
-            <span>Side</span>
-            <select id="history-side-filter" value={sideFilter} onChange={event => setSideFilter(event.target.value as 'all' | 'white' | 'black')}>
-              <option value="all">Either side</option>
-              <option value="white">Played White</option>
-              <option value="black">Played Black</option>
-            </select>
-          </label>
+          <MultiSelect
+            id="history-result-filter"
+            label="Result"
+            Icon={Trophy}
+            options={RESULT_OPTIONS}
+            selected={resultSelection}
+            onChange={setResultSelection}
+          />
+          <MultiSelect
+            id="history-side-filter"
+            label="Side"
+            Icon={ChessPawn}
+            options={SIDE_OPTIONS}
+            selected={sideSelection}
+            onChange={setSideSelection}
+            layout="inline"
+          />
         </div>
       )}
       {state.saved.length > 0 && visibleGames.length !== state.saved.length && (

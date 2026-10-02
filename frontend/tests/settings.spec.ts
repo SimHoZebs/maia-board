@@ -42,10 +42,10 @@ for (const width of [320, 360, 1440]) test(`engine settings and Play temperature
   await page.goto('http://maia.test/play');
   // Temperature lives in the visible Bot section, never in a collapsed <details>.
   await expect(page.locator('#play-controls details')).toHaveCount(0);
-  // The rating dropdown is the single strength control; the hint mirrors it.
+  // The rating dropdown is the single strength control; the heading description mirrors it.
   await page.locator('#bot-elo').selectOption('1400');
   await expect(page.locator('#bot-elo')).toHaveValue('1400');
-  await expect(page.locator('#play-controls')).toContainText('Bot 1400 plays like a casual human');
+  await expect(page.locator('#play-controls')).toContainText('Plays like a casual human');
   // Header tabs hide on phones (the bottom-bar menu owns navigation there),
   // so navigate whichever way the current viewport offers.
   const gotoMode = async (mode: string) => {

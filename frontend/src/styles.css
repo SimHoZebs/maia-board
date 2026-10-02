@@ -244,9 +244,25 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .saved-heading { display: flex; align-items: baseline; gap: 12px; }.saved-heading span { font-size: 12px; color: var(--muted); }
 .saved-controls { display: flex; flex-wrap: wrap; gap: 12px; }
 .saved-controls .field { flex: 1 1 140px; min-width: 140px; max-width: 220px; }
-.saved-controls .field > span { font-size: 12px; color: var(--muted); }
+.saved-controls .field > span { display: inline-flex; align-items: center; font-size: 12px; color: var(--muted); }
+.saved-controls .field > span svg { flex: none; }
 .saved-controls select { width: 100%; }
 .saved-count { margin: 0; font-size: 12px; color: var(--muted); }
+/* Dropdown multi-select filters: the trigger reads like the neighboring
+   selects; the checkbox menu floats above the game list. */
+.multi-filter { position: relative; }
+.multi-filter-trigger { display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 44px; background: #202122; color: inherit; border: 1px solid #555758; border-radius: 4px; padding: 10px; font-size: 14px; text-align: left; }
+.multi-filter-trigger:hover:not(:disabled) { background: #202122; }
+.multi-filter-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.multi-filter-trigger svg { flex: none; }
+.multi-filter-trigger[aria-expanded="true"] svg { transform: rotate(180deg); }
+.multi-filter-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 60; min-width: 100%; display: flex; flex-direction: column; padding: 6px; background: #282a2b; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5); }
+.multi-filter-menu label { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 6px 10px; border-radius: 4px; font-size: 14px; cursor: pointer; }
+.multi-filter-menu label:hover { background: #3b3d3d; }
+.multi-filter-menu input { width: 18px; height: 18px; min-height: 18px; margin: 0; accent-color: var(--accent); flex: none; }
+/* Two-option menus (Side) read better as one row of two checkboxes. */
+.multi-filter-menu--inline { flex-direction: row; }
+.multi-filter-menu--inline label { flex: 1 1 0; justify-content: center; }
 .saved-game { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-top: 1px solid var(--line); padding: 20px 0; }
 .saved-open { display: flex; align-items: center; gap: 16px; flex: 1; min-width: 0; padding: 0; border-color: transparent; background: transparent; text-align: left; }
 .saved-game h2 { font-size: 16px; margin: 0; }
@@ -256,7 +272,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .saved-game time { color: var(--muted); font-size: 12px; }
 .board-thumbnail { width: 88px; height: 88px; flex: 0 0 88px; overflow: hidden; border-radius: 4px; }
 .board-thumbnail > div { width: 100%; height: 100%; }
-.saved-actions { gap: 4px; flex-shrink: 0; }
+.saved-actions { display: flex; flex-direction: row; flex-wrap: nowrap; gap: 4px; flex: none; }
 .saved-actions button { width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 .dialog, .promotion-dialog { width: min(540px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow: auto; padding: 24px; color: #eeeae3; background: #282a2b; border: 1px solid #555758; border-radius: 8px; }
 .dialog::backdrop, .promotion-dialog::backdrop { background: #0009; }
@@ -323,8 +339,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
   .entry { margin: 0 auto; padding-block: 24px; }
   .entry.panel { margin: 24px auto; padding: 18px; }
   .panel { padding: 18px; }
-  .saved-game { flex-wrap: wrap; gap: 12px; }
-  .saved-game .saved-actions { width: 100%; justify-content: flex-end; }
+  .saved-game { gap: 12px; }
   .game-result { font-size: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: 0s !important; } }
@@ -376,7 +391,8 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .dialog-close:focus-visible { outline: 2px solid #d2dfbd; outline-offset: 2px; }
 .play-setup { display: grid; gap: 18px; }
 .play-setup h1 { margin: 0; }
-.temp-subhead { margin: 0; font-size: 12px; font-weight: 600; color: inherit; }
+.temp-subhead { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 8px; margin: 0; font-size: 12px; font-weight: 600; color: inherit; }
+.temp-desc { font-size: 11px; font-weight: 400; color: var(--muted); }
 /* Bot controls: Elo select (9 options) takes 1/4, temperature slider 3/4, hints below. */
 .bot-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 3fr); gap: 16px; align-items: start; }
 .bot-row .field { margin: 0; }
@@ -387,9 +403,13 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 @media (max-width: 560px) { .bot-row { grid-template-columns: minmax(0, 1fr); } }
 .setup-section { display: grid; gap: 8px; align-content: start; min-width: 0; }
 .setup-section h2 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+/* Heading rows carry their one-line description inline instead of a paragraph below. */
+.section-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; }
+.section-head h2 { margin: 0; }
+.section-desc { font-size: 12px; letter-spacing: 0; text-transform: none; color: var(--muted); }
 .setup-section .field { margin: 0; }
 .setup-section .hint, .play-setup .hint { margin: 0; font-size: 12px; line-height: 1.55; }
-.temp-pill { display: inline-block; margin-left: 8px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; font-size: 11px; letter-spacing: 0; text-transform: none; color: inherit; background: #202122; font-variant-numeric: tabular-nums; }
+.temp-pill { display: inline-block; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; font-size: 11px; letter-spacing: 0; text-transform: none; color: inherit; background: #202122; font-variant-numeric: tabular-nums; }
 .temp-field input[type=range] { width: 100%; min-height: 32px; height: 32px; accent-color: var(--accent); }
 .temp-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
 .side-segmented { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }

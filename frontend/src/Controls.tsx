@@ -35,19 +35,20 @@ export function PlayControls({ state, dispatch }: Props) {
   const content = <section id="play-controls" className="setup panel play-setup" aria-label="Game setup">
     {state.started && <h1>Start a new game?</h1>}
     <section className="setup-section" aria-labelledby="opponent-heading">
-      <h2 id="opponent-heading">Bot</h2>
+      <div className="section-head">
+        <h2 id="opponent-heading">Bot</h2>
+        <span className="section-desc">Plays like a {strengthLabel(setup.botElo).toLowerCase()} human</span>
+      </div>
       <div className="bot-row">
         <Rating value={setup.botElo} label="Elo" onChange={botElo => dispatch({ type: 'setup', draft: { botElo } })} />
         <div className="temp-block">
-          <h3 className="temp-subhead">Temperature <span className="temp-pill">{temperatureLabel(temperature)} · {temperature.toFixed(1)}</span></h3>
+          <h3 className="temp-subhead">Temperature <span className="temp-pill">{temperatureLabel(temperature)} · {temperature.toFixed(1)}</span> <span className="temp-desc">Higher adds variety</span></h3>
           <label className="field temp-field" htmlFor="bot-temperature"><span className="visually-hidden">Bot temperature</span>
             <input id="bot-temperature" type="range" min="0" max="2" step="0.1" value={temperature} onChange={e => dispatch({ type: 'setup', draft: { temperature: e.target.valueAsNumber } })} />
             <span className="temp-scale" aria-hidden="true"><span>Deterministic</span><span>Balanced</span><span>Creative</span></span>
           </label>
         </div>
       </div>
-      <p className="hint">Bot {setup.botElo} plays like a {strengthLabel(setup.botElo).toLowerCase()} human — mistakes included.</p>
-      <p className="hint">0 always takes Bot’s top move. 1 samples its natural spread; higher adds variety. Set per game.</p>
     </section>
     <section className="setup-section" aria-labelledby="side-heading">
       <h2 id="side-heading">Your side</h2>
