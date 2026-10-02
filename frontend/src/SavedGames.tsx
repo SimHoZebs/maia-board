@@ -3,9 +3,11 @@ import {
   exportLine,
   loadLine,
   lineRecord,
+  oppositeColor,
   resultTextForTip,
   sideName,
   storedGameResult,
+  type StoredGame,
 } from "./domain";
 import type { Action, State } from "./state/index";
 import { copyText } from "./BoardTools";
@@ -15,6 +17,17 @@ import { Check, Copy, Play, Trash2 } from "lucide-react";
 import { BoardThumbnail } from "./BoardThumbnail";
 import { useSyncSnapshot, useSyncStore } from "./syncStore";
 import { useFlash } from "./useFlash";
+
+// Result from the player's perspective: a resignation is always the player's
+// own, so it reads as a loss; checkmate winners come from the result text.
+function userOutcome(game: StoredGame, result: string): 'win' | 'loss' | 'draw' | 'unfinished' {
+  if (result === 'Unfinished') return 'unfinished';
+  if (result === 'Draw') return 'draw';
+  const winner = game.result === 'resigned'
+    ? oppositeColor(game.settings.userColor)
+    : result.startsWith('White') ? 'white' : 'black';
+  return winner === game.settings.userColor ? 'win' : 'loss';
+}
 
 export function SavedGames({
   state,
@@ -27,6 +40,9 @@ export function SavedGames({
 }) {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [copiedId, flashCopied] = useFlash<string>();
+  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
+  const [resultFilter, setResultFilter] = useState<'all' | 'win' | 'loss' | 'draw' | 'unfinished'>('all');
+  const [sideFilter, setSideFilter] = useState<'all' | 'white' | 'black'>('all');
   // Sync display reads come from the isolated history-sync store, so the
   // "Syncing…" indicator never re-renders the board through game state.
   const sync = useSyncStore();
@@ -35,8 +51,19 @@ export function SavedGames({
   const historyTotal = sync.total;
   const visibleGames = useMemo(() => state.saved.map(game => {
     const position = lineRecord(game.moves);
-    return { game, position, result: game.result === 'resigned' ? storedGameResult(game) : resultTextForTip(position.fen, position.terminal) };
-  }), [state.saved]);
+    const result = game.result === 'resigned' ? storedGameResult(game) : resultTextForTip(position.fen, position.terminal);
+    return { game, position, result, outcome: userOutcome(game, result) };
+  }).filter(({ game, outcome }) =>
+    (resultFilter === 'all' || outcome === resultFilter) &&
+    (sideFilter === 'all' || game.settings.userColor === sideFilter),
+  ).sort((a, b) => {
+    const time = (iso: string) => {
+      const parsed = Date.parse(iso);
+      return Number.isNaN(parsed) ? 0 : parsed;
+    };
+    const delta = time(a.game.createdAt) - time(b.game.createdAt);
+    return sortOrder === 'newest' ? -delta : delta;
+  }), [state.saved, resultFilter, sideFilter, sortOrder]);
   const copyGame = (game: { id: string; moves: string[] }) =>
     void copyText(exportLine(loadLine("", game.moves.join(" ")))).then(
       (ok) => {
@@ -62,6 +89,43 @@ export function SavedGames({
         )}
       {!state.saved.length && (
         <p className="empty-copy">Your games will appear here.</p>
+      )}
+      {state.saved.length > 0 && (
+        <div className="saved-controls" role="group" aria-label="Sort and filter games">
+          <label className="field" htmlFor="history-sort">
+            <span>Sort</span>
+            <select id="history-sort" value={sortOrder} onChange={event => setSortOrder(event.target.value as 'newest' | 'oldest')}>
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+            </select>
+          </label>
+          <label className="field" htmlFor="history-result-filter">
+            <span>Result</span>
+            <select id="history-result-filter" value={resultFilter} onChange={event => setResultFilter(event.target.value as 'all' | 'win' | 'loss' | 'draw' | 'unfinished')}>
+              <option value="all">All results</option>
+              <option value="win">Wins</option>
+              <option value="loss">Losses</option>
+              <option value="draw">Draws</option>
+              <option value="unfinished">Unfinished</option>
+            </select>
+          </label>
+          <label className="field" htmlFor="history-side-filter">
+            <span>Side</span>
+            <select id="history-side-filter" value={sideFilter} onChange={event => setSideFilter(event.target.value as 'all' | 'white' | 'black')}>
+              <option value="all">Either side</option>
+              <option value="white">Played White</option>
+              <option value="black">Played Black</option>
+            </select>
+          </label>
+        </div>
+      )}
+      {state.saved.length > 0 && visibleGames.length !== state.saved.length && (
+        <p className="saved-count" role="status">
+          Showing {visibleGames.length} of {state.saved.length}
+        </p>
+      )}
+      {state.saved.length > 0 && visibleGames.length === 0 && (
+        <p className="empty-copy">No games match these filters.</p>
       )}
       <div id="saved-games">
         {visibleGames.map(({ game, position, result }) => {

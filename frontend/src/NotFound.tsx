@@ -22,7 +22,7 @@ export function NotFound({
         <h1>Page not found</h1>
         <p>This page doesn&apos;t exist. Pick a destination below.</p>
         <nav aria-label="Destination" className="actions">
-          {destinations.map(({ mode: destMode, path, label }) => (
+          {destinations.map(({ mode: destMode, path, label, Icon }) => (
             <NavLink
               id={`mode-${destMode}`}
               key={destMode}
@@ -36,6 +36,7 @@ export function NotFound({
                 }
               }}
             >
+              <Icon size={16} aria-hidden="true" />
               {label}
             </NavLink>
           ))}

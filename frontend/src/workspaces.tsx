@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { DrawBrushes, DrawShape } from '@lichess-org/chessground/draw';
-import { Menu, RotateCw, Plus, Undo2, Flag } from 'lucide-react';
+import { ChartLine, Menu, RotateCw, Plus, Undo2, Flag } from 'lucide-react';
 import { NavLink } from 'react-router';
 import { Chess } from 'chess.js';
 import { ChessBoard } from './ChessBoard';
@@ -58,7 +58,7 @@ export function MobileMenu({ state, dispatch }: Props) {
   return <div className="menu-root" ref={root}>
     <IconButton id="mobile-menu" label="Menu" aria-haspopup="true" aria-expanded={open} aria-controls="mobile-menu-sheet" onClick={() => setOpen(value => !value)}><Menu size={18} aria-hidden="true" /></IconButton>
     {open && <nav className="mobile-menu-sheet" id="mobile-menu-sheet" aria-label="Pages">
-      {destinations.map(({ mode: destMode, path, label }) => (
+      {destinations.map(({ mode: destMode, path, label, Icon }) => (
         <NavLink
           id={`mobile-mode-${destMode}`}
           key={destMode}
@@ -73,6 +73,7 @@ export function MobileMenu({ state, dispatch }: Props) {
             }
           }}
         >
+          <Icon size={16} aria-hidden="true" />
           {label}
         </NavLink>
       ))}
@@ -241,7 +242,7 @@ export function PlayWorkspace({ state, dispatch }: Props) {
           movesPanel={ready ? <><MovesPanel sans={full.sanMoves} ply={ply} initialFen={START_FEN} qualities={moveFeedback.qualities} badgeLoading={state.badgeLoading} onView={ply => dispatch({ type: 'view', ply })} onOriginalView={ply => { dispatch({ type: 'original' }); dispatch({ type: 'view', ply }); }} analysis={false}
             original={undefined} hideNav={mobileBar}
             branchUp={mobileBar} tools={mobileBar ? undefined : tools} bookFlags={playBookFlags} /><PlayVerdict state={state} feedback={moveFeedback} /></> : null}
-          resultOverlay={over ? <div className="game-result" role="status"><div className="result-copy"><span className="result-eyebrow">Game over</span><strong className="result-text">{winner && <span className={`side-dot ${winner}`} aria-hidden="true" />}{resultText}</strong></div><div className="result-actions"><Button variant="primary" onClick={() => dispatch({ type: 'review' })}>Review game</Button><Button id="new-game-again" onClick={() => dispatch({ type: 'setup' })}>New game</Button></div></div> : null} />
+          resultOverlay={over ? <div className="game-result" role="status"><div className="result-copy"><span className="result-eyebrow">Game over</span><strong className="result-text">{winner && <span className={`side-dot ${winner}`} aria-hidden="true" />}{resultText}</strong></div><div className="result-actions"><Button variant="primary" onClick={() => dispatch({ type: 'review' })}><ChartLine size={16} aria-hidden="true" />Review game</Button><Button id="new-game-again" onClick={() => dispatch({ type: 'setup' })}><Plus size={16} aria-hidden="true" />New game</Button></div></div> : null} />
       </RegionRecorder>
     </div>
     {ready && <RegionRecorder id="chrome"><><PlayControls state={state} dispatch={dispatch} /><AnalysisControls state={state} dispatch={dispatch} /></></RegionRecorder>}

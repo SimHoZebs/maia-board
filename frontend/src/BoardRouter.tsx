@@ -10,6 +10,7 @@ import {
   useNavigate,
 } from "react-router";
 import { App } from "./App";
+import { History, Microscope, Play, Settings } from "lucide-react";
 const EvalLoadingLab = lazy(() => import("./EvalLoadingLab").then(module => ({ default: module.EvalLoadingLab })));
 const VerdictLab = lazy(() => import("./VerdictLab").then(module => ({ default: module.VerdictLab })));
 import type { Mode } from "./domain";
@@ -22,10 +23,10 @@ import { analysisPath, analysisSearch, parseAnalysisSearch, sameLine } from "./a
 import { RegionRecorder } from "./perfCommits";
 
 export const destinations = [
-  { mode: "play", path: "/play", label: "Play" },
-  { mode: "analysis", path: "/analyze", label: "Analyze" },
-  { mode: "history", path: "/history", label: "History" },
-  { mode: "settings", path: "/settings", label: "Settings" },
+  { mode: "play", path: "/play", label: "Play", Icon: Play },
+  { mode: "analysis", path: "/analyze", label: "Analyze", Icon: Microscope },
+  { mode: "history", path: "/history", label: "History", Icon: History },
+  { mode: "settings", path: "/settings", label: "Settings", Icon: Settings },
 ] as const;
 const pathFor = (mode: Mode) =>
   destinations.find((destination) => destination.mode === mode)!.path;
@@ -51,7 +52,7 @@ function DestinationNav({
   // the router — not a render-phase correction — owns the mode.
   return (
     <nav aria-label="Destination">
-      {destinations.map(({ mode: destMode, path, label }) => (
+      {destinations.map(({ mode: destMode, path, label, Icon }) => (
         <NavLink
           id={`mode-${destMode}`}
           key={destMode}
@@ -65,6 +66,7 @@ function DestinationNav({
             }
           }}
         >
+          <Icon size={16} aria-hidden="true" />
           {label}
         </NavLink>
       ))}
