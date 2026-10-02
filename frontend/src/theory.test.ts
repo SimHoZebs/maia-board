@@ -549,6 +549,17 @@ describe('verdictInputsForPly', () => {
       quality: quality('Best'),
       mover: 'black',
     })).positiveNote).toBeNull();
+    // A capture with fork geometry tells the gain story, never the fork:
+    // Nxd5 takes a bishop while eyeing queen and bishop, but the take owns
+    // the note (fork/pin candidates never scan captures).
+    expect(verdictInputsForPly(baseInputs({
+      beforeFen: '4k3/8/8/3B4/5n2/2Q1B3/8/4K3 b - - 0 1',
+      afterFen: '4k3/8/8/3n4/8/2Q1B3/8/4K3 w - - 0 2',
+      playedUci: 'f4d5',
+      san: 'Nxd5',
+      quality: quality('Best'),
+      mover: 'black',
+    })).positiveNote).toBe('Wins a bishop.');
     expect(verdictInputsForPly(baseInputs({
       beforeFen: '8/2qk4/8/2B5/8/8/5K2/4R3 w - - 0 1',
       afterFen: '8/2qkR3/8/2B5/8/8/5K2/8 b - - 1 1',

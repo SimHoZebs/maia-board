@@ -365,9 +365,14 @@ const POSITIVE_CANDIDATES: { name: string; note: (ctx: PositiveContext) => strin
   { name: 'only-move', note: ({ isCritical }) => (isCritical ? 'The only move to hold.' : null) },
   { name: 'promotion', note: ({ beforeFen, playedUci }) => promotionNote(beforeFen, playedUci) },
   { name: 'skewer', note: ({ facts, mover }) => (facts ? skewerPlayedClaim(facts, mover) : null) },
-  { name: 'fork', note: ({ facts, mover }) => (facts ? forkPlayedClaim(facts, mover) : null) },
+  // Captures and promotions can never be fork/pin pressure (both getters
+  // return null there by construction), so gate on the UCI shape before the
+  // geometry scans: every capturing move skips straight to the
+  // exchange/gain story. Skewer keeps its scan — capturing checkers own the
+  // skewer story, not the gain.
+  { name: 'fork', note: ({ facts, mover }) => (facts && !facts.captured && !facts.promotion ? forkPlayedClaim(facts, mover) : null) },
   { name: 'en-passant', note: ({ beforeFen, playedUci }) => enPassantNote(beforeFen, playedUci) },
-  { name: 'pin', note: ({ facts, mover }) => (facts ? pinPlayedClaim(facts, mover) : null) },
+  { name: 'pin', note: ({ facts, mover }) => (facts && !facts.captured && !facts.promotion ? pinPlayedClaim(facts, mover) : null) },
   { name: 'gain',
     note: ({ facts, beforeFen, afterFen, playedUci, mover }) =>
       (facts ? exchangePlayedClaim(facts) : null) ?? playedMoveGainNote(beforeFen, afterFen, playedUci, mover) },
@@ -448,11 +453,13 @@ export function pawnDamageNoteSkippingBest(
   playedUci: string,
   bestUci: string | null | undefined,
 ): string | null {
+  // Cheapest gate first: the played move IS the best, so there is no blame
+  // by definition — string compare before any board scan.
+  if (bestUci && playedUci === bestUci) return null;
   const played = newPawnDamage(beforeFen, afterFen, mover);
   if (!played) return null;
   if (played.doubled <= 0 && played.isolated <= 0) return null;
   if (!bestUci) return pawnDamageNote(beforeFen, afterFen, mover);
-  if (playedUci === bestUci) return null;
   let bestAfterFen: string | null = null;
   try {
     const game = new Chess(beforeFen);
