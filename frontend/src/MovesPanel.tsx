@@ -64,6 +64,9 @@ export function MoveNavBar({
           </IconButton>
         ))}
       </div>
+      <span id="analysis-index">
+        Position {ply + 1} / {total + 1}
+      </span>
     </div>
   );
 }
@@ -231,9 +234,6 @@ function MovesPanel({
           menu={menu}
         />
       )}
-      <span id="analysis-index">
-        Position {ply + 1} / {sans.length + 1}
-      </span>
     </section>
   );
 }
