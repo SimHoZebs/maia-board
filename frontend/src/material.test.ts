@@ -366,6 +366,23 @@ describe('playedMovePinNote', () => {
     expect(playedMovePinNote('4k3/8/p1n5/8/2B5/8/8/4K3 w - - 0 1', 'c4b5', 'white')).toBeNull();
   });
 
+  it('suppresses pins where the front outvalues the back', () => {
+    // Rfe1 lines up queen-e4 in front of rook-e8: a queen is never pinned
+    // to a rook, so no pin story may be told.
+    expect(playedMovePinNote('4r1k1/8/8/8/4q3/2B5/8/R4RK1 w - - 0 1', 'f1e1', 'white')).toBeNull();
+  });
+
+  it('suppresses attacks misread as pins: cheaper slider on a pricier shield', () => {
+    // Bb2 aims at Rc3 with Qd4 behind, but bishop-for-rook wins the
+    // exchange outright — an attack, not a pin.
+    expect(playedMovePinNote('6k1/8/8/8/3q4/2r5/8/B6K w - - 0 1', 'a1b2', 'white')).toBeNull();
+  });
+
+  it('keeps pins where the back outvalues the front', () => {
+    expect(playedMovePinNote('4q1k1/8/8/8/4r3/2B5/8/R4RK1 w - - 0 1', 'f1e1', 'white'))
+      .toBe("Rfe1 pins Black's rook to the queen.");
+  });
+
   it('rejects captures, promotions, non-sliders, quiet moves, and bad data', () => {
     expect(playedMovePinNote(
       'rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',

@@ -235,13 +235,20 @@ function buildSkewerFacts(postMoveGame: Chess, to: Square, victimColor: 'w' | 'b
 
 // Pin geometry: the moved slider sits on a ray whose first enemy contact is
 // a capturable non-pawn piece (the front) and whose second enemy contact is
-// the king or a major piece (the back) — the front shields the back, so it
-// cannot move off the ray without exposing the higher value behind it.
+// a strictly more valuable piece (the back; the king counts as infinite) —
+// the front shields the back, so it cannot move off the ray without exposing
+// the higher value behind it. A higher value piece is never pinned to a
+// lower value one (queen to rook): moving the front exposes nothing more
+// valuable, so there is no pin pressure to name. Relative pins also require
+// the pinner to match or outvalue the front: a cheaper slider on a pricier
+// shield (bishop on a rook) simply wins the piece outright, so the back is
+// incidental and there is no pin to name. Absolute pins are exempt from the
+// pinner leg — a piece that cannot legally move is pinned at any price.
 // Own pieces block; pawns and kings never count as fronts (pawn pins are
-// noise, a king front is a check owned by the skewer story). Null when no
-// ray qualifies or the position is unreadable. Like the fork there is no
-// fall clause downstream: a relative pin still lets the front move (Ne7
-// keeps Nc8/Ng6/Nf5), so the note names only the pressure.
+// noise, a king front is a check owned by the skewer story). Null when no ray qualifies or the position is
+// unreadable. Like the fork there is no fall clause downstream: a relative
+// pin still lets the front move (Ne7 keeps Nc8/Ng6/Nf5), so the note names
+// only the pressure.
 const PIN_BACK_RANK: Record<PinFacts['back'], number> = { k: 0, q: 1, r: 2 };
 function detectPinRay(postMoveGame: Chess, to: Square, pinnerType: 'r' | 'b' | 'q', victimColor: 'w' | 'b'): { front: Exclude<ForkVictim, 'k'>; frontSquare: Square; back: 'k' | 'q' | 'r'; backSquare: Square } | null {
   let board: ReturnType<Chess['board']>;
@@ -272,6 +279,15 @@ function detectPinRay(postMoveGame: Chess, to: Square, pinnerType: 'r' | 'b' | '
       }
       const back = occupant.type.toLowerCase();
       if (back !== 'k' && back !== 'q' && back !== 'r') break;
+      // The back must be strictly more valuable than the front (the king
+      // counts as infinite). A queen shielding a rook, or equal values
+      // (rook for rook, queen for queen), is no pin pressure.
+      if (back !== 'k' && TACTIC_VALUES[back as CapturedPiece] <= TACTIC_VALUES[front.piece as CapturedPiece]) break;
+      // Relative pins need the pinner to match or outvalue the front: a
+      // bishop on a rook wins the piece outright (even when the queen
+      // recaptures), so the queen behind is incidental — an attack, not a
+      // pin. The king leg is exempt: absolute pins bind at any price.
+      if (back !== 'k' && TACTIC_VALUES[front.piece as CapturedPiece] > TACTIC_VALUES[pinnerType as CapturedPiece]) break;
       const candidate = { front: front.piece, frontSquare: front.square, back: back as 'k' | 'q' | 'r', backSquare: square };
       if (!best || PIN_BACK_RANK[candidate.back] < PIN_BACK_RANK[best.back]) {
         best = candidate;

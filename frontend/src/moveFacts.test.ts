@@ -104,6 +104,52 @@ describe('createMoveFacts', () => {
     expect(facts?.pin()).toMatchObject({ front: 'n', back: 'k', hanging: true });
   });
 
+  it('suppresses pins where the front outvalues the back', () => {
+    // Rfe1 lines up queen-e4 behind rook-e8: the queen (9) shields the rook
+    // (5), so there is no pin pressure. The c3 bishop holds e1, ruling out
+    // the hanging-pinner suppression as the reason for silence.
+    expect(createMoveFacts({
+      beforeFen: '4r1k1/8/8/8/4q3/2B5/8/R4RK1 w - - 0 1',
+      playedUci: 'f1e1',
+      mover: 'white',
+    })?.pin()).toBeNull();
+    // Equal values are no pin either: rook shielding rook.
+    expect(createMoveFacts({
+      beforeFen: '4r1k1/8/8/8/4r3/2B5/8/R4RK1 w - - 0 1',
+      playedUci: 'f1e1',
+      mover: 'white',
+    })?.pin()).toBeNull();
+    // Queen shielding queen is no pin either.
+    expect(createMoveFacts({
+      beforeFen: '4q1k1/8/8/8/4q3/2B5/8/R4RK1 w - - 0 1',
+      playedUci: 'f1e1',
+      mover: 'white',
+    })?.pin()).toBeNull();
+    // A cheaper slider on a pricier shield is an attack, not a pin: Bb2
+    // takes aim at Rc3 with Qd4 behind, but bishop-for-rook wins the
+    // exchange outright, so the queen is incidental.
+    expect(createMoveFacts({
+      beforeFen: '6k1/8/8/8/3q4/2r5/8/B6K w - - 0 1',
+      playedUci: 'a1b2',
+      mover: 'white',
+    })?.pin()).toBeNull();
+  });
+
+  it('keeps pins where the back outvalues the front', () => {
+    // Rook shielding the queen at equal value: real relative pin pressure.
+    expect(createMoveFacts({
+      beforeFen: '4q1k1/8/8/8/4r3/2B5/8/R4RK1 w - - 0 1',
+      playedUci: 'f1e1',
+      mover: 'white',
+    })?.pin()).toMatchObject({ front: 'r', back: 'q', hanging: false });
+    // Queen shielding the king is absolute: still a pin.
+    expect(createMoveFacts({
+      beforeFen: '4k3/8/8/8/4q3/2B5/8/R4RK1 w - - 0 1',
+      playedUci: 'f1e1',
+      mover: 'white',
+    })?.pin()).toMatchObject({ front: 'q', back: 'k', hanging: false });
+  });
+
   it('stays silent on captures, promotions, non-sliders, and quiet moves', () => {
     const capture = createMoveFacts({
       beforeFen: 'rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',

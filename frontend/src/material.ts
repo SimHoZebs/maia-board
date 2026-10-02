@@ -393,8 +393,10 @@ export function skewerPlayedClaim(facts: MoveFacts, mover: Side): string | null 
   // Same as forks: a detected non-winning outcome is not a tactic to name.
   return skewer.net > 0 ? `${lead}.` : null;
 }
-// Names the pin when the played move itself pins a piece to its king or a
-// major piece: "Bd6 pins Black's knight to the rook." Like the fork there is
+// Names the pin when the played slider pins a no-pricier piece to a
+// strictly more valuable piece: "Bd6 pins Black's knight to the rook."
+// A cheaper slider on a pricier shield (bishop on a rook) is an attack,
+// not a pin, and never reaches here. Like the fork there is
 // no fall clause — a relative pin still lets the front move, so the note
 // names only the pressure. A hanging pinner refutes the tactic outright (the
 // victim simply takes it), so the note yields to the next positive
