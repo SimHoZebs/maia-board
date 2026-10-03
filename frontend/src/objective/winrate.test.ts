@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { deltaBaseline, deltaColumnTitle, formatWinrateDelta, botDisplayParts, botExpected, botPoint, botWhiteWdl, selectDeltaParts } from './winrate';
+import { deltaBaseline, deltaColumnTitle, formatWinrateDelta, botDisplayParts, botExpected, botPoint, botWhiteWdl, selectDeltaParts, trueCandidateDelta } from './winrate';
 
 it('reads mover-relative expected scores from WDL triples', () => {
   expect(botExpected([0.2, 0.3, 0.5])).toBeCloseTo(65, 9);
@@ -157,4 +157,17 @@ it('falls back locally when server deltas are absent or partial', () => {
   );
   expect(partial.kind).toBe('before');
   expect(partial.parts[0]).toEqual({ prob: '60%', delta: '-11.9%' });
+});
+
+it('computes true game-shift deltas including the opponent reply', () => {
+  // White c3 case: before 55.5 mover, child Black mover 49 -> after 51, delta -4.5.
+  expect(trueCandidateDelta(55.5, 49, null)).toBeCloseTo(-4.5, 9);
+  // Black to move gain: before 47 Black, child White 45 -> after 55, delta +8.
+  expect(trueCandidateDelta(47, 45, null)).toBeCloseTo(8, 9);
+  // Terminals synthesize from the outcome (mate delivered wins, draws split).
+  expect(trueCandidateDelta(60, null, { kind: 'checkmate' })).toBe(40);
+  expect(trueCandidateDelta(60, null, { kind: 'draw' })).toBe(-10);
+  // Missing endpoints stay null (caller falls back or shows pending).
+  expect(trueCandidateDelta(null, 49, null)).toBeNull();
+  expect(trueCandidateDelta(55.5, null, null)).toBeNull();
 });

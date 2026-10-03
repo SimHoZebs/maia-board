@@ -44,6 +44,30 @@ export function botWhiteWdl(wdl: MoveResponse['wdl'], turn: 'white' | 'black'): 
 // is being viewed. One decimal keeps
 // sub-point gaps visible where integer rounding would collapse them to 0.
 // Rendered as two separate columns (prob + delta), never a combined string.
+// True game-shift delta for one candidate: how the bar WDL would change
+// if this candidate were played, including the opponent best reply.
+// beforeExpected is the mover-relative grading point before the move;
+// childExpected is the mover-relative grading point of the child board
+// (opponent to move); childOutcome synthesizes terminals the bot never
+// infers (delivered mate wins, draws split). Null while either endpoint
+// is missing. Mover-relative: positive favors whoever is to move now.
+// This differs from the prospective candidate-minus-baseline above, which
+// compares forward child-direct values within one inference and reads 0.0%
+// for the policy top by construction.
+export function trueCandidateDelta(
+  beforeExpected: number | null,
+  childExpected: number | null,
+  childOutcome: { kind: string } | null | undefined,
+): number | null {
+  if (beforeExpected == null || !Number.isFinite(beforeExpected)) return null;
+  if (childOutcome) {
+    const after = childOutcome.kind === 'checkmate' ? 100 : 50;
+    return after - beforeExpected;
+  }
+  if (childExpected == null || !Number.isFinite(childExpected)) return null;
+  return (100 - childExpected) - beforeExpected;
+}
+
 export function formatWinrateDelta(delta: number): string {
   if (Math.abs(delta) < 0.05) return '0.0%';
   const rounded = (Math.sign(delta) * Math.round(Math.abs(delta) * 10) / 10).toFixed(1);

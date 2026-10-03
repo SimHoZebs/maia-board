@@ -205,11 +205,11 @@ export function MoveAnalysis({
   // ReviewActionButton); skeleton only while a side is missing.
   const verdictLoading =
     hasMove && !!played && !verdict && !hasError && !tooLong && (!evaluation || !afterEvaluation);
-  // Display list values: policy share at the selected Elo plus winrate delta
-  // from 2400's perspective. The server pairs each served row with its
-  // before-position baseline at read time; the selector below prefers those
-  // attached deltas and keeps the local before/max comparison as fallback
-  // for rows served without delta context.
+  // Display list values: policy share at the selected Elo plus true game-shift
+  // delta (bar-vs-bar including the opponent best reply) from 2400's
+  // perspective. True deltas read from the child grading rows the pipeline
+  // fetches for the viewed before-position; the prospective server/local
+  // comparison below is the fallback while a child is pending or failed.
   const beforePly = hasMove ? focus : ply;
   const beforeExpected = review.objective[beforePly]?.expected ?? null;
   const displayListed = response?.top_moves.slice(0, 5) ?? [];
@@ -232,6 +232,13 @@ export function MoveAnalysis({
     beforeExpected,
     bestListed,
   );
+  const trueDeltaText = (uci: string, fallback: string) => {
+    const entry = review.trueDeltaByUci?.get(uci);
+    if (!entry) return fallback;
+    if (entry.value != null) return formatWinrateDelta(entry.value);
+    if (entry.pending) return '…';
+    return fallback;
+  };
   // One header set for both bot lanes: play probability (Users) plus
   // win-rate delta (TrendingDown): every row versus the previous position's
   // WDL. The display lane carries low-Elo policy with 2400 values; the
@@ -304,7 +311,7 @@ export function MoveAnalysis({
               items={displayListed.map((candidate, index) => ({
                 uci: candidate.move,
                 metric: displayParts[index].prob,
-                delta: displayParts[index].delta,
+                delta: trueDeltaText(candidate.move, displayParts[index].delta),
               }))}
               headers={botListHeaders}
               onPreview={(uci) => dispatch({ type: "preview", uci })}
@@ -349,7 +356,7 @@ export function MoveAnalysis({
                 ? {
                   uci: candidate.uci,
                   metric: `${Math.round(candidate.prob! * 100)}%`,
-                  delta: objectiveDelta.parts[index]?.delta ?? formatWinrateDelta(0),
+                  delta: trueDeltaText(candidate.uci, objectiveDelta.parts[index]?.delta ?? formatWinrateDelta(0)),
                 }
                 : { uci: candidate.uci, metric: `${Math.round(candidate.expected)}%` }))}
               headers={objectiveHasProb ? botListHeaders : {

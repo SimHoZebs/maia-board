@@ -4,6 +4,7 @@ import { buildTimeline, legalPrefixLength, lineKeyFor, START_FEN, type StoredGam
 import type { State } from './state/index';
 import { ReviewCoordinator, resolveSettings, reviewKey, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings, type SettingsInput } from './reviewCoordinator';
 import { ensureLane, candidatesFor, laneError, laneFailures, laneKey, lanePending, lanePoints, laneRows, restoreDescriptor } from './objective';
+import { trueCandidateDelta } from './objective/winrate';
 import type { ObjectiveLane } from './qualities';
 import { useLineScope } from './useLineScope';
 import { useLookupRestore } from './useLookupRestore';
@@ -347,6 +348,67 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     focus: focusNode ? candidatesFor(objectiveRows[focusPly], focusNode) : undefined,
     current: candidatesFor(objectiveRows[currentPly], currentNode),
   }), [objectiveRows, focusNode, focusPly, currentNode, currentPly]);
+  // True game-shift deltas: for the viewed before-position (focus, else
+  // current at the root), fetch the 2400 grading row of each candidate
+  // child and compare bar-vs-bar: P(child) vs P(before), mover-relative.
+  // The played child already rides the mainline restore/batch; only the
+  // 4 unplayed children cost extra foreground fetches, viewed-position
+  // only (never the whole line). Terminal children synthesize (mate 100,
+  // draw 50) with no fetch.
+  const trueTargetNode = focusNode ?? currentNode;
+  const trueTargetPly = focusNode ? focusPly : currentPly;
+  const trueUcis = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    const push = (uci: string) => {
+      if (typeof uci !== 'string' || seen.has(uci)) return;
+      seen.add(uci); out.push(uci);
+    };
+    const displayMoves = (focusNode ? botResults[focusPly] : botResults[currentPly])?.top_moves.map(candidate => candidate.move) ?? [];
+    for (const uci of displayMoves) push(uci);
+    const objectiveMoves = (focusNode ? objectiveCandidates.focus : objectiveCandidates.current)?.entries.map(entry => entry.uci) ?? [];
+    for (const uci of objectiveMoves) push(uci);
+    return out.slice(0, 10);
+  }, [focusNode, focusPly, currentPly, botResults, objectiveCandidates]);
+  const trueUciKey = trueUcis.join(',');
+  const trueChildNodes = useMemo(() => {
+    if (!trueTargetNode || trueUcis.length === 0) return [];
+    const base = timeline.moves.slice(0, trueTargetPly);
+    const out: { uci: string; node: ReviewNode }[] = [];
+    for (const uci of trueUcis) {
+      try {
+        const childTimeline = buildTimeline(timeline.initialFen, [...base, uci]);
+        const row = childTimeline.rows[childTimeline.rows.length - 1];
+        out.push({ uci, node: Object.freeze({ ...row, timeline: childTimeline, initialFen: childTimeline.initialFen }) });
+      } catch { /* Illegal candidate: skip, panel falls back. */ }
+    }
+    return out;
+  }, [timeline, trueTargetPly, trueUciKey]);
+  useEffect(() => {
+    if (!active || tooLong || trueChildNodes.length === 0) return;
+    const targets = trueChildNodes.map(entry => entry.node).filter(node => !node.outcome);
+    if (targets.length === 0) return;
+    ensureLane(coordinator, targets, scope.signal);
+  }, [coordinator, active, tooLong, scope, trueChildNodes]);
+  const trueChildPoints = useMemo(() => {
+    const rows = trueChildNodes.map(entry => laneRows([entry.node], { coordinator, sfEvaluations: [undefined] })[0]);
+    return lanePoints(rows, trueChildNodes.map(entry => entry.node));
+  }, [trueChildNodes, version, coordinator]);
+  const trueDeltaByUci = useMemo(() => {
+    const map = new Map<string, { value: number | null; pending: boolean }>();
+    const beforeExpected = (focusNode ? objectivePoints[focusPly] : objectivePoints[currentPly])?.expected ?? null;
+    // Without a settled baseline there is nothing true to converge to:
+    // fall back to the prospective comparison instead of spinning forever
+    // (the focus row itself is still loading or failed).
+    if (beforeExpected == null) return map;
+    trueChildNodes.forEach((entry, index) => {
+      const point = trueChildPoints[index];
+      const value = trueCandidateDelta(beforeExpected, point?.expected ?? null, entry.node.outcome);
+      const failed = !entry.node.outcome && value === null && laneError(coordinator, entry.node) !== undefined;
+      map.set(entry.uci, { value, pending: value === null && !entry.node.outcome && !failed });
+    });
+    return map;
+  }, [trueChildNodes, trueChildPoints, objectivePoints, focusNode, focusPly, currentPly, version, coordinator]);
   const objectiveLane: ObjectiveLane = useMemo(() => ({
     points: objectivePoints,
     pending: lanePending(coordinator),
@@ -484,6 +546,12 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     // displayed move, the current list describes the root. Always the
     // objective source, never the display Elo.
     objectiveCandidates,
+    // True game-shift deltas by candidate UCI for the viewed before-position
+    // (focus, else current at the root): bar-vs-bar including the opponent
+    // reply. Value null with pending true means child grading is in flight
+    // (panel shows an ellipsis); null with pending false means failed or
+    // unsettled baseline (panel falls back to the prospective delta).
+    trueDeltaByUci,
     // Raw engine grades (Critical/Top/Holds intact) for the verdict's
     // only-move fact. Badges and text read the translated `qualities`; this
     // never reaches display directly.
