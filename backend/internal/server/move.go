@@ -58,13 +58,14 @@ func (s *Server) serveMove(w http.ResponseWriter, r *http.Request, prio sched.Pr
 		lane = "focus"
 	}
 	// Perf spans: validate_us covers decode + request validation, exec_ms
-	// covers the cache→admission→inference→store path. Appended to the
-	// existing timing line so docker-logs latency curves can split
-	// validation overhead from engine execution.
-	validateMicros, execMillis := int64(-1), int64(-1)
+	// covers the cache→admission→inference→store path, and wait_ms is the
+	// admission queue wait inside exec_ms (-1 when admission was never
+	// reached: validation error or cache hit). exec_ms - wait_ms ~= engine
+	// inference + store on misses.
+	validateMicros, execMillis, waitMillis := int64(-1), int64(-1), int64(-1)
 	defer func() {
-		log.Printf("move status=%d lane=%s plies=%d model=%s degraded=%t duration_ms=%d validate_us=%d exec_ms=%d",
-			rec.status, lane, len(request.Moves), model, degraded, time.Since(started).Milliseconds(), validateMicros, execMillis)
+		log.Printf("move status=%d lane=%s plies=%d model=%s degraded=%t duration_ms=%d validate_us=%d exec_ms=%d wait_ms=%d",
+			rec.status, lane, len(request.Moves), model, degraded, time.Since(started).Milliseconds(), validateMicros, execMillis, waitMillis)
 		if rec.status == http.StatusOK {
 			cache := "miss"
 			if request.Temperature != 0 {
@@ -112,6 +113,9 @@ func (s *Server) serveMove(w http.ResponseWriter, r *http.Request, prio sched.Pr
 	if predictErr != nil {
 		mapEngineError(w, predictErr, engine.SanitizeError(predictErr.Error()))
 		return
+	}
+	if !hit {
+		waitMillis = response.WaitMs
 	}
 	model, degraded = response.ModelUsed, response.Degraded
 	// The analysis lane serves rows with their delta context attached (the

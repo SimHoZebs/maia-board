@@ -188,7 +188,7 @@ func (e maiaExecutor) runLive(waitCtx, execCtx context.Context, prio sched.Prior
 	if err != nil {
 		return engine.MoveResponse{}, release, false, err
 	}
-	response = engine.MoveResponse{Move: result.Move, WDL: result.WDL, ModelUsed: used, Degraded: degraded}
+	response = engine.MoveResponse{Move: result.Move, WDL: result.WDL, ModelUsed: used, Degraded: degraded, WaitMs: result.WaitMs}
 	for _, candidate := range result.Candidates {
 		response.TopMoves = append(response.TopMoves, engine.TopMove{Move: candidate.Move, Prob: candidate.Policy, WDL: candidate.WDL})
 	}
@@ -310,7 +310,7 @@ func (job *batchJob) progress() batchProgress {
 // per-request move/evaluate lines: `docker logs` (Komodo) shows the
 // per-index latency curve, where a second-half cliff points at
 // ply-correlated cost and flat-but-slow lines point at the search budget.
-func (job *batchJob) complete(entry *batchEntry, errMsg string) {
+func (job *batchJob) complete(entry *batchEntry, errMsg string, waitMs int64) {
 	status := batchDone
 	if errMsg != "" {
 		status = batchFailed
@@ -333,8 +333,8 @@ func (job *batchJob) complete(entry *batchEntry, errMsg string) {
 		}
 	}
 	job.mu.Unlock()
-	log.Printf("review-batch entry job=%s index=%d engine=%s role=%s status=%s duration_ms=%d err=%s",
-		job.id, entry.index, entry.engine, entry.role, status, time.Since(entry.started).Milliseconds(), errMsg)
+	log.Printf("review-batch entry job=%s index=%d engine=%s role=%s status=%s duration_ms=%d wait_ms=%d err=%s",
+		job.id, entry.index, entry.engine, entry.role, status, time.Since(entry.started).Milliseconds(), waitMs, errMsg)
 }
 
 // ReviewJobs runs whole-game batches over the shared engine schedulers
@@ -790,26 +790,33 @@ func batchErrMessage(err error) string {
 // job.complete, which emits the per-entry timing line.
 func (js *ReviewJobs) runEntry(job *batchJob, entry *batchEntry) {
 	bg := context.Background()
-	runners := map[string]func() error{
-		"sf": func() error {
-			_, _, err := js.s.executeSF(bg, bg, sched.PriorityBatch, entry.submitSeq, entry.evalReq, true)
-			return err
+	runners := map[string]func() (int64, error){
+		"sf": func() (int64, error) {
+			res, _, err := js.s.executeSF(bg, bg, sched.PriorityBatch, entry.submitSeq, entry.evalReq, true)
+			if err != nil || res == nil {
+				return -1, err
+			}
+			return res.WaitMs, err
 		},
-		"maia": func() error {
-			_, _, err := js.s.executeMaia(bg, bg, sched.PriorityBatch, entry.submitSeq, entry.maiaReq, entry.maiaModel, true)
-			return err
+		"maia": func() (int64, error) {
+			res, _, err := js.s.executeMaia(bg, bg, sched.PriorityBatch, entry.submitSeq, entry.maiaReq, entry.maiaModel, true)
+			if err != nil {
+				return -1, err
+			}
+			return res.WaitMs, err
 		},
 	}
 	run, ok := runners[entry.engine]
 	if !ok {
-		job.complete(entry, "unknown engine")
+		job.complete(entry, "unknown engine", -1)
 		return
 	}
-	if err := run(); err != nil {
-		job.complete(entry, batchErrMessage(err))
+	if waitMs, err := run(); err != nil {
+		job.complete(entry, batchErrMessage(err), waitMs)
 		return
+	} else {
+		job.complete(entry, "", waitMs)
 	}
-	job.complete(entry, "")
 }
 
 // reviewEvents streams live progress as server-sent events. The opening

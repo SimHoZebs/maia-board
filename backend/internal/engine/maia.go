@@ -75,6 +75,10 @@ type MaiaResult struct {
 	Move       string          `json:"move"`
 	Candidates []MaiaCandidate `json:"candidates"`
 	WDL        [3]float64      `json:"wdl"`
+	// WaitMs is admission queue wait in ms. Internal only (never
+	// serialized to clients or the cache); -1 means admission was
+	// never reached (cache hit or pre-admission error).
+	WaitMs int64 `json:"-"`
 }
 type workerState string
 
@@ -245,7 +249,9 @@ func (w *Worker) Predict(waitCtx, execCtx context.Context, prio sched.Priority, 
 	}
 	// Sync lanes bound their queue wait; batch work waits until granted or
 	// cancelled, since it runs detached without a client deadline.
+	admitStart := time.Now()
 	grant, err := Admit(waitCtx, prio, w.sched, key, submitSeq)
+	waitMs := time.Since(admitStart).Milliseconds()
 	if err != nil {
 		return MaiaResult{}, nil, err
 	}
@@ -272,8 +278,9 @@ func (w *Worker) Predict(waitCtx, execCtx context.Context, prio sched.Priority, 
 	completed := func() (MaiaResult, func(), error) {
 		result := op.result
 		result.Candidates = append([]MaiaCandidate(nil), result.Candidates...)
+		result.WaitMs = waitMs
 		if op.err != nil {
-			return MaiaResult{}, release, op.err
+			return MaiaResult{WaitMs: waitMs}, release, op.err
 		}
 		return result, release, nil
 	}
@@ -620,7 +627,9 @@ func (p *Pool) Predict(waitCtx, execCtx context.Context, prio sched.Priority, su
 	if request.Temperature == 0 {
 		key, _ = MaiaIdentity(request, p.model).Coordinates()
 	}
+	admitStart := time.Now()
 	grant, err := Admit(waitCtx, prio, p.sched, key, submitSeq)
+	waitMs := time.Since(admitStart).Milliseconds()
 	if err != nil {
 		return MaiaResult{}, nil, err
 	}
@@ -655,8 +664,9 @@ func (p *Pool) Predict(waitCtx, execCtx context.Context, prio sched.Priority, su
 	completed := func() (MaiaResult, func(), error) {
 		result := op.result
 		result.Candidates = append([]MaiaCandidate(nil), result.Candidates...)
+		result.WaitMs = waitMs
 		if op.err != nil {
-			return MaiaResult{}, release, op.err
+			return MaiaResult{WaitMs: waitMs}, release, op.err
 		}
 		return result, release, nil
 	}
@@ -707,6 +717,7 @@ func (p *EnginePool) Predict(waitCtx, execCtx context.Context, prio sched.Priori
 	if err == nil {
 		return result, release, "79m", false, nil
 	}
+	firstWait := result.WaitMs
 	// The worker returns a release with operation errors (nothing was
 	// stored); free it here since the caller only releases on success.
 	// Joins and admission failures carry no grant.
@@ -726,6 +737,7 @@ func (p *EnginePool) Predict(waitCtx, execCtx context.Context, prio sched.Priori
 		}
 		return MaiaResult{}, nil, "", false, fmt.Errorf("engine fallback failed: %w", errors.Join(err, fallbackErr))
 	}
+	result.WaitMs += firstWait
 	return result, release, "5m", true, nil
 }
 

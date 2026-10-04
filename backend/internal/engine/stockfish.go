@@ -61,6 +61,10 @@ type EvaluationResponse struct {
 	Score          EvaluationScore    `json:"score"`
 	Lines          []EvaluationLine   `json:"lines"`
 	ActualSettings *StockfishSettings `json:"actual_settings,omitempty"`
+	// WaitMs is admission queue wait in ms. Internal only (never
+	// serialized to clients or the cache); -1 means admission was
+	// never reached (cache hit or pre-admission error).
+	WaitMs int64 `json:"-"`
 }
 
 // Evaluator owns the priority schedulers, one warm helper per scheduler, and
@@ -347,7 +351,9 @@ func ValidateEvaluationRequest(r *EvaluationRequest) *apierror.RequestError {
 func (e *Evaluator) Run(waitCtx, execCtx context.Context, prio sched.Priority, submitSeq uint64, request EvaluationRequest) (*EvaluationResponse, func(), error) {
 	key, _ := SFIdentity(request).Coordinates()
 	sched := e.schedulerFor(prio)
+	admitStart := time.Now()
 	grant, err := Admit(waitCtx, prio, sched, key, submitSeq)
+	waitMs := time.Since(admitStart).Milliseconds()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -401,6 +407,7 @@ func (e *Evaluator) Run(waitCtx, execCtx context.Context, prio sched.Priority, s
 		return fail(errors.New("invalid worker response"))
 	}
 	result = decoded
+	result.WaitMs = waitMs
 	return &result, release, nil
 }
 

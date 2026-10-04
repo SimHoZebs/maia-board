@@ -3,9 +3,11 @@ package server
 import (
 	"database/sql"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"maia-board/backend/internal/store"
 )
@@ -62,19 +64,34 @@ func (s *Server) games(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"games": games, "current_id": nullableString(currentID), "current_game": current, "total": total, "next_offset": nextOffset})
 	case http.MethodPost:
+		started := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		w = rec
 		payload, ok := decodeSingle[store.GamePayload](w, r, 64*1024)
 		if !ok {
+			log.Printf("game-save status=%d plies=-1 duration_ms=%d", rec.status, time.Since(started).Milliseconds())
 			return
 		}
 		if err := store.ValidateGamePayload(&payload); err != nil {
 			writeAPIError(w, http.StatusBadRequest, err.Code, err.Message)
+			log.Printf("game-save status=%d plies=%d model=%s result=%q duration_ms=%d", rec.status, len(payload.Moves), payload.Model, payload.Result, time.Since(started).Milliseconds())
 			return
 		}
 		game, err := s.store.Save(payload)
 		if err != nil {
 			writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
+			log.Printf("game-save status=%d plies=%d model=%s result=%q duration_ms=%d", rec.status, len(payload.Moves), payload.Model, payload.Result, time.Since(started).Milliseconds())
 			return
 		}
+		eloMaia, eloUser := 0, 0
+		if payload.EloMaia != nil {
+			eloMaia = *payload.EloMaia
+		}
+		if payload.EloUser != nil {
+			eloUser = *payload.EloUser
+		}
+		log.Printf("game-save status=%d id=%s plies=%d model=%s user_color=%s elo_maia=%d elo_user=%d result=%q current=%t duration_ms=%d",
+			rec.status, game.ID, len(game.Moves), game.Model, game.UserColor, eloMaia, eloUser, game.Result, payload.Current, time.Since(started).Milliseconds())
 		writeJSON(w, http.StatusOK, game)
 	default:
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET or POST is required")
@@ -104,10 +121,15 @@ func (s *Server) gameByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, game)
 	case http.MethodDelete:
+		started := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusNoContent}
+		w = rec
 		if err := s.store.Delete(id); err != nil {
 			writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
+			log.Printf("game-delete status=%d id=%s duration_ms=%d", rec.status, id, time.Since(started).Milliseconds())
 			return
 		}
+		log.Printf("game-delete status=%d id=%s duration_ms=%d", rec.status, id, time.Since(started).Milliseconds())
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET or DELETE is required")

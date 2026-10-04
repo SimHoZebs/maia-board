@@ -201,10 +201,12 @@ optionally points at `scripts/gen-perf-line.py --seed N --plies M` output
 to run the shared seeded line (same mulberry32 as the frontend client
 sim); otherwise a synthetic line is used.
 
-`move` and `evaluate` log lines carry `validate_us` (decode + validation)
-and `exec_ms` (cache→admission→inference→store) spans alongside
-`duration_ms`, so `docker logs` latency curves split validation overhead
-from engine execution.
+`move` and `evaluate` log lines carry `validate_us` (decode + validation),
+`exec_ms` (cache→admission→inference→store), and `wait_ms` (admission queue
+wait inside `exec_ms`; -1 when admission was never reached) alongside
+`duration_ms`, so `docker logs` latency curves split validation overhead,
+queue waiting, and engine execution (`exec_ms - wait_ms` ~= inference +
+store on misses). `review-batch entry` lines carry `wait_ms` likewise.
 
 ### Live-engine profiling
 

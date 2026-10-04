@@ -40,6 +40,10 @@ type MoveResponse struct {
 	// DeltaBaseline is the before-position 2400 point the deltas above
 	// were computed against, attached at read time (never stored).
 	DeltaBaseline *DeltaBaseline `json:"delta_baseline,omitempty"`
+	// WaitMs is admission queue wait in ms. Internal only (never
+	// serialized to clients or the cache); -1 means admission was
+	// never reached (cache hit or pre-admission error).
+	WaitMs int64 `json:"-"`
 }
 
 // DeltaBaseline names the baseline a served Maia row's deltas compare
