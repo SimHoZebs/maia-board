@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { computePlayQualities, getNavigatorOnLine, hasExhaustedPlayRetries, isOfflineNow, isOfflineValue, PLAY_RETRY_EXHAUSTED_MESSAGE, playExhaustedError, wantedPlayPair, type PlayQualitiesMemo } from './usePlayFeedback';
+import { computePlayQualities, getNavigatorOnLine, hasExhaustedPlayRetries, isOfflineNow, isOfflineValue, PLAY_RETRY_EXHAUSTED_MESSAGE, playExhaustedError, unsettledReviewNodes, wantedPlayPair, type PlayQualitiesMemo } from './usePlayFeedback';
 import { computeReviewQualities, translateReviewQualities } from './useReview';
 import { qualityGlyphs } from './ReviewCharts';
 import { initialState, reducer } from './state/index';
@@ -215,6 +215,29 @@ describe('play retry offline/exhaustion helpers', () => {
     expect(playExhaustedError(true, 0)).toBeUndefined();
     expect(playExhaustedError(true, 3)).toBe(PLAY_RETRY_EXHAUSTED_MESSAGE);
     expect(playExhaustedError(true, 4)).toBe(PLAY_RETRY_EXHAUSTED_MESSAGE);
+  });
+});
+
+describe('unsettledReviewNodes', () => {
+  const nodes = reviewNodes(buildTimeline(START_FEN, ['e2e4', 'e7e5']));
+  const ctxFor = (settled: readonly number[], busy: readonly number[]) => ({
+    settled: (node: ReviewNode) => settled.includes(node.ply),
+    busy: (node: ReviewNode) => busy.includes(node.ply),
+  });
+  it('keeps only nodes with no row and nothing in flight', () => {
+    // ply 0 settled, ply 1 busy (pending/failure/restoring), ply 2 healable.
+    expect(unsettledReviewNodes(nodes, ctxFor([0], [1]))).toEqual([nodes[2]]);
+  });
+  it('returns nothing when everything settles or stays busy', () => {
+    expect(unsettledReviewNodes(nodes, ctxFor([0, 1, 2], []))).toEqual([]);
+    expect(unsettledReviewNodes(nodes, ctxFor([], [0, 1, 2]))).toEqual([]);
+  });
+  it('skips outcome nodes, which never fetch', () => {
+    const mated = reviewNodes(buildTimeline(START_FEN, ['f2f3', 'e7e5', 'g2g4', 'd8h4']));
+    const terminal = mated[mated.length - 1];
+    expect(terminal.outcome).not.toBeNull();
+    expect(unsettledReviewNodes(mated, { settled: () => false, busy: () => false }))
+      .not.toContain(terminal);
   });
 });
 

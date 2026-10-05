@@ -155,11 +155,11 @@ export function playExhaustedError(hasErrors: boolean, attemptCount: number): st
 }
 
 // Nodes that need a heal sweep: no settled row, no recorded failure, and no
-// pending/restoring flight. Queue-wiped or superseded (409) work lands here:
-// it records no failure and the bulk restore only serves cached rows, so
-// without this the position blanks forever once it slides out of the newest
-// pair. Outcome nodes never fetch and stay excluded by callers' filters via
-// the outcome check here. Pure for tests (wantedPlayPair precedent).
+// pending/restoring flight. Server-superseded (409) work lands here: it
+// records no failure and the bulk restore only serves cached rows, so
+// without this the position blanks until something re-requests it. Outcome
+// nodes never fetch and stay excluded by callers' filters via the outcome
+// check here. Pure for tests (wantedPlayPair precedent).
 export function unsettledReviewNodes(nodes: ReviewNode[], ctx: {
   settled: (node: ReviewNode) => boolean;
   busy: (node: ReviewNode) => boolean;
@@ -306,8 +306,8 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   // Eagerness (analysis): debounce + batch-wait. Current and previous
   // Stockfish grade the displayed move. The bot's focus grades that move;
   // the current-position bot supplies forward candidates. Signal-abort is the
-  // only foreground cancel path: a line change aborts the scope, a ply
-  // change replaces the queue latest-wins.
+  // only foreground cancel path: a line change aborts the scope; a ply
+  // change queues the new pair behind in FIFO order.
   useEffect(() => {
     if (!active || tooLong) return;
     // Cached-instant bypass: when both SF sides are already settled
@@ -631,20 +631,18 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   // the coordinator's job filter, exactly like the analysis focus fetch.
   const pair = useMemo(() => wantedPlayPair(allNodes, userColor), [allNodes, userColor]);
   const tooLong = timeline.moves.length > 256;
-  // Eagerness (play): foreground fetch on move. Newest-first merge per
-  // engine: the newest pair jumps the queue front while older queued pairs
-  // stay behind it — every queued position stays displayed, so nothing is
-  // ever dropped for being slow. The server batch is out of this path
-  // entirely — no per-ply submit, no cancel/resubmit churn, no 409 races
-  // with ourselves. Play (POST /move → Play lane) and bot analysis
-  // (POST /move/analysis → Focus lane) queue on the shared slot with Play
-  // priority instead of superseding each other.
+  // Eagerness (play): foreground fetch on move. Requests serve FIFO and
+  // nothing queued is ever dropped, so fast play never loses a badge. The
+  // server batch is out of this path entirely — no per-ply submit, no
+  // cancel/resubmit churn, no 409 races with ourselves. Play (POST /move →
+  // Play lane) and bot analysis (POST /move/analysis → Focus lane) queue on
+  // the shared slot with Play priority instead of superseding each other.
   useEffect(() => {
     if (!active || tooLong || !pair.sfNodes.length) return;
-    coordinator.ensure(pair.sfNodes, settings, { priority: true, engines: ['sf'], signal: scope.signal, newestFirst: true });
+    coordinator.ensure(pair.sfNodes, settings, { priority: true, engines: ['sf'], signal: scope.signal });
     if (pair.botNode) {
-      coordinator.ensure([pair.botNode], settings, { priority: true, engines: ['maia'], signal: scope.signal, newestFirst: true });
-      ensureLane(coordinator, pair.sfNodes, scope.signal, { newestFirst: true });
+      coordinator.ensure([pair.botNode], settings, { priority: true, engines: ['maia'], signal: scope.signal });
+      ensureLane(coordinator, pair.sfNodes, scope.signal);
     }
   }, [coordinator, active, tooLong, pair, settings, scope]);
   const nodes = useMemo(() => {
@@ -764,16 +762,14 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
       const hasFailures = !!latestRetry.current.key;
       if (hasFailures) attempts.current.set(bucket, (attempts.current.get(bucket) ?? 0) + 1);
       // Re-issuing is enough: the coordinator clears failures for desired
-      // jobs and skips already-settled ones at the pump. Heals append
-      // behind the queue so a sweep never reorders the newest pair behind
-      // older gaps.
+      // jobs and skips already-settled ones at the pump.
       if (!latestRetry.current.key) {
         setSustainedError(undefined);
       } else if (hasExhaustedPlayRetries(attempts.current.get(bucket) ?? 0)) {
         setSustainedError(playExhaustedError(true, attempts.current.get(bucket) ?? 0));
       }
-      if (sf.length) coordinator.ensure(sf, settings, { priority: true, engines: ['sf'], signal: scope.signal, append: true });
-      if (bot.length) coordinator.ensure(bot, settings, { priority: true, engines: ['maia'], signal: scope.signal, append: true });
+      if (sf.length) coordinator.ensure(sf, settings, { priority: true, engines: ['sf'], signal: scope.signal });
+      if (bot.length) coordinator.ensure(bot, settings, { priority: true, engines: ['maia'], signal: scope.signal });
       if (lane.length) ensureLane(coordinator, lane, scope.signal);
       if (restoreFailed) retryRestore();
     }, FOREGROUND_RETRY_MS);
@@ -793,8 +789,8 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
       const s = latestSettings.current;
       const sc = latestScope.current;
       if (sc.signal.aborted) return;
-      if (targets.sf.length) coordinator.ensure(targets.sf, s, { priority: true, engines: ['sf'], signal: sc.signal, append: true });
-      if (targets.bot.length) coordinator.ensure(targets.bot, s, { priority: true, engines: ['maia'], signal: sc.signal, append: true });
+      if (targets.sf.length) coordinator.ensure(targets.sf, s, { priority: true, engines: ['sf'], signal: sc.signal });
+      if (targets.bot.length) coordinator.ensure(targets.bot, s, { priority: true, engines: ['maia'], signal: sc.signal });
       if (targets.lane.length) ensureLane(coordinator, targets.lane, sc.signal);
       if (targets.restore) retryRestore();
     };
@@ -842,8 +838,8 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     && !evaluations[viewFocus]?.terminal && !evaluations[viewedPly]?.terminal;
   const playSfSettingsFor = useCallback(() => settings, [settings]);
   const ensurePlayWalkFrontier = useCallback((maia: ReviewNode | null, sf: ReviewNode | null) => {
-    if (maia) ensureLane(coordinator, [maia], scope.signal, { newestFirst: true });
-    if (sf) coordinator.ensure([sf], settings, { priority: true, engines: ['sf'], signal: scope.signal, newestFirst: true });
+    if (maia) ensureLane(coordinator, [maia], scope.signal);
+    if (sf) coordinator.ensure([sf], settings, { priority: true, engines: ['sf'], signal: scope.signal });
   }, [coordinator, scope, settings]);
   const objectiveBestLine = useObjectiveBestLine({ coordinator, initialFen: START_FEN, lineMoves: timeline.moves,
     reviewedPly: viewedPly, enabled: playWalkEnabled, window: state.bestLineWindow, sfSettingsFor: playSfSettingsFor,
