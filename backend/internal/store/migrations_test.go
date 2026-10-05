@@ -32,7 +32,7 @@ func TestTemperatureMigrationAndRoundtrip(t *testing.T) {
 	}
 	elo := 1600
 	payload := GamePayload{ID: "new", UserColor: "white", EloMaia: &elo, EloUser: &elo, Model: "79m", Moves: []string{}, Temperature: .7}
-	saved, err := store.Save(payload)
+	saved, _, err := store.Save(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,12 +40,12 @@ func TestTemperatureMigrationAndRoundtrip(t *testing.T) {
 	if err != nil || loaded.Temperature != .7 {
 		t.Fatalf("roundtrip: %+v %v", loaded, err)
 	}
-	again, err := store.Save(payload)
+	again, _, err := store.Save(payload)
 	if err != nil || again.UpdatedAt != saved.UpdatedAt {
 		t.Fatal("unchanged save changed recency", err)
 	}
 	resigned := GamePayload{ID: "old", UserColor: "white", EloMaia: &elo, EloUser: &elo, Model: "79m", Moves: []string{"e2e4"}, Result: "resigned"}
-	if _, err := store.Save(resigned); err != nil {
+	if _, _, err := store.Save(resigned); err != nil {
 		t.Fatal(err)
 	}
 	got, err := store.Get("old")

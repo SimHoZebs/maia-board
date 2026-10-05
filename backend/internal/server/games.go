@@ -77,7 +77,7 @@ func (s *Server) games(w http.ResponseWriter, r *http.Request) {
 			log.Printf("game-save status=%d plies=%d model=%s result=%q duration_ms=%d", rec.status, len(payload.Moves), payload.Model, payload.Result, time.Since(started).Milliseconds())
 			return
 		}
-		game, err := s.store.Save(payload)
+		game, isNew, err := s.store.Save(payload)
 		if err != nil {
 			writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
 			log.Printf("game-save status=%d plies=%d model=%s result=%q duration_ms=%d", rec.status, len(payload.Moves), payload.Model, payload.Result, time.Since(started).Milliseconds())
@@ -90,8 +90,8 @@ func (s *Server) games(w http.ResponseWriter, r *http.Request) {
 		if payload.EloUser != nil {
 			eloUser = *payload.EloUser
 		}
-		log.Printf("game-save status=%d id=%s plies=%d model=%s user_color=%s elo_maia=%d elo_user=%d result=%q current=%t duration_ms=%d",
-			rec.status, game.ID, len(game.Moves), game.Model, game.UserColor, eloMaia, eloUser, game.Result, payload.Current, time.Since(started).Milliseconds())
+		log.Printf("game-save status=%d id=%s plies=%d model=%s user_color=%s elo_maia=%d elo_user=%d result=%q current=%t new=%t duration_ms=%d",
+			rec.status, game.ID, len(game.Moves), game.Model, game.UserColor, eloMaia, eloUser, game.Result, payload.Current, isNew, time.Since(started).Milliseconds())
 		writeJSON(w, http.StatusOK, game)
 	default:
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET or POST is required")

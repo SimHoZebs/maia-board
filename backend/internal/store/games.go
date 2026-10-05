@@ -170,35 +170,43 @@ func ValidateGamePayload(payload *GamePayload) *apierror.RequestError {
 
 // Save inserts or updates a game. created_at is immutable once set; updated_at
 // always becomes now. When current is true the current-game marker moves too.
-func (s *GameStore) Save(payload GamePayload) (GameRow, error) {
+// It reports isNew=true when the id was absent (a genuinely new game row),
+// false for updates and unchanged re-saves.
+func (s *GameStore) Save(payload GamePayload) (GameRow, bool, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	id := payload.ID
 	if id == "" {
 		generated, err := NewHexID()
 		if err != nil {
-			return GameRow{}, err
+			return GameRow{}, false, err
 		}
 		id = generated
 	}
 	moves, err := encodeJSONColumn(payload.Moves)
 	if err != nil {
-		return GameRow{}, err
+		return GameRow{}, false, err
 	}
-	return withTx(s.db, func(tx *sql.Tx) (GameRow, error) {
+	type saveResult struct {
+		game  GameRow
+		isNew bool
+	}
+	res, err := withTx(s.db, func(tx *sql.Tx) (saveResult, error) {
 		var created, updated, stored string
 		var storedColor, storedModel, storedResult string
 		var storedMaia, storedUser int
 		var storedTemperature float64
 		err := tx.QueryRow(`SELECT created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result
 			FROM games WHERE id = ?`, id).Scan(&created, &updated, &storedColor, &storedMaia, &storedUser, &storedModel, &stored, &storedTemperature, &storedResult)
+		isNew := false
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
+			isNew = true
 			created = payload.CreatedAt
 			if created == "" {
 				created = now
 			}
 		case err != nil:
-			return GameRow{}, err
+			return saveResult{}, err
 		default:
 			// Resuming or re-saving unchanged content must not churn recency order.
 			if storedColor == payload.UserColor && storedMaia == *payload.EloMaia && storedUser == *payload.EloUser &&
@@ -206,11 +214,11 @@ func (s *GameStore) Save(payload GamePayload) (GameRow, error) {
 				if payload.Current {
 					if _, err := tx.Exec(`INSERT INTO meta (key, value) VALUES ('current_game_id', ?)
 						ON CONFLICT (key) DO UPDATE SET value = excluded.value`, id); err != nil {
-						return GameRow{}, err
+						return saveResult{}, err
 					}
 				}
-				return GameRow{ID: id, CreatedAt: created, UpdatedAt: updated, UserColor: payload.UserColor,
-					EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result}, nil
+				return saveResult{game: GameRow{ID: id, CreatedAt: created, UpdatedAt: updated, UserColor: payload.UserColor,
+					EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result}}, nil
 			}
 		}
 		_, err = tx.Exec(`INSERT INTO games (id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result)
@@ -219,18 +227,22 @@ func (s *GameStore) Save(payload GamePayload) (GameRow, error) {
 				elo_maia = excluded.elo_maia, elo_user = excluded.elo_user, model = excluded.model, moves = excluded.moves, temperature = excluded.temperature, result = excluded.result`,
 			id, created, now, payload.UserColor, *payload.EloMaia, *payload.EloUser, payload.Model, moves, payload.Temperature, payload.Result)
 		if err != nil {
-			return GameRow{}, err
+			return saveResult{}, err
 		}
 		if payload.Current {
 			_, err = tx.Exec(`INSERT INTO meta (key, value) VALUES ('current_game_id', ?)
 				ON CONFLICT (key) DO UPDATE SET value = excluded.value`, id)
 			if err != nil {
-				return GameRow{}, err
+				return saveResult{}, err
 			}
 		}
-		return GameRow{ID: id, CreatedAt: created, UpdatedAt: now, UserColor: payload.UserColor,
-			EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result}, nil
+		return saveResult{game: GameRow{ID: id, CreatedAt: created, UpdatedAt: now, UserColor: payload.UserColor,
+			EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result}, isNew: isNew}, nil
 	})
+	if err != nil {
+		return GameRow{}, false, err
+	}
+	return res.game, res.isNew, nil
 }
 
 type gameScanner interface {

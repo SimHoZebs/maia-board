@@ -72,11 +72,11 @@ func TestGamesPagesIncludeCurrentOutsidePage(t *testing.T) {
 	gameStore := testStore(t)
 	current := gameFixture("old", "e2e4")
 	current.Current = true
-	if _, err := gameStore.Save(current); err != nil {
+	if _, _, err := gameStore.Save(current); err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"middle", "new"} {
-		if _, err := gameStore.Save(gameFixture(id)); err != nil {
+		if _, _, err := gameStore.Save(gameFixture(id)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -112,7 +112,7 @@ func TestGamesListOrphanMarkerReadsNull(t *testing.T) {
 	gameStore := testStore(t)
 	current := gameFixture("old", "e2e4")
 	current.Current = true
-	if _, err := gameStore.Save(current); err != nil {
+	if _, _, err := gameStore.Save(current); err != nil {
 		t.Fatal(err)
 	}
 	// Bypass Delete's marker cleanup to simulate a marker/game race.

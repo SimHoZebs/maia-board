@@ -58,14 +58,14 @@ func gameFixture(id string, moves ...string) GamePayload {
 
 func TestGameStoreSaveGetList(t *testing.T) {
 	store := testStore(t)
-	first, err := store.Save(gameFixture("a", "e2e4"))
+	first, _, err := store.Save(gameFixture("a", "e2e4"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.ID != "a" || first.CreatedAt == "" || first.UpdatedAt == "" {
 		t.Fatalf("unexpected saved row: %+v", first)
 	}
-	if _, err := store.Save(gameFixture("b", "e2e4", "e7e5")); err != nil {
+	if _, _, err := store.Save(gameFixture("b", "e2e4", "e7e5")); err != nil {
 		t.Fatal(err)
 	}
 	games, total, err := store.List(200)
@@ -86,15 +86,21 @@ func TestGameStoreSaveGetList(t *testing.T) {
 
 func TestGameStoreUpsertPreservesCreatedAt(t *testing.T) {
 	store := testStore(t)
-	saved, err := store.Save(gameFixture("a", "e2e4"))
+	saved, isNew, err := store.Save(gameFixture("a", "e2e4"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !isNew {
+		t.Fatal("first save must report isNew=true")
+	}
 	updated := gameFixture("a", "e2e4", "e7e5")
 	updated.CreatedAt = "2000-01-01T00:00:00Z"
-	resaved, err := store.Save(updated)
+	resaved, isNew, err := store.Save(updated)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if isNew {
+		t.Fatal("update save must report isNew=false")
 	}
 	if resaved.CreatedAt != saved.CreatedAt {
 		t.Fatalf("created_at changed: %q -> %q", saved.CreatedAt, resaved.CreatedAt)
@@ -106,15 +112,15 @@ func TestGameStoreUpsertPreservesCreatedAt(t *testing.T) {
 
 func TestGameStoreUnchangedSavePreservesOrder(t *testing.T) {
 	store := testStore(t)
-	if _, err := store.Save(gameFixture("a", "e2e4")); err != nil {
+	if _, _, err := store.Save(gameFixture("a", "e2e4")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Save(gameFixture("b", "d2d4")); err != nil {
+	if _, _, err := store.Save(gameFixture("b", "d2d4")); err != nil {
 		t.Fatal(err)
 	}
 	unchanged := gameFixture("a", "e2e4")
 	unchanged.Current = true
-	resaved, err := store.Save(unchanged)
+	resaved, _, err := store.Save(unchanged)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +138,7 @@ func TestGameStoreUnchangedSavePreservesOrder(t *testing.T) {
 		t.Fatalf("marker not set on unchanged save: %q", id)
 	}
 	changed := gameFixture("a", "e2e4", "e7e5")
-	if _, err := store.Save(changed); err != nil {
+	if _, _, err := store.Save(changed); err != nil {
 		t.Fatal(err)
 	}
 	games, _, err = store.List(200)
@@ -151,7 +157,7 @@ func TestGameStoreResult(t *testing.T) {
 	store := testStore(t)
 	payload := gameFixture("a", "e2e4")
 	payload.Result = "resigned"
-	saved, err := store.Save(payload)
+	saved, _, err := store.Save(payload)
 	if err != nil || saved.Result != "resigned" {
 		t.Fatalf("saved = %+v, err = %v", saved, err)
 	}
@@ -173,13 +179,13 @@ func TestGameStoreCurrentMarker(t *testing.T) {
 	}
 	payload := gameFixture("a")
 	payload.Current = true
-	if _, err := store.Save(payload); err != nil {
+	if _, _, err := store.Save(payload); err != nil {
 		t.Fatal(err)
 	}
 	if id := store.CurrentID(); id != "a" {
 		t.Fatalf("marker = %q", id)
 	}
-	if _, err := store.Save(gameFixture("b")); err != nil {
+	if _, _, err := store.Save(gameFixture("b")); err != nil {
 		t.Fatal(err)
 	}
 	if id := store.CurrentID(); id != "a" {

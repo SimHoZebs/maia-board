@@ -31,7 +31,7 @@ from code alone. Query the live logs and traffic first.
 
 | Signal | Log prefix | Key fields |
 | --- | --- | --- |
-| Game played / saved | `game-save` | `status, id, plies, model, user_color, elo_maia, elo_user, result, current, duration_ms` |
+| Game played / saved | `game-save` | `status, id, plies, model, user_color, elo_maia, elo_user, result, current, new, duration_ms` (`new=true` = first save of that id; per-move re-saves log `new=false`) |
 | Game deleted | `game-delete` | `status, id, duration_ms` |
 | Live reply / analysis | `move` | `status, lane=play\|focus, plies, model, degraded, duration_ms, validate_us, exec_ms, wait_ms` |
 | Stockfish search | `evaluate` | `status, plies, policy, duration_ms, validate_us, exec_ms, wait_ms, depth, lines` |
@@ -57,8 +57,8 @@ Play/Focus depth-1 latest-wins, Batch unbounded FIFO, capacity = replicas.
 ### Example Loki queries (Grafana Explore)
 
 ```logql
-# Games played per hour
-count_over_time({container_name="maia-board"} |= "game-save status=200" [1h])
+# Games started per hour (new=true only; the frontend re-saves every move)
+count_over_time({container_name="maia-board"} |= "game-save status=200" |= "new=true" [1h])
 
 # Games by result / model
 {container_name="maia-board"} |= "game-save status=200" | regexp `result="(?P<result>[^"]*)".*model=(?P<model>\S+)`
