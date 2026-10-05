@@ -76,10 +76,12 @@ export function laneFailures(nodes: ReviewNode[], coordinator: ReviewCoordinator
   return nodes.filter(node => laneError(coordinator, node) !== undefined);
 }
 
-// Foreground fetch for the visible pair. Appends to the shared bot queue
-// without wiping queued display jobs (different keys, same lane).
+// Foreground fetch for the objective lane. Queues behind whatever is
+// already waiting: the pump serves FIFO, so grading never disturbs the
+// display pair's order. Shares the bot queue with the display bot under
+// different keys.
 export function ensureLane(coordinator: ReviewCoordinator, targets: ReviewNode[], signal: AbortSignal): void {
-  coordinator.ensure(targets, GRADING_BOT_SETTINGS, { priority: true, engines: ['maia'], signal, append: true });
+  coordinator.ensure(targets, GRADING_BOT_SETTINGS, { priority: true, engines: ['maia'], signal });
 }
 
 // Human name for copy (bar, graphs). Names the role, never the model.

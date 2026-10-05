@@ -3,7 +3,7 @@ import { clampBotElo } from './BoardTools';
 // Canonical terms: see spec/GLOSSARY.md.
 // transport = shared JSON-POST sender (evaluationTransport); coordinator =
 // foreground coordinator (this class, at most one live request per engine,
-// latest-wins); flight = one tracked AbortController request
+// one FIFO queue each); flight = one tracked AbortController request
 // (PlayFiringIdentity, restoreFlights). Backend admission
 // (admit → Scheduler.Acquire) has no frontend symbol.
 import type { Evaluation } from './reviewMetrics';
@@ -31,12 +31,12 @@ type Pending = { job: Job };
 type ForegroundFlight = { job: Job; controller: AbortController };
 const engines = ['sf', 'maia'] as const;
 
-// One keyed queue per engine for interactive (foreground) work: immediate
-// priority requests preempt each other latest-wins. Whole-game batches run
-// on the server (see batchReview); this coordinator never queues them, so it
-// stays a small foreground pump plus the cache-restore path. The ONLY
-// foreground cancel path is the AbortSignal passed to ensure(); there are no
-// clearForeground/suspend/resume entry points.
+// One FIFO queue per engine for interactive (foreground) work: requests
+// serve in arrival order and nothing queued is ever dropped. Whole-game
+// batches run on the server (see batchReview); this coordinator never
+// queues them, so it stays a small foreground pump plus the cache-restore
+// path. The ONLY foreground cancel path is the AbortSignal passed to
+// ensure(); there are no clearForeground/suspend/resume entry points.
 export class ReviewCoordinator {
   readonly store: EvaluationStore;
   private pending: Record<Engine, Map<string, Pending>> = { sf: new Map(), maia: new Map() };
@@ -90,14 +90,16 @@ export class ReviewCoordinator {
   // Queue-only calls return void synchronously; signal calls return coverage.
   // Passing signal makes this ensure call abortable: aborting removes its
   // queued jobs and aborts its flight jobs. Omitting signal queues
-  // latest-wins foreground work; the next priority ensure replaces queued
-  // work only and lets flight work land.
+  // foreground work in arrival order; the pump serves it FIFO and lets
+  // flight work land. Re-requesting an already-queued key keeps its place.
+  // Nothing queued is ever dropped: drops only happen server-side (409),
+  // which the callers' retry sweeps heal.
   ensure(
     nodes: ReviewNode[],
     settings: SettingsInput,
-    opts: { priority?: boolean; engines?: Engine[]; signal?: AbortSignal; priorityPlies?: readonly number[]; fastFirst?: boolean; append?: boolean } = {},
+    opts: { priority?: boolean; engines?: Engine[]; signal?: AbortSignal; priorityPlies?: readonly number[]; fastFirst?: boolean } = {},
   ): Promise<{ total: number; covered: number }> | void {
-    const { priority = false, engines: enginesOpt, signal, priorityPlies, fastFirst = false, append = false } = opts;
+    const { priority = false, engines: enginesOpt, signal, priorityPlies, fastFirst = false } = opts;
     const wanted = enginesOpt ?? [...engines];
     if (priority) {
       const desired: Job[] = [];
@@ -134,42 +136,45 @@ export class ReviewCoordinator {
           if (job) desired.push(job);
         }
       }
-      // Latest-wins within this workspace: the new set replaces queued work
-      // for the same engines, unless append keeps both (the grading lane
-      // shares the bot queue with the display bot under different keys, so a
-      // grading ensure must not wipe queued display jobs or vice versa).
-      // Flight work continues either way (non-preemptive server slot).
-      if (!append) for (const engine of wanted) this.pending[engine].clear();
+      // Arrival order, nothing dropped. Re-requested keys keep their
+      // place (Map.set preserves insertion order); failures clear so the
+      // job runs again. Settled rows prune so the queue never accumulates
+      // dead keys. Flight work continues either way (non-preemptive server
+      // slot).
       for (const job of desired) {
         this.failures.delete(job.key);
-        this.pending[job.engine].set(job.key, { job });
+        if (this.store.peek(job.engine, job.key)) {
+          this.pending[job.engine].delete(job.key);
+        } else if (!this.pending[job.engine].has(job.key)) {
+          this.pending[job.engine].set(job.key, { job });
+        }
       }
       if (signal) {
         const keys = new Set(desired.map(job => job.key));
+        const removeQueued = (engine: Engine, job: Job) => {
+          if (this.pending[engine].get(job.key)?.job === job) this.pending[engine].delete(job.key);
+        };
         if (signal.aborted) {
-          for (const job of desired) this.pending[job.engine].delete(job.key);
+          for (const job of desired) removeQueued(job.engine, job);
           for (const engine of wanted) this.abortKeys(engine, keys);
         } else {
           // NOTE: one listener per priority ensure on the long-lived scope
           // signal; stale entries fire once on scope teardown (bounded: tens
-          // per line, each scanning its small desired set). If profiling ever
+          // per game, each scanning its small desired set). If profiling ever
           // shows this hot, track and remove each listener when its desired
           // keys all finish instead of letting teardown sweep them.
           const onAbort = () => {
-            for (const job of desired) {
-              if (this.pending[job.engine].get(job.key)?.job === job) this.pending[job.engine].delete(job.key);
-            }
+            for (const job of desired) removeQueued(job.engine, job);
             for (const engine of wanted) this.abortKeys(engine, keys);
             this.notify();
           };
           signal.addEventListener('abort', onAbort, { once: true });
         }
       }
-      // Supersede drops only still-queued work (pending cleared above). The
-      // server slot is non-preemptive: flight work always completes and
-      // caches, so aborting only blinds this tab to a paid-for answer. Let
-      // flight fetches continue; pump starts the newest wanted work
-      // concurrently (deduplicated by key below).
+      // Queueing never touches running work. The server slot is
+      // non-preemptive: flight work always completes and caches, so aborting
+      // only blinds this tab to a paid-for answer. The pump serves FIFO
+      // (deduplicated by key below).
       wanted.forEach(engine => this.pump(engine));
       this.notify();
     }
@@ -249,8 +254,13 @@ export class ReviewCoordinator {
     }
   }
   private pump(engine: Engine) {
+    const queue = this.pending[engine];
+    // Prune settled rows so the queue never accumulates dead keys.
+    // Recorded failures stay queued: retry() re-drives them after clearing
+    // the failure, and the find below skips them meanwhile.
+    for (const [key, entry] of queue) if (this.store.peek(entry.job.engine, entry.job.key)) queue.delete(key);
     const flightKeys = new Set([...this.foregroundFlights[engine]].map(run => run.job.key));
-    const entry = [...this.pending[engine].values()].find(entry => !this.finished(entry.job) && !flightKeys.has(entry.job.key));
+    const entry = [...queue.values()].find(entry => !this.finished(entry.job) && !flightKeys.has(entry.job.key));
     if (!entry) return;
     const job = entry.job;
     const flight: ForegroundFlight = { job, controller: new AbortController() };

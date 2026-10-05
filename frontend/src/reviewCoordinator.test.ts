@@ -172,60 +172,72 @@ describe('workspace coordinator', () => {
   it('default workspace coordinators share the app store', () => {
     expect(new ReviewCoordinator().store).toBe(new ReviewCoordinator().store);
   });
-  it('a newer foreground request replaces queued stale work', async () => {
+  it('a newer pair queues behind in FIFO order, nothing drops', async () => {
+    const fetcher = vi.fn<typeof fetch>(() => new Promise(() => {}));
+    const coordinator = new ReviewCoordinator(fetcher);
+    coordinator.ensure(nodes.slice(0, 2), settings, { priority: true, engines: ['sf'] });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    coordinator.ensure(nodes.slice(2), settings, { priority: true, engines: ['sf'] });
+    // FIFO: the next waiting job starts; the rest stay queued, none drop.
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls.map(([, init]) => JSON.parse(requestBodyText(init)).moves.length)).toEqual([0, 1]);
+    for (const node of nodes) expect(coordinator.isPending('sf', node, settings)).toBe(true);
+    expect(coordinator.sfPendingKeys().size).toBe(4);
+  });
+  it('the queue drains oldest-first and every row lands', async () => {
     let release!: (response: Response) => void;
     const fetcher = liveFetch(); fetcher.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
     const coordinator = new ReviewCoordinator(fetcher);
     coordinator.ensure(nodes.slice(0, 2), settings, { priority: true, engines: ['sf'] });
     coordinator.ensure(nodes.slice(2), settings, { priority: true, engines: ['sf'] });
-    // Supersede keeps the running fetch and starts the latest set at once.
     expect(fetcher).toHaveBeenCalledTimes(2);
-    // Pending stays latest-wins: the superseded running/queued keys hide.
-    expect(coordinator.sfPendingKeys().size).toBe(2);
-    expect(coordinator.isPending('sf', nodes[0], settings)).toBe(false);
-    expect(coordinator.isPending('sf', nodes[1], settings)).toBe(false);
-    expect(coordinator.isPending('sf', nodes[2], settings)).toBe(true);
+    expect(fetcher.mock.calls.map(([, init]) => JSON.parse(requestBodyText(init)).moves.length)).toEqual([0, 1]);
+    expect(coordinator.sfPendingKeys().size).toBe(4);
+    for (const node of nodes) expect(coordinator.isPending('sf', node, settings)).toBe(true);
     expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(false);
     release(jsonResponse(sfFixture(nodes[0].fen))); await flush();
-    expect(fetcher.mock.calls.map(([, init]) => JSON.parse(requestBodyText(init)).moves.length)).toEqual([0, 2, 3]);
-    // Non-preemptive slot: the late superseded result still lands (paid for);
-    // the dropped queued key never fetches.
+    // Strict arrival order, then every row settles.
+    expect(fetcher.mock.calls.map(([, init]) => JSON.parse(requestBodyText(init)).moves.length)).toEqual([0, 1, 2, 3]);
     expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(false);
-    expect(coordinator.result('sf', nodes[0], settings)).toBeDefined();
-    expect(coordinator.result('sf', nodes[1], settings)).toBeUndefined();
-    expect(coordinator.result('sf', nodes[2], settings)).toBeDefined();
-    expect(coordinator.result('sf', nodes[3], settings)).toBeDefined();
+    for (const node of nodes) expect(coordinator.result('sf', node, settings)).toBeDefined();
     expect(coordinator.sfPendingKeys().size).toBe(0);
 
   });
-  it('superseded running work lands late while pending stays latest-wins', async () => {
+  it('running work lands late and queued work follows in arrival order', async () => {
     let releaseFirst!: (response: Response) => void;
     const fetcher = liveFetch(); fetcher.mockImplementationOnce(() => new Promise(resolve => { releaseFirst = resolve; }));
     const coordinator = new ReviewCoordinator(fetcher);
     coordinator.ensure(nodes.slice(0, 2), settings, { priority: true, engines: ['sf'] });
     coordinator.ensure(nodes.slice(2, 3), settings, { priority: true, engines: ['sf'] });
     expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls.map(([, init]) => JSON.parse(requestBodyText(init)).moves.length)).toEqual([0, 1]);
     expect(fetcher.mock.calls.every(([, init]) => init?.signal?.aborted !== true)).toBe(true);
-    // Only the latest set reports pending, even though the stale fetch runs.
-    expect(coordinator.isPending('sf', nodes[0], settings)).toBe(false);
-    expect(coordinator.isPending('sf', nodes[1], settings)).toBe(false);
+    // Everything waits in arrival order while the first flight runs.
+    expect(coordinator.isPending('sf', nodes[0], settings)).toBe(true);
+    expect(coordinator.isPending('sf', nodes[1], settings)).toBe(true);
     expect(coordinator.isPending('sf', nodes[2], settings)).toBe(true);
-    expect([...coordinator.sfPendingKeys()]).toHaveLength(1);
+    expect([...coordinator.sfPendingKeys()]).toHaveLength(3);
     releaseFirst(jsonResponse(sfFixture(nodes[0].fen))); await flush();
-    // Late landing stores; dropped queued work never fetched.
-    expect(fetcher.mock.calls.map(([, init]) => JSON.parse(requestBodyText(init)).moves.length)).toEqual([0, 2]);
+    // Late landing stores; queued work follows FIFO.
+    expect(fetcher.mock.calls.map(([, init]) => JSON.parse(requestBodyText(init)).moves.length)).toEqual([0, 1, 2]);
     expect(coordinator.result('sf', nodes[0], settings)).toBeDefined();
-    expect(coordinator.result('sf', nodes[1], settings)).toBeUndefined();
+    expect(coordinator.result('sf', nodes[1], settings)).toBeDefined();
     expect(coordinator.result('sf', nodes[2], settings)).toBeDefined();
     expect(coordinator.sfPendingKeys().size).toBe(0);
   });
-  it('takebacks prune queued future nodes while retaining the running result', async () => {
+  it('takebacks keep queued future nodes while retaining the running result', async () => {
     let release!: (response: Response) => void;
     const fetcher = liveFetch(); fetcher.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
     const coordinator = new ReviewCoordinator(fetcher);
     coordinator.ensure(nodes, settings, { priority: true, engines: ['sf'] }); coordinator.ensure(nodes.slice(0, 2), settings, { priority: true, engines: ['sf'] });
-    release(jsonResponse(sfFixture(nodes[0].fen))); await flush();
+    // The takeback pair is already at the queue front; the taken-back
+    // future stays queued behind it (a replay hits cache).
     expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls.map(([, init]) => JSON.parse(requestBodyText(init)).moves.length)).toEqual([0, 1]);
+    release(jsonResponse(sfFixture(nodes[0].fen))); await flush();
+    expect(fetcher.mock.calls.map(([, init]) => JSON.parse(requestBodyText(init)).moves.length)).toEqual([0, 1, 2, 3]);
+    for (const node of nodes) expect(coordinator.result('sf', node, settings)).toBeDefined();
+    expect(coordinator.sfPendingKeys().size).toBe(0);
 
   });
   it('foreground failures surface per key and retry reruns only missing work', async () => {
@@ -279,19 +291,24 @@ describe('workspace coordinator', () => {
     expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
     expect(coordinator.sfPendingKeys().size).toBe(0);
   });
-  it('foreground lets running stale work continue while the latest request proceeds', async () => {
+  it('queued work waits its turn while the running request proceeds', async () => {
     const fetcher = liveFetch(); fetcher.mockImplementationOnce(() => new Promise(() => {}));
     const coordinator = new ReviewCoordinator(fetcher);
     coordinator.ensure([nodes[0]], settings, { priority: true });
     coordinator.ensure([nodes[3]], settings, { priority: true }); await flush();
-    // Non-preemptive server slot: supersede never aborts running work.
+    // Non-preemptive server slot: queueing never aborts running work.
     expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(false);
+    // The pump starts the next waiting job per engine; nothing is dropped.
+    expect(fetcher).toHaveBeenCalledTimes(4);
     expect(coordinator.result('sf', nodes[3], settings)).toBeDefined();
     expect(coordinator.result('maia', nodes[3], settings)).toBeDefined();
-    // Pending stays latest-wins: the stale hung fetch hides from spinners.
-    expect(coordinator.isPending('sf', nodes[0], settings)).toBe(false);
+    expect(coordinator.result('maia', nodes[0], settings)).toBeDefined();
+    // Only the hung Stockfish flight is still pending.
+    expect(coordinator.isPending('sf', nodes[0], settings)).toBe(true);
+    expect(coordinator.isPending('sf', nodes[3], settings)).toBe(false);
     expect(coordinator.isPending('maia', nodes[0], settings)).toBe(false);
-    expect(coordinator.sfPendingKeys().size).toBe(0);
+    expect(coordinator.isPending('maia', nodes[3], settings)).toBe(false);
+    expect(coordinator.sfPendingKeys().size).toBe(1);
     expect(coordinator.botPendingKeys().size).toBe(0);
 
   });
@@ -427,10 +444,10 @@ describe('fast-then-refine', () => {
     expect(coordinator.result('sf', target, settings)?.lines).toHaveLength(2);
     expect(coordinator.provisionalSfResult(target, settings)?.lines).toHaveLength(2);
   });
-  it('appended grading ensure preserves queued display jobs and cascades in lane order', async () => {
+  it('grading ensure queues behind display jobs and cascades in lane order', async () => {
     // Regression: the grading lane shares the bot queue under different
-    // keys. Its ensure must append (never wipe the queued display current),
-    // and held display jobs must not starve it — completions cascade FIFO.
+    // keys. FIFO keeps display order intact, and held display jobs must not
+    // starve grading — completions cascade in queue order.
     const line = reviewNodes(buildTimeline(START_FEN, ['e2e4', 'e7e5', 'g1f3', 'g8f6', 'f1c4']));
     const started: string[] = [];
     const resolvers = new Map<string, () => void>();
@@ -448,7 +465,7 @@ describe('fast-then-refine', () => {
     const scope = new AbortController().signal;
     const targets = [line[4], line[5]];
     coordinator.ensure(targets, settings, { priority: true, signal: scope, fastFirst: true });
-    coordinator.ensure(targets, GRADING_BOT_SETTINGS, { priority: true, engines: ['maia'], signal: scope, append: true });
+    coordinator.ensure(targets, GRADING_BOT_SETTINGS, { priority: true, engines: ['maia'], signal: scope });
     await flush();
     expect(started).toContain('maia:1600:4');
     expect(started).toContain('maia:1600:5');
