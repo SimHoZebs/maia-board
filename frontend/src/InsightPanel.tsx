@@ -1,13 +1,12 @@
 import { type Dispatch, type ReactNode } from "react";
-import { TrendingDown, Users } from "lucide-react";
 import type { Action, State } from "./state/index";
 import { Rating } from "./BoardTools";
-import { Button, EngineCandidateList, EngineSection } from "./components";
+import { Button, EngineSection, KeyMovesList } from "./components";
 import { Chess } from "chess.js";
 import type { Review } from "./useReview";
 import { describeMove } from "./reviewMetrics";
-import { fixedElo, sourceLabel } from "./objective";
-import { deltaColumnTitle, formatWinrateDelta, botExpected, selectDeltaParts } from "./objective/winrate";
+import { deltaBaseline, deltaColumnTitle } from "./objective/winrate";
+import { buildKeyMoves } from "./keyMoves";
 import { bestLinePreview, playedCapture } from "./material";
 import { verdictInputsForPly } from "./theory";
 import { useLineOpenings } from "./openings";
@@ -89,9 +88,6 @@ export function MoveAnalysis({
   const response = hasMove ? review.bot : review.botCurrent;
   const node = review.nodes[hasMove ? focus : ply];
   const candidates = hasMove ? review.objectiveCandidates.focus : review.objectiveCandidates.current;
-  // Pinned Elo shown as a locked dropdown in the objective heading; null
-  // hides it (sources without a rating).
-  const objectiveElo = fixedElo();
   const insight = { fen: node.fen };
   const played = hasMove
     ? review.nodes[ply]?.uci ?? undefined
@@ -207,52 +203,35 @@ export function MoveAnalysis({
   // ReviewActionButton); skeleton only while a side is missing.
   const verdictLoading =
     hasMove && !!played && !verdict && !hasError && !tooLong && (!evaluation || !afterEvaluation);
-  // Display list values: policy share at the selected Elo plus true game-shift
-  // delta (bar-vs-bar including the opponent best reply) from 2400's
-  // perspective. True deltas read from the child grading rows the pipeline
-  // fetches for the viewed before-position; the prospective server/local
-  // comparison below is the fallback while a child is pending or failed.
+  // Key moves card: one fused row per distinct move (Stockfish best, 2400
+  // best by expected score, 2400 most-likely by policy, played) with the
+  // 2400 share, the true game-shift delta (bar-vs-bar including the opponent
+  // reply), and the viewed-Elo share. True deltas read from the child grading
+  // rows the pipeline fetches; the builder falls back to the prospective
+  // server/local comparison while a child is pending or failed.
   const beforePly = hasMove ? focus : ply;
   const beforeExpected = review.objective[beforePly]?.expected ?? null;
   const displayListed = response?.top_moves.slice(0, 5) ?? [];
   const objectiveEntries = candidates?.entries ?? [];
-  const objectiveHasProb = objectiveEntries.length > 0
-    && objectiveEntries.every(candidate => typeof candidate.prob === 'number' && Number.isFinite(candidate.prob));
-  const bestListed = objectiveHasProb ? Math.max(...objectiveEntries.map(candidate => candidate.expected)) : null;
-  const {
-    parts: displayParts,
-    kind,
-  } = selectDeltaParts(
-    displayListed.map(candidate => ({ prob: candidate.prob, expected: botExpected(candidate.wdl), delta: candidate.delta ?? null })),
-    response?.delta_baseline ?? null,
+  const bestListed = objectiveEntries.length > 0
+    ? Math.max(...objectiveEntries.map(candidate => candidate.expected))
+    : null;
+  const { kind } = deltaBaseline(beforeExpected, bestListed);
+  const keyMoves = buildKeyMoves({
+    sfBest: evaluation?.best_move ?? null,
+    objective: candidates,
+    displayTopMoves: displayListed,
+    played,
     beforeExpected,
-    bestListed,
-  );
-  const objectiveDelta = selectDeltaParts(
-    objectiveEntries.map(candidate => ({ prob: candidate.prob ?? 0, expected: candidate.expected, delta: candidate.delta ?? null })),
-    candidates?.baseline ?? null,
-    beforeExpected,
-    bestListed,
-  );
-  const trueDeltaText = (uci: string, fallback: string) => {
-    const entry = review.trueDeltaByUci?.get(uci);
-    if (!entry) return fallback;
-    if (entry.value != null) return formatWinrateDelta(entry.value);
-    if (entry.pending) return '…';
-    return fallback;
-  };
-  // One header set for both bot lanes: play probability (Users) plus
-  // win-rate delta (TrendingDown): every row versus the previous position's
-  // WDL. The display lane carries low-Elo policy with 2400 values; the
-  // objective lane is 2400 throughout. The objective lane only gets it
-  // when the provider supplies probabilities (bot policy share); a lane
-  // without them (Stockfish lines) keeps its single absolute-value column.
+    trueDeltaByUci: review.trueDeltaByUci,
+  });
   const deltaTitle = deltaColumnTitle(kind);
-  const botListHeaders = {
-    metric: <span title="Share of human play at this rating"><Users size={13} aria-hidden="true" /></span>,
-    delta: <span title={deltaTitle}><TrendingDown size={13} aria-hidden="true" /></span>,
-    label: `Probability of play, ${deltaTitle.charAt(0).toLowerCase()}${deltaTitle.slice(1)}`,
-  };
+  const mineTitle = `Share of play at bot ${review.botElo}`;
+  // Either bot lane renders the card: the objective lane alone still names
+  // the 2400 rows (the viewed-Elo share reads — until the display lane
+  // lands), mirroring how the old per-lane sections settled independently.
+  // Missing sides stay em-dashes; only a fully empty card skeletons.
+  const canRender = (!!response || !!candidates) && keyMoves.length > 0;
   return (
     <>
       {!hasMove && <p className="move-verdict" role="status">Current position — explore a candidate or step forward to review a move.</p>}
@@ -276,14 +255,12 @@ export function MoveAnalysis({
       ) : (
         verdictLoading && <SkeletonText label="Loading move verdict" />
       )}
-      <div className="engine-duo">
       <EngineSection
-        label="Bot analysis"
+        label="Key moves"
         titleId="insight-title"
-        dotClass="source-display"
         title={
           <>
-            Bot •{" "}
+            You:{" "}
             <Rating
               inline
               id="analysis-rating"
@@ -298,73 +275,22 @@ export function MoveAnalysis({
         }
       >
         {response?.degraded && <p role="status">Bot fallback results.</p>}
+        {candidates?.degraded && <p role="status">Bot 2400 fallback results.</p>}
         {review.botStale && (
           <p role="status">
             Showing bot {review.botElo} · updating to {review.botWantedElo}…
           </p>
         )}
-        {response ? (
+        {canRender ? (
           <div id="insight-content">
-            <EngineCandidateList
+            <KeyMovesList
               fen={insight.fen}
               played={played}
               hasMove={hasMove}
               previewUci={state.preview}
-              items={displayListed.map((candidate, index) => ({
-                uci: candidate.move,
-                metric: displayParts[index].prob,
-                delta: trueDeltaText(candidate.move, displayParts[index].delta),
-              }))}
-              headers={botListHeaders}
-              onPreview={(uci) => dispatch({ type: "preview", uci })}
-              onClear={() => dispatch({ type: "preview", uci: null })}
-              onSelect={exploreFromFocus}
-            />
-          </div>
-        ) : displayLoading ? (
-          <SkeletonList label="Loading bot moves" rows={3} />
-        ) : (
-          <p className="empty-copy">No analysis yet.</p>
-        )}
-      </EngineSection>
-      <EngineSection
-        label={sourceLabel()}
-        dotClass="source-objective"
-        title={
-          <>
-            Bot •{" "}
-            {objectiveElo !== null && (
-              <Rating
-                inline
-                id="objective-rating"
-                label="Objective rating"
-                value={objectiveElo}
-                disabled
-                onChange={() => undefined}
-              />
-            )}
-          </>
-        }
-      >
-        {candidates?.degraded && <p role="status">Bot 2400 fallback results.</p>}
-        {candidates ? (
-          <div>
-            <EngineCandidateList
-              fen={insight.fen}
-              played={played}
-              hasMove={hasMove}
-              previewUci={state.preview}
-                items={objectiveEntries.map((candidate, index) => (objectiveHasProb
-                ? {
-                  uci: candidate.uci,
-                  metric: `${Math.round(candidate.prob! * 100)}%`,
-                  delta: trueDeltaText(candidate.uci, objectiveDelta.parts[index]?.delta ?? formatWinrateDelta(0)),
-                }
-                : { uci: candidate.uci, metric: `${Math.round(candidate.expected)}%` }))}
-              headers={objectiveHasProb ? botListHeaders : {
-                metric: <span title="Expected win rate for the side to move"><TrendingDown size={13} aria-hidden="true" /></span>,
-                label: "Expected win rate for the side to move",
-              }}
+              moves={keyMoves}
+              deltaTitle={deltaTitle}
+              mineTitle={mineTitle}
               onPreview={(uci) => dispatch({ type: "preview", uci })}
               onClear={() => dispatch({ type: "preview", uci: null })}
               onSelect={exploreFromFocus}
@@ -376,13 +302,12 @@ export function MoveAnalysis({
               ? `${node.outcome.winner === 'white' ? 'White' : 'Black'} wins`
               : 'Draw'}
           </p>
-        ) : objectiveLoading ? (
-          <SkeletonList label="Loading objective moves" rows={3} />
+        ) : displayLoading || objectiveLoading ? (
+          <SkeletonList label="Loading key moves" rows={3} />
         ) : (
           <p className="empty-copy">No analysis yet.</p>
         )}
       </EngineSection>
-      </div>
     </>
   );
 }

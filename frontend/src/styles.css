@@ -10,7 +10,7 @@ button.primary { background: var(--accent); color: #202619; border-color: var(--
 button.primary:hover { background: #c9d7b0; }
 button.quiet { background: transparent; border-color: transparent; color: var(--muted); font-size: 12px; min-height: 0; min-width: 0; padding: 4px 6px; }
 button.quiet:hover:not(:disabled) { background: transparent; color: inherit; text-decoration: underline; }
-.insight-panel .engine-duo section h2 select { width: auto; min-height: 28px; height: 28px; padding: 2px 4px; font-size: 13px; vertical-align: baseline; }
+.insight-panel section h2 select { width: auto; min-height: 28px; height: 28px; padding: 2px 4px; font-size: 13px; vertical-align: baseline; }
 .analysis-record { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin: 0; }
 .analysis-record p { margin: 0; font-size: 12px; color: var(--muted); }
 :focus-visible { outline: 2px solid #d2dfbd; outline-offset: 3px; }
@@ -191,6 +191,17 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .candidate-header .metric, .candidate-header .delta { display: inline-flex; justify-content: flex-end; }
 .candidate-header svg { display: block; }
 .candidate-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* Key moves card: SAN + role chips on the left, three numeric columns
+   (2400 share, win delta, your share) on the right. */
+.key-main { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex: 1; }
+.key-roles { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.key-role { display: inline-flex; align-items: center; font-size: 10px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+.key-role svg { display: block; }
+.key-role--sf-best { color: #d6b85c; border-color: #6b5f2e; }
+.key-role--best-2400 { color: var(--accent); border-color: #4a5d3a; }
+.key-role--likely-2400 { color: #9db8d6; border-color: #3d4f63; }
+.key-role--played { color: #eee; border-color: #899d6b; }
+.key-metrics .metric--mine { color: #9db8d6; }
 .skeleton-list { display: grid; margin: 0; padding: 0; }
 .skeleton-row { display: flex; gap: 6px; align-items: center; border-bottom: 1px solid var(--line); padding: 4px 0; min-height: 41px; }
 .skeleton-rank { width: 12px; height: 12px; border-radius: 3px; background: #333637; flex: none; }
@@ -326,7 +337,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
   .insight-panel > .analysis-section { padding: 0; }
   .insight-panel > .analysis-section ~ .analysis-section { border-top: 0; padding-top: 0; }
   .insight-panel > .analysis-section.analysis-footer-section { padding-bottom: 0; }
-  .insight-panel .engine-duo section h2 { font-size: 13px; }
+  .insight-panel .engine-card h2 { font-size: 13px; }
   .win-hero strong { font-size: 18px; }
   .win-hero span { font-size: 11px; }
   .candidate-list li { gap: 4px; }
@@ -380,7 +391,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .quality-shimmer { background: #333637; overflow: hidden; }
 .quality-shimmer-bar { display: block; width: 100%; height: 12px; border-radius: 4px; background: linear-gradient(90deg, #333637 25%, #4a4f50 50%, #333637 75%); background-size: 200% 100%; animation: skeleton-shimmer 1.2s ease-in-out infinite; }
 .source-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }.source-display { background: #ef4444; }.source-objective { background: #3b82f6; }.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }.win-hero { display: flex; align-items: baseline; gap: 8px; margin: 0; }.win-hero strong { font-size: 21px; font-weight: 750; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }.win-hero span { font-size: 12px; color: var(--muted); }
-.insight-panel .engine-duo section h2 { font-size: 14px; }
+.insight-panel .engine-card h2 { font-size: 14px; }
 @media (max-width: 760px) { .insight-panel { max-height: none; overflow: visible; }.side-options { gap: 5px; }.side-options label { padding: 0 8px; font-size: 13px; } }
 /* Modern play-setup modal: Bot / side / coaching sections.
    Keeps the #play-controls / #bot-elo / #start-game IDs the specs
