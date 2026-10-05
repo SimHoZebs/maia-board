@@ -40,11 +40,11 @@ export function KeyMovesList({ fen, played, hasMove, previewUci, moves, deltaTit
       <li className="candidate-header key-header">
         <span className="candidate-reading">
           <strong aria-hidden="true" />
-          <span className="visually-hidden">{`Share of 2400 play, ${deltaTitle.charAt(0).toLowerCase()}${deltaTitle.slice(1)}, and your share`}</span>
+          <span className="visually-hidden">{`Share of 2400 play, your share, and ${deltaTitle.charAt(0).toLowerCase()}${deltaTitle.slice(1)}`}</span>
           <span className="metrics key-metrics" aria-hidden="true">
             <span className="metric" title="Share of 2400 play"><Bot size={13} aria-hidden="true" /></span>
-            <span className="delta" title={deltaTitle}><TrendingDown size={13} aria-hidden="true" /></span>
             <span className="metric metric--mine" title={mineTitle}><Users size={13} aria-hidden="true" /></span>
+            <span className="delta" title={deltaTitle}><TrendingDown size={13} aria-hidden="true" /></span>
           </span>
         </span>
       </li>
@@ -72,8 +72,8 @@ export function KeyMovesList({ fen, played, hasMove, previewUci, moves, deltaTit
               </span>
               <span className="metrics key-metrics">
                 <span className="metric" title={move.prob2400 == null ? "Unlisted at 2400" : "Share of 2400 play"}>{formatProb(move.prob2400)}</span>
-                <span className="delta" title={deltaTitle}>{formatKeyDelta(move)}</span>
                 <span className="metric metric--mine" title={mineTitle}>{formatProb(move.probMine)}</span>
+                <span className="delta" title={deltaTitle}>{formatKeyDelta(move)}</span>
               </span>
             </button>
           </li>
