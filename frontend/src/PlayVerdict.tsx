@@ -46,11 +46,15 @@ export function PlayVerdict({ state, feedback }: { state: State; feedback: PlayF
   const afterEvaluation = feedback.evaluations[ply];
   const mover = beforeNode.turn === 'white' ? 'white' : 'black';
   const exactOpening = lineOpening?.isExact ? { eco: lineOpening.eco, name: lineOpening.name } : null;
+  // Grading-lane walk (bot-2400 tops, Stockfish-vetoed) instead of the
+  // Stockfish rank-1 PV, so the suggestion never starts with a move the
+  // badge grades as a mistake. PlayVerdict renders the note only (no
+  // explore button); the walk converges as frontier rows land.
   const materialNote = quality && played && !exactOpening
     && (quality.label === 'Mistake' || quality.label === 'Blunder')
     && evaluation?.score.type === 'cp' && afterEvaluation?.score.type === 'cp'
     && !evaluation.terminal && !afterEvaluation.terminal
-    ? bestLinePreview(afterNode.fen, afterEvaluation?.lines[0]?.pv, mover, state.bestLineWindow, playedCapture(beforeNode.fen, played))?.note ?? null
+    ? bestLinePreview(afterNode.fen, feedback.objectiveBestLine.length ? feedback.objectiveBestLine : undefined, mover, state.bestLineWindow, playedCapture(beforeNode.fen, played))?.note ?? null
     : null;
   const facts = verdictInputsForPly({
     beforeFen: beforeNode.fen,

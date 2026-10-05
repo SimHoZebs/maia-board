@@ -103,9 +103,11 @@ export function MoveAnalysis({
   // Terminal facts (mate, stalemate, repetition) outrank even the book name.
   const { opening: lineOpening, bookFlags: lineBookFlags, matches: lineMatches } = useLineOpenings(review.timeline.moves, state.analysis.initialFen, ply);
   const exactOpening = lineOpening?.isExact ? { eco: lineOpening.eco, name: lineOpening.name } : null;
-  // Material consequence: after-position rank-1 PV rooted at the after-FEN.
-  // Only cp-vs-cp Mistake/Blunder render it (describeMove gates the labels;
-  // mate scores stay silent so a forced mate is never reduced to a pawn note).
+  // Material consequence: the grading-lane walk rooted at the after-FEN
+  // (bot-2400 tops, Stockfish-vetoed — never the Stockfish rank-1 PV, whose
+  // first move the badge can grade as a mistake). Only cp-vs-cp
+  // Mistake/Blunder render it (describeMove gates the labels; mate scores
+  // stay silent so a forced mate is never reduced to a pawn note).
   // The preview bundles the note with its clickable SAN line so "This line"
   // always has an exact referent; the button below spawns the same UCIs as a
   // branch rooted at the current ply.
@@ -116,7 +118,7 @@ export function MoveAnalysis({
     && !evaluation.terminal && !afterEvaluation.terminal
     ? bestLinePreview(
       review.nodes[ply].fen,
-      afterEvaluation?.lines[0]?.pv,
+      review.objectiveBestLine.length ? review.objectiveBestLine : undefined,
       review.nodes[focus].turn === 'white' ? 'white' : 'black',
       state.bestLineWindow,
       playedCapture(review.nodes[focus].fen, played),

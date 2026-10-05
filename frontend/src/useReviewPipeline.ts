@@ -12,6 +12,7 @@ import { useServerBatch } from './useServerBatch';
 import { computeLineQualities, type UnifiedMemo } from './qualities';
 import { alienUpgrade, effectiveQuality, botRarity, sfTopGap, type EngineGrade, type Evaluation, type ObjectivePoint, type Quality, type Rarity } from './reviewMetrics';
 import { selectBotDisplay, type BotDisplayEntry } from './botDisplay';
+import { useObjectiveBestLine } from './useObjectiveBestLine';
 
 // Configuration expressing room differences, not architecture. One pipeline
 // owns coordinator + scope + restore + grading + translation for both rooms;
@@ -93,6 +94,9 @@ export type PlayFeedback = {
   objectivePoints: (ObjectivePoint | undefined)[];
   engineGrades: (EngineGrade | undefined)[];
   settings: ReviewSettings;
+  // Objective best-line UCIs for the viewed move (grading-lane walk with
+  // Stockfish veto): PlayVerdict renders them through bestLinePreview.
+  objectiveBestLine: string[];
 };
 export type PlayQualitiesMemo = UnifiedMemo;
 export type PlayQualitiesStats = { reviews: number };
@@ -458,6 +462,24 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     const bot = botResults[ply];
     return best && bot ? botRarity(bot, best) : undefined;
   }), [timeline, evaluations, objectivePoints, botResults]);
+  // Objective best line for the viewed move: the suggestion walks the
+  // grading lane (bot-2400 tops, reply by reply) with Stockfish as veto
+  // only — never the Stockfish rank-1 PV, whose first move the badge can
+  // grade as a mistake. Gated exactly like the material note (minus the
+  // book hit, which InsightPanel owns); the walk deepens as frontier rows
+  // land through ensureWalkFrontier below.
+  const walkQuality = focusPly >= 0 ? qualities[focusPly] : undefined;
+  const walkEnabled = active && !tooLong && focusPly >= 0
+    && (walkQuality?.label === 'Mistake' || walkQuality?.label === 'Blunder')
+    && evaluations[focusPly]?.score.type === 'cp' && evaluations[currentPly]?.score.type === 'cp'
+    && !evaluations[focusPly]?.terminal && !evaluations[currentPly]?.terminal;
+  const ensureWalkFrontier = useCallback((maia: ReviewNode | null, sf: ReviewNode | null) => {
+    if (maia) ensureLane(coordinator, [maia], scope.signal);
+    if (sf) coordinator.ensure([sf], settingsForNode, { priority: true, engines: ['sf'], signal: scope.signal });
+  }, [coordinator, scope, settingsForNode]);
+  const objectiveBestLine = useObjectiveBestLine({ coordinator, initialFen: timeline.initialFen, lineMoves: timeline.moves,
+    reviewedPly: currentPly, enabled: walkEnabled, window: state.bestLineWindow, sfSettingsFor: settingsForNode,
+    ensureFrontier: ensureWalkFrontier, version });
   // Mainline display qualities for the original-line continuation rendered
   // under an explored branch. MovesPanel draws that continuation from the
   // mainline while review.qualities aligns with the branch timeline, so
@@ -536,10 +558,15 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     : !displayRestore || displayRestore.key !== restoreKey || !laneReady || !coverage ? 'loading'
     : 'partial';
   return { timeline, nodes, evaluations, qualities, rarities, rarity2400, bestRarities, mainlineQualities, coverage,
+    // Objective best-line UCIs for the viewed move (grading-lane walk, see
+    // above): InsightPanel renders them through bestLinePreview instead of
+    // the Stockfish rank-1 PV.
+    objectiveBestLine,
     // Objective lane (provider points per position): the bar, graphs, and
     // score copy read this; move grades already derive from it. The
     // display-bot results above stay on the selected Elo for rarity and
-    // wording; Stockfish evaluations stay for material, mate, and praise.
+    // wording; Stockfish evaluations stay for mate, praise, and the
+    // best-line veto.
     objective: objectivePoints,
     objectiveError: (node: ReviewNode | undefined) => laneError(coordinator, node),
     // Objective candidate lists for the panel: the focus list judges the
@@ -750,6 +777,27 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     return result;
   },
   [active, gameId, timeline, userColor, settings, lane, version, coordinator]);
+  // Objective best line for the viewed user move: same grading-lane walk
+  // as the analysis room, so the suggestion never starts with a move the
+  // badge grades as a mistake. Play issues no speculative whole-line work:
+  // the walk extends only through rows the pair fetch, restore, and retry
+  // sweeps already settle, and the frontier fetch below covers one viewed
+  // mistake at a time.
+  const viewedPly = Math.max(0, Math.min(state.viewedPly ?? timeline.moves.length, timeline.moves.length));
+  const viewFocus = viewedPly - 1;
+  const playWalkGrade = viewFocus >= 0 ? computed?.qualities[viewFocus] : undefined;
+  const playWalkEnabled = active && !tooLong && viewFocus >= 0
+    && (playWalkGrade?.label === 'Mistake' || playWalkGrade?.label === 'Blunder')
+    && evaluations[viewFocus]?.score.type === 'cp' && evaluations[viewedPly]?.score.type === 'cp'
+    && !evaluations[viewFocus]?.terminal && !evaluations[viewedPly]?.terminal;
+  const playSfSettingsFor = useCallback(() => settings, [settings]);
+  const ensurePlayWalkFrontier = useCallback((maia: ReviewNode | null, sf: ReviewNode | null) => {
+    if (maia) ensureLane(coordinator, [maia], scope.signal);
+    if (sf) coordinator.ensure([sf], settings, { priority: true, engines: ['sf'], signal: scope.signal });
+  }, [coordinator, scope, settings]);
+  const objectiveBestLine = useObjectiveBestLine({ coordinator, initialFen: START_FEN, lineMoves: timeline.moves,
+    reviewedPly: viewedPly, enabled: playWalkEnabled, window: state.bestLineWindow, sfSettingsFor: playSfSettingsFor,
+    ensureFrontier: ensurePlayWalkFrontier, version });
   // Play queues no whole-line work and owns no batch job: the foreground
   // pair above plus the bulk restore are the only evaluation traffic, so
   // there is nothing to prune or cancel beyond the line scope's own abort.
@@ -759,7 +807,7 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     active, qualities: computed?.qualities ?? [], error: sustainedError,
     timeline, nodes: fullNodes, evaluations, botResults,
     objectivePoints: lane.points, engineGrades: computed?.grades ?? [],
-    settings,
+    settings, objectiveBestLine,
   };
 }
 
