@@ -31,7 +31,7 @@
 .overview-issues-heading > span { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .review-issues { list-style: none; margin: 0; padding: 0; }
 .review-issues li + li { border-top: 1px solid var(--line); }
-.review-issue { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 58px; padding: 10px 0; border: 0; border-radius: 0; background: transparent; text-align: left; }
+.review-issue { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 4px 0; border: 0; border-radius: 0; background: transparent; text-align: left; }
 .review-issue:hover:not(:disabled) { background: #b8c9980d; }
 .issue-move { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
 .issue-move strong { font-size: 14px; }

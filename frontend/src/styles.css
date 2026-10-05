@@ -254,10 +254,12 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .saved-panel { max-width: 820px; margin: 0 auto; padding-block: 28px; display: flex; flex-direction: column; gap: 16px; }
 .saved-heading { display: flex; align-items: baseline; gap: 12px; }.saved-heading span { font-size: 12px; color: var(--muted); }
 .saved-controls { display: flex; flex-wrap: wrap; gap: 12px; }
-.saved-controls .field { flex: 1 1 140px; min-width: 140px; max-width: 220px; }
+.saved-controls .field { display: flex; flex-direction: row; align-items: center; gap: 8px; flex: 1 1 140px; min-width: 140px; max-width: 220px; }
+.saved-controls .field > span { flex: none; }
+.saved-controls select { flex: 1; min-width: 0; width: auto; }
+.saved-controls .multi-filter-trigger { flex: 1; min-width: 0; width: auto; }
 .saved-controls .field > span { display: inline-flex; align-items: center; font-size: 12px; color: var(--muted); }
 .saved-controls .field > span svg { flex: none; }
-.saved-controls select { width: 100%; }
 .saved-count { margin: 0; font-size: 12px; color: var(--muted); }
 /* Dropdown multi-select filters: the trigger reads like the neighboring
    selects; the checkbox menu floats above the game list. */
@@ -317,7 +319,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
      the top while the insight panel scrolls beneath on phones. Sticky (not
      fixed) keeps the stage in flow so nothing jumps, and releases at the
      workspace end. Below the footer (z 50) and banners (z 60). */
-  .bottom-ui .board-stage { position: sticky; top: 0; z-index: 40; background: #202122; padding-top: calc(4px + env(safe-area-inset-top)); padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  .bottom-ui .board-stage { position: sticky; top: 0; z-index: 40; background: #202122; padding: 0; border-bottom: 1px solid var(--line); }
   /* The mobile footer is a separate mount outside the padded content flow
      (portaled to the body end), so it spans edge to edge: plain sticky pins
      it to the viewport, its own box reserves the space, and nothing drifts
@@ -331,7 +333,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
   .mobile-footer .nav-buttons { flex: 1; justify-content: space-evenly; }
   /* The bar owns the bottom edge: the shell's own bottom padding would just
      stack trailing space behind it. */
-  .app-shell.bottom-ui { padding-bottom: 0; }
+  .app-shell.bottom-ui { padding-top: calc(4px + env(safe-area-inset-top)); padding-bottom: 0; }
   .player-strip { height: 34px; font-size: 13px; }
   .panel.insight-panel { margin: 0; width: 100%; padding: 0; background: transparent; border: 0; border-radius: 0; gap: 20px; }
   .insight-panel > .analysis-section { padding: 0; }
@@ -391,7 +393,8 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .quality-shimmer { background: #333637; overflow: hidden; }
 .quality-shimmer-bar { display: block; width: 100%; height: 12px; border-radius: 4px; background: linear-gradient(90deg, #333637 25%, #4a4f50 50%, #333637 75%); background-size: 200% 100%; animation: skeleton-shimmer 1.2s ease-in-out infinite; }
 .source-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }.source-display { background: #ef4444; }.source-objective { background: #3b82f6; }.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }.win-hero { display: flex; align-items: baseline; gap: 8px; margin: 0; }.win-hero strong { font-size: 21px; font-weight: 750; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }.win-hero span { font-size: 12px; color: var(--muted); }
-.insight-panel .engine-card h2 { font-size: 14px; }
+.insight-panel .engine-card h2 { font-size: 14px; margin: 0; }
+#insight-title { margin: 0; }
 @media (max-width: 760px) { .insight-panel { max-height: none; overflow: visible; }.side-options { gap: 5px; }.side-options label { padding: 0 8px; font-size: 13px; } }
 /* Modern play-setup modal: Bot / side / coaching sections.
    Keeps the #play-controls / #bot-elo / #start-game IDs the specs
@@ -426,10 +429,10 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .side-segmented { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .side-segmented label { display: flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; min-height: 48px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; font-size: 13px; flex: 1; overflow: hidden; }
 .side-segmented label > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* At phone widths three icon+text columns no longer fit (320px leaves ~75px
-   per option while the content needs ~100px), so the options stack full-width
-   instead of spilling past their borders. */
-@media (max-width: 480px) { .side-segmented { grid-template-columns: minmax(0, 1fr); } }
+/* Below the bottom-ui breakpoint three icon+text columns no longer fit,
+   so the options stack full-width (one per row) instead of spilling past
+   their borders. */
+@media (max-width: 760px) { .side-segmented { grid-template-columns: minmax(0, 1fr); } }
 .side-segmented label[data-active="true"] { border-color: var(--accent); background: #414b35; color: #e6f0d5; }
 .side-segmented input { width: 16px; height: 16px; min-height: 16px; accent-color: var(--accent); flex: none; }
 .toggle-card { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; font-size: 14px; margin: 0; }
