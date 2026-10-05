@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildKeyMoves, formatKeyDelta, formatProb, keyUciOrder, type KeyMove } from './keyMoves';
+import { buildKeyMoves, formatKeyDelta, formatProb, keyHeads, keyRowOrder, type KeyMove } from './keyMoves';
 import { candidateSan } from './domain';
 
 describe('buildKeyMoves', () => {
@@ -7,7 +7,7 @@ describe('buildKeyMoves', () => {
   // Simpler: construct WDL triples with exact expectations via win + draw/2.
   const triple = (win: number, draw: number): [number, number, number] => [Math.max(0, 1 - win - draw), draw, win];
 
-  it('merges shared moves and rows the rest in lane order', () => {
+  it('merges shared moves into one row each', () => {
     const moves = buildKeyMoves({
       sfBest: 'e2e4',
       objective: {
@@ -26,16 +26,15 @@ describe('buildKeyMoves', () => {
       beforeExpected: 52,
       trueDeltaByUci: new Map([['e2e4', { value: 8, pending: false }]]),
     });
-    // 2400 policy order backbone; the display-only g1f3 appends (it is also
-    // the played move); the listed SF best stays in place with its roles.
-    expect(moves.map(m => m.uci)).toEqual(['d2d4', 'e2e4', 'c2c4', 'g1f3']);
-    expect(moves[0].roles).toEqual(['likely-2400']);
-    expect(moves[1].roles).toEqual(['sf-best', 'best-2400']);
-    expect(moves[2].roles).toEqual([]);
-    expect(moves[3].roles).toEqual(['played']);
-    expect(moves[1].delta).toBe(8);
-    expect(moves[1].probMine).toBe(0.2);
-    expect(moves[3].prob2400).toBeNull();
+    // Backbone runners-up without a role (c2c4) and display-only extras stay
+    // out; the played move rows even when listed nowhere else.
+    expect(moves.map(m => m.uci)).toEqual(['e2e4', 'd2d4', 'g1f3']);
+    expect(moves[0].roles).toEqual(['sf-best', 'best-2400']);
+    expect(moves[1].roles).toEqual(['likely-2400']);
+    expect(moves[2].roles).toEqual(['played']);
+    expect(moves[0].delta).toBe(8);
+    expect(moves[0].probMine).toBe(0.2);
+    expect(moves[2].prob2400).toBeNull();
   });
 
   it('floats an unlisted Stockfish best above the 2400 list', () => {
@@ -50,6 +49,22 @@ describe('buildKeyMoves', () => {
     expect(moves.map(m => m.uci)).toEqual(['h2h4', 'e2e4']);
     expect(moves[0].roles).toEqual(['sf-best']);
     expect(moves[1].roles).toEqual(['best-2400', 'likely-2400']);
+  });
+
+  it('rows a distinct my-likely move without flair', () => {
+    const moves = buildKeyMoves({
+      sfBest: 'e2e4',
+      objective: { entries: [{ uci: 'e2e4', expected: 60, prob: 0.6 }], degraded: false },
+      displayTopMoves: [{ move: 'd2d4', prob: 0.5, wdl: triple(0.5, 0.2) }],
+      played: 'e2e4',
+      beforeExpected: 55,
+      trueDeltaByUci: new Map(),
+    });
+    expect(moves.map(m => m.uci)).toEqual(['e2e4', 'd2d4']);
+    expect(moves[0].roles).toEqual(['sf-best', 'best-2400', 'likely-2400', 'played']);
+    expect(moves[1].roles).toEqual([]);
+    expect(moves[1].probMine).toBe(0.5);
+    expect(moves[1].prob2400).toBeNull();
   });
 
   it('keeps distinct best vs likely when policy and value disagree', () => {
@@ -67,9 +82,9 @@ describe('buildKeyMoves', () => {
       beforeExpected: 52,
       trueDeltaByUci: new Map(),
     });
-    expect(moves.map(m => m.uci)).toEqual(['d2d4', 'e2e4']);
-    expect(moves[0].roles).toEqual(['likely-2400', 'played']);
-    expect(moves[1].roles).toEqual(['best-2400']);
+    expect(moves.map(m => m.uci)).toEqual(['e2e4', 'd2d4']);
+    expect(moves[0].roles).toEqual(['best-2400']);
+    expect(moves[1].roles).toEqual(['likely-2400', 'played']);
   });
 
   it('falls back to the prospective delta while the child row is pending', () => {
@@ -92,15 +107,21 @@ describe('buildKeyMoves', () => {
     expect(formatProb(0.156)).toBe('16%');
   });
 
-  it('queues the Stockfish best first for true-delta grading', () => {
-    expect(keyUciOrder({ sfBest: 'c2c4', played: 'd2d4', displayMoves: ['e2e4'], objectiveMoves: ['e2e4', 'd2d4'] }))
-      .toEqual(['c2c4', 'd2d4', 'e2e4']);
-    // Dedupes and caps at 10 child fetches.
-    const display = Array.from({ length: 6 }, (_, index) => `d${index}`);
-    const objective = Array.from({ length: 6 }, (_, index) => `o${index}`);
-    const queued = keyUciOrder({ sfBest: 'c2c4', played: undefined, displayMoves: display, objectiveMoves: objective });
-    expect(queued).toHaveLength(10);
-    expect(queued[0]).toBe('c2c4');
+  it('reads heads and orders at most five rows', () => {
+    const objective = {
+      entries: [
+        { uci: 'd2d4', expected: 55, prob: 0.4 },
+        { uci: 'e2e4', expected: 60, prob: 0.3 },
+      ],
+      degraded: false,
+    };
+    const display = [
+      { move: 'g1f3', prob: 0.5, wdl: triple(0.5, 0.2) },
+      { move: 'e2e4', prob: 0.2, wdl: triple(0.5, 0.2) },
+    ];
+    expect(keyHeads(objective, display)).toEqual({ best2400: 'e2e4', likely2400: 'd2d4', myLikely: 'g1f3' });
+    expect(keyRowOrder({ sfBest: 'c2c4', best2400: 'e2e4', likely2400: 'd2d4', myLikely: 'g1f3', played: 'd2d4' }))
+      .toEqual(['c2c4', 'e2e4', 'd2d4', 'g1f3']);
   });
 
   it('uses display expectations for SF-best moves 2400 never lists', () => {

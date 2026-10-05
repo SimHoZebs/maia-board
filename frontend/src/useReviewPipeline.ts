@@ -12,7 +12,7 @@ import { useServerBatch } from './useServerBatch';
 import { computeLineQualities, type UnifiedMemo } from './qualities';
 import { alienUpgrade, effectiveQuality, botRarity, sfTopGap, type EngineGrade, type Evaluation, type ObjectivePoint, type Quality, type Rarity } from './reviewMetrics';
 import { selectBotDisplay, type BotDisplayEntry } from './botDisplay';
-import { keyUciOrder } from './keyMoves';
+import { keyHeads, keyRowOrder } from './keyMoves';
 import { useObjectiveBestLine } from './useObjectiveBestLine';
 
 // Configuration expressing room differences, not architecture. One pipeline
@@ -376,12 +376,15 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   // synthesize (mate 100, draw 50) with no fetch.
   const trueTargetNode = focusNode ?? currentNode;
   const trueTargetPly = focusNode ? focusPly : currentPly;
-  const trueUcis = useMemo(() => keyUciOrder({
-    sfBest: (focusNode ? evaluations[focusPly] : evaluations[currentPly])?.best_move ?? null,
-    played: focusNode ? timeline.moves[focusPly] : undefined,
-    displayMoves: (focusNode ? botResults[focusPly] : botResults[currentPly])?.top_moves.map(candidate => candidate.move) ?? [],
-    objectiveMoves: (focusNode ? objectiveCandidates.focus : objectiveCandidates.current)?.entries.map(entry => entry.uci) ?? [],
-  }), [focusNode, focusPly, currentPly, timeline, botResults, evaluations, objectiveCandidates]);
+  const trueUcis = useMemo(() => {
+    const candidates = focusNode ? objectiveCandidates.focus : objectiveCandidates.current;
+    const disp = (focusNode ? botResults[focusPly] : botResults[currentPly])?.top_moves ?? [];
+    return keyRowOrder({
+      sfBest: (focusNode ? evaluations[focusPly] : evaluations[currentPly])?.best_move ?? null,
+      ...keyHeads(candidates, disp),
+      played: focusNode ? timeline.moves[focusPly] : undefined,
+    });
+  }, [focusNode, focusPly, currentPly, timeline, botResults, evaluations, objectiveCandidates]);
   const trueUciKey = trueUcis.join(',');
   const trueChildNodes = useMemo(() => {
     if (!trueTargetNode || trueUcis.length === 0) return [];

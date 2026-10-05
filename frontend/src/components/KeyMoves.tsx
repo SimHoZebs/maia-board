@@ -17,10 +17,10 @@ function KeyMark({ move }: { move: KeyMove }) {
   );
 }
 
-// Key moves card: one fused row per distinct move (SF best, 2400 best,
-// 2400 most-likely, played) instead of two parallel 5-row engine lists.
-// Each row carries the 2400 policy share, the true game-shift win delta,
-// and the viewed-Elo share, so the SF-vs-human and best-vs-likely
+// Key moves card: one fused row per head move (SF best, 2400 best,
+// 2400 most-likely, my likely, played) instead of two parallel 5-row engine
+// lists. Each row carries the 2400 policy share, the viewed-Elo share, and
+// the true game-shift win delta, so the SF-vs-human and best-vs-likely
 // comparisons read off one line. Preview/branch interactions match the
 // engine candidate lists exactly (hover previews, click branches).
 export function KeyMovesList({ fen, played, hasMove, previewUci, moves, deltaTitle, mineTitle, onPreview, onClear, onSelect }: {

@@ -23,14 +23,29 @@ export type KeyMove = {
 
 export type TrueDeltaEntry = { value: number | null; pending: boolean };
 
-// Union of candidate UCIs whose 2400 child rows the pipeline grades for
-// true game-shift deltas. Stockfish best leads: it is the card's first row
-// yet appears in neither bot list, so without this its delta would never
-// settle. The played move is always queued too: on mainlines its child row
-// rides the restore/batch (an instant cache hit), while on fresh branches
-// this is the only fetch that settles its delta. Capped at 10 child
-// fetches, viewed position only.
-export function keyUciOrder(args: { sfBest: string | null; played?: string | undefined; displayMoves: string[]; objectiveMoves: string[] }): string[] {
+// Heads of the three received lists: the 2400 best by expected score, the
+// 2400 most-likely by policy, and my most-likely (display top-1). Together
+// with the Stockfish best and the played move these are the card's rows.
+export function keyHeads(objective: ObjectiveCandidates | undefined, displayTopMoves: TopMove[]): {
+  best2400: string | null; likely2400: string | null; myLikely: string | null;
+} {
+  const entries = objective?.entries ?? [];
+  const hasProb = entries.length > 0
+    && entries.every(entry => typeof entry.prob === 'number' && Number.isFinite(entry.prob));
+  return {
+    best2400: entries.length > 0 ? entries.reduce((a, b) => (b.expected > a.expected ? b : a)).uci : null,
+    likely2400: hasProb ? entries.reduce((a, b) => ((b.prob ?? 0) > (a.prob ?? 0) ? b : a)).uci : null,
+    myLikely: displayTopMoves.length > 0 ? displayTopMoves[0].move : null,
+  };
+}
+
+// Row order: Stockfish best, 2400 best, 2400 likely, my likely, played —
+// deduped so shared moves merge into one row carrying every role. Never
+// more than five rows.
+export function keyRowOrder(args: {
+  sfBest: string | null; best2400: string | null; likely2400: string | null;
+  myLikely: string | null; played?: string | undefined;
+}): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   const push = (uci: string | null | undefined) => {
@@ -38,10 +53,11 @@ export function keyUciOrder(args: { sfBest: string | null; played?: string | und
     seen.add(uci); out.push(uci);
   };
   push(args.sfBest);
+  push(args.best2400);
+  push(args.likely2400);
+  push(args.myLikely);
   push(args.played);
-  for (const uci of args.displayMoves) push(uci);
-  for (const uci of args.objectiveMoves) push(uci);
-  return out.slice(0, 10);
+  return out;
 }
 
 export function formatProb(prob: number | null): string {
@@ -55,13 +71,14 @@ export function formatKeyDelta(move: Pick<KeyMove, 'delta' | 'deltaPending' | 'p
   return '—';
 }
 
-// Pure builder for the Key moves card: the union of every received move —
-// the 2400 policy list as the backbone, the Stockfish best floating above
-// it only when 2400 doesn't list it, display-only moves appended in display
-// order, the played move appended when listed nowhere. Same UCIs merge into
-// one row carrying every role it fulfills. Expectations for the prospective
-// fallback prefer the objective lane, then the display lane (both are
-// 2400-valued).
+// Pure builder for the Key moves card: the 2400 policy list as the
+// backbone, the Stockfish best floating above it only when 2400 doesn't
+// list it, the played move appended when listed nowhere. Same UCIs merge
+// into one row carrying every role it fulfills; display-only runners-up
+// stay out (their only reading would be the You share). The display lane
+// still feeds per-row You shares and value expectations. Expectations for
+// the prospective fallback prefer the objective lane, then the display lane
+// (both are 2400-valued).
 export function buildKeyMoves(args: {
   sfBest: string | null;
   objective?: ObjectiveCandidates | undefined;
@@ -77,24 +94,8 @@ export function buildKeyMoves(args: {
   const bestListed = entries.length > 0 ? Math.max(...entries.map(entry => entry.expected)) : null;
   const { baseline } = deltaBaseline(beforeExpected, bestListed);
 
-  const hasProb = entries.length > 0
-    && entries.every(entry => typeof entry.prob === 'number' && Number.isFinite(entry.prob));
-  const best2400 = entries.length > 0
-    ? entries.reduce((a, b) => (b.expected > a.expected ? b : a)).uci
-    : null;
-  const likely2400 = hasProb
-    ? entries.reduce((a, b) => ((b.prob ?? 0) > (a.prob ?? 0) ? b : a)).uci
-    : null;
-
-  const ordered: string[] = [];
-  const push = (uci: string | null | undefined) => {
-    if (typeof uci !== 'string' || uci.length === 0 || ordered.includes(uci)) return;
-    ordered.push(uci);
-  };
-  if (sfBest && !objByUci.has(sfBest)) push(sfBest);
-  for (const entry of entries) push(entry.uci);
-  for (const candidate of displayTopMoves) push(candidate.move);
-  push(played);
+  const { best2400, likely2400, myLikely } = keyHeads(objective, displayTopMoves);
+  const ordered = keyRowOrder({ sfBest, best2400, likely2400, myLikely, played });
 
   return ordered.map(uci => {
     const obj = objByUci.get(uci);
