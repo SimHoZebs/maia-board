@@ -4,7 +4,6 @@
 .footer-analyze button { flex-shrink: 0; white-space: nowrap; }
 .footer-analyze [role="status"] { flex-shrink: 0; white-space: nowrap; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .review-overview { display: flex; flex-direction: column; gap: 12px; }
-.review-overview .review-charts { margin: 0; }
 .chart-point .chart-dot-inaccuracy { background: #7c691e; }
 .chart-point .chart-dot-mistake { background: #985920; }
 .chart-point .chart-dot-blunder { background: #a63c3c; }
@@ -17,17 +16,13 @@
 .accuracy-summary > :only-child { grid-column: 1 / -1; }
 .accuracy-card { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 12px 10px; border: 1px solid var(--line); border-radius: 5px; background: #202122; }
 .accuracy-card.own-side { border-color: #76865b; }
-.accuracy-card h3 { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 12px; font-weight: 600; }
+.accuracy-card h3 { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; }
 .quality-counts { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 11px; }
 .quality-counts li { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px 3px 3px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .quality-counts li.zero { opacity: 0.45; }
-.overview-partial { margin: 0; padding: 10px 12px; border-left: 2px solid var(--accent); background: #b8c99809; font-size: 12px; }
+.overview-partial { padding: 10px 12px; border-left: 2px solid var(--accent); background: #b8c99809; font-size: 12px; }
 .overview-issues-heading { display: flex; align-items: center; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
-/* Separation from the summary above lives on the section boundary, not the
-   heading, preserving the panel's 12px rhythm. */
-/* The summary continues below the engines: 12px parent gap + 8px sibling = preserved 20px. */
-.engine-duo + .review-overview, .engine-card + .review-overview { margin: 8px 0 0; }
-.overview-issues-heading h3 { margin: 0; font-size: 13px; }
+.overview-issues-heading h3 { font-size: 13px; }
 .overview-issues-heading > span { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .review-issues { list-style: none; margin: 0; padding: 0; }
 .review-issues li + li { border-top: 1px solid var(--line); }

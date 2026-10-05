@@ -1,18 +1,17 @@
 .lab-page main { max-width: 760px; margin: 24px auto 64px; display: flex; flex-direction: column; gap: 16px; }
-.lab-page main > h1, .lab-page main > p { margin: 0; }
 .lab-crumb { color: var(--muted); font-size: 13px; }
 .lab-page code { font-size: 12px; background: #333637; border-radius: 4px; padding: 1px 5px; }
 .lab-intro { max-width: 60ch; }
-.lab-row { border: 1px solid var(--line); border-radius: 8px; padding: 18px; margin: 0; background: #282a2b; display: flex; flex-direction: column; gap: 12px; }
+.lab-row { border: 1px solid var(--line); border-radius: 8px; padding: 18px; background: #282a2b; display: flex; flex-direction: column; gap: 12px; }
 .lab-row-head { display: flex; gap: 12px; align-items: baseline; }
 .lab-row-head > div { display: flex; flex-direction: column; gap: 4px; }
 .lab-num { font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 750; font-size: 13px; }
-.lab-row-head h2 { margin: 0; font-size: 16px; }
-.lab-row-head p { margin: 0; font-size: 13px; }
-.lab-demo { display: grid; gap: 12px; margin: 0; }
+.lab-row-head h2 { font-size: 16px; }
+.lab-row-head p { font-size: 13px; }
+.lab-demo { display: grid; gap: 12px; }
 .lab-demo-badges { display: flex; align-items: center; gap: 12px; min-height: 32px; }
 .lab-moves { display: flex; flex-wrap: wrap; gap: 2px; border-top: 1px solid var(--line); padding-top: 8px; }
-.lab-verdict { margin: 0; font-size: 12px; color: var(--muted); }
+.lab-verdict { font-size: 12px; color: var(--muted); }
 
 /* 02 morph: blur + scale into the next glyph */
 @keyframes lab-morph-in {
