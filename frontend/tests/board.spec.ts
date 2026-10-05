@@ -504,7 +504,9 @@ test('analysis load, navigation, copy, request history, stale reply and mode reu
   expect(app.requests[0].payload.moves).toEqual(['e2e4', 'e7e5']);
   await page.locator('#analysis-prev').click();
   await app.reply(0, 'g1f3');
-  await expect(page.locator('#insight-content')).toHaveCount(0);
+  // The objective lane settles on its own: the card renders from it while
+  // the focus display single is still in flight (its You column reads —).
+  await expect(page.locator('#insight-content')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Analyze entire game' })).toBeEnabled();
   await piece(page, 'g1', 'white knight');
   await page.locator('#analysis-next').click();
@@ -530,7 +532,7 @@ test('analysis load, navigation, copy, request history, stale reply and mode reu
     }
   }
   await expect(page.locator('#insight-content')).toBeVisible();
-  await expect(page.locator('section[aria-label="Bot analysis"] h2')).toContainText('Bot');
+  await expect(page.locator('section[aria-label="Key moves"] h2 #analysis-rating')).toBeVisible();
   await expect(page.locator('#analysis-rating')).toHaveValue('1600');
   await page.locator('#mode-play').click();
   await expect(page.locator('#takeback')).toBeVisible();
@@ -711,27 +713,45 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   await page.locator('#load-analysis').click();
   await expect(page.locator('#analysis-controls')).toHaveCount(0);
   await app.reply(0, 'b8c6', 200, [{ move: 'b8c6', prob: .4, wdl: [0.2, 0.3, 0.5] }, { move: 'g8f6', prob: .15, wdl: [0.2, 0.3, 0.5] }]);
-  // Header row shares .candidate-reading, so scope to data rows; both
-  // candidates share one winrate, hence identical 0.0% deltas.
-  await expect(page.locator('section[aria-label="Bot analysis"] li:not(.candidate-header) .candidate-reading')).toHaveText(['Played, Nc640%0.0%', 'Nf615%0.0%']);
+  // Key moves unions every received move: Nc6 merges Stockfish best,
+  // 2400 best/likely, and played into one row; Na6 (2400-only) and Nf6
+  // (display-only) row separately.
+  const keyMoves = page.locator('section[aria-label="Key moves"]');
+  await expect(page.locator('#insight-content')).toBeVisible();
+  await expect(keyMoves.locator('li:not(.candidate-header)')).toHaveCount(3);
+  await expect(keyMoves.locator('.candidate-list')).toContainText('Nc6');
+  await expect(keyMoves.locator('.candidate-list')).toContainText('Na6');
+  await expect(keyMoves.locator('.candidate-list')).toContainText('Nf6');
+  await expect(keyMoves.getByRole('button', { name: 'Explore Nc6 (played) from before this move', exact: true })).toBeVisible();
+  // The only marker is the Stockfish fish: best/likely read off the 2400
+  // and delta columns, and no played chip (the green row says played).
+  await expect(keyMoves.locator('.key-role--sf-best svg')).toBeVisible();
+  await expect(keyMoves.locator('.key-role--sf-best')).toHaveAttribute('title', 'Stockfish best move');
+  await expect(keyMoves.locator('.key-roles .key-role')).toHaveCount(1);
+  // 2400 and viewed-Elo shares read off the merged Nc6 row (objective
+  // auto-top 60%, display reply 40%).
+  const merged = keyMoves.locator('li:not(.candidate-header)').first();
+  await expect(merged).toContainText('60%');
+  await expect(merged).toContainText('40%');
   await expect(page.locator('.win-hero')).toHaveCount(0);
-  await expect(page.locator('section[aria-label="Bot analysis"] .candidate-list')).toContainText('Nc6');
   await expect(page.locator('.balance-track')).toHaveAccessibleName(/White 50%.*Draw 30%.*Black 20%.*estimated White winning chance 65%/);
   await expect(page.locator('.balance-white-tag')).toHaveText('50%');
   await expect(page.locator('.balance-draw-tag')).toHaveText('30%');
   await expect(page.locator('.balance-black-tag')).toHaveText('20%');
-  await page.getByRole('button', { name: 'Explore Nf6' }).hover();
+  await page.getByRole('button', { name: 'Explore Nc6 (played) from before this move' }).hover();
   await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(0);
-  await piece(page, 'g8', 'black knight');
+  await piece(page, 'c6', 'black knight');
   await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
-  await expect(page.locator('section[aria-label="Bot analysis"] .candidate-list')).toContainText('Nc6');
+  await expect(keyMoves.locator('.candidate-list')).toContainText('Nc6');
   await screenshot(page, testInfo.outputPath('analysis-candidates-desktop.png'));
-  await page.getByRole('button', { name: 'Explore Nf6' }).click();
+  // Branch on the board: step back to just after Nf3, then play ...Nf6 and
+  // Bc4 on the board — the fused row offers no unplayed candidate while
+  // every lane agrees on Nc6.
+  await page.locator('#analysis-prev').click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
+  await move(page, 'g8', 'f6');
   await piece(page, 'f6', 'black knight');
-  // Exploring lands on a position whose before-position already has a cached
-  // evaluation, so the panel judges the explored move instead of blanking.
-  await expect(page.locator('#insight-content').getByRole('button', { name: 'Explore Nf6 (played) from before this move', exact: true })).toBeVisible();
-  await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(0);
+  await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
   await move(page, 'f1', 'c4');
   // Either branch move can win the 200ms foreground race. A parked
   // intermediate tip holds the bot lanes (the fixture holds routes
@@ -755,7 +775,7 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   await expect.poll(() => app.requests.some(r => r.payload.moves.join() === focusMoves.join())).toBe(true);
   const focusIdx = app.requests.findIndex((r, i) => !replied.has(i) && r.payload.moves.join() === focusMoves.join());
   if (focusIdx >= 0) { replied.add(focusIdx); await app.reply(focusIdx); }
-  await expect(page.locator('section[aria-label="Bot analysis"] .candidate-list')).toBeVisible();
+  await expect(page.locator('section[aria-label="Key moves"] .candidate-list')).toBeVisible();
   // Let the display commit flush before changing the rating.
   await page.waitForTimeout(250);
   await expect(page.locator('#analysis-rating')).toBeVisible();
@@ -774,10 +794,8 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   await app.reply(app.requests.findIndex(r => r.payload.elo_maia === 2000));
   await expect.poll(() => app.requests.filter(r => r.payload.elo_maia === 2000)).toHaveLength(2);
   await app.reply(app.requests.map((r, i) => (r.payload.elo_maia === 2000 ? i : -1)).filter(i => i >= 0).at(-1)!);
-  // The display list follows the reference Elo; the objective heading
-  // holds steady across the switch.
-  await expect(page.locator('section[aria-label="Bot analysis"] h2')).toContainText('Bot');
-  await expect(page.locator('#objective-rating')).toHaveValue('2400');
+  // The key-moves card follows the reference Elo.
+  await expect(page.locator('section[aria-label="Key moves"] h2 #analysis-rating')).toBeVisible();
   await expect(page.locator('#analysis-rating')).toHaveValue('2000');
   expect(app.requests.some(r => r.payload.elo_maia === 2000 && r.payload.elo_user === 2000)).toBe(true);
   for (const [id, expected] of [['copy-pgn', '1. e4 e5 2. Nf3 Nc6'], ['copy-explored-pgn', '1. e4 e5 2. Nf3 Nf6 3. Bc4']]) {
@@ -875,7 +893,7 @@ test('analysis entry sources and input keyboard isolation', async ({ page }) => 
   // The drained startpos reply already seeded this focus row (same node, same
   // settings), so the focus single is a memory hit and fires no request.
   await expect(page.locator('.win-hero')).toHaveCount(0);
-  await expect(page.locator('section[aria-label="Bot analysis"] .candidate-list')).toContainText('e4');
+  await expect(page.locator('section[aria-label="Key moves"] .candidate-list')).toContainText('e4');
 });
 
 test('tapping a history game opens its analysis', async ({ page }) => {
@@ -1144,11 +1162,14 @@ for (const width of [320, 390]) {
     expect(footerGeometry.analyzeTop).toBeGreaterThanOrEqual(footerGeometry.actionsTop);
     const ratingBox = (await page.locator('#analysis-rating').boundingBox())!;
     expect(ratingBox.height).toBeLessThanOrEqual(32);
-    const engines = (await page.locator('.engine-duo').boundingBox())!;
+    // Settle the branch-tip card before measuring against it: unlike the old
+    // two-list shell, the key-moves header only exists once content lands.
+    await expect(page.locator('#insight-content')).toBeVisible();
+    const engines = (await page.locator('section[aria-label="Key moves"]').boundingBox())!;
     const exports = (await page.locator('.analysis-actions').boundingBox())!;
     expect(exports.y).toBeGreaterThanOrEqual(engines.y + engines.height);
     await expect(page.locator('.board-stage .analysis-actions')).toHaveCount(0);
-    await expect(page.locator('#objective-rating')).toHaveCount(1);
+    await expect(page.locator('section[aria-label="Key moves"] .key-header')).toHaveCount(1);
     await expect(page.getByText('Engine moves', { exact: true })).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath(`variation-${width}.png`), fullPage: true });
@@ -1319,6 +1340,10 @@ test('phone touch movement and board exploration', async ({ browser }) => {
   await page.locator('#analysis-pgn').fill('1. e4');
   await page.locator('#load-analysis').tap();
   await app.reply(1, 'e2e4');
+  // Top-align the insight panel before tapping: on phones the sticky board
+  // stage and mobile footer can otherwise cover the row after it scrolls
+  // into view.
+  await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
   await page.locator('#insight-content').getByRole('button', { name: 'Explore e4 (played)' }).tap();
   await piece(page, 'e4', 'white pawn');
   await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 2');

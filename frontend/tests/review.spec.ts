@@ -163,32 +163,42 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
   return { requests, errors, evaluations, batches };
 }
 const lines = (page: Page) => page.locator('#board svg.cg-shapes line');
-test('standalone FEN shows current candidates and clears correct-frame previews', async ({ page }) => {
+test('standalone FEN shows a fused key row; candidate previews clear by frame', async ({ page }) => {
   const app = await bootReview(page);
   const fen = '4k3/8/8/8/8/8/4P3/4K3 w - - 0 23';
   await page.goto(`http://maia.test/analyze?fen=${encodeURIComponent(fen)}`);
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 1');
-  const bot = page.getByRole('region', { name: 'Bot analysis', exact: true });
+  const bot = page.getByRole('region', { name: 'Key moves', exact: true });
+  // The e4 top merges every lane; the 2400 runner-up rows beneath it.
+  await expect(bot.locator('li:not(.candidate-header)')).toHaveCount(2);
   await expect(bot.getByRole('button', { name: 'Explore e4', exact: true })).toBeVisible();
-  const candidate = bot.getByRole('button', { name: 'Explore e3', exact: true });
-  await expect(bot.getByRole('button').first()).toBeVisible();
-  const preview = page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]');
-  await candidate.hover();
-  await expect(preview).toHaveCount(1);
-  await page.locator('.brand').hover();
-  await expect(preview).toHaveCount(0);
-  await candidate.focus();
-  await expect(preview).toHaveCount(1);
-  // Focusing away clears the preview. A settled single position reports
-  // "Analyzed" (foreground covered everything, nothing to batch), so focus
-  // the always-present New analysis action instead of the Analyze button.
-  await page.getByRole('button', { name: 'New analysis' }).focus();
-  await expect(preview).toHaveCount(0);
+  // The union rows every received move: e3 was always in the bot lists, the
+  // old card just dropped it.
+  await expect(bot.getByRole('button', { name: 'Explore e3', exact: true })).toBeVisible();
+  await expect(bot.locator('.key-role--sf-best svg')).toBeVisible();
+  // Hovering the fused top move draws no extra arrow: the preview duplicates
+  // the lane arrows by design.
+  await bot.getByRole('button', { name: 'Explore e4', exact: true }).hover();
+  await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(0);
   await bot.getByRole('button', { name: 'Explore e4', exact: true }).click();
   await expect(page.locator('.move-cell')).toContainText('23. e4');
   await expect(bot.getByRole('button', { name: 'Explore e4 (played) from before this move', exact: true })).toBeVisible();
-  await bot.getByRole('button').first().hover();
-  await expect(preview).toHaveCount(0);
+  // Preview-state lifecycle back at the branch root: hover/focus set it (the
+  // arrow itself stays deduplicated against the lane arrows), frame moves
+  // clear it.
+  await page.locator('#analysis-first').click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 2');
+  const rootCandidate = bot.getByRole('button', { name: 'Explore e4', exact: true });
+  await expect(rootCandidate).toBeVisible();
+  await rootCandidate.hover();
+  await expect(rootCandidate).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('.brand').hover();
+  await expect(rootCandidate).toHaveAttribute('aria-pressed', 'false');
+  await rootCandidate.focus();
+  await expect(rootCandidate).toHaveAttribute('aria-pressed', 'true');
+  // Focusing away clears the preview.
+  await page.getByRole('button', { name: 'New analysis' }).focus();
+  await expect(rootCandidate).toHaveAttribute('aria-pressed', 'false');
   expect(app.errors).toEqual([]);
 });
 
@@ -201,8 +211,8 @@ test('root shows the fallback notice without model parameters', async ({ page })
     return route.fulfill({ json: { move: uci, top_moves: [{ move: uci, prob: .13, wdl: [.2,.3,.5] }], wdl: [.2,.3,.5], model_used: '5m', degraded: true } });
   });
   await page.goto('http://maia.test/analyze?moves=');
-  await expect(page.locator('#objective-rating')).toHaveValue('2400');
-  await expect(page.locator('section[aria-label="Bot analysis"]').getByText('Bot fallback results.', { exact: true })).toBeVisible();
+  await expect(page.locator('#insight-content')).toBeVisible();
+  await expect(page.locator('section[aria-label="Key moves"]').getByText('Bot fallback results.', { exact: true })).toBeVisible();
   await expect(page.getByText('Bot 2400 fallback results.', { exact: true })).toBeVisible();
   expect(app.errors).toEqual([]);
 });
@@ -306,7 +316,7 @@ for (const width of [320, 1440]) {
 
 test('move analysis summarizes the game below the engines and links mistakes from moves to review', async ({ page }, info) => {
   const app = await bootReview(page);
-  await expect(page.locator('#objective-rating')).toHaveValue('2400');
+  await expect(page.locator('#insight-content')).toBeVisible();
   await expect(page.locator('.overview-partial')).toContainText('Summary covers reviewed moves only');
   await expect(page.getByRole('region', { name: 'White move quality', exact: true })).toBeVisible();
   await expect(page.locator('.accuracy-value')).toHaveCount(0);
@@ -414,7 +424,7 @@ for (const width of [1440, 360]) test(`move analysis restores evaluation graph a
 
 test('move analysis graphs leave unreviewed positions as gaps', async ({ page }) => {
   await bootReview(page);
-  await expect(page.locator('#objective-rating')).toHaveValue('2400');
+  await expect(page.locator('#insight-content')).toBeVisible();
   await expect(page.getByRole('region', { name: 'Evaluation graph', exact: true })).toBeVisible();
   await expect(page.locator('.chart-point i')).toHaveCount(2);
   await expect(page.locator('.chart-line')).toHaveCount(1);
@@ -458,7 +468,7 @@ test('analysis panel shows move analysis, moves to review, and footer analyze to
   await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
-  await expect(page.locator('.engine-duo')).toBeVisible();
+  await expect(page.locator('section[aria-label="Key moves"]')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Moves to review' })).toBeVisible();
   await expect(page.locator('.footer-analyze').getByRole('button', { name: 'Analyzed' })).toBeVisible();
   const geometry = await page.locator('.analysis-footer-section.footer-row, .analysis-actions, .footer-analyze').evaluateAll((elements) => {
@@ -486,7 +496,7 @@ test('analysis panel shows move analysis, moves to review, and footer analyze to
   expect(geometry.analyzeLeft).toBeGreaterThan(geometry.actionsRight);
 });
 
-test('unlisted played moves have no fallback below either prediction list', async ({ page }) => {
+test('unlisted played moves appear as their own key row', async ({ page }) => {
   await bootReview(page, '1. d4 d5');
   // Step to the position after the played move: the panel judges d4 from its
   // before-position, where the top predictions genuinely exclude it.
@@ -494,8 +504,10 @@ test('unlisted played moves have no fallback below either prediction list', asyn
   await page.locator('#analysis-next').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 3');
   await expect(page.locator('#insight-content .candidate-list')).toContainText('e4');
-  await expect(page.locator('.engine-duo')).not.toContainText('Played d4');
-  await expect(page.locator('.engine-duo .candidate-list')).not.toContainText(['d4', 'd4']);
+  // The played move is always a key row (with the Played chip), never a
+  // "Played X" fallback line below the lists.
+  await expect(page.locator('section[aria-label="Key moves"] .candidate-list')).toContainText('d4');
+  await expect(page.locator('section[aria-label="Key moves"]').getByRole('button', { name: /Explore d4 \(played\)/ })).toBeVisible();
 });
 
 test('checkmate fills the bar for the winning side', async ({ page }) => {
@@ -517,7 +529,7 @@ test('blunder and mistake destinations carry board badges', async ({ page }) => 
 });
 test('server-cached positions skip inference after reload', async ({ page }) => {
   const app = await bootReview(page);
-  await expect(page.locator('#objective-rating')).toHaveValue('2400');
+  await expect(page.locator('#insight-content')).toBeVisible();
   // Both engines at the before/current pair must finish before reloading:
   // fast+full Stockfish plus display and grading bot rows.
   await expect.poll(() => app.evaluations.size).toBe(8);
@@ -525,7 +537,7 @@ test('server-cached positions skip inference after reload', async ({ page }) => 
   await page.reload();
   // The loaded line restores from the snapshot with the import panel closed;
   // cached positions resolve without new inference.
-  await expect(page.locator('#objective-rating')).toHaveValue('2400');
+  await expect(page.locator('#insight-content')).toBeVisible();
   await expect(page.locator('.candidate-list li')).not.toHaveCount(0);
   expect(app.requests).toHaveLength(calls);
   expect(app.errors).toEqual([]);
@@ -609,9 +621,11 @@ test('mixed arrow sources retain their own endpoints', async ({ page }, info) =>
   expect(new Set(endpoints).size).toBe(3);
   // Arrows project forward from the viewed position, but the panel judges the
   // displayed move from its before-position: step forward to read predictions.
+  // The key-moves card lists the played move plus the 2400 top (the
+  // display-only override top shares no row by design).
   await page.locator('#analysis-next').click();
-  await expect(page.locator('#objective-rating')).toHaveValue('2400');
-  await expect(page.locator('.insight-panel')).toContainText('Nf3');
+  await expect(page.locator('section[aria-label="Key moves"] .candidate-list')).toContainText('d4');
+  await expect(page.locator('section[aria-label="Key moves"] .candidate-list')).toContainText('e4');
   await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
   await page.screenshot({ path: info.outputPath('mixed-arrows.png'), fullPage: true });
 });
@@ -630,7 +644,7 @@ test('current position balance replaces the win-rate sections', async ({ page })
 });
 test('analysis progress replaces the analyze button while running without a cancel option', async ({ page }) => {
   await bootReview(page);
-  await expect(page.locator('#objective-rating')).toHaveValue('2400');
+  await expect(page.locator('#insight-content')).toBeVisible();
   // Hold the batch event stream AND the status endpoint open: the client
   // reconciles from ground-truth status on mount (not just live ticks), so
   // holding the stream alone no longer keeps the job observably running —
@@ -753,12 +767,13 @@ test('explored branches keep the original line badges', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   // Mainline badges settled: two Best, one Mistake, one Blunder.
   await expect(page.locator('.move-cell .quality-best')).toHaveCount(2);
-  // Branch from the root via the second bot candidate.
+  // Branch via the unplayed second row: the union lists every received
+  // move, so exploration goes through the card's candidates again.
   await page.locator('#analysis-first').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 5');
-  const candidates = page.locator('section[aria-label="Bot analysis"] li:not(.candidate-header) .candidate-reading');
-  await expect(candidates).toHaveCount(2);
-  await candidates.nth(1).click();
+  const keyRows = page.locator('section[aria-label="Key moves"] li:not(.candidate-header) .candidate-reading');
+  await expect(keyRows).toHaveCount(2);
+  await keyRows.nth(1).click();
   await expect(page.locator('.original-move')).toHaveCount(4);
   // The continuation keeps every badge it showed on the mainline.
   await expect(page.locator('.original-move .quality-best')).toHaveCount(2);
