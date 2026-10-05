@@ -163,18 +163,32 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
   return { requests, errors, evaluations, batches };
 }
 const lines = (page: Page) => page.locator('#board svg.cg-shapes line');
+// Click-click board move for analysis branching (mirrors board.spec's helper:
+// the strict card's single fused row offers no candidate to branch on).
+async function boardMove(page: Page, from: string, to: string) {
+  const board = page.locator('#board cg-board');
+  await board.scrollIntoViewIfNeeded();
+  const bounds = (await board.boundingBox())!;
+  const black = await page.locator('#board .cg-wrap').evaluate(el => el.classList.contains('orientation-black'));
+  const point = (key: string) => {
+    const file = key.charCodeAt(0) - 97, rank = Number(key[1]) - 1;
+    return { x: bounds.x + (black ? 7 - file + 0.5 : file + 0.5) * bounds.width / 8, y: bounds.y + (black ? rank + 0.5 : 7 - rank + 0.5) * bounds.height / 8 };
+  };
+  const a = point(from), b = point(to);
+  await page.mouse.click(a.x, a.y); await page.mouse.click(b.x, b.y);
+}
 test('standalone FEN shows a fused key row; candidate previews clear by frame', async ({ page }) => {
   const app = await bootReview(page);
   const fen = '4k3/8/8/8/8/8/4P3/4K3 w - - 0 23';
   await page.goto(`http://maia.test/analyze?fen=${encodeURIComponent(fen)}`);
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 1');
   const bot = page.getByRole('region', { name: 'Key moves', exact: true });
-  // The e4 top merges every lane; the 2400 runner-up rows beneath it.
-  await expect(bot.locator('li:not(.candidate-header)')).toHaveCount(2);
+  // The e4 top merges every head (Stockfish, 2400 best/likely, my likely);
+  // role-less runners-up stay out, so the card is one row.
+  await expect(bot.locator('li:not(.candidate-header)')).toHaveCount(1);
   await expect(bot.getByRole('button', { name: 'Explore e4', exact: true })).toBeVisible();
-  // The union rows every received move: e3 was always in the bot lists, the
-  // old card just dropped it.
-  await expect(bot.getByRole('button', { name: 'Explore e3', exact: true })).toBeVisible();
+  // Role-less runners-up (like e3) stay out of the strict card.
+  await expect(bot.getByRole('button', { name: 'Explore e3', exact: true })).toHaveCount(0);
   await expect(bot.locator('.key-role--sf-best svg')).toBeVisible();
   // Hovering the fused top move draws no extra arrow: the preview duplicates
   // the lane arrows by design.
@@ -767,13 +781,13 @@ test('explored branches keep the original line badges', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   // Mainline badges settled: two Best, one Mistake, one Blunder.
   await expect(page.locator('.move-cell .quality-best')).toHaveCount(2);
-  // Branch via the unplayed second row: the union lists every received
-  // move, so exploration goes through the card's candidates again.
+  // Branch from the root with an off-line board move: the strict card's
+  // fused row offers no unplayed candidate.
   await page.locator('#analysis-first').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 5');
   const keyRows = page.locator('section[aria-label="Key moves"] li:not(.candidate-header) .candidate-reading');
-  await expect(keyRows).toHaveCount(2);
-  await keyRows.nth(1).click();
+  await expect(keyRows).toHaveCount(1);
+  await boardMove(page, 'd2', 'd4');
   await expect(page.locator('.original-move')).toHaveCount(4);
   // The continuation keeps every badge it showed on the mainline.
   await expect(page.locator('.original-move .quality-best')).toHaveCount(2);

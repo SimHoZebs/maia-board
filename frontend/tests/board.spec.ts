@@ -713,15 +713,12 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   await page.locator('#load-analysis').click();
   await expect(page.locator('#analysis-controls')).toHaveCount(0);
   await app.reply(0, 'b8c6', 200, [{ move: 'b8c6', prob: .4, wdl: [0.2, 0.3, 0.5] }, { move: 'g8f6', prob: .15, wdl: [0.2, 0.3, 0.5] }]);
-  // Key moves unions every received move: Nc6 merges Stockfish best,
-  // 2400 best/likely, and played into one row; Na6 (2400-only) and Nf6
-  // (display-only) row separately.
+  // Strict key rows: Nc6 merges Stockfish best, 2400 best/likely, my
+  // likely, and played into one row. Runners-up without a role stay out.
   const keyMoves = page.locator('section[aria-label="Key moves"]');
   await expect(page.locator('#insight-content')).toBeVisible();
-  await expect(keyMoves.locator('li:not(.candidate-header)')).toHaveCount(3);
+  await expect(keyMoves.locator('li:not(.candidate-header)')).toHaveCount(1);
   await expect(keyMoves.locator('.candidate-list')).toContainText('Nc6');
-  await expect(keyMoves.locator('.candidate-list')).toContainText('Na6');
-  await expect(keyMoves.locator('.candidate-list')).toContainText('Nf6');
   await expect(keyMoves.getByRole('button', { name: 'Explore Nc6 (played) from before this move', exact: true })).toBeVisible();
   // The only marker is the Stockfish fish: best/likely read off the 2400
   // and delta columns, and no played chip (the green row says played).
