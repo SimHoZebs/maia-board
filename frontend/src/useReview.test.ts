@@ -60,7 +60,7 @@ it('resolves the same game identity for branched views and mainline passes', () 
   expect(gameIdentityFor('missing', [saved], live)).toBeNull();
   expect(gameIdentityFor(null, [saved], live)).toBe(live);
 });
-it('display layer accepts the fast MPV1 row provisionally until the full MPV2 lands', () => {  const fullSettings: ReviewSettings = { botElo: 1600, userElo: 1600, model: '79m', stockfish: defaultStockfishSettings };
+it('display layer accepts the fast 250ms row provisionally until the full 750ms lands', () => {  const fullSettings: ReviewSettings = { botElo: 1600, userElo: 1600, model: '79m', stockfish: defaultStockfishSettings };
   const fastSettings = fastReviewSettings(fullSettings)!;
   const node = reviewNodes(buildTimeline(START_FEN, ['e2e4']))[0];
   const store = new EvaluationStore();
@@ -69,7 +69,7 @@ it('display layer accepts the fast MPV1 row provisionally until the full MPV2 la
   expect(store.result('sf', node, fullSettings)).toBeUndefined();
   expect(store.provisionalSfResult(node, fullSettings)?.lines).toHaveLength(1);
   store.store('sf', reviewKey('sf', node, fullSettings), sfFixture(node.fen, defaultStockfishSettings));
-  expect(store.provisionalSfResult(node, fullSettings)?.lines).toHaveLength(2);
+  expect(store.provisionalSfResult(node, fullSettings)?.lines).toHaveLength(1);
 });
 it('grades negatives from the 2400 lane and holds the spinner while it is pending', () => {
   const timeline = buildTimeline(START_FEN, ['e2e4', 'e7e5']);

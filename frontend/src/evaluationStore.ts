@@ -39,10 +39,10 @@ export const resolveSettings = (input: SettingsInput, node: ReviewNode): ReviewS
 export type Job = { key: string; engine: Engine; node: ReviewNode; settings: ReviewSettings; fast?: boolean };
 
 // Fast-then-refine derivation for Stockfish first paint. The bar + verdict
-// need only rank-1, so focus/current nodes fetch MPV1 at min(250, requested)
-// ms first, then refine to the full requested MPV2+ budget in the background.
-// Same depth as requested; lines=1. Distinct settingsHash keys (time/lines
-// differ), so fast and full cache separately — the display layer falls back
+// need only rank-1, so focus/current nodes fetch a 250ms MPV1 first, then
+// refine to the full requested MPV1 time budget in the background.
+// Same depth as requested; lines=1 always. Distinct settingsHash keys (time
+// differs), so fast and full cache separately — the display layer falls back
 // to fast when full is missing. Returns undefined when there is no useful
 // fast path: legacy omission (no stockfish) or an already-minimal 250ms
 // budget where a second fetch would only add latency.
@@ -269,11 +269,10 @@ export class EvaluationStore {
   }
   peek(_engine: Engine, key: string) { return this.cache.get(key); }
   store<E extends Engine>(_engine: E, key: string, value: E extends 'sf' ? Evaluation : MoveResponse) { this.retain(key, value); this.notify(); }
-  // Provisional first-paint read: full MPV2 when present, else the fast MPV1
-  // row when only it has landed. Score/verdict need only rank-1, so they
-  // render from fast; the candidate list shows the single fast line until the
-  // full refine lands (no separate skeleton — 1 line provisionally is the
-  // refine signal). Outcomes never use fast (synthetic, no fetch).
+  // Provisional first-paint read: full MPV1 when present, else the fast 250ms
+  // MPV1 row when only it has landed. Score/verdict need only rank-1, so they
+  // render from fast while the full time budget refines in the background.
+  // Outcomes never use fast (synthetic, no fetch).
   provisionalSfResult(node: ReviewNode, settings: ReviewSettings): EvaluationResult | undefined {
     const full = this.result('sf', node, settings);
     if (full || node.outcome) return full;

@@ -340,13 +340,13 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   const { restore: displayRestore, gradeRestore } = restorePair;
   const batch = useServerBatch({ active: active && !tooLong, nodes, settings: settingsForNode, objectiveLane: restorePair.lane?.settings ?? null, coordinator, scope: active ? scope : null, auto: false, priorityPlies });
 
-  // Display evaluations accept the fast MPV1 row provisionally: mate
+  // Display evaluations accept the fast 250ms MPV1 row provisionally: mate
   // detection and the material-note gating need only rank-1, so they render
-  // from fast while the full MPV2 refines in the background. Coverage below
+  // from fast while the full time budget refines in the background. Coverage below
   // stays exact-full (completeness, not readiness) so a fast-only pair never
   // marks the line complete.
-  // Known transient: a 1-line provisional can understate Critical (gap needs
-  // before.lines[1]) and converge to Critical/Excellent/Great on full refine.
+  // Lines are hardcoded to 1, so Critical (needs before.lines[1]) never
+  // fires and the old 1-line-provisional Critical transient is gone.
   const evaluations = useMemo(() => nodes.map(node => coordinator.provisionalSfResult(node, settingsForNode(node))), [nodes, settingsForNode, version, coordinator]);
   const botResults = useMemo(() => nodes.map(node => coordinator.result('maia', node, settingsForNode(node))), [nodes, settingsForNode, version, coordinator]);
   // Objective points for the active source. Row reads and point

@@ -34,8 +34,8 @@
    is the only exception — it needs the full width to stay usable. */
 .engine-settings .field--row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; row-gap: 8px; }
 .settings-control .field--row > .field-label { font-size: 14px; color: inherit; }
-/* Segmented choice for small discrete sets (candidate lines 1–5): one row,
-   natively keyboard-accessible radios, no full-width slider needed. */
+/* Segmented choice for small discrete sets (board orientation, coordinates):
+   one row, natively keyboard-accessible radios, no full-width slider needed. */
 .segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex: none; }
 .segmented label { cursor: pointer; }
 .segmented label + label { border-left: 1px solid var(--line); }

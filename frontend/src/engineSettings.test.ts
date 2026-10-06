@@ -49,7 +49,7 @@ it('commits temperature per game, leaves analysis deterministic, and preserves p
 
 it('restores and validates browser settings and legacy temperature', () => {
   localStorage.setItem(STOCKFISH_STORAGE_KEY, JSON.stringify({ time_ms: 4000, lines: 5, depth: 20 }));
-  expect(initialState('settings').stockfish).toEqual({ time_ms: 4000, lines: 5, depth: 20 });
+  expect(initialState('settings').stockfish).toEqual({ time_ms: 4000, lines: 1, depth: 20 });
   expect(normalizeStockfishSettings({ time_ms: Infinity, lines: 0, depth: 41 })).toEqual(defaultStockfishSettings);
   expect(normalizeSettings({ temperature: NaN }).temperature).toBe(0);
   expect(normalizeSettings({ temperature: 2 }).temperature).toBe(2);
@@ -69,7 +69,7 @@ it('separates Stockfish cache identity while retaining bot cache identity', () =
   const node = testNodes(START_FEN, [])[0];
   const settings = { ...defaultSettings, stockfish: defaultStockfishSettings };
   const changed = { ...settings, stockfish: { time_ms: 30000, lines: 5, depth: 40 } };
-  expect(stockfishPolicy(settings.stockfish)).toBe('sf19-ms750-mpv2-d0-t4-h128-v3');
+  expect(stockfishPolicy(settings.stockfish)).toBe('sf19-ms750-mpv1-d0-t4-h128-v3');
   expect(stockfishPolicy(changed.stockfish)).toBe('sf19-ms30000-mpv5-d40-t4-h128-v3');
   expect(reviewKey('sf', node, changed)).not.toBe(reviewKey('sf', node, settings));
   expect(reviewKey('maia', node, changed)).toBe(reviewKey('maia', node, settings));

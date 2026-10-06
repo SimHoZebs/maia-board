@@ -150,7 +150,7 @@ describe('workspace coordinator', () => {
     coordinator.ensure([nodes[0]], settings, { priority: true }); coordinator.ensure([nodes[0]], settings, { priority: true });
     await flush();
     expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(coordinator.result('sf', nodes[0], settings)?.lines.length).toBe(2);
+    expect(coordinator.result('sf', nodes[0], settings)?.lines.length).toBe(1);
     coordinator.ensure([nodes[1], nodes[0]], settings, { priority: true }); await flush();
     coordinator.ensure([nodes[0]], settings, { priority: true }); await flush();
     expect(fetcher).toHaveBeenCalledTimes(4);
@@ -362,28 +362,34 @@ describe('identity and provenance', () => {
     const value = parseEvaluation(raw, defaultStockfishSettings, actual, START_FEN);
     expect(value.search_policy).toBe(stockfishPolicy(actual));
     expect(value.actual_settings).toEqual(actual);
-    expect(value.lines).toHaveLength(2);
+    expect(value.lines).toHaveLength(1);
     expect(value.score).toEqual(raw.score); expect(value.depth).toBe(raw.depth);
   });
-  it.each([{ time_ms: 1000 }, { depth: 12 }, { lines: 1 }])('rejects incompatible actual settings %j', change => {
+  it.each([{ time_ms: 1000 }, { depth: 12 }])('rejects incompatible actual settings %j', change => {
     const actual = { ...defaultStockfishSettings, ...change };
     expect(() => parseEvaluation(sfFixture(START_FEN, actual), defaultStockfishSettings, actual, START_FEN)).toThrow();
   });
+  it('rejects smaller-lines rows for larger requests', () => {
+    const requested = { ...defaultStockfishSettings, lines: 2 };
+    expect(() => parseEvaluation(sfFixture(START_FEN, defaultStockfishSettings), requested, defaultStockfishSettings, START_FEN)).toThrow();
+  });
   it('rejects false provenance, empty candidates, duplicate moves and illegal native moves', () => {
     const raw = sfFixture(START_FEN);
+    const twoLine = sfFixture(START_FEN, { ...defaultStockfishSettings, lines: 2 });
     expect(() => parseEvaluation(raw, defaultStockfishSettings, { ...defaultStockfishSettings, lines: 3 }, START_FEN)).toThrow();
     expect(() => parseEvaluation({ ...raw, lines: [] })).toThrow();
-    expect(() => parseEvaluation({ ...raw, lines: [raw.lines[0], raw.lines[0]] })).toThrow();
-    expect(() => parseEvaluation({ ...raw, lines: [{ ...raw.lines[0], move: 'a1a8' }, raw.lines[1]], best_move: 'a1a8' }, defaultStockfishSettings, undefined, START_FEN)).toThrow();
+    expect(() => parseEvaluation({ ...twoLine, lines: [twoLine.lines[0], twoLine.lines[0]] })).toThrow();
+    expect(() => parseEvaluation({ ...twoLine, lines: [{ ...twoLine.lines[0], move: 'a1a8' }, twoLine.lines[1]], best_move: 'a1a8' }, { ...defaultStockfishSettings, lines: 2 }, undefined, START_FEN)).toThrow();
   });
   it('keeps the score when a rank-1 PV tail is illegal, but rejects malformed PV shapes', () => {
     const raw = sfFixture(START_FEN);
+    const twoLine = sfFixture(START_FEN, { ...defaultStockfishSettings, lines: 2 });
     const illegalTail = { ...raw, lines: [{ ...raw.lines[0], pv: [raw.lines[0].move, raw.lines[0].move] }] };
     const stripped = parseEvaluation(illegalTail, defaultStockfishSettings, undefined, START_FEN);
     expect(stripped.score).toEqual(raw.score);
     expect(stripped.lines[0].pv).toBeUndefined();
     expect(() => parseEvaluation({ ...raw, lines: [{ ...raw.lines[0], pv: ['e7e5'] }] }, defaultStockfishSettings, undefined, START_FEN)).toThrow();
-    expect(() => parseEvaluation({ ...raw, lines: [raw.lines[0], { ...raw.lines[1], pv: [raw.lines[1].move] }] }, defaultStockfishSettings, undefined, START_FEN)).toThrow();
+    expect(() => parseEvaluation({ ...twoLine, lines: [twoLine.lines[0], { ...twoLine.lines[1], pv: [twoLine.lines[1].move] }] }, { ...defaultStockfishSettings, lines: 2 }, undefined, START_FEN)).toThrow();
   });
   it('keeps the omitted-settings node-budget policy distinct from timed default settings', () => {
     const timed = sfFixture(START_FEN);
@@ -420,29 +426,29 @@ describe('fast-then-refine', () => {
     expect(fastStockfishSettings(undefined)).toBeUndefined();
     expect(fastReviewSettings(settings)?.stockfish).toEqual({ time_ms: 250, lines: 1, depth: 0 });
   });
-  it('uses the fast MPV1 row provisionally until the full MPV2 refines', async () => {
+  it('uses the fast 250ms row provisionally until the full 750ms refines', async () => {
     let releaseFull!: (response: Response) => void;
     const fullGate = new Promise<Response>(resolve => { releaseFull = resolve; });
     const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
       const body = JSON.parse(requestBodyText(init));
-      if (body.settings?.lines === 1) return jsonResponse(sfFixture(body.fen, body.settings));
+      if (body.settings?.time_ms === 250) return jsonResponse(sfFixture(body.fen, body.settings));
       return fullGate;
     });
     const coordinator = new ReviewCoordinator(fetcher);
     const target = nodes[0];
     coordinator.ensure([target], settings, { priority: true, engines: ['sf'], fastFirst: true });
     await flush();
-    // Fast MPV1 lands first; the full MPV2 fetch starts next on the same lane.
+    // Fast 250ms lands first; the full 750ms fetch starts next on the same lane.
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(JSON.parse(requestBodyText(fetcher.mock.calls[0][1])).settings).toMatchObject({ time_ms: 250, lines: 1 });
-    expect(JSON.parse(requestBodyText(fetcher.mock.calls[1][1])).settings).toMatchObject({ time_ms: 750, lines: 2 });
+    expect(JSON.parse(requestBodyText(fetcher.mock.calls[1][1])).settings).toMatchObject({ time_ms: 750, lines: 1 });
     expect(coordinator.result('sf', target, settings)).toBeUndefined();
     expect(coordinator.provisionalSfResult(target, settings)?.lines).toHaveLength(1);
     expect(coordinator.error('sf', target, settings)).toBeUndefined();
     releaseFull(jsonResponse(sfFixture(target.fen, defaultStockfishSettings)));
     await flush();
-    expect(coordinator.result('sf', target, settings)?.lines).toHaveLength(2);
-    expect(coordinator.provisionalSfResult(target, settings)?.lines).toHaveLength(2);
+    expect(coordinator.result('sf', target, settings)?.lines).toHaveLength(1);
+    expect(coordinator.provisionalSfResult(target, settings)?.lines).toHaveLength(1);
   });
   it('grading ensure queues behind display jobs and cascades in lane order', async () => {
     // Regression: the grading lane shares the bot queue under different
@@ -479,7 +485,7 @@ describe('fast-then-refine', () => {
   it('fast failure never blocks the full refine and never surfaces', async () => {
     const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
       const body = JSON.parse(requestBodyText(init));
-      if (body.settings?.lines === 1) return jsonResponse({ code: 'engine_unavailable', message: 'offline' }, 503);
+      if (body.settings?.time_ms === 250) return jsonResponse({ code: 'engine_unavailable', message: 'offline' }, 503);
       return jsonResponse(sfFixture(body.fen, body.settings));
     });
     const coordinator = new ReviewCoordinator(fetcher);
@@ -487,8 +493,8 @@ describe('fast-then-refine', () => {
     coordinator.ensure([target], settings, { priority: true, engines: ['sf'], fastFirst: true });
     await flush();
     expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(coordinator.result('sf', target, settings)?.lines).toHaveLength(2);
+    expect(coordinator.result('sf', target, settings)?.lines).toHaveLength(1);
     expect(coordinator.error('sf', target, settings)).toBeUndefined();
-    expect(coordinator.provisionalSfResult(target, settings)?.lines).toHaveLength(2);
+    expect(coordinator.provisionalSfResult(target, settings)?.lines).toHaveLength(1);
   });
 });

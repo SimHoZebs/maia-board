@@ -138,20 +138,6 @@ export function SettingsPage({ state, dispatch }: Props) {
     </div>
     <div className="settings-control">
       <div className="field field--row">
-        <span className="field-label" id="stockfish-lines-label">Candidate lines</span>
-        <div role="radiogroup" aria-labelledby="stockfish-lines-label" className="segmented">
-          {[1, 2, 3, 4, 5].map(n => (
-            <label key={n}>
-              <input type="radio" name="stockfish-lines" value={n} checked={settings.lines === n} onChange={() => update({ lines: n })} />
-              <span>{n}</span>
-            </label>
-          ))}
-        </div>
-      </div>
-      <p>More lines split the same search time.</p>
-    </div>
-    <div className="settings-control">
-      <div className="field field--row">
         <span className="field-label" id="best-line-window-label">Best-line window</span>
         <NumberSetting id="best-line-window" label="Best-line window plies" min={1} max={5} step={1} value={state.bestLineWindow} onChange={window => dispatch({ type: 'best-line-window', window })} />
         <span>plies of the top line</span>

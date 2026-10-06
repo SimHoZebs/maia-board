@@ -76,8 +76,8 @@ export class ReviewCoordinator {
     for (const [key, message] of errors) this.failures.set(key, message);
     this.notify();
   }
-  // Provisional first-paint read for the display layer: full MPV2 when
-  // present, else the fast MPV1 row. Score/verdict render from fast;
+  // Provisional first-paint read for the display layer: full MPV1 when
+  // present, else the fast 250ms MPV1 row. Score/verdict render from fast;
   // coverage and the candidate-list completeness check use exact result().
   provisionalSfResult(node: ReviewNode, settings: ReviewSettings): EvaluationResult | undefined {
     return this.store.provisionalSfResult(node, settings);
@@ -104,8 +104,8 @@ export class ReviewCoordinator {
     if (priority) {
       const desired: Job[] = [];
       // Fast-then-refine (foreground focus/current only, never bulk restore):
-      // queue fast MPV1 jobs ahead of the full MPV2 jobs on the sf lane so
-      // rank-1 lands first (~250ms) and the full list refines after (~750ms).
+      // queue fast 250ms MPV1 jobs ahead of the full MPV1 jobs on the sf lane so
+      // rank-1 lands first (~250ms) and the full time budget refines after (~750ms).
       // Bot lanes queue once as before. Skip fast when full already settles
       // (no extra fetch) or when fast already settles (queue full only).
       const useFast = fastFirst && wanted.includes('sf');
