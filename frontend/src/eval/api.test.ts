@@ -37,8 +37,10 @@ describe('requestMove', () => {
 
   it('preserves server error codes for user-facing mapping', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      code: 'not_maia_turn',
-      message: 'fen side-to-move is not maia_color',
+      title: 'Bad Request',
+      status: 400,
+      detail: 'fen side-to-move is not maia_color',
+      errors: [{ message: 'not_maia_turn' }],
     }), { status: 400 }));
 
     const error = await requestMove(payload, fetchImpl).catch((value: unknown) => value);
@@ -77,7 +79,9 @@ describe('requestMove', () => {
   });
 
   it('preserves the scheduler 409 code without retrying it', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 'superseded', message: 'superseded' }), { status: 409 }));
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      title: 'Conflict', status: 409, detail: 'superseded', errors: [{ message: 'superseded' }],
+    }), { status: 409 }));
     const error = await requestMove(payload, fetchImpl).catch((value: unknown) => value);
     if (!(error instanceof BotApiError)) throw error;
     expect(error).toBeInstanceOf(BotApiError);

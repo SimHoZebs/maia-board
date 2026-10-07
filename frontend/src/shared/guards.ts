@@ -1,6 +1,10 @@
-// Shared runtime type guards: the honest alternative to `as` casts at
-// unknown boundaries (wire JSON, storage, worker output). Narrow with these
-// instead of asserting — a cast claims a type, a guard proves it.
+// Shared runtime type guards for boundaries the OpenAPI contract does not
+// cover: localStorage JSON, Huma error bodies, and semantic refinements
+// (non-negative counters, string maps, Stockfish provenance shape) that sit
+// below the spec-driven zod gates. Wire response shapes validate first
+// against the Orval-generated schemas (src/api/generated/maia.zod.ts);
+// narrow with these instead of asserting — a cast claims a type, a guard
+// proves it.
 import type { StockfishSettings } from '../eval/stockfishSettings';
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

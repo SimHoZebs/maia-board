@@ -8,6 +8,8 @@
     "dev": "vite",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "openapi": "(cd ../backend && OPENAPI_DUMP=../spec/openapi.yaml go run ./cmd/server)",
+    "api:gen": "npm run openapi && npx orval",
     "build:bundle": "vite build",
     "build": "npm run typecheck && npm run build:bundle",
     "build:profiling": "tsc --noEmit && vite build --mode profiling --outDir dist-profiling",
@@ -29,13 +31,15 @@
     "lucide-react": "^1.46.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "react-router": "^8.3.1"
+    "react-router": "^8.3.1",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "@types/node": "^24.13.4",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "orval": "^8.40.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.0",
     "vitest": "^5.0.0"

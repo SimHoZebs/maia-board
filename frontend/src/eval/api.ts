@@ -1,6 +1,7 @@
 import { Chess } from 'chess.js';
 import { fetchJsonWithBusyRetry } from './evaluationTransport';
 import { isRecord } from '../shared/guards';
+import { MoveResponse as MoveResponseSchema } from '../api/generated/maia.zod';
 export type SideColor = 'white' | 'black';
 export type BotModel = '79m' | '5m';
 
@@ -104,7 +105,31 @@ export function assertLegalUci(moves: string[], fen: string): void {
   const legal = legalUciSet(fen);
   for (const move of moves) if (!legal.has(move)) throw new Error(`Illegal UCI move: ${move}`);
 }
+// Delta attachments are validated-or-absent: strip them for the shape
+// gate so a malformed annotation can never reject a good engine row.
+function stripAttachments(value: unknown): unknown {
+  if (!isRecord(value)) return value;
+  const { delta_baseline: _baseline, ...core } = value;
+  const top = Array.isArray(core.top_moves)
+    ? core.top_moves.map(candidate => {
+      if (!isRecord(candidate)) return candidate;
+      const { delta: _delta, ...rest } = candidate;
+      return rest;
+    })
+    : core.top_moves;
+  return { ...core, top_moves: top };
+}
+
 export function parseMoveResponse(value: unknown, expected?: { model: BotModel; fen: string; temperature?: number }): MoveResponse {
+  // Shape gate is spec-driven (Orval zod from Huma): unknown keys and
+  // mistyped fields reject here. The delta attachments are excluded from
+  // the gate on purpose — they are validated-or-absent by design below
+  // (a malformed attachment drops the annotation, never the row).
+  // Everything else below is semantic domain logic no schema can express
+  // (legality, probabilities, WDL sums, ties).
+  if (!MoveResponseSchema.safeParse(stripAttachments(value)).success) {
+    throw new BotApiError('unknown', 'Bot returned an incomplete response.');
+  }
   if (!isRecord(value) || typeof value.move !== 'string' || !uci.test(value.move) || !isModel(value.model_used) || typeof value.degraded !== 'boolean') {
     throw new BotApiError('unknown', 'Bot returned an incomplete response.');
   }
@@ -172,9 +197,27 @@ export function isApiErrorCode(value: unknown): value is ApiErrorCode {
   return typeof value === 'string' && KNOWN_ERROR_CODES.has(value);
 }
 
+// Huma ErrorModel envelope: {title, status, detail, errors}. Our
+// machine-readable code rides in errors[0].message, human text in detail.
+// Huma's own request errors (malformed JSON, schema violations, oversize)
+// carry no code and read as 'unknown' with the detail as message.
+export type HumaErrorDetail = { message?: unknown; location?: unknown; value?: unknown };
+export function parseHumaError(body: unknown): { code: ApiErrorCode; message: string | undefined } {
+  if (!isRecord(body)) return { code: 'unknown', message: undefined };
+  const errs = Array.isArray(body.errors) ? body.errors : [];
+  let code: ApiErrorCode = 'unknown';
+  for (const entry of errs) {
+    if (isRecord(entry) && isApiErrorCode(entry.message)) { code = entry.message; break; }
+  }
+  return { code, message: typeof body.detail === 'string' ? body.detail : undefined };
+}
+
 export function parseErrorCode(value: unknown): ApiErrorCode {
-  if (!isRecord(value)) return 'unknown';
-  return isApiErrorCode(value.code) ? value.code : 'unknown';
+  return parseHumaError(value).code;
+}
+
+export function parseErrorMessage(value: unknown, fallback: string): string {
+  return parseHumaError(value).message ?? fallback;
 }
 
 export async function requestMove(payload: MoveRequest, fetchImpl: FetchLike = fetch, signal?: AbortSignal): Promise<MoveResponse & { cached?: boolean }> {
@@ -221,9 +264,8 @@ async function postBot(path: '/move' | '/move/analysis', payload: MoveRequest | 
     throw new BotApiError('unknown', 'The bot server returned unreadable data.', response!.status);
   }
   if (!response.ok) {
-    const code = parseErrorCode(body);
-    const message = isRecord(body) && typeof body.message === 'string' ? body.message : 'The bot server rejected this position.';
-    throw new BotApiError(code, message, response.status);
+    const { code, message } = parseHumaError(body);
+    throw new BotApiError(code, message ?? 'The bot server rejected this position.', response.status);
   }
   const parsed = parseMoveResponse(body, payload);
   return response.headers.get('X-Eval-Cache') === 'hit' ? { ...parsed, cached: true } : parsed;

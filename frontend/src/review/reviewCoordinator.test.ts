@@ -241,7 +241,7 @@ describe('workspace coordinator', () => {
 
   });
   it('foreground failures surface per key and retry reruns only missing work', async () => {
-    const fetcher = liveFetch(); fetcher.mockImplementationOnce(async () => jsonResponse({ code: 'engine_unavailable', message: 'offline' }, 503));
+    const fetcher = liveFetch(); fetcher.mockImplementationOnce(async () => jsonResponse({ title: 'Bad Gateway', status: 502, detail: 'offline', errors: [{ message: 'engine_unavailable' }] }, 503));
     const coordinator = new ReviewCoordinator(fetcher);
     coordinator.ensure(nodes.slice(0, 1), settings, { priority: true }); await flush();
     expect(coordinator.error('sf', nodes[0], settings)).toBe('offline');
@@ -314,7 +314,7 @@ describe('workspace coordinator', () => {
   });
   it('bounds structured busy retries while leaving unavailable errors immediately retriable', async () => {
     vi.useFakeTimers();
-    const fetcher = vi.fn<typeof fetch>(async () => jsonResponse({ code: 'engine_busy', message: 'busy' }, 503));
+    const fetcher = vi.fn<typeof fetch>(async () => jsonResponse({ title: 'Service Unavailable', status: 503, detail: 'busy', errors: [{ message: 'engine_busy' }] }, 503));
     const coordinator = new ReviewCoordinator(fetcher);
     coordinator.ensure([nodes[0]], settings, { priority: true, engines: ['sf'] });
     await vi.advanceTimersByTimeAsync(3000);
@@ -485,7 +485,7 @@ describe('fast-then-refine', () => {
   it('fast failure never blocks the full refine and never surfaces', async () => {
     const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
       const body = JSON.parse(requestBodyText(init));
-      if (body.settings?.time_ms === 250) return jsonResponse({ code: 'engine_unavailable', message: 'offline' }, 503);
+      if (body.settings?.time_ms === 250) return jsonResponse({ title: 'Bad Gateway', status: 502, detail: 'offline', errors: [{ message: 'engine_unavailable' }] }, 503);
       return jsonResponse(sfFixture(body.fen, body.settings));
     });
     const coordinator = new ReviewCoordinator(fetcher);

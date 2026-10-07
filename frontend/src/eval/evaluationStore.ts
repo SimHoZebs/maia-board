@@ -1,4 +1,4 @@
-import { assertLegalUci, isApiErrorCode, BotApiError, parseMoveResponse, type BotModel, type MoveResponse } from './api';
+import { assertLegalUci, BotApiError, parseHumaError, parseMoveResponse, type BotModel, type MoveResponse } from './api';
 import { Chess } from 'chess.js';
 // Terms: see spec/GLOSSARY.md. restore = the one cache-fill op
 // (store.restore → coordinator.restore → restoreLookup).
@@ -7,6 +7,7 @@ import { applyUci, posId, type Timeline, type TimelineRow } from '../shared/doma
 import { outcomeEvaluation } from '../review/outcomeEvaluation';
 import { fetchJsonWithBusyRetry } from './evaluationTransport';
 import { isRecord, isStringArray, isStockfishSettings } from '../shared/guards';
+import { EvaluateResponse as EvaluateResponseSchema } from '../api/generated/maia.zod';
 import type { Evaluation, Score } from '../review/reviewMetrics';
 import { defaultStockfishSettings, stockfishPolicy, type StockfishSettings } from './stockfishSettings';
 import { clampBotElo } from '../board/BoardTools';
@@ -58,9 +59,9 @@ export function fastReviewSettings(settings: ReviewSettings): ReviewSettings | u
 }
 export type EvaluationResult = Evaluation & { actual_settings?: StockfishSettings; cached?: boolean };
 export type StockfishResult = EvaluationResult;
-// Error-code vocabulary is owned once by api.ts (isApiErrorCode): unknown
-// wire codes normalize to 'unknown' with the message preserved. Per-endpoint
-// codes ride under that one sender taxonomy — no fork here.
+  // Error-code vocabulary is owned once by api.ts (parseHumaError): unknown
+  // wire codes normalize to 'unknown' with the detail preserved. Per-endpoint
+  // codes ride under that one sender taxonomy — no fork here.
 type Result = Evaluation | MoveResponse;
 // One identity struct owns position + engine + settings. posId is
 // hash(initialFen, prefix); the review key adds engine + settings hash.
@@ -169,6 +170,9 @@ function actualPolicy(value: Evaluation, requested: StockfishSettings | undefine
 }
 export function parseEvaluation(body: unknown, settings?: StockfishSettings, actual?: unknown, fen?: string): StockfishResult {
   const invalid = () => new Error('Stockfish returned an incomplete evaluation.');
+  // Shape gate is spec-driven (Orval zod from Huma). Below stays semantic:
+  // provenance agreement, terminal coherence, rank shape, PV rules.
+  if (!EvaluateResponseSchema.safeParse(body).success) throw invalid();
   if (!isEvaluationBody(body)) throw invalid();
   const value = body;
   const provenance = actualPolicy(value, settings, actual ?? value.actual_settings);
@@ -230,10 +234,9 @@ export async function fetchEvaluation(node: ReviewNode, signal: AbortSignal, fet
   if (body === null) throw new Error('Stockfish returned unreadable data.');
   if (!response.ok) {
     const record: unknown = body;
-    const code: unknown = isRecord(record) ? record.code : undefined;
-    const message: unknown = isRecord(record) ? record.message : undefined;
-    throw new BotApiError(isApiErrorCode(code) ? code : 'unknown',
-      typeof message === 'string' ? message : `Stockfish request failed (${response.status}).`, response.status);
+    const { code, message } = parseHumaError(record);
+    throw new BotApiError(code,
+      message ?? `Stockfish request failed (${response.status}).`, response.status);
   }
   const parsed = parseEvaluation(body, settings, undefined, node.fen);
   return response.headers.get('X-Eval-Cache') === 'hit' ? { ...parsed, cached: true } : parsed;

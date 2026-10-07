@@ -4,7 +4,7 @@ import { defaultSettings, type StoredGame } from '../shared/domain';
 import { KEYS } from './storage';
 
 const game = (moves: string[] = []): StoredGame => ({ id: 'a', createdAt: '2026-09-10T00:00:00Z', settings: defaultSettings, moves });
-const row = (moves: string[] = []) => ({ id: 'a', created_at: '2026-09-10T00:00:00Z', updated_at: '2026-09-10T00:00:00Z', user_color: 'white', elo_maia: 1600, elo_user: 1600, model: '79m', moves });
+const row = (moves: string[] = []) => ({ id: 'a', created_at: '2026-09-10T00:00:00Z', updated_at: '2026-09-10T00:00:00Z', user_color: 'white', elo_maia: 1600, elo_user: 1600, model: '79m', moves, temperature: 0 });
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; };
 beforeEach(() => {
   vi.unstubAllGlobals();
@@ -33,7 +33,7 @@ it('rejects a GET that predates a local save even after its acknowledgement', as
   const loading = repo.refresh();
   repo.save(game(['e2e4']), true);
   await repo.flush();
-  held.resolve(Response.json({ games: [row()], current_id: 'a', total: 1, next_offset: null }));
+  held.resolve(Response.json({ games: [row()], current_id: 'a', current_game: row(), total: 1, next_offset: null }));
   await loading;
   expect(repo.snapshot().games[0].moves).toEqual(['e2e4']);
 });
@@ -48,14 +48,14 @@ it('keeps the request-start pending overlay when a GET races its acknowledgement
   const loading = repo.refresh();
   heldSave.resolve(Response.json(row(['e2e4'])));
   await flushing;
-  heldGet.resolve(Response.json({ games: [row()], current_id: 'a', total: 1 }));
+  heldGet.resolve(Response.json({ games: [row()], current_id: 'a', current_game: row(), total: 1, next_offset: null }));
   await loading;
   expect(repo.snapshot().games[0].moves).toEqual(['e2e4']);
 });
 
 it('keeps a failed operation visible after a successful history refresh', async () => {
-  const repo = new GameRepository(vi.fn().mockResolvedValueOnce(Response.json({ message: 'invalid game' }, { status: 400 }))
-    .mockResolvedValueOnce(Response.json({ games: [], current_id: null, total: 0 })));
+  const repo = new GameRepository(vi.fn().mockResolvedValueOnce(Response.json({ title: 'Bad Request', status: 400, detail: 'invalid game', errors: [{ message: 'invalid_request' }] }, { status: 400 }))
+    .mockResolvedValueOnce(Response.json({ games: [], current_id: null, total: 0, next_offset: null })));
   repo.save(game(), true);
   await repo.retry();
   expect(repo.snapshot().error).toBe('invalid game');
@@ -64,7 +64,7 @@ it('keeps a failed operation visible after a successful history refresh', async 
 
 it('merges truncated pages without deletes and retrieves a current game outside the page', async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ games: [], current_game: row(['e2e4']), current_id: 'a', total: 2, next_offset: 1 }))
-    .mockResolvedValueOnce(Response.json({ games: [{ ...row(), id: 'older' }], current_id: 'a', total: 2, next_offset: null }));
+    .mockResolvedValueOnce(Response.json({ games: [{ ...row(), id: 'older' }], current_id: 'a', current_game: row(), total: 2, next_offset: null }));
   const repo = new GameRepository(fetcher);
   await repo.refresh();
   await repo.loadMore();
@@ -133,7 +133,7 @@ it('preserves an acknowledged delete over a GET started while that delete was pe
   await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
   const loading = repo.refresh();
   heldDelete.resolve(new Response(null, { status: 204 })); await flushing;
-  heldGet.resolve(Response.json({ games: [row()], current_id: 'a', total: 1 })); await loading;
+  heldGet.resolve(Response.json({ games: [row()], current_id: 'a', current_game: row(), total: 1, next_offset: null })); await loading;
   expect(repo.snapshot().games).toEqual([]);
   expect(repo.snapshot().currentId).toBeNull();
   expect(repo.snapshot().pending).toEqual([]);
@@ -174,7 +174,7 @@ it('cancels page hydration and deferred lifecycle work on cleanup', async () => 
   const loading = repo.refresh();
   const stopAgain = repo.start(); stopAgain();
   expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true);
-  held.resolve(Response.json({ games: [row()], current_id: 'a', total: 1 }));
+  held.resolve(Response.json({ games: [row()], current_id: 'a', current_game: row(), total: 1, next_offset: null }));
   await loading;
   expect(repo.snapshot().games).toEqual([]);
 });

@@ -138,7 +138,7 @@ describe('submitBatch 429 backpressure', () => {
 
 describe('429 skew into the old generic path', () => {
   it('handles a 429 in generic status reads without crashing', async () => {
-    const fetcher = vi.fn<typeof fetch>(async () => response429(null, { code: 'busy', message: 'slow down' }));
+    const fetcher = vi.fn<typeof fetch>(async () => response429(null, { title: 'Too Many Requests', status: 429, detail: 'slow down', errors: [{ message: 'busy' }] }));
     const error = await fetchBatchStatus('job1', fetcher).then(() => null, error => error);
     expect(error).toBeInstanceOf(BotApiError);
     expect(error.message).toBe('slow down');

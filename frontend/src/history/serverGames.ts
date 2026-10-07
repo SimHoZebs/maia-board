@@ -3,6 +3,7 @@ import type { StoredGame } from '../shared/domain';
 // (durable game requests), never the engine transport (evaluationTransport).
 import { isRecord } from '../shared/guards';
 import { restoreGame } from './storage';
+import { GamesCreateResponse as GameRowSchema, GamesListResponse as GamesListSchema } from '../api/generated/maia.zod';
 
 export type ServerGame = {
   id: string; created_at: string; updated_at: string; user_color: string;
@@ -59,8 +60,12 @@ async function readBody(response: Response): Promise<unknown> {
 }
 
 function throwServerError(body: unknown, status: number): never {
-  const code = isRecord(body) && typeof body.code === 'string' ? body.code : 'unknown';
-  const message = isRecord(body) && typeof body.message === 'string' ? body.message : 'Game history is unavailable.';
+  // Huma envelope: the code rides in errors[0].message (free string here,
+  // not the gated ApiErrorCode vocabulary), human text in detail.
+  const errs = isRecord(body) && Array.isArray(body.errors) ? body.errors : [];
+  const first = errs.find(entry => isRecord(entry) && typeof entry.message === 'string');
+  const code = first && isRecord(first) && typeof first.message === 'string' ? first.message : 'unknown';
+  const message = isRecord(body) && typeof body.detail === 'string' ? body.detail : 'Game history is unavailable.';
   throw new ServerGamesError(code, message, status);
 }
 
@@ -73,6 +78,9 @@ export async function fetchGames(fetchImpl: FetchLike = fetch, offset = 0, signa
   }
   const body = await readBody(response);
   if (!response.ok) throwServerError(body, response.status);
+  // Shape gate is spec-driven (Orval zod from Huma). Row semantics
+  // (current-game identity, monotonic paging) stay below.
+  if (!GamesListSchema.safeParse(body).success) throw new ServerGamesError('unknown', 'The game server returned an incomplete list.', response.status);
   if (!isRecord(body)) throw new ServerGamesError('unknown', 'The game server returned an incomplete list.', response.status);
   const { games, current_id, total, current_game, next_offset } = body;
   if (!isServerGameArray(games)
@@ -109,6 +117,8 @@ export async function saveRemote(game: StoredGame, current: boolean, fetchImpl: 
   }
   const body = await readBody(response);
   if (!response.ok) throwServerError(body, response.status);
+  // Shape gate is spec-driven (Orval zod from Huma); row semantics stay below.
+  if (!GameRowSchema.safeParse(body).success) throw new ServerGamesError('unknown', 'The game server returned an incomplete game.', response.status);
   if (!isServerGame(body)) throw new ServerGamesError('unknown', 'The game server returned an incomplete game.', response.status);
   return body;
 }

@@ -1,6 +1,7 @@
-import { BotApiError, parseErrorCode } from '../eval/api';
+import { BotApiError, parseHumaError } from '../eval/api';
 import { postJson, readJsonBody } from '../eval/evaluationTransport';
 import { isNonNegativeInt, isRecord, isStringMap } from '../shared/guards';
+import { ReviewsStatusResponse as BatchProgressSchema, ReviewsSubmitResponse as BatchSubmittedSchema } from '../api/generated/maia.zod';
 import { evaluationRequest, batchLineFor, resolveSettings, reviewKey, type BatchLine, type Engine, type ReviewNode, type SettingsInput } from '../eval/evaluationStore';
 
 export type BatchItem = { request: ReturnType<typeof evaluationRequest>; key: string; engine: Engine };
@@ -136,10 +137,8 @@ export function buildBatchItems(nodes: ReviewNode[], settings: SettingsInput, en
 }
 
 function errorFromBody(response: Response, body: unknown, fallback: string): BotApiError {
-  const record = isRecord(body) ? body : null;
-  const code = record ? parseErrorCode(record) : 'unknown';
-  const message = record && typeof record.message === 'string' ? record.message : fallback;
-  return new BotApiError(code, message, response.status);
+  const { code, message } = parseHumaError(body);
+  return new BotApiError(code, message ?? fallback, response.status);
 }
 
 async function readError(response: Response, fallback: string): Promise<BotApiError> {
@@ -150,6 +149,11 @@ function parseProgress(body: unknown): BatchProgress {
   // Reject, don't default: silently zeroed done/failed/total would paint a
   // confident progress bar over unknown state (the blank-badge lie family).
   // Callers already surface BotApiError through the batch error paths.
+  // Shape gate is spec-driven (Orval zod from Huma); the checks below stay
+  // for non-negative integers and the errors map.
+  if (!BatchProgressSchema.safeParse(body).success) {
+    throw new BotApiError('unknown', 'The review server returned unreadable data.');
+  }
   if (!isRecord(body) || typeof body.job_id !== 'string'
     || !isNonNegativeInt(body.total) || !isNonNegativeInt(body.done) || !isNonNegativeInt(body.failed)
     || typeof body.finished !== 'boolean' || (body.errors !== undefined && !isStringMap(body.errors))) {
@@ -162,6 +166,10 @@ function parseProgress(body: unknown): BatchProgress {
 function parseSubmitted(body: unknown, status?: number): BatchSubmitted {
   // Same reject-not-default contract as parseProgress: trusted cached/pending
   // totals would misreport batch size instead of failing visibly.
+  // Shape gate is spec-driven (Orval zod from Huma).
+  if (!BatchSubmittedSchema.safeParse(body).success) {
+    throw new BotApiError('unknown', 'The review server returned unreadable data.', status);
+  }
   if (!isRecord(body) || typeof body.job_id !== 'string'
     || !isNonNegativeInt(body.total) || !isNonNegativeInt(body.cached) || !isNonNegativeInt(body.pending)) {
     throw new BotApiError('unknown', 'The review server returned unreadable data.', status);

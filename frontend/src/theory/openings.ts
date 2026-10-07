@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { lineKeyFor } from '../shared/domain';
 import { isRecord } from '../shared/guards';
+import { OpeningsResponse as OpeningsResponseSchema } from '../api/generated/maia.zod';
 
 export type Opening = { eco: string; name: string; matchedPly: number; isExact: boolean };
 export type OpeningMatch = { ply: number; eco: string; name: string };
@@ -30,6 +31,9 @@ export async function fetchLineOpenings(
   });
   if (!response.ok) throw new Error(`Opening lookup failed (${response.status}).`);
   const body: unknown = await response.json();
+  // Shape gate is spec-driven (Orval zod from Huma). Match/flag coherence
+  // stays below: filtered length equality and the book-length invariant.
+  if (!OpeningsResponseSchema.safeParse(body).success) throw new Error('Opening lookup returned an unexpected response.');
   if (!isRecord(body)) throw new Error('Opening lookup returned an unexpected response.');
   const { matches, book_flags } = body;
   if (!Array.isArray(matches)) throw new Error('Opening lookup returned an unexpected response.');

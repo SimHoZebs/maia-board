@@ -13,7 +13,7 @@ beforeEach(() => {
 const game = (id: string, moves: string[] = []): StoredGame => ({ id, createdAt: '2026-09-10T00:00:00Z', moves, settings: { ...defaultSettings } });
 const row = (id: string, moves: string[] = []) => ({
   id, created_at: '2026-09-10T00:00:00Z', updated_at: '2026-09-10T00:00:00Z',
-  user_color: 'white', elo_maia: 1600, elo_user: 1400, model: '79m', moves,
+  user_color: 'white', elo_maia: 1600, elo_user: 1400, model: '79m', moves, temperature: 0,
 });
 
 describe('server mapping', () => {
@@ -29,12 +29,12 @@ describe('server mapping', () => {
     expect(toStoredGame({ ...row('u', ['e2e4']), result: 'unknown-future' })?.result).toBeUndefined();
   });
   it('fetches lists, saves, and deletes with server errors preserved', async () => {
-    const list = { games: [row('a')], current_id: 'a', total: 1 };
+    const list = { games: [row('a')], current_id: 'a', current_game: row('a'), total: 1, next_offset: null };
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(Response.json(list))
       .mockResolvedValueOnce(Response.json(row('b', ['e2e4'])))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
-      .mockResolvedValueOnce(Response.json({ code: 'invalid_elo', message: 'bad elo' }, { status: 400 }));
+      .mockResolvedValueOnce(Response.json({ title: 'Bad Request', status: 400, detail: 'bad elo', errors: [{ message: 'invalid_elo' }] }, { status: 400 }));
     await expect(fetchGames(fetchImpl)).resolves.toEqual(list);
     await expect(saveRemote(game('b', ['e2e4']), true, fetchImpl)).resolves.toMatchObject({ id: 'b' });
     await expect(deleteRemote('b', fetchImpl)).resolves.toBeUndefined();

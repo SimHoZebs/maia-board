@@ -28,7 +28,10 @@ export async function retryBusy(fetcher: typeof fetch, input: RequestInfo | URL,
     const response = await fetcher(input, { ...init, signal });
     if (response.status !== 503 || attempt === 2) return response;
     const body: unknown = await response.clone().json().catch(() => null);
-    if (!isRecord(body) || body.code !== 'engine_busy') return response;
+    // Huma envelope: our engine_busy code rides in errors[0].message.
+    // Anything else (including Huma's own 503s) is returned as-is.
+    const errs = isRecord(body) && Array.isArray(body.errors) ? body.errors : [];
+    if (!errs.some(entry => isRecord(entry) && entry.message === 'engine_busy')) return response;
     const header = response.headers.get('Retry-After');
     const numeric = header ? Number(header) : 1;
     const ms = Number.isFinite(numeric) ? numeric * 1000 : Date.parse(header!) - Date.now();
