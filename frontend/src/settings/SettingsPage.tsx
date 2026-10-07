@@ -91,6 +91,9 @@ export function SettingsPage({ state, dispatch }: Props) {
       <p>Inside stays aligned at any size. Outside is the classic look.</p>
     </div>
     <div className="settings-control">
+      <label className="toggle-card" htmlFor="sound-enabled"><input id="sound-enabled" type="checkbox" checked={state.soundEnabled} onChange={event => dispatch({ type: 'sound-enabled', enabled: event.target.checked })} /><span><strong>Move sounds</strong><em>Move, capture, check, and checkmate sounds in play and analysis.</em></span></label>
+    </div>
+    <div className="settings-control">
       <div className="field field--row">
         <span className="field-label" id="arrows-basis-label">Arrow basis</span>
         <div role="radiogroup" aria-labelledby="arrows-basis-label" className="segmented">

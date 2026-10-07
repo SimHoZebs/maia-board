@@ -21,7 +21,13 @@ export function normalizeCoordinatesOnSquares(stored: unknown): boolean {
   return stored === false ? false : true;
 }
 
-export type DisplayState = Pick<State, 'stockfish' | 'feedback' | 'playVerdict' | 'badgeLoading' | 'coordinatesOnSquares' | 'boardOrientation' | 'bestLineWindow' | 'arrows' | 'arrowBasis' | 'flipped' | 'preview'>;
+// Move sounds default on: every chess platform sounds the board, and the
+// stored value only ever turns them off.
+export function normalizeSoundEnabled(stored: unknown): boolean {
+  return stored === false ? false : true;
+}
+
+export type DisplayState = Pick<State, 'stockfish' | 'feedback' | 'playVerdict' | 'badgeLoading' | 'coordinatesOnSquares' | 'soundEnabled' | 'boardOrientation' | 'bestLineWindow' | 'arrows' | 'arrowBasis' | 'flipped' | 'preview'>;
 
 export function initialDisplayState(): DisplayState {
   return {
@@ -30,6 +36,7 @@ export function initialDisplayState(): DisplayState {
     playVerdict: readStorage<boolean>(KEYS.playVerdict) === true,
     badgeLoading: normalizeBadgeLoading(readStorage<unknown>(KEYS.badgeLoading)),
     coordinatesOnSquares: normalizeCoordinatesOnSquares(readStorage<unknown>(KEYS.coordinatesOnSquares)),
+    soundEnabled: normalizeSoundEnabled(readStorage<unknown>(KEYS.sound)),
     boardOrientation: normalizeBoardOrientation(readStorage<unknown>(KEYS.boardOrientation)),
     bestLineWindow: normalizeBestLineWindow(readStorage<unknown>(KEYS.bestLineWindow)),
     arrows: normalizeArrowSettings(readStorage<unknown>(KEYS.arrows)),
@@ -46,6 +53,7 @@ export function reduceDisplay(state: State, action: Action): State | undefined {
     case 'play-verdict': return state.playVerdict === action.enabled ? state : { ...state, playVerdict: action.enabled };
     case 'badge-loading': return state.badgeLoading === action.loading ? state : { ...state, badgeLoading: action.loading };
     case 'coordinates-on-squares': return state.coordinatesOnSquares === action.enabled ? state : { ...state, coordinatesOnSquares: action.enabled };
+    case 'sound-enabled': return state.soundEnabled === action.enabled ? state : { ...state, soundEnabled: action.enabled };
     case 'board-orientation': return state.boardOrientation === action.orientation ? state : { ...state, boardOrientation: action.orientation };
     // Display-only like badgeLoading: normalizing here keeps junk storage or
     // dispatches on the default, and the value never enters review cache keys

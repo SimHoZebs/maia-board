@@ -5,6 +5,8 @@ import { AnalysisControls, PlayControls, type Props } from './Controls';
 import { SavedGames } from './ReadPanels';
 import { PromotionDialog } from './PromotionDialog';
 import { SettingsPage } from '../settings/SettingsPage';
+import { useBoardSounds } from '../sound/useBoardSounds';
+import { unlockSounds } from '../sound/player';
 import { ErrorBoundary, PanelError } from './ErrorBoundary';
 import { RegionRecorder } from './perfCommits';
 import { HistoryRecovery } from './HistoryRecovery';
@@ -32,6 +34,18 @@ export function App({ state, dispatch, children }: Props & { children: ReactNode
     return () => document.removeEventListener('keydown', keydown);
   }, [ready, mode, dispatch]);
   const mobileBar = useMobileBar();
+  useBoardSounds(state);
+  // Browsers suspend WebAudio until a user gesture: the first pointer or key
+  // press unlocks the shared context so committed moves can sound at once.
+  useEffect(() => {
+    const unlock = () => unlockSounds();
+    window.addEventListener('pointerdown', unlock);
+    window.addEventListener('keydown', unlock);
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, []);
   return <div className={`app-shell${mobileBar ? ' bottom-ui' : ''}`}>
     <RegionRecorder id="chrome"><header className="site-header"><span className="brand">maia board</span>{children}{mode === 'play' && ready && !mobileBar && <IconButton id="new-game" className="header-action" label="New game" onClick={() => dispatch({ type: 'setup' })}><Plus size={18} aria-hidden="true" /></IconButton>}</header></RegionRecorder>
     <main>

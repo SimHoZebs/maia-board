@@ -11,7 +11,7 @@ export type Draft = Pick<Settings, 'botElo' | 'model'> & { userColor: 'white' | 
 export type PlayDraft = Draft & Pick<Settings, 'temperature'>;
 export type State = {
   mode: Mode; play: StoredGame; saved: StoredGame[];
-  started: boolean; setup: PlayDraft | null; viewedPly: number | null; stockfish: StockfishSettings; feedback: boolean; playVerdict: boolean; badgeLoading: BadgeLoading; coordinatesOnSquares: boolean; boardOrientation: BoardOrientationSetting; bestLineWindow: number; arrows: ArrowSettings; arrowBasis: ArrowBasis;
+  started: boolean; setup: PlayDraft | null; viewedPly: number | null; stockfish: StockfishSettings; feedback: boolean; playVerdict: boolean; badgeLoading: BadgeLoading; coordinatesOnSquares: boolean; soundEnabled: boolean; boardOrientation: BoardOrientationSetting; bestLineWindow: number; arrows: ArrowSettings; arrowBasis: ArrowBasis;
   analysis: Analysis; analysisSettings: Draft; analysisLoaded: boolean; importing: boolean; analysisSourceId: string | null;
   inputs: { fen: string; pgn: string }; flipped: boolean; preview: string | null;
   promotion: { from: Square; to: Square } | null;
@@ -25,6 +25,7 @@ export type Action =
   | { type: 'play-verdict'; enabled: boolean }
   | { type: 'badge-loading'; loading: BadgeLoading }
   | { type: 'coordinates-on-squares'; enabled: boolean }
+  | { type: 'sound-enabled'; enabled: boolean }
   | { type: 'board-orientation'; orientation: BoardOrientationSetting }
   | { type: 'best-line-window'; window: number }
   | { type: 'arrow-settings'; source: ArrowSettingsKey; style: Partial<ArrowStyle> }
