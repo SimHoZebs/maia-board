@@ -14,8 +14,8 @@ re-defining. One name per concept — no aliases.
   Call shapes (same value, different inputs — no new names):
   `posId(initialFen, prefix)` (tuple) vs `stablePositionKey(node)` (node).
   `posId` is also the timeline cache key.
-  See `frontend/src/domain.ts:posId`,
-  `frontend/src/evaluationStore.ts:stablePositionKey`.
+  See `frontend/src/shared/domain.ts:posId`,
+  `frontend/src/eval/evaluationStore.ts:stablePositionKey`.
 - `lineKey = posId(initialFen, full moves)` — content key for one line.
   Tuple-input: `lineKeyFor(initialFen, moves)`. Node-input wrapper:
   `lineKeyForNode(node)` (takes a ReviewNode, not a tuple). Pinned-settings
@@ -23,12 +23,15 @@ re-defining. One name per concept — no aliases.
   (`{lineKey, gameId?}`) key foreground work by this. The same field name
   recurs for other owners: `PersistedBatch.lineKey` (batch identity,
   `batchReview.ts`) and the openings-cache local (openings fetch guard).
-  See `frontend/src/domain.ts:lineKeyFor`.
+  See `frontend/src/shared/domain.ts:lineKeyFor`.
 - `reviewKey = JSON([posId, engine, settingsHash])` — cache key for one engine
   reading. `settingsHash` is `stockfishPolicy` for SF, `[botElo, userElo,
   model, valueElos?]` for the bot. See
-  `frontend/src/evaluationStore.ts:reviewKey`.
+  `frontend/src/eval/evaluationStore.ts:reviewKey`.
 - `gameId` — durable user-game identity (saved games, current-game marker).
+  The data/wire name is `games` (`/games`, `GameStore`, `serverGames`); the
+  frontend destination viewing them is `history` (mode/route/folder). Scoped
+  names, not aliases.
   Never cache identity. Deleting a game orphans nothing. `currentId` is the
   marker, not the identity. `${gameId}|${userColor}` memo scopes and
   `job_id` batch IDs (shared `newHexID` generator, separate namespaces:
@@ -37,7 +40,7 @@ re-defining. One name per concept — no aliases.
   Live `/move`, `/move/analysis`, `/evaluate` accept-and-ignore them;
   bulk `/evaluations/lookup`, `/reviews` accept only `pos_hash` and reject
   `cache_hash`/`cache_key` as unknown fields. Server derives identity from
-  `(fen, initial_fen, moves)`. See `backend/evaluation_identity.go`.
+  `(fen, initial_fen, moves)`. See `backend/internal/server/identity.go`.
   Backend identity: `evaluationIdentity.coordinates()` =
   `v2:JSON(engine, fen, initial_fen, moves, settings|elos, model, revision)`.
   Frontend `posId ~= (initialFen, prefix)` slice; `reviewKey ~= hash +
@@ -129,7 +132,9 @@ Display/grading restore states are `displayRestore/gradeRestore`
 ## Lanes
 
 Endpoint-implied, backend-owned: `POST /move → Play`, `POST /move/analysis →
-Focus`, `POST /evaluate → Focus`, `POST /reviews → Batch`. Maia: one
+Focus`, `POST /evaluate → Focus`, `POST /reviews → Batch`. The frontend
+`analysis` mode rides the Focus lane; `lane` (scheduler) vs `mode` (UI) is
+the scoped spelling of one concept. Maia: one
 scheduler; Stockfish: two (interactive + batch, dedup per-scheduler).
 Non-preemptive, grant order `Play > Focus > Batch` within a scheduler.
 Batch shares fairly by rotation with dual admission caps (fail-visible 429).
