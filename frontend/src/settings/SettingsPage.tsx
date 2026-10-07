@@ -30,10 +30,15 @@ export function SettingsPage({ state, dispatch }: Props) {
   const update = (patch: Partial<typeof settings>) => dispatch({ type: 'stockfish-settings', settings: patch });
   const [anchor, setAnchor] = useState(loadUserEloAnchor);
   const elo = computeUserElo(anchor, state.saved);
-  const setBaseline = (value: number) => {
-    const next = { value: normalizeUserElo(value), updatedAt: new Date().toISOString() };
+  // The field shows the current rating until edited; Save activates only
+  // on a real change and stamps today as the new baseline date.
+  const [draft, setDraft] = useState<number | null>(null);
+  const saveElo = () => {
+    if (draft === null || draft === elo.rating) return;
+    const next = { value: normalizeUserElo(draft), updatedAt: new Date().toISOString() };
     saveUserEloAnchor(next);
     setAnchor(next);
+    setDraft(null);
   };
   // UI-only mode: time-limited (depth 0) vs depth-targeted (depth > 0 with
   // time as a safety cap). The backend still accepts both limits at once;
@@ -130,11 +135,10 @@ export function SettingsPage({ state, dispatch }: Props) {
     <h2 className="settings-subhead">User Elo</h2>
     <div className="settings-control">
       <div className="field field--row">
-        <span className="field-label" id="user-elo-label">Elo</span>
-        <NumberSetting id="user-elo" label="Your Elo" min={0} max={5000} step={1} value={anchor.value} onChange={setBaseline} />
+        <NumberSetting id="user-elo" label="Your Elo" min={0} max={5000} step={1} value={draft ?? elo.rating} onChange={setDraft} />
         <span>since {new Date(anchor.updatedAt).toLocaleDateString()}</span>
+        <Button onClick={saveElo} disabled={draft === null || draft === elo.rating}>Save</Button>
       </div>
-      <p>Now {elo.rating}.</p>
     </div>
     <p className="settings-eyebrow">ANALYSIS ENGINE</p>
     <h1 id="settings-title">Stockfish</h1>
