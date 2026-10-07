@@ -17,7 +17,13 @@ export function reducePlay(state: State, action: Action): State | undefined {
     case 'new': {
       const draft = state.setup ?? newPlayDraft(state.play.settings);
       if (draft.userColor === 'random' && !action.resolvedColor) return state;
-      const settings: Settings = { ...draft, userColor: action.resolvedColor ?? (draft.userColor === 'black' ? 'black' : 'white'), userElo: draft.botElo };
+      // The user's rating rides along for engine conditioning and game
+      // history: callers pass the computed adaptive Elo (anchor replay);
+      // legacy callers without it fall back to the bot strength.
+      const userElo = typeof action.userElo === 'number' && Number.isFinite(action.userElo)
+        ? Math.min(5000, Math.max(0, Math.round(action.userElo)))
+        : draft.botElo;
+      const settings: Settings = { ...draft, userColor: action.resolvedColor ?? (draft.userColor === 'black' ? 'black' : 'white'), userElo };
       return transition(state, { started: true, setup: null, viewedPly: null, play: { id: action.id, createdAt: action.createdAt, moves: [], settings } });
     }
     case 'takeback': {

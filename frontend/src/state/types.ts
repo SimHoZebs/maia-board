@@ -30,7 +30,7 @@ export type Action =
   | { type: 'arrow-settings'; source: ArrowSettingsKey; style: Partial<ArrowStyle> }
   | { type: 'arrow-basis'; basis: ArrowBasis }
   | { type: 'arrow-settings-reset' }
-  | { type: 'new'; id: string; createdAt: string; resolvedColor?: 'white' | 'black' }
+  | { type: 'new'; id: string; createdAt: string; resolvedColor?: 'white' | 'black'; userElo?: number }
   | { type: 'analysis-settings'; settings: Partial<Draft> }
   | { type: 'takeback' } | { type: 'resign' } | { type: 'flip' }
   | { type: 'move'; from: Square; to: Square }

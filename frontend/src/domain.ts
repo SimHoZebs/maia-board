@@ -14,7 +14,7 @@ export type Position = { fen: string; moves: string[]; sanMoves: string[]; lastM
 export type Analysis = { initialFen: string; moves: string[]; sanMoves: string[]; index: number; branchFromPly: number | null; branchMoves: string[]; perspective: SideColor; ownGame: boolean };
 export type Insight = { response: MoveResponse; fen: string; mode: Mode };
 export type StoredGame = { id: string; createdAt: string; moves: string[]; settings: Settings; result?: 'resigned' };
-export const defaultSettings: Settings = { userColor: 'white', botElo: 1600, userElo: 1600, model: '79m', temperature: 1 };
+export const defaultSettings: Settings = { userColor: 'white', botElo: 1600, userElo: 400, model: '79m', temperature: 1 };
 export const oppositeColor = (color: SideColor): SideColor => color === 'white' ? 'black' : 'white';
 export type BoardOrientationSetting = 'auto' | SideColor;
 export function normalizeBoardOrientation(stored: unknown): BoardOrientationSetting {
@@ -41,8 +41,11 @@ export function normalizeSettings(stored?: (Partial<Settings> & LegacySettingsKe
   // identity stays raw for the coming global-Elo pass.
   const botElo = (value: unknown, fallback: number) => clampBotElo(elo(value, fallback));
   const storedBotElo = stored?.botElo ?? stored?.eloMaia;
+  // The player's own rating defaults to the 400 anchor (see userElo.ts),
+  // never to the bot strength: mirroring botElo guesses the user is a 1600
+  // player. Legacy saves keep their stored userElo.
   return { userColor: stored?.userColor === 'black' ? 'black' : 'white', model: stored?.model === '5m' ? '5m' : '79m',
-    botElo: botElo(storedBotElo, 1600), userElo: elo(stored?.userElo ?? stored?.eloUser, elo(storedBotElo, 1600)),
+    botElo: botElo(storedBotElo, 1600), userElo: elo(stored?.userElo ?? stored?.eloUser, 400),
     temperature: typeof stored?.temperature === 'number' && Number.isFinite(stored.temperature) && stored.temperature >= 0 && stored.temperature <= 2 ? stored.temperature : 0 };
 }
 

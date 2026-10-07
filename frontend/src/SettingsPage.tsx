@@ -7,6 +7,7 @@ import { QualityBadge, type BadgeLoading } from './ReviewCharts';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import './settings.css';
 import { useState } from 'react';
+import { computeUserElo, DEFAULT_USER_ELO, loadUserEloAnchor, normalizeUserElo, saveUserEloAnchor } from './userElo';
 
 function NumberSetting({ id, value, min, max, step, onChange, disabled, label }: { id: string; value: number; min: number; max: number; step: number; onChange: (value: number) => void; disabled?: boolean; label: string }) {
   // Uncommitted text lives in draft; null means "show the committed value".
@@ -27,6 +28,13 @@ function NumberSetting({ id, value, min, max, step, onChange, disabled, label }:
 export function SettingsPage({ state, dispatch }: Props) {
   const settings = state.stockfish;
   const update = (patch: Partial<typeof settings>) => dispatch({ type: 'stockfish-settings', settings: patch });
+  const [anchor, setAnchor] = useState(loadUserEloAnchor);
+  const elo = computeUserElo(anchor, state.saved);
+  const setBaseline = (value: number) => {
+    const next = { value: normalizeUserElo(value), updatedAt: new Date().toISOString() };
+    saveUserEloAnchor(next);
+    setAnchor(next);
+  };
   // UI-only mode: time-limited (depth 0) vs depth-targeted (depth > 0 with
   // time as a safety cap). The backend still accepts both limits at once;
   // the toggle only makes the depth-0 sentinel explicit.
@@ -114,6 +122,20 @@ export function SettingsPage({ state, dispatch }: Props) {
           </div>
         </div>;
       })}
+    </div>
+    <p className="settings-eyebrow">YOUR RATING</p>
+    <h2 className="settings-subhead">User Elo</h2>
+    <div className="settings-control">
+      <div className="field field--row">
+        <span className="field-label" id="user-elo-label">Baseline Elo</span>
+        <NumberSetting id="user-elo" label="Your baseline Elo" min={0} max={5000} step={1} value={anchor.value} onChange={setBaseline} />
+      </div>
+      <p>Baseline {anchor.value} since {new Date(anchor.updatedAt).toLocaleDateString()}. Current {elo.rating} from {elo.counted} rated game{elo.counted === 1 ? '' : 's'} ({elo.wins}W · {elo.draws}D · {elo.losses}L).</p>
+      <p>Finished games only move the rating with K=32 against the bot Elo. Unfinished lines never count. New games store the current rating.</p>
+      <div className="field field--row">
+        <Button onClick={() => setBaseline(DEFAULT_USER_ELO)}>Reset to {DEFAULT_USER_ELO}</Button>
+        <Button onClick={() => { const next = { value: elo.rating, updatedAt: new Date().toISOString() }; saveUserEloAnchor(next); setAnchor(next); }}>Use {elo.rating} as new baseline</Button>
+      </div>
     </div>
     <p className="settings-eyebrow">ANALYSIS ENGINE</p>
     <h1 id="settings-title">Stockfish</h1>
