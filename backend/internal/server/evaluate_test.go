@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -122,14 +121,14 @@ func TestEvaluateHTTP(t *testing.T) {
 		{"success", valid, "ok", "", 200},
 		{"white terminal", valid, "white_win", "", 200},
 		{"black terminal", valid, "black_win", "", 200},
-		{"configured", `{"fen":"` + startFEN + `","settings":{"time_ms":2000,"lines":5,"depth":18}}`, "settings", "", 200},
-		{"invalid settings", `{"fen":"` + startFEN + `","settings":{"time_ms":30001,"lines":5,"depth":18}}`, "settings", "invalid_request", 400},
-		{"wrong policy", `{"fen":"` + startFEN + `","settings":{"time_ms":2000,"lines":5,"depth":18}}`, "ok", "engine_unavailable", 502},
-		{"malformed", "{", "ok", "invalid_json", 400},
-		{"unknown", `{"fen":"` + startFEN + `","flags":[]}`, "ok", "invalid_json", 400},
-		{"trailing", valid + ` {}`, "ok", "invalid_json", 400},
-		{"size", `{"fen":"` + strings.Repeat("x", 65536) + `"}`, "ok", "invalid_json", 400},
-		{"fen", `{"fen":"no"}`, "ok", "invalid_fen", 400},
+		{"configured", `{"fen":"` + startFEN + `","moves":[],"settings":{"time_ms":2000,"lines":5,"depth":18}}`, "settings", "", 200},
+		{"invalid settings", `{"fen":"` + startFEN + `","moves":[],"settings":{"time_ms":30001,"lines":5,"depth":18}}`, "settings", "invalid_request", 400},
+		{"wrong policy", `{"fen":"` + startFEN + `","moves":[],"settings":{"time_ms":2000,"lines":5,"depth":18}}`, "ok", "engine_unavailable", 502},
+		{"malformed", "{", "ok", "", 400},
+		{"unknown", `{"fen":"` + startFEN + `","flags":[]}`, "ok", "", 422},
+		{"trailing", valid + ` {}`, "ok", "", 400},
+		{"size", `{"fen":"` + strings.Repeat("x", 65536) + `"}`, "ok", "", 413},
+		{"fen", `{"fen":"no","moves":[]}`, "ok", "invalid_fen", 400},
 		{"uci", `{"fen":"` + startFEN + `","moves":["e2e9"]}`, "ok", "invalid_position", 400},
 		{"mismatch", valid, "position_mismatch", "position_mismatch", 400},
 		{"semantic", valid, "invalid_position", "invalid_position", 400},
@@ -140,12 +139,11 @@ func TestEvaluateHTTP(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &Server{evaluator: fakeEvaluator(t, tc.mode)}
-			w := httptest.NewRecorder()
-			s.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(tc.body)))
+			w := serve(s, "POST", "/evaluate", tc.body)
 			if w.Code != tc.status {
 				t.Fatalf("status %d: %s", w.Code, w.Body)
 			}
-			if tc.code != "" && !strings.Contains(w.Body.String(), `"code":"`+tc.code+`"`) {
+			if tc.code != "" && humaCode(t, w) != tc.code {
 				t.Fatal(w.Body)
 			}
 			if strings.Contains(w.Body.String(), "/secret") {
@@ -156,11 +154,10 @@ func TestEvaluateHTTP(t *testing.T) {
 	// Occupy the interactive slot with a slow search, then prove a second
 	// arrival fails fast with 503 instead of queueing behind it.
 	slow := fakeEvaluator(t, "slow")
+	slowSrv := &Server{evaluator: slow}
 	slowDone := make(chan int, 1)
 	go func() {
-		w := httptest.NewRecorder()
-		(&Server{evaluator: slow}).evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(valid)))
-		slowDone <- w.Code
+		slowDone <- serve(slowSrv, "POST", "/evaluate", valid).Code
 	}()
 	deadline := time.Now().Add(2 * time.Second)
 	for slow.Idle() && time.Now().Before(deadline) {
@@ -169,14 +166,12 @@ func TestEvaluateHTTP(t *testing.T) {
 	oldWait := engine.SyncWaitFocus
 	engine.SyncWaitFocus = 50 * time.Millisecond
 	defer func() { engine.SyncWaitFocus = oldWait }()
-	w := httptest.NewRecorder()
-	(&Server{evaluator: slow}).evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(valid)))
+	w := serve(slowSrv, "POST", "/evaluate", valid)
 	if w.Code != 503 || w.Header().Get("Retry-After") != "1" {
 		t.Fatal(w)
 	}
 	<-slowDone
-	w = httptest.NewRecorder()
-	(&Server{}).evaluate(w, httptest.NewRequest("GET", "/evaluate", nil))
+	w = serve(&Server{}, "GET", "/evaluate", "")
 	if w.Code != 405 {
 		t.Fatal(w.Code)
 	}
@@ -191,16 +186,14 @@ func TestEvaluateCacheReadThrough(t *testing.T) {
 	store := testStore(t)
 	// Miss: computes live, stores the row, reports miss.
 	s := &Server{evaluator: fakeEvaluator(t, "ok"), store: store}
-	w := httptest.NewRecorder()
-	s.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(cached)))
+	w := serve(s, "POST", "/evaluate", cached)
 	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "miss" {
 		t.Fatalf("miss: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
 	}
 	first := w.Body.String()
 	// Hit: serves from SQLite without an evaluator configured.
 	hit := &Server{store: store}
-	w = httptest.NewRecorder()
-	hit.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(cached)))
+	w = serve(hit, "POST", "/evaluate", cached)
 	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "hit" {
 		t.Fatalf("hit: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
 	}
@@ -209,13 +202,11 @@ func TestEvaluateCacheReadThrough(t *testing.T) {
 	}
 	// Client-provided coordinates cannot alter the server-derived identity.
 	stale := `{"fen":"` + startFEN + `","moves":[],"cache_hash":"abc123","cache_key":"other-key"}`
-	w = httptest.NewRecorder()
-	s.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(stale)))
+	w = serve(s, "POST", "/evaluate", stale)
 	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "hit" {
 		t.Fatalf("ignored coordinates: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
 	}
-	w = httptest.NewRecorder()
-	hit.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(stale)))
+	w = serve(hit, "POST", "/evaluate", stale)
 	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "hit" {
 		t.Fatalf("stale overwrite: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
 	}
@@ -224,14 +215,12 @@ func TestEvaluateCacheReadThrough(t *testing.T) {
 	if _, err := store.CachePut(hash, "sf", key, `{"a":1}`); err != nil {
 		t.Fatal(err)
 	}
-	w = httptest.NewRecorder()
-	s.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(`{"fen":"`+startFEN+`","moves":[],"cache_hash":"deadbeef","cache_key":"k"}`)))
+	w = serve(s, "POST", "/evaluate", `{"fen":"`+startFEN+`","moves":[],"cache_hash":"deadbeef","cache_key":"k"}`)
 	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "miss" {
 		t.Fatalf("corrupt: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
 	}
 	// No client coordinates still uses the canonical server cache.
-	w = httptest.NewRecorder()
-	s.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(`{"fen":"`+startFEN+`","moves":[]}`)))
+	w = serve(s, "POST", "/evaluate", `{"fen":"`+startFEN+`","moves":[]}`)
 	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "hit" {
 		t.Fatalf("uncached: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
 	}
@@ -344,13 +333,11 @@ func TestRealStockfishHTTPAndCancellation(t *testing.T) {
 		python = "python3"
 	}
 	e := engine.NewEvaluator(python, helper, binary)
-	w := httptest.NewRecorder()
-	(&Server{evaluator: e}).evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(`{"fen":"`+startFEN+`","moves":[]}`)))
+	w := serve(&Server{evaluator: e}, "POST", "/evaluate", `{"fen":"`+startFEN+`","moves":[]}`)
 	if w.Code != 200 {
 		t.Fatalf("real evaluation: %d %s", w.Code, w.Body)
 	}
-	w = httptest.NewRecorder()
-	(&Server{evaluator: e}).evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(`{"fen":"`+startFEN+`","moves":[],"settings":{"time_ms":2000,"lines":5,"depth":8}}`)))
+	w = serve(&Server{evaluator: e}, "POST", "/evaluate", `{"fen":"`+startFEN+`","moves":[],"settings":{"time_ms":2000,"lines":5,"depth":8}}`)
 	var configured engine.EvaluationResponse
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &configured) != nil || configured.SearchPolicy != "sf19-ms2000-mpv5-d8-t4-h128-v3" || len(configured.Lines) != 5 || configured.Depth > 8 {
 		t.Fatalf("configured real evaluation: %d %s", w.Code, w.Body)

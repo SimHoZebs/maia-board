@@ -10,13 +10,22 @@ import (
 	"maia-board/backend/internal/sched"
 )
 
-func (s *Server) evaluate(w http.ResponseWriter, r *http.Request) {
+type EvaluateInput struct {
+	Body engine.EvaluationRequest
+}
+
+// EvaluateOutput carries the Stockfish result plus the cache header.
+type EvaluateOutput struct {
+	Cache string `header:"X-Eval-Cache"`
+	Body  *engine.EvaluationResponse
+}
+
+func (s *Server) handleEvaluate(ctx context.Context, input *EvaluateInput) (*EvaluateOutput, error) {
 	started := time.Now()
-	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-	w = rec
-	var request engine.EvaluationRequest
+	request := input.Body
 	var result *engine.EvaluationResponse
 	var hit bool
+	status := http.StatusOK
 	// Perf spans mirroring serveMove: validate_us covers request
 	// validation, exec_ms covers cache→admission→search→store, and
 	// wait_ms is the admission queue wait inside exec_ms (-1 when
@@ -32,8 +41,8 @@ func (s *Server) evaluate(w http.ResponseWriter, r *http.Request) {
 			depth, lines = result.Depth, len(result.Lines)
 		}
 		log.Printf("evaluate status=%d plies=%d policy=%s duration_ms=%d validate_us=%d exec_ms=%d wait_ms=%d depth=%d lines=%d",
-			rec.status, len(request.Moves), policy, time.Since(started).Milliseconds(), validateMicros, execMillis, waitMillis, depth, lines)
-		if rec.status == http.StatusOK && result != nil {
+			status, len(request.Moves), policy, time.Since(started).Milliseconds(), validateMicros, execMillis, waitMillis, depth, lines)
+		if status == http.StatusOK && result != nil {
 			cache := "miss"
 			if hit {
 				cache = "hit"
@@ -42,38 +51,35 @@ func (s *Server) evaluate(w http.ResponseWriter, r *http.Request) {
 				cache, policy, request.FEN, len(request.Moves), orDash(request.PosHash), sfContentFields(result))
 		}
 	}()
-	decoded, ok := decodeSingle[engine.EvaluationRequest](w, r, 64*1024)
-	if !ok {
-		return
-	}
-	request = decoded
 	validateStart := time.Now()
 	if err := engine.ValidateEvaluationRequest(&request); err != nil {
 		validateMicros = time.Since(validateStart).Microseconds()
-		writeAPIError(w, 400, err.Code, err.Message)
-		return
+		status = http.StatusBadRequest
+		return nil, apiError(status, err.Code, err.Message)
 	}
 	validateMicros = time.Since(validateStart).Microseconds()
 	// /evaluate is a size-1 batch through the shared executor (lane Focus;
-	// any X-Priority header from older clients is ignored). waitCtx dequeues
-	// on disconnect; execCtx stays detached so a granted search still writes
-	// through after the client goes away.
-	execCtx := context.WithoutCancel(r.Context())
+	// any X-Priority header from older clients is ignored). The request
+	// context dequeues on disconnect; execCtx stays detached so a granted
+	// search still writes through after the client goes away.
+	execCtx := context.WithoutCancel(ctx)
 	execStart := time.Now()
-	live, hit, runErr := s.executeSF(r.Context(), execCtx, sched.PriorityFocus, 0, request, false)
+	live, hit, runErr := s.executeSF(ctx, execCtx, sched.PriorityFocus, 0, request, false)
 	execMillis = time.Since(execStart).Milliseconds()
 	if runErr != nil {
-		mapEngineError(w, runErr, "Stockfish evaluation is unavailable")
-		return
+		failStatus, failCode, failMessage := engineFailure(runErr, "Stockfish evaluation is unavailable")
+		status = failStatus
+		return nil, apiError(failStatus, failCode, failMessage)
 	}
 	result = live
 	if !hit && result != nil {
 		waitMillis = result.WaitMs
 	}
+	out := &EvaluateOutput{Body: result}
 	if hit {
-		w.Header().Set("X-Eval-Cache", "hit")
+		out.Cache = "hit"
 	} else {
-		w.Header().Set("X-Eval-Cache", "miss")
+		out.Cache = "miss"
 	}
-	writeJSON(w, 200, result)
+	return out, nil
 }

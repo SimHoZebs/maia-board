@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -10,58 +11,61 @@ import (
 	"maia-board/backend/internal/openings"
 )
 
-func (s *Server) openingsHandler(w http.ResponseWriter, r *http.Request) {
+type OpeningsInput struct {
+	Body openings.Request
+}
+
+type OpeningsOutput struct {
+	Body openings.Response
+}
+
+func (s *Server) handleOpenings(ctx context.Context, input *OpeningsInput) (*OpeningsOutput, error) {
 	started := time.Now()
-	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-	w = rec
-	var request openings.Request
+	request := input.Body
+	status := http.StatusOK
 	defer func() {
-		log.Printf("openings status=%d plies=%d duration_ms=%d", rec.status, len(request.Moves), time.Since(started).Milliseconds())
+		log.Printf("openings status=%d plies=%d duration_ms=%d", status, len(request.Moves), time.Since(started).Milliseconds())
 	}()
-	decoded, ok := decodeSingle[openings.Request](w, r, 64*1024)
-	if !ok {
-		return
-	}
-	request = decoded
 	if err := openings.ValidateRequest(&request); err != nil {
-		writeAPIError(w, 400, err.Code, err.Message)
-		return
+		status = http.StatusBadRequest
+		return nil, apiError(status, err.Code, err.Message)
 	}
-	input, err := json.Marshal(request)
+	encoded, err := json.Marshal(request)
 	if err != nil {
-		writeAPIError(w, 500, "openings_unavailable", "Opening lookup is unavailable")
-		return
+		status = http.StatusInternalServerError
+		return nil, apiError(status, "openings_unavailable", "Opening lookup is unavailable")
 	}
-	output, err := s.openings.Lookup(r.Context(), input)
+	output, err := s.openings.Lookup(ctx, encoded)
 	if err != nil {
-		writeAPIError(w, 502, "openings_unavailable", "Opening lookup is unavailable")
-		return
+		status = http.StatusBadGateway
+		return nil, apiError(status, "openings_unavailable", "Opening lookup is unavailable")
 	}
 	var workerError apierror.Error
 	if err := json.Unmarshal(output, &workerError); err != nil {
-		writeAPIError(w, 502, "openings_unavailable", "Opening lookup is unavailable")
-		return
+		status = http.StatusBadGateway
+		return nil, apiError(status, "openings_unavailable", "Opening lookup is unavailable")
 	}
 	if workerError.Code != "" {
 		switch workerError.Code {
 		case "invalid_fen", "invalid_position":
-			writeAPIError(w, 400, workerError.Code, "position or move history is invalid")
+			status = http.StatusBadRequest
+			return nil, apiError(status, workerError.Code, "position or move history is invalid")
 		default:
-			writeAPIError(w, 502, "openings_unavailable", "Opening lookup is unavailable")
+			status = http.StatusBadGateway
+			return nil, apiError(status, "openings_unavailable", "Opening lookup is unavailable")
 		}
-		return
 	}
 	var result openings.Response
 	if err := json.Unmarshal(output, &result); err != nil {
-		writeAPIError(w, 502, "openings_unavailable", "Opening lookup is unavailable")
-		return
+		status = http.StatusBadGateway
+		return nil, apiError(status, "openings_unavailable", "Opening lookup is unavailable")
 	}
 	if result.Matches == nil {
 		result.Matches = []openings.Match{}
 	}
 	if len(result.BookFlags) != len(request.Moves) {
-		writeAPIError(w, 502, "openings_unavailable", "Opening lookup is unavailable")
-		return
+		status = http.StatusBadGateway
+		return nil, apiError(status, "openings_unavailable", "Opening lookup is unavailable")
 	}
-	writeJSON(w, 200, result)
+	return &OpeningsOutput{Body: result}, nil
 }

@@ -17,6 +17,14 @@ import (
 )
 
 func main() {
+	// OPENAPI_DUMP writes the Huma OpenAPI document and exits, for Orval
+	// codegen without booting engines or touching the database.
+	if path := os.Getenv("OPENAPI_DUMP"); path != "" {
+		if err := server.DumpOpenAPI(path); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	workerPath := getenv("MAIA3_WORKER", "/app/maia3_worker.py")
 	python := getenv("PYTHON", "python3")
 	largeModel := getenv("MAIA3_MODEL_79M", "79m")

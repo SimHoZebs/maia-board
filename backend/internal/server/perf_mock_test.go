@@ -218,13 +218,7 @@ func TestBackendPerfMock(t *testing.T) {
 	sleeperCalls := func() int { return large.calls() + small.calls() }
 	app := &Server{pool: engine.NewEnginePool(large, small), store: testStore(t)}
 	app.reviews = NewReviewJobs(app)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/move", app.move)
-	mux.HandleFunc("/move/analysis", app.moveAnalysis)
-	mux.HandleFunc("/evaluate", app.evaluate)
-	mux.HandleFunc("/evaluations/lookup", app.evaluationLookup)
-	mux.HandleFunc("/reviews", app.reviews.reviews)
-	mux.HandleFunc("/reviews/", app.reviews.reviewRouter)
+	handler := app.Handler()
 
 	var steps []perfStep
 	timed := func(step string, fn func()) {
@@ -233,8 +227,10 @@ func TestBackendPerfMock(t *testing.T) {
 		steps = append(steps, perfStep{Step: step, Ms: time.Since(start).Milliseconds()})
 	}
 	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, strings.NewReader(body)))
+		handler.ServeHTTP(w, req)
 		return w
 	}
 	moveBody := func(ply, eloMaia, eloUser int) string {
@@ -272,12 +268,12 @@ func TestBackendPerfMock(t *testing.T) {
 	var lineLoadMs int64
 	timed("lookup: line load before batch", func() {
 		before := sleeperCalls()
-		queries := make([]lookupRequest, 0, positions)
+		queries := make([]LookupRequest, 0, positions)
 		for i := range positions {
-			queries = append(queries, lookupRequest{Engine: "maia", FEN: line.fens[i], Ply: i,
+			queries = append(queries, LookupRequest{Engine: "maia", FEN: line.fens[i], Ply: i,
 				EloMaia: intPtr(1500), EloUser: intPtr(1300), Model: "79m"})
 		}
-		body, _ := json.Marshal(map[string]any{"line": batchLine{InitialFEN: startFEN, Moves: line.moves}, "requests": queries})
+		body, _ := json.Marshal(map[string]any{"line": BatchLine{InitialFEN: startFEN, Moves: line.moves}, "requests": queries})
 		start := time.Now()
 		w := post("/evaluations/lookup", string(body))
 		lineLoadMs = time.Since(start).Milliseconds()
@@ -285,7 +281,7 @@ func TestBackendPerfMock(t *testing.T) {
 			t.Fatalf("line lookup: %d %s", w.Code, w.Body)
 		}
 		var result struct {
-			Results []lookupResult `json:"results"`
+			Results []LookupResult `json:"results"`
 		}
 		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || len(result.Results) != 1 {
 			t.Fatalf("pre-batch lookup results = %d, want 1 (the boot row)", len(result.Results))
@@ -303,12 +299,12 @@ func TestBackendPerfMock(t *testing.T) {
 	var drainSamples [][2]int64 // (elapsed_ms, done)
 	timed("reviews: batch submit + drain", func() {
 		before := sleeperCalls()
-		queries := make([]lookupRequest, 0, positions)
+		queries := make([]LookupRequest, 0, positions)
 		for i := range positions {
-			queries = append(queries, lookupRequest{Engine: "maia", FEN: line.fens[i], Ply: i,
+			queries = append(queries, LookupRequest{Engine: "maia", FEN: line.fens[i], Ply: i,
 				EloMaia: intPtr(1500), EloUser: intPtr(1300), Model: "79m"})
 		}
-		body, _ := json.Marshal(map[string]any{"line": batchLine{InitialFEN: startFEN, Moves: line.moves}, "requests": queries})
+		body, _ := json.Marshal(map[string]any{"line": BatchLine{InitialFEN: startFEN, Moves: line.moves}, "requests": queries})
 		start := time.Now()
 		w := post("/reviews", string(body))
 		if w.Code != http.StatusAccepted {
@@ -337,7 +333,7 @@ func TestBackendPerfMock(t *testing.T) {
 		deadline := time.Now().Add(120 * time.Second)
 		for {
 			sw := httptest.NewRecorder()
-			mux.ServeHTTP(sw, httptest.NewRequest(http.MethodGet, "/reviews/"+submit.JobID, nil))
+			handler.ServeHTTP(sw, httptest.NewRequest(http.MethodGet, "/reviews/"+submit.JobID, nil))
 			if sw.Code != http.StatusOK {
 				t.Fatalf("batch poll: %d %s", sw.Code, sw.Body)
 			}
@@ -375,9 +371,9 @@ func TestBackendPerfMock(t *testing.T) {
 	timed(fmt.Sprintf("lookup: scrub sweep of %d positions", positions), func() {
 		before := sleeperCalls()
 		for i := range positions {
-			queries := []lookupRequest{{Engine: "maia", FEN: line.fens[i], Ply: i,
+			queries := []LookupRequest{{Engine: "maia", FEN: line.fens[i], Ply: i,
 				EloMaia: intPtr(1500), EloUser: intPtr(1300), Model: "79m"}}
-			body, _ := json.Marshal(map[string]any{"line": batchLine{InitialFEN: startFEN, Moves: line.moves}, "requests": queries})
+			body, _ := json.Marshal(map[string]any{"line": BatchLine{InitialFEN: startFEN, Moves: line.moves}, "requests": queries})
 			start := time.Now()
 			w := post("/evaluations/lookup", string(body))
 			scrubMs = append(scrubMs, time.Since(start).Milliseconds())
@@ -385,7 +381,7 @@ func TestBackendPerfMock(t *testing.T) {
 				t.Fatalf("scrub lookup %d: %d %s", i, w.Code, w.Body)
 			}
 			var result struct {
-				Results []lookupResult `json:"results"`
+				Results []LookupResult `json:"results"`
 			}
 			if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || len(result.Results) != 1 {
 				t.Fatalf("scrub lookup %d results: %v %s", i, err, w.Body)
@@ -461,9 +457,8 @@ func TestBackendPerfMock(t *testing.T) {
 		seedSF(t, app, engine.EvaluationRequest{FEN: startFEN, Settings: settings}, 25)
 		sfApp := &Server{store: app.store}
 		body := fmt.Sprintf(`{"fen":%q,"moves":[],"settings":{"time_ms":750,"lines":2,"depth":0}}`, startFEN)
-		w := httptest.NewRecorder()
 		start := time.Now()
-		sfApp.evaluate(w, httptest.NewRequest(http.MethodPost, "/evaluate", strings.NewReader(body)))
+		w := serve(sfApp, http.MethodPost, "/evaluate", body)
 		sfHitMs = time.Since(start).Milliseconds()
 		if w.Code != http.StatusOK || w.Header().Get("X-Eval-Cache") != "hit" {
 			t.Fatalf("sf hit: %d header=%q %s", w.Code, w.Header().Get("X-Eval-Cache"), w.Body)

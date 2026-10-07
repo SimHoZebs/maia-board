@@ -25,7 +25,7 @@ func batchServer(t *testing.T, mode string) *Server {
 }
 
 // Batch entries carry ply; the shared line ships once.
-func batchLineJSON() string {
+func BatchLineJSON() string {
 	return fmt.Sprintf(`"line":{"initial_fen":%q,"moves":[]}`, startFEN)
 }
 
@@ -38,28 +38,26 @@ func maiaBatchReq() string {
 }
 
 func batchBody(reqs ...string) string {
-	return fmt.Sprintf(`{%s,"requests":[%s]}`, batchLineJSON(), strings.Join(reqs, ","))
+	return fmt.Sprintf(`{%s,"requests":[%s]}`, BatchLineJSON(), strings.Join(reqs, ","))
 }
 
 func postBatch(t *testing.T, s *Server, body string) (int, map[string]any) {
 	t.Helper()
-	w := httptest.NewRecorder()
-	s.reviews.reviews(w, httptest.NewRequest("POST", "/reviews", strings.NewReader(body)))
+	w := serve(s, "POST", "/reviews", body)
 	var decoded map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &decoded)
 	return w.Code, decoded
 }
 
-func getBatch(t *testing.T, s *Server, id string) (int, batchProgress) {
+func getBatch(t *testing.T, s *Server, id string) (int, BatchProgress) {
 	t.Helper()
-	w := httptest.NewRecorder()
-	s.reviews.reviewByID(w, httptest.NewRequest("GET", "/reviews/"+id, nil))
-	var progress batchProgress
+	w := serve(s, "GET", "/reviews/"+id, "")
+	var progress BatchProgress
 	_ = json.Unmarshal(w.Body.Bytes(), &progress)
 	return w.Code, progress
 }
 
-func awaitBatch(t *testing.T, s *Server, id string) batchProgress {
+func awaitBatch(t *testing.T, s *Server, id string) BatchProgress {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
 	for {
@@ -79,11 +77,11 @@ func awaitBatch(t *testing.T, s *Server, id string) batchProgress {
 
 func TestBatchValidation(t *testing.T) {
 	s := batchServer(t, "ok")
-	line := batchLineJSON()
+	line := BatchLineJSON()
 	badEngine := fmt.Sprintf(`{%s,"requests":[{"engine":"xx","ply":0,"fen":"%s"}]}`, line, startFEN)
 	nilPly := fmt.Sprintf(`{%s,"requests":[{"engine":"sf","fen":"%s"}]}`, line, startFEN)
 	maiaInSF := fmt.Sprintf(`{%s,"requests":[{"engine":"sf","ply":0,"fen":"%s","model":"79m"}]}`, line, startFEN)
-	sfInMaia := fmt.Sprintf(`{%s,"requests":[{"engine":"maia","ply":0,"fen":"%s","elo_maia":1500,"elo_user":1500,"model":"79m","settings":{"time_ms":750,"lines":2}}]}`, line, startFEN)
+	sfInMaia := fmt.Sprintf(`{%s,"requests":[{"engine":"maia","ply":0,"fen":"%s","elo_maia":1500,"elo_user":1500,"model":"79m","settings":{"time_ms":750,"lines":2,"depth":8}}]}`, line, startFEN)
 	tooLongLine := fmt.Sprintf(`{"line":{"initial_fen":%q,"moves":[%s]},"requests":[{"engine":"sf","ply":258,"fen":%q}]}`,
 		startFEN, strings.Repeat(`"e2e4",`, 257)+`"e2e4"`, startFEN)
 	plyOutOfRange := fmt.Sprintf(`{%s,"requests":[{"engine":"sf","ply":1,"fen":"%s"}]}`, line, startFEN)
@@ -91,21 +89,22 @@ func TestBatchValidation(t *testing.T) {
 		startFEN, startFEN)
 	for _, tc := range []struct {
 		name, body string
+		status     int
 	}{
-		{"empty", fmt.Sprintf(`{%s,"requests":[]}`, line)},
-		{"missing", `{}`},
-		{"missing line", `{"requests":[]}`},
-		{"bad engine", badEngine},
-		{"nil ply", nilPly},
-		{"maia in sf", maiaInSF},
-		{"sf in maia", sfInMaia},
-		{"too long", tooLongLine},
-		{"ply out of range", plyOutOfRange},
-		{"bad line move", badLineMove},
+		{"empty", fmt.Sprintf(`{%s,"requests":[]}`, line), 400},
+		{"missing", `{}`, 422},
+		{"missing line", `{"requests":[]}`, 422},
+		{"bad engine", badEngine, 400},
+		{"nil ply", nilPly, 422},
+		{"maia in sf", maiaInSF, 400},
+		{"sf in maia", sfInMaia, 400},
+		{"too long", tooLongLine, 400},
+		{"ply out of range", plyOutOfRange, 400},
+		{"bad line move", badLineMove, 400},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if code, _ := postBatch(t, s, tc.body); code != 400 {
-				t.Fatalf("status %d, want 400", code)
+			if code, _ := postBatch(t, s, tc.body); code != tc.status {
+				t.Fatalf("status %d, want %d", code, tc.status)
 			}
 		})
 	}
@@ -138,10 +137,9 @@ func TestBatchDrainsAndPersists(t *testing.T) {
 	}
 	// Finished rows are ordinary cache rows visible to bulk lookup.
 	lookupBody := batchBody(sfBatchReq(), maiaBatchReq())
-	w := httptest.NewRecorder()
-	s.evaluationLookup(w, httptest.NewRequest("POST", "/evaluations/lookup", strings.NewReader(lookupBody)))
+	w := serve(s, "POST", "/evaluations/lookup", lookupBody)
 	var lookup struct {
-		Results []lookupResult `json:"results"`
+		Results []LookupResult `json:"results"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &lookup); err != nil || len(lookup.Results) != 2 {
 		t.Fatalf("lookup after batch: %d %s %v", w.Code, w.Body.String(), err)
@@ -183,15 +181,13 @@ func TestBatchConcurrentAdmits(t *testing.T) {
 
 func TestBatchUnknownID(t *testing.T) {
 	s := batchServer(t, "ok")
-	w := httptest.NewRecorder()
-	s.reviews.reviewByID(w, httptest.NewRequest("GET", "/reviews/nope", nil))
+	w := serve(s, "GET", "/reviews/nope", "")
 	if w.Code != 404 {
 		t.Fatalf("get %d", w.Code)
 	}
-	// No DELETE route: removed handler answers 405 via the default (§3),
+	// No DELETE route: Chi answers 405 (§3),
 	// even for unknown ids (DELETE-404 becomes DELETE-405).
-	w = httptest.NewRecorder()
-	s.reviews.reviewByID(w, httptest.NewRequest("DELETE", "/reviews/nope", nil))
+	w = serve(s, "DELETE", "/reviews/nope", "")
 	if w.Code != 405 {
 		t.Fatalf("delete unknown %d, want 405", w.Code)
 	}
@@ -210,8 +206,7 @@ func TestBatchDeleteGone(t *testing.T) {
 		t.Fatalf("submit %d: %v", code, created)
 	}
 	id, _ := created["job_id"].(string)
-	w := httptest.NewRecorder()
-	s.reviews.reviewByID(w, httptest.NewRequest("DELETE", "/reviews/"+id, nil))
+	w := serve(s, "DELETE", "/reviews/"+id, "")
 	if w.Code != 405 {
 		t.Fatalf("delete known %d, want 405", w.Code)
 	}
@@ -239,9 +234,7 @@ func maiaBodyFEN(fen, model string) string {
 }
 
 func postBatchRec(s *Server, body string) *httptest.ResponseRecorder {
-	w := httptest.NewRecorder()
-	s.reviews.reviews(w, httptest.NewRequest("POST", "/reviews", strings.NewReader(body)))
-	return w
+	return serve(s, "POST", "/reviews", body)
 }
 
 func assertEngineBusy(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
@@ -256,10 +249,16 @@ func assertEngineBusy(t *testing.T, w *httptest.ResponseRecorder) map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &decoded); err != nil {
 		t.Fatalf("429 body not JSON: %v", err)
 	}
-	if decoded["code"] != "engine_busy" {
+	var code string
+	if errs, ok := decoded["errors"].([]any); ok && len(errs) > 0 {
+		if first, ok := errs[0].(map[string]any); ok {
+			code, _ = first["message"].(string)
+		}
+	}
+	if code != "engine_busy" {
 		t.Fatalf("429 code %v, want engine_busy", decoded)
 	}
-	msg, _ := decoded["message"].(string)
+	msg, _ := decoded["detail"].(string)
 	if !strings.Contains(msg, "queue depth") {
 		t.Fatalf("429 message %q must name queue depth", msg)
 	}
@@ -295,7 +294,7 @@ func seedFakeJob(js *ReviewJobs, id string, finished bool, sfN, largeN, smallN i
 			e.status = batchDone
 		}
 	}
-	job := &batchJob{id: id, createdAt: "seed", entries: entries, subs: make(map[chan batchProgress]struct{}), finished: finished}
+	job := &batchJob{id: id, createdAt: "seed", entries: entries, subs: make(map[chan BatchProgress]struct{}), finished: finished}
 	if finished {
 		job.done = len(entries)
 	}
@@ -329,8 +328,8 @@ func TestCountMisses(t *testing.T) {
 
 func TestEntryRoles(t *testing.T) {
 	js := &ReviewJobs{}
-	line := batchLine{InitialFEN: startFEN, Moves: []string{}}
-	resolve := func(query lookupRequest) *batchEntry {
+	line := BatchLine{InitialFEN: startFEN, Moves: []string{}}
+	resolve := func(query LookupRequest) *batchEntry {
 		t.Helper()
 		entry, reqErr := js.resolveBatchEntryRequest(0, line, query)
 		if reqErr != nil {
@@ -339,25 +338,25 @@ func TestEntryRoles(t *testing.T) {
 		return entry
 	}
 	// Grading lane: Maia 2400/2400 on 79m shares the grading row.
-	grade := resolve(lookupRequest{Engine: "maia", FEN: startFEN, Ply: 0,
+	grade := resolve(LookupRequest{Engine: "maia", FEN: startFEN, Ply: 0,
 		EloMaia: intPtr(2400), EloUser: intPtr(2400), Model: "79m"})
 	if grade.role != roleGrade {
 		t.Fatalf("2400/2400/79m role = %q, want grade", grade.role)
 	}
 	// Display lane: any other Maia settings.
-	display := resolve(lookupRequest{Engine: "maia", FEN: startFEN, Ply: 0,
+	display := resolve(LookupRequest{Engine: "maia", FEN: startFEN, Ply: 0,
 		EloMaia: intPtr(1500), EloUser: intPtr(1300), Model: "79m"})
 	if display.role != roleDisplay {
 		t.Fatalf("1500/1300/79m role = %q, want display", display.role)
 	}
 	// Small model never grades, even at 2400.
-	small := resolve(lookupRequest{Engine: "maia", FEN: startFEN, Ply: 0,
+	small := resolve(LookupRequest{Engine: "maia", FEN: startFEN, Ply: 0,
 		EloMaia: intPtr(2400), EloUser: intPtr(2400), Model: "5m"})
 	if small.role != roleDisplay {
 		t.Fatalf("2400/2400/5m role = %q, want display", small.role)
 	}
 	// Stockfish multiplexes mate/material/display through one lane.
-	sf := resolve(lookupRequest{Engine: "sf", FEN: startFEN, Ply: 0})
+	sf := resolve(LookupRequest{Engine: "sf", FEN: startFEN, Ply: 0})
 	if sf.role != roleDisplay {
 		t.Fatalf("sf role = %q, want display", sf.role)
 	}
@@ -544,7 +543,7 @@ func TestBatchSubmitSeqAssignedAndHidden(t *testing.T) {
 	}
 	// Rejected submits consume nothing.
 	mid := sched.NextSubmitSeq()
-	code, _ = postBatch(t, s, fmt.Sprintf(`{%s,"requests":[{"engine":"xx","ply":0,"fen":%q}]}`, batchLineJSON(), startFEN))
+	code, _ = postBatch(t, s, fmt.Sprintf(`{%s,"requests":[{"engine":"xx","ply":0,"fen":%q}]}`, BatchLineJSON(), startFEN))
 	if code != 400 {
 		t.Fatalf("invalid %d", code)
 	}
@@ -556,8 +555,7 @@ func TestBatchSubmitSeqAssignedAndHidden(t *testing.T) {
 		t.Fatalf("rejected submits must consume nothing")
 	}
 	// Non-exposure: absent from GET/SSE/429 bodies.
-	gw := httptest.NewRecorder()
-	s.reviews.reviewByID(gw, httptest.NewRequest("GET", "/reviews/"+id, nil))
+	gw := serve(s, "GET", "/reviews/"+id, "")
 	for _, body := range []string{gw.Body.String(), w.Body.String()} {
 		lowered := strings.ToLower(body)
 		if strings.Contains(lowered, "submitseq") || strings.Contains(lowered, "submit_seq") || strings.Contains(lowered, "batchcursor") || strings.Contains(lowered, "batch_cursor") {

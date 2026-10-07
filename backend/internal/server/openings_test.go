@@ -4,11 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 
-	"maia-board/backend/internal/apierror"
 	"maia-board/backend/internal/openings"
 )
 
@@ -21,8 +18,7 @@ func stubOpenings(t *testing.T, output string, err error) *openings.OpeningsLook
 
 func TestOpeningsHandlerReturnsMatches(t *testing.T) {
 	s := &Server{openings: stubOpenings(t, `{"matches":[{"ply":5,"eco":"C50","name":"Italian Game"}],"book_flags":[true,true,true,false,false]}`, nil)}
-	w := httptest.NewRecorder()
-	s.openingsHandler(w, httptest.NewRequest(http.MethodPost, "/openings", strings.NewReader(`{"moves":["e2e4","e7e5","g1f3","b8c6","f1c4"]}`)))
+	w := serve(s, "POST", "/openings", `{"moves":["e2e4","e7e5","g1f3","b8c6","f1c4"]}`)
 	if w.Code != 200 {
 		t.Fatalf("status = %d, want 200 (%s)", w.Code, w.Body.String())
 	}
@@ -40,32 +36,26 @@ func TestOpeningsHandlerReturnsMatches(t *testing.T) {
 
 func TestOpeningsHandlerRejectsBadInput(t *testing.T) {
 	cases := []struct {
-		name string
-		body string
-		code string
+		name   string
+		method string
+		body   string
+		code   string
+		status int
 	}{
-		{"method", ``, "method_not_allowed"},
-		{"json", `{`, "invalid_json"},
-		{"uci shape", `{"moves":["e2e4","bogus"]}`, "invalid_position"},
-		{"fen shape", `{"initial_fen":"nope","moves":[]}`, "invalid_fen"},
+		{"method", http.MethodGet, ``, "method_not_allowed", 405},
+		{"json", http.MethodPost, `{`, "", 400},
+		{"uci shape", http.MethodPost, `{"moves":["e2e4","bogus"]}`, "invalid_position", 400},
+		{"fen shape", http.MethodPost, `{"initial_fen":"nope","moves":[]}`, "invalid_fen", 400},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &Server{openings: stubOpenings(t, `{"matches":[],"book_flags":[]}`, nil)}
-			var w *httptest.ResponseRecorder
-			if tc.name == "method" {
-				w = httptest.NewRecorder()
-				s.openingsHandler(w, httptest.NewRequest(http.MethodGet, "/openings", nil))
-			} else {
-				w = httptest.NewRecorder()
-				s.openingsHandler(w, httptest.NewRequest(http.MethodPost, "/openings", strings.NewReader(tc.body)))
+			w := serve(s, tc.method, "/openings", tc.body)
+			if w.Code != tc.status {
+				t.Fatalf("status = %d, want %d (%s)", w.Code, tc.status, w.Body.String())
 			}
-			var failure apierror.Error
-			if err := json.Unmarshal(w.Body.Bytes(), &failure); err != nil {
-				t.Fatalf("decode: %v", err)
-			}
-			if failure.Code != tc.code {
-				t.Fatalf("code = %q, want %q (%s)", failure.Code, tc.code, w.Body.String())
+			if tc.code != "" && humaCode(t, w) != tc.code {
+				t.Fatalf("code = %q, want %q (%s)", humaCode(t, w), tc.code, w.Body.String())
 			}
 		})
 	}
@@ -73,19 +63,13 @@ func TestOpeningsHandlerRejectsBadInput(t *testing.T) {
 
 func TestOpeningsHandlerMapsHelperErrors(t *testing.T) {
 	s := &Server{openings: stubOpenings(t, `{"code":"invalid_position","message":"bad"}`, nil)}
-	w := httptest.NewRecorder()
-	s.openingsHandler(w, httptest.NewRequest(http.MethodPost, "/openings", strings.NewReader(`{"moves":["e2e4"]}`)))
-	var failure apierror.Error
-	if err := json.Unmarshal(w.Body.Bytes(), &failure); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if w.Code != 400 || failure.Code != "invalid_position" {
-		t.Fatalf("status = %d code = %q", w.Code, failure.Code)
+	w := serve(s, "POST", "/openings", `{"moves":["e2e4"]}`)
+	if w.Code != 400 || humaCode(t, w) != "invalid_position" {
+		t.Fatalf("status = %d code = %q", w.Code, humaCode(t, w))
 	}
 
 	broken := &Server{openings: stubOpenings(t, ``, context.DeadlineExceeded)}
-	w = httptest.NewRecorder()
-	broken.openingsHandler(w, httptest.NewRequest(http.MethodPost, "/openings", strings.NewReader(`{"moves":[]}`)))
+	w = serve(broken, "POST", "/openings", `{"moves":[]}`)
 	if w.Code != 502 {
 		t.Fatalf("status = %d, want 502", w.Code)
 	}
@@ -93,8 +77,7 @@ func TestOpeningsHandlerMapsHelperErrors(t *testing.T) {
 
 func TestOpeningsHandlerRejectsFlagCountMismatch(t *testing.T) {
 	s := &Server{openings: stubOpenings(t, `{"matches":[],"book_flags":[true]}`, nil)}
-	w := httptest.NewRecorder()
-	s.openingsHandler(w, httptest.NewRequest(http.MethodPost, "/openings", strings.NewReader(`{"moves":[]}`)))
+	w := serve(s, "POST", "/openings", `{"moves":[]}`)
 	if w.Code != 502 {
 		t.Fatalf("status = %d, want 502", w.Code)
 	}

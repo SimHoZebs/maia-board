@@ -22,7 +22,7 @@ func TestHTTPResponseWriteErrorsAreLogged(t *testing.T) {
 	previous := log.Writer()
 	log.SetOutput(&output)
 	defer log.SetOutput(previous)
-	writeJSON(failingResponseWriter{}, 200, map[string]any{"ok": true})
+	writeHumaError(failingResponseWriter{}, 200, "unknown", "ok")
 	if !strings.Contains(output.String(), "disconnected test client") {
 		t.Fatal("discarded response write error")
 	}

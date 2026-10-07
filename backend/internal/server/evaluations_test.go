@@ -1,9 +1,7 @@
 package server
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -14,40 +12,19 @@ import (
 // Cache fixtures are inserted directly. Public PUT is intentionally
 // disabled; corruption fixtures are untrusted producers. Short legacy ids
 // address nothing since the legacy table was dropped: they 404.
-func putCache(t *testing.T, s *Server, hash, body string) *httptest.ResponseRecorder {
-	t.Helper()
-	var put struct {
-		Engine string          `json:"engine"`
-		Key    string          `json:"key"`
-		Value  json.RawMessage `json:"value"`
-	}
-	if err := json.Unmarshal([]byte(body), &put); err != nil {
-		t.Fatal(err)
-	}
-	entry, err := s.store.CachePut(hash, put.Engine, put.Key, string(put.Value))
-	if err != nil {
-		t.Fatal(err)
-	}
-	w := httptest.NewRecorder()
-	writeJSON(w, 200, entry)
-	return w
-}
 func TestLegacyEvaluationIdsAreGone(t *testing.T) {
 	s := &Server{store: testStore(t)}
-	w := httptest.NewRecorder()
-	s.evaluations(w, httptest.NewRequest("GET", "/evaluations/abc123", nil))
+	w := serve(s, "GET", "/evaluations/abc123", "")
 	if w.Code != 404 {
 		t.Fatal(w)
 	}
 	for _, body := range []string{`{"engine":"sf","key":"k","value":{"depth":13}}`, `{`, `{}`} {
-		w = httptest.NewRecorder()
-		s.evaluations(w, httptest.NewRequest("PUT", "/evaluations/abc123", strings.NewReader(body)))
+		w = serve(s, "PUT", "/evaluations/abc123", body)
 		if w.Code != 405 {
 			t.Fatalf("public PUT accepted: %d", w.Code)
 		}
 	}
-	w = httptest.NewRecorder()
-	s.evaluations(w, httptest.NewRequest("GET", "/evaluations/deadbeef", nil))
+	w = serve(s, "GET", "/evaluations/deadbeef", "")
 	if w.Code != 404 {
 		t.Fatal(w)
 	}

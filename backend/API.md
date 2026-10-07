@@ -8,12 +8,19 @@ evaluation vs batch reviews vs lookup, lanes) and the limits table live in
 
 ## Envelope and limits
 
-- Errors are `{code, message}` as JSON (see [STOCKFISH.md](STOCKFISH.md#resource-and-failure-behavior) for the Stockfish table).
-- Single-object POST endpoints reject unknown fields, trailing values,
-  and over-limit bodies with `400 invalid_json`.
+- Errors are Huma's `ErrorModel` as JSON: `{title, status, detail,
+  errors}`. Our machine-readable code vocabulary (`invalid_fen`,
+  `engine_busy`, `superseded`, …) rides in `errors[0].message`; human
+  text rides in `detail`. Huma's own request errors (malformed JSON →
+  `400`, unknown fields or missing required keys → `422`, oversized
+  bodies → `413`) carry no code and read as `unknown` client-side.
+  The machine-readable spec lives at `/openapi.json`
+  (checked in as [../spec/openapi.yaml](../spec/openapi.yaml)).
+- Single-object POST endpoints reject unknown fields (`422`), trailing
+  values (`400`), and over-limit bodies (`413`).
 - Body limits: `POST /move`, `/move/analysis`, `/evaluate`, `/games`,
-  `/openings` accept at most 64 KiB; `POST /reviews` and
-  `POST /evaluations/lookup` accept at most 4 MiB.
+  `/openings` accept under 64 KiB; `POST /reviews` and
+  `POST /evaluations/lookup` accept under 4 MiB.
 - `X-Eval-Cache: hit | miss` is set on `POST /move`, `/move/analysis`
   (only when `temperature == 0`; sampled requests omit it), and
   `POST /evaluate`. Bulk lookup and batch progress do not set it.
@@ -149,8 +156,10 @@ Errors: `404 not_found`, `405 method_not_allowed`.
 
 ```json
 // GET /games?limit=200&offset=0 → 200
-{"games": [{...}], "current_id": "<id>|null", "current_game": {...}|null,
+{"games": [{...}], "current_id": "<id>|null", "current_game": {...},
  "total": 12, "next_offset": 10}
+// current_game is present only when a current game exists;
+// next_offset: null ends pagination.
 // POST /games → 200 (insert or update; unchanged re-save keeps recency)
 {"user_color": "white", "elo_maia": 1500, "elo_user": 1300,
  "model": "79m", "moves": ["e2e4"], "result": "", "current": true}
@@ -190,7 +199,7 @@ Errors: `404 not_found`, `405 method_not_allowed`.
 
 ## GET /healthz
 
-Liveness plus Maia worker state. `GET` or `HEAD`.
+Liveness plus Maia worker state. `GET` only.
 
 ```json
 {"status": "ok|degraded|unavailable", "models": {"79m": {...}, "5m": {...}}}

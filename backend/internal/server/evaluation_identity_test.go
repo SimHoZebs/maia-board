@@ -35,30 +35,28 @@ func seedSF(t *testing.T, s *Server, r engine.EvaluationRequest, score int) {
 		t.Fatalf("producer rejected fixture: %v", err)
 	}
 }
-func testLine() batchLine {
-	return batchLine{InitialFEN: startFEN, Moves: []string{}}
+func testLine() BatchLine {
+	return BatchLine{InitialFEN: startFEN, Moves: []string{}}
 }
-func lookup(t *testing.T, s *Server, line batchLine, requests []lookupRequest) *httptest.ResponseRecorder {
+func lookup(t *testing.T, s *Server, line BatchLine, requests []LookupRequest) *httptest.ResponseRecorder {
 	t.Helper()
 	data, err := json.Marshal(map[string]any{"line": line, "requests": requests})
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := httptest.NewRecorder()
-	s.evaluationLookup(w, httptest.NewRequest("POST", "/evaluations/lookup", strings.NewReader(string(data))))
-	return w
+	return serve(s, "POST", "/evaluations/lookup", string(data))
 }
-func lookupDefault(t *testing.T, s *Server, requests []lookupRequest) *httptest.ResponseRecorder {
+func lookupDefault(t *testing.T, s *Server, requests []LookupRequest) *httptest.ResponseRecorder {
 	t.Helper()
 	return lookup(t, s, testLine(), requests)
 }
-func lookupValues(t *testing.T, w *httptest.ResponseRecorder) []lookupResult {
+func lookupValues(t *testing.T, w *httptest.ResponseRecorder) []LookupResult {
 	t.Helper()
 	if w.Code != 200 {
 		t.Fatalf("lookup status %d: %s", w.Code, w.Body)
 	}
 	var body struct {
-		Results []lookupResult `json:"results"`
+		Results []LookupResult `json:"results"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
@@ -85,8 +83,8 @@ func TestLookupCompatibleSettingsPreserveActualProvenance(t *testing.T) {
 	large := &engine.StockfishSettings{TimeMS: 750, Lines: 5, Depth: 8}
 	r := engine.EvaluationRequest{FEN: startFEN, Moves: []string{}, Settings: large}
 	seedSF(t, s, r, 55)
-	query := lookupRequest{Engine: "sf", FEN: startFEN, Ply: 0, Settings: &engine.StockfishSettings{TimeMS: 750, Lines: 2, Depth: 8}}
-	rows := lookupValues(t, lookupDefault(t, s, []lookupRequest{query}))
+	query := LookupRequest{Engine: "sf", FEN: startFEN, Ply: 0, Settings: &engine.StockfishSettings{TimeMS: 750, Lines: 2, Depth: 8}}
+	rows := lookupValues(t, lookupDefault(t, s, []LookupRequest{query}))
 	if len(rows) != 1 || rows[0].Index != 0 || rows[0].ActualSettings == nil || *rows[0].ActualSettings != *large {
 		t.Fatalf("provenance %+v", rows)
 	}
@@ -100,8 +98,7 @@ func TestLookupCompatibleSettingsPreserveActualProvenance(t *testing.T) {
 	// with the requested smaller policy stamped onto a larger native search.
 	requested := engine.EvaluationRequest{FEN: startFEN, Moves: []string{}, Settings: query.Settings}
 	data, _ := json.Marshal(requested)
-	w := httptest.NewRecorder()
-	s.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(string(data))))
+	w := serve(s, "POST", "/evaluate", string(data))
 	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "hit" {
 		t.Fatal(w)
 	}
@@ -114,7 +111,7 @@ func TestLookupCompatibleSettingsPreserveActualProvenance(t *testing.T) {
 		t.Fatalf("restamped reuse: %v", err)
 	}
 	seedSF(t, s, requested, 99)
-	rows = lookupValues(t, lookupDefault(t, s, []lookupRequest{query}))
+	rows = lookupValues(t, lookupDefault(t, s, []LookupRequest{query}))
 	value, ok = strictEvalResponse(t, rows[0].Value)
 	if !ok || value.Score.Value != 99 || value.SearchPolicy != query.Settings.Policy() || *rows[0].ActualSettings != *query.Settings {
 		t.Fatalf("exact search did not win: %+v", rows)
@@ -124,27 +121,27 @@ func TestLookupSettingsAndCompleteHistoryIsolation(t *testing.T) {
 	s := &Server{store: testStore(t)}
 	settings := &engine.StockfishSettings{TimeMS: 750, Lines: 3, Depth: 8}
 	seedSF(t, s, engine.EvaluationRequest{FEN: startFEN, Settings: settings}, 10)
-	base := lookupRequest{Engine: "sf", FEN: startFEN, Ply: 0, Settings: settings}
-	queries := []lookupRequest{base}
-	for _, mutate := range []func(*lookupRequest){
-		func(q *lookupRequest) { q.Settings = &engine.StockfishSettings{TimeMS: 1000, Lines: 3, Depth: 8} },
-		func(q *lookupRequest) { q.Settings = &engine.StockfishSettings{TimeMS: 750, Lines: 3, Depth: 9} },
-		func(q *lookupRequest) { q.Settings = &engine.StockfishSettings{TimeMS: 750, Lines: 4, Depth: 8} },
-		func(q *lookupRequest) { q.Settings = nil },
-		func(q *lookupRequest) { q.Ply = 4 },
+	base := LookupRequest{Engine: "sf", FEN: startFEN, Ply: 0, Settings: settings}
+	queries := []LookupRequest{base}
+	for _, mutate := range []func(*LookupRequest){
+		func(q *LookupRequest) { q.Settings = &engine.StockfishSettings{TimeMS: 1000, Lines: 3, Depth: 8} },
+		func(q *LookupRequest) { q.Settings = &engine.StockfishSettings{TimeMS: 750, Lines: 3, Depth: 9} },
+		func(q *LookupRequest) { q.Settings = &engine.StockfishSettings{TimeMS: 750, Lines: 4, Depth: 8} },
+		func(q *LookupRequest) { q.Settings = nil },
+		func(q *LookupRequest) { q.Ply = 4 },
 	} {
 		q := base
 		mutate(&q)
 		queries = append(queries, q)
 	}
-	line := batchLine{InitialFEN: startFEN, Moves: []string{"g1f3", "g8f6", "f3g1", "f6g8"}}
+	line := BatchLine{InitialFEN: startFEN, Moves: []string{"g1f3", "g8f6", "f3g1", "f6g8"}}
 	rows := lookupValues(t, lookup(t, s, line, queries))
 	if len(rows) != 1 || rows[0].Index != 0 {
 		t.Fatalf("cross-key hit: %+v", rows)
 	}
 	// A normalized request shares identity with the real inference route.
 	base.FEN = "  " + strings.ReplaceAll(startFEN, " ", "  ") + " "
-	if len(lookupValues(t, lookupDefault(t, s, []lookupRequest{base}))) != 1 {
+	if len(lookupValues(t, lookupDefault(t, s, []LookupRequest{base}))) != 1 {
 		t.Fatal("whitespace altered identity")
 	}
 }
@@ -155,7 +152,7 @@ func TestInconsistentTripleRejectedNeverFiled(t *testing.T) {
 	s := &Server{store: testStore(t)}
 	badInitial := strings.Replace(startFEN, "0 1", "1 1", 1)
 	// Ply-0 entries rooting away from the shared line initial.
-	for _, line := range []batchLine{
+	for _, line := range []BatchLine{
 		{InitialFEN: badInitial, Moves: []string{}},
 		{InitialFEN: startFEN, Moves: []string{}},
 	} {
@@ -163,16 +160,15 @@ func TestInconsistentTripleRejectedNeverFiled(t *testing.T) {
 		if line.InitialFEN == startFEN {
 			fen = badInitial
 		}
-		q := lookupRequest{Engine: "sf", FEN: fen, Ply: 0, Settings: &engine.StockfishSettings{TimeMS: 750, Lines: 3, Depth: 8}}
-		w := lookup(t, s, line, []lookupRequest{q})
+		q := LookupRequest{Engine: "sf", FEN: fen, Ply: 0, Settings: &engine.StockfishSettings{TimeMS: 750, Lines: 3, Depth: 8}}
+		w := lookup(t, s, line, []LookupRequest{q})
 		if w.Code != 400 {
 			t.Fatalf("inconsistent lookup status %d: %s", w.Code, w.Body)
 		}
 	}
 	// /evaluate with empty moves + mismatched root is 400.
-	w := httptest.NewRecorder()
-	s.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(
-		fmt.Sprintf(`{"fen":%q,"initial_fen":%q,"moves":[]}`, startFEN, badInitial))))
+	w := serve(s, "POST", "/evaluate",
+		fmt.Sprintf(`{"fen":%q,"initial_fen":%q,"moves":[]}`, startFEN, badInitial))
 	if w.Code != 400 || !strings.Contains(w.Body.String(), "position_mismatch") {
 		t.Fatalf("evaluate inconsistent %d %s", w.Code, w.Body)
 	}
@@ -200,8 +196,8 @@ func TestMaiaLookupModelEloAndLegacyIsolation(t *testing.T) {
 	hash, key := engine.MaiaIdentity(r, "79m").Coordinates()
 	value := engine.MoveResponse{Move: "e2e4", TopMoves: []engine.TopMove{{Move: "e2e4", Prob: 1, WDL: [3]float64{.2, .3, .5}}}, WDL: [3]float64{.2, .3, .5}, ModelUsed: "79m"}
 	s.storeCache(hash, "maia", key, value)
-	base := lookupRequest{Engine: "maia", FEN: startFEN, Ply: 0, EloMaia: &elo, EloUser: &elo, Model: "79m"}
-	queries := []lookupRequest{base, base, base, base}
+	base := LookupRequest{Engine: "maia", FEN: startFEN, Ply: 0, EloMaia: &elo, EloUser: &elo, Model: "79m"}
+	queries := []LookupRequest{base, base, base, base}
 	queries[1].Model, queries[2].EloMaia, queries[3].EloUser = "5m", &other, &other
 	rows := lookupValues(t, lookupDefault(t, s, queries))
 	if len(rows) != 1 || rows[0].Index != 0 {
@@ -213,7 +209,7 @@ func TestMaiaLookupModelEloAndLegacyIsolation(t *testing.T) {
 	if _, err := legacy.store.CachePut("abc", "maia", "legacy", string(data)); err != nil {
 		t.Fatal(err)
 	}
-	if rows := lookupValues(t, lookupDefault(t, legacy, []lookupRequest{base})); len(rows) != 0 {
+	if rows := lookupValues(t, lookupDefault(t, legacy, []LookupRequest{base})); len(rows) != 0 {
 		t.Fatal("trusted legacy row")
 	}
 }
@@ -221,41 +217,50 @@ func TestLookupRejectsMalformedShapeAndBounds(t *testing.T) {
 	s := &Server{store: testStore(t)}
 	line := `"line":{"initial_fen":"","moves":[]}`
 	valid := `{"engine":"sf","ply":0,"fen":"` + startFEN + `"}`
-	for name, body := range map[string]string{
-		"null": "null", "missing": `{}`, "null entries": `{"line":{"initial_fen":"","moves":[]},"requests":null}`,
-		"wrong array": `{"line":{"initial_fen":"","moves":[]},"requests":{}}`, "null request": `{"line":{"initial_fen":"","moves":[]},"requests":[null]}`,
-		"no ply":                 `{"line":{"initial_fen":"","moves":[]},"requests":[{"engine":"sf","fen":"` + startFEN + `"}]}`,
-		"null ply":               `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.Replace(valid, `"ply":0`, `"ply":null`, 1) + `]}`,
-		"no line":                `{"requests":[]}`,
-		"null line moves":        `{"line":{"initial_fen":"","moves":null},"requests":[]}`,
-		"no line initial":        `{"line":{"moves":[]},"requests":[]}`,
-		"bad FEN":                `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.Replace(valid, startFEN, "garbage", 1) + `]}`,
-		"bad line move":          `{"line":{"initial_fen":"","moves":["oops"]},"requests":[]}`,
-		"unknown":                `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.Replace(valid, `"engine":"sf"`, `"engine":"other"`, 1) + `]}`,
-		"extra":                  `{"line":{"initial_fen":"","moves":[]},"requests":[],"extra":true}`,
-		"null settings":          `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.TrimSuffix(valid, "}") + `,"settings":null}]}`,
-		"missing settings depth": `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.TrimSuffix(valid, "}") + `,"settings":{"time_ms":750,"lines":2}}]}`,
-		"mixed settings":         `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.TrimSuffix(valid, "}") + `,"elo_maia":1600}]}`,
-		"unknown coordinates":    `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.TrimSuffix(valid, "}") + `,"cache_hash":"abc"}]}`,
-		"old coordinates":        `{"line":{"initial_fen":"","moves":[]},"requests":[{"engine":"sf","ply":0,"fen":"` + startFEN + `","initial_fen":"","moves":[]}]}`,
-		"trailing":               `{"line":{"initial_fen":"","moves":[]},"requests":[]} {}`,
-		"count":                  `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.Repeat(valid+",", 1024) + valid + `]}`,
-		"size":                   `{"line":{"initial_fen":"","moves":[]},"requests":[],"padding":"` + strings.Repeat("x", 4*1024*1024) + `"}`,
+	// Huma validates shape (malformed JSON is a 400, unknown fields and
+	// missing required keys are a 422, oversize is a 413); domain rules
+	// answer 400 with our code below.
+	for name, tc := range map[string]struct {
+		body   string
+		status int
+		code   string
+	}{
+		"null":                   {body: "null", status: 422},
+		"missing":                {body: `{}`, status: 422},
+		"null entries":           {body: `{"line":{"initial_fen":"","moves":[]},"requests":null}`, status: 400, code: "invalid_request"},
+		"wrong array":            {body: `{"line":{"initial_fen":"","moves":[]},"requests":{}}`, status: 422},
+		"null request":           {body: `{"line":{"initial_fen":"","moves":[]},"requests":[null]}`, status: 422},
+		"no ply":                 {body: `{"line":{"initial_fen":"","moves":[]},"requests":[{"engine":"sf","fen":"` + startFEN + `"}]}`, status: 422},
+		"null ply":               {body: `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.Replace(valid, `"ply":0`, `"ply":null`, 1) + `]}`, status: 422},
+		"no line":                {body: `{"requests":[]}`, status: 422},
+		"null line moves":        {body: `{"line":{"initial_fen":"","moves":null},"requests":[]}`, status: 422},
+		"no line initial":        {body: `{"line":{"moves":[]},"requests":[]}`, status: 422},
+		"bad FEN":                {body: `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.Replace(valid, startFEN, "garbage", 1) + `]}`, status: 400, code: "invalid_request"},
+		"bad line move":          {body: `{"line":{"initial_fen":"","moves":["oops"]},"requests":[]}`, status: 400, code: "invalid_request"},
+		"unknown":                {body: `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.Replace(valid, `"engine":"sf"`, `"engine":"other"`, 1) + `]}`, status: 400, code: "invalid_request"},
+		"extra":                  {body: `{"line":{"initial_fen":"","moves":[]},"requests":[],"extra":true}`, status: 422},
+		"null settings":          {body: `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.TrimSuffix(valid, "}") + `,"settings":null}]}`, status: 422},
+		"missing settings depth": {body: `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.TrimSuffix(valid, "}") + `,"settings":{"time_ms":750,"lines":2}}]}`, status: 422},
+		"mixed settings":         {body: `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.TrimSuffix(valid, "}") + `,"elo_maia":1600}]}`, status: 400, code: "invalid_request"},
+		"unknown coordinates":    {body: `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.TrimSuffix(valid, "}") + `,"cache_hash":"abc"}]}`, status: 422},
+		"old coordinates":        {body: `{"line":{"initial_fen":"","moves":[]},"requests":[{"engine":"sf","ply":0,"fen":"` + startFEN + `","initial_fen":"","moves":[]}]}`, status: 422},
+		"trailing":               {body: `{"line":{"initial_fen":"","moves":[]},"requests":[]} {}`, status: 400},
+		"count":                  {body: `{"line":{"initial_fen":"","moves":[]},"requests":[` + strings.Repeat(valid+",", 1024) + valid + `]}`, status: 400, code: "invalid_request"},
+		"size":                   {body: `{"line":{"initial_fen":"","moves":[]},"requests":[],"padding":"` + strings.Repeat("x", 4*1024*1024) + `"}`, status: 413},
 	} {
 		t.Run(name, func(t *testing.T) {
-			w := httptest.NewRecorder()
-			s.evaluationLookup(w, httptest.NewRequest("POST", "/evaluations/lookup", strings.NewReader(body)))
-			if w.Code != 400 || !strings.Contains(w.Body.String(), `"code":`) {
+			w := serve(s, "POST", "/evaluations/lookup", tc.body)
+			if w.Code != tc.status || (tc.code != "" && humaCode(t, w) != tc.code) {
 				t.Fatalf("status %d: %s", w.Code, w.Body)
 			}
 		})
 	}
 	_ = line
-	requests := make([]lookupRequest, 1024)
+	requests := make([]LookupRequest, 1024)
 	for i := range requests {
-		requests[i] = lookupRequest{Engine: "sf", FEN: startFEN, Ply: 0}
+		requests[i] = LookupRequest{Engine: "sf", FEN: startFEN, Ply: 0}
 	}
-	if rows := lookupValues(t, lookup(t, s, batchLine{InitialFEN: "", Moves: []string{}}, requests)); len(rows) != 0 {
+	if rows := lookupValues(t, lookup(t, s, BatchLine{InitialFEN: "", Moves: []string{}}, requests)); len(rows) != 0 {
 		t.Fatal("cold cache produced results")
 	}
 	var rows int
@@ -285,8 +290,7 @@ func TestCorruptV2ValuesMissThenRecomputeAndOverwrite(t *testing.T) {
 		if _, ok := s.cachedSF(r); ok {
 			t.Fatalf("corrupt hit: %s", corrupt)
 		}
-		w := httptest.NewRecorder()
-		s.evaluate(w, httptest.NewRequest("POST", "/evaluate", strings.NewReader(fmt.Sprintf(`{"fen":%q}`, startFEN))))
+		w := serve(s, "POST", "/evaluate", fmt.Sprintf(`{"fen":%q,"moves":[]}`, startFEN))
 		if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "miss" {
 			t.Fatalf("repair %d %s", w.Code, w.Body)
 		}
@@ -412,13 +416,14 @@ func TestLookupBodyByteLimit(t *testing.T) {
 	s := &Server{store: testStore(t)}
 	prefix := `{"line":{"initial_fen":"","moves":[]},"requests":[{"engine":"sf","ply":0,"fen":"`
 	suffix := startFEN + `"}]}`
-	for _, extra := range []int{0, 1} {
+	// Huma's MaxBodyBytes is exclusive: under 4MiB passes, exactly 4MiB is
+	// a 413 (the old MaxBytesReader let exactly-limit bodies through).
+	for _, extra := range []int{-1, 0} {
 		body := prefix + strings.Repeat(" ", 4*1024*1024-len(prefix)-len(suffix)+extra) + suffix
-		w := httptest.NewRecorder()
-		s.evaluationLookup(w, httptest.NewRequest("POST", "/evaluations/lookup", strings.NewReader(body)))
+		w := serve(s, "POST", "/evaluations/lookup", body)
 		want := 200
-		if extra != 0 {
-			want = 400
+		if extra == 0 {
+			want = 413
 		}
 		if w.Code != want {
 			t.Fatalf("body bytes=%d status=%d want=%d: %s", len(body), w.Code, want, w.Body)
@@ -532,7 +537,7 @@ func TestMaiaDeltaAttachGolden(t *testing.T) {
 		}
 	}
 	// End to end through the line-shaped lookup: same baseline and deltas.
-	rows := lookupValues(t, lookupDefault(t, s, []lookupRequest{{Engine: "maia", FEN: startFEN,
+	rows := lookupValues(t, lookupDefault(t, s, []LookupRequest{{Engine: "maia", FEN: startFEN,
 		Ply: 0, EloMaia: &elo, EloUser: &elo, Model: "79m"}}))
 	if len(rows) != 1 {
 		t.Fatalf("lookup rows = %+v", rows)

@@ -43,7 +43,7 @@ const (
 // predict/run. Work runs on detached contexts so disconnects never leak slots
 // and granted ops still write through. Intake cache-filtering happens at
 // batch submit (resolveBatchEntryRequest + prefetched intake filter); write-through happens inside execute.
-func resolveSFQuery(query lookupRequest, initialFEN string, prefix []string) (engine.EvaluationRequest, *apierror.RequestError) {
+func resolveSFQuery(query LookupRequest, initialFEN string, prefix []string) (engine.EvaluationRequest, *apierror.RequestError) {
 	if prefix == nil {
 		return engine.EvaluationRequest{}, &apierror.RequestError{Code: "invalid_request", Message: "moves must be an array"}
 	}
@@ -57,7 +57,7 @@ func resolveSFQuery(query lookupRequest, initialFEN string, prefix []string) (en
 	return req, nil
 }
 
-func resolveMaiaQuery(query lookupRequest, initialFEN string, prefix []string) (engine.MaiaRequest, string, *apierror.RequestError) {
+func resolveMaiaQuery(query LookupRequest, initialFEN string, prefix []string) (engine.MaiaRequest, string, *apierror.RequestError) {
 	if prefix == nil {
 		return engine.MaiaRequest{}, "", &apierror.RequestError{Code: "invalid_request", Message: "moves must be an array"}
 	}
@@ -69,7 +69,7 @@ func resolveMaiaQuery(query lookupRequest, initialFEN string, prefix []string) (
 	if side == "b" {
 		color = "black"
 	}
-	req, model, err := validateMoveRequest(moveRequest{FEN: query.FEN, InitialFEN: initialFEN,
+	req, model, err := validateMoveRequest(MoveRequest{FEN: query.FEN, InitialFEN: initialFEN,
 		Moves: prefix, EloMaia: query.EloMaia, EloUser: query.EloUser,
 		ValueEloMaia: query.ValueEloMaia, ValueEloUser: query.ValueEloUser,
 		Model: query.Model, MaiaColor: color})
@@ -265,7 +265,7 @@ type batchEntry struct {
 	started   time.Time
 }
 
-type batchProgress struct {
+type BatchProgress struct {
 	JobID    string            `json:"job_id"`
 	Total    int               `json:"total"`
 	Done     int               `json:"done"`
@@ -282,11 +282,11 @@ type batchJob struct {
 	failed    int
 	finished  bool
 	mu        sync.Mutex
-	subs      map[chan batchProgress]struct{}
+	subs      map[chan BatchProgress]struct{}
 }
 
-func (job *batchJob) progressLocked() batchProgress {
-	progress := batchProgress{JobID: job.id, Total: len(job.entries), Done: job.done,
+func (job *batchJob) progressLocked() BatchProgress {
+	progress := BatchProgress{JobID: job.id, Total: len(job.entries), Done: job.done,
 		Failed: job.failed, Finished: job.finished}
 	for _, entry := range job.entries {
 		if entry.status == batchFailed {
@@ -299,7 +299,7 @@ func (job *batchJob) progressLocked() batchProgress {
 	return progress
 }
 
-func (job *batchJob) progress() batchProgress {
+func (job *batchJob) progress() BatchProgress {
 	job.mu.Lock()
 	defer job.mu.Unlock()
 	return job.progressLocked()
@@ -420,15 +420,6 @@ func overCap(unfinished, sf, large, small, newSF, newLarge, newSmall int) bool {
 	return false
 }
 
-func writeEngineBusy(w http.ResponseWriter, unfinished, sf, large, small int) {
-	w.Header().Set("Retry-After", "5")
-	log.Printf("review-batch busy unfinished=%d sf_queue=%d large_queue=%d small_queue=%d",
-		unfinished, sf, large, small)
-	writeJSON(w, http.StatusTooManyRequests, map[string]any{
-		"code": "engine_busy", "message": "review queue depth exceeded, retry later",
-	})
-}
-
 // evictLocked removes finished jobs while order exceeds maxKeptJobs,
 // scanning for the first finished job anywhere in order (not head-only).
 // Stale order entries missing from the map are dropped too. Unfinished jobs
@@ -470,7 +461,7 @@ func (js *ReviewJobs) evictLocked(keepID string) {
 // unchanged identity/validate paths. Cache filtering happens separately in
 // reviews() from one prefetched snapshot, so intake costs one bulk read
 // instead of a point read per entry.
-func (js *ReviewJobs) resolveBatchEntryRequest(index int, line batchLine, query lookupRequest) (*batchEntry, *apierror.RequestError) {
+func (js *ReviewJobs) resolveBatchEntryRequest(index int, line BatchLine, query LookupRequest) (*batchEntry, *apierror.RequestError) {
 	entry := &batchEntry{index: index, engine: query.Engine, status: batchPending}
 	prefixMsg := fmt.Sprintf("requests[%d]: ", index)
 	prefix, prefixErr := linePrefix(line, query.Ply)
@@ -527,34 +518,39 @@ func entryHashes(entry *batchEntry) []string {
 	return []string{hash}
 }
 
-func (js *ReviewJobs) reviews(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST is required")
-		return
-	}
+// SubmitBody is the POST /reviews bulk shape: the shared line once,
+// entries referencing it by ply.
+type SubmitBody struct {
+	Line     BatchLine       `json:"line"`
+	Requests []LookupRequest `json:"requests"`
+}
+
+type SubmitInput struct {
+	Body SubmitBody
+}
+
+// BatchSubmitted is the 202 submit answer: cache-filter totals.
+type BatchSubmitted struct {
+	JobID   string `json:"job_id"`
+	Total   int    `json:"total"`
+	Cached  int    `json:"cached"`
+	Pending int    `json:"pending"`
+}
+
+type SubmitOutput struct {
+	Body BatchSubmitted
+}
+
+func (js *ReviewJobs) handleSubmit(ctx context.Context, input *SubmitInput) (*SubmitOutput, error) {
 	if js.s.store == nil {
-		writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
-		return
+		return nil, apiError(http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
 	}
-	var body struct {
-		Line     batchLine       `json:"line"`
-		Requests []lookupRequest `json:"requests"`
-	}
-	decoded, ok := decodeSingle[struct {
-		Line     batchLine       `json:"line"`
-		Requests []lookupRequest `json:"requests"`
-	}](w, r, 4*1024*1024)
-	if !ok {
-		return
-	}
-	body = decoded
+	body := input.Body
 	if lineErr := validateBatchLine(body.Line); lineErr != nil {
-		writeAPIError(w, http.StatusBadRequest, lineErr.Code, lineErr.Message)
-		return
+		return nil, apiError(http.StatusBadRequest, lineErr.Code, lineErr.Message)
 	}
 	if body.Requests == nil || len(body.Requests) == 0 || len(body.Requests) > maxBatchRequests {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("requests must contain 1 to %d entries", maxBatchRequests))
-		return
+		return nil, apiError(http.StatusBadRequest, "invalid_request", fmt.Sprintf("requests must contain 1 to %d entries", maxBatchRequests))
 	}
 	// Two-phase admission (§2): snapshot counts under js.mu so a large
 	// submit never stalls status reads, release, resolve outside the lock
@@ -575,8 +571,7 @@ func (js *ReviewJobs) reviews(w http.ResponseWriter, r *http.Request) {
 		for index, query := range body.Requests {
 			entry, invalid := js.resolveBatchEntryRequest(index, body.Line, query)
 			if invalid != nil {
-				writeAPIError(w, http.StatusBadRequest, invalid.Code, invalid.Message)
-				return
+				return nil, apiError(http.StatusBadRequest, invalid.Code, invalid.Message)
 			}
 			hashes = append(hashes, entryHashes(entry)...)
 			entries = append(entries, entry)
@@ -602,8 +597,7 @@ func (js *ReviewJobs) reviews(w http.ResponseWriter, r *http.Request) {
 		// The sync /evaluate endpoint serves cache hits without an evaluator;
 		// batches are identical: only sf misses need live inference.
 		if sfMiss && js.s.evaluator == nil {
-			writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "Stockfish is unavailable")
-			return
+			return nil, apiError(http.StatusBadGateway, "engine_unavailable", "Stockfish is unavailable")
 		}
 		newSF, newLarge, newSmall := countMisses(entries)
 		js.mu.Lock()
@@ -626,8 +620,8 @@ func (js *ReviewJobs) reviews(w http.ResponseWriter, r *http.Request) {
 			if attempt == 0 {
 				continue
 			}
-			writeEngineBusy(w, unfinished, sf, large, small)
-			return
+			js.writeBusy(unfinished, sf, large, small)
+			return nil, apiError(http.StatusTooManyRequests, "engine_busy", "review queue depth exceeded, retry later")
 		}
 		// Cap pass: consume one ordering nonce for the whole submit (§1).
 		// Rejected submits consume nothing.
@@ -638,11 +632,10 @@ func (js *ReviewJobs) reviews(w http.ResponseWriter, r *http.Request) {
 		id, err := store.NewHexID()
 		if err != nil {
 			js.mu.Unlock()
-			writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "could not start review batch")
-			return
+			return nil, apiError(http.StatusBadGateway, "engine_unavailable", "could not start review batch")
 		}
 		job := &batchJob{id: id, createdAt: time.Now().UTC().Format(time.RFC3339Nano),
-			entries: entries, subs: make(map[chan batchProgress]struct{})}
+			entries: entries, subs: make(map[chan BatchProgress]struct{})}
 		job.done = cached
 		js.jobs[id] = job
 		js.order = append(js.order, id)
@@ -651,43 +644,39 @@ func (js *ReviewJobs) reviews(w http.ResponseWriter, r *http.Request) {
 		go js.drain(job)
 		pending := len(entries) - cached
 		log.Printf("review-batch submit job=%s total=%d cached=%d pending=%d", id, len(entries), cached, pending)
-		writeJSON(w, http.StatusAccepted, map[string]any{
-			"job_id": id, "total": len(entries), "cached": cached, "pending": pending,
-		})
-		return
+		return &SubmitOutput{Body: BatchSubmitted{
+			JobID: id, Total: len(entries), Cached: cached, Pending: pending,
+		}}, nil
 	}
+	// Unreachable: the cap loop either admits or 429s on the second attempt.
+	return nil, apiError(http.StatusTooManyRequests, "engine_busy", "review queue depth exceeded, retry later")
 }
 
-// reviewRouter splits /reviews/:id from /reviews/:id/events.
-func (js *ReviewJobs) reviewRouter(w http.ResponseWriter, r *http.Request) {
-	rest := strings.TrimPrefix(r.URL.Path, "/reviews/")
-	if id, found := strings.CutSuffix(rest, "/events"); found {
-		r.URL.Path = "/reviews/" + id + "/events"
-		js.reviewEvents(w, r)
-		return
-	}
-	js.reviewByID(w, r)
+// writeBusy emits the queue-pressure snapshot line. The 429 + Retry-After
+// ride the retryAfter middleware (429 defaults to 5s, matching the old
+// explicit header); this keeps the observability signal.
+func (js *ReviewJobs) writeBusy(unfinished, sf, large, small int) {
+	log.Printf("review-batch busy unfinished=%d sf_queue=%d large_queue=%d small_queue=%d",
+		unfinished, sf, large, small)
 }
 
-func (js *ReviewJobs) reviewByID(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/reviews/")
-	if id == "" || strings.Contains(id, "/") {
-		writeAPIError(w, http.StatusNotFound, "not_found", "unknown review batch")
-		return
+// reviewStatusInput carries the batch id for GET /reviews/{id}.
+type ReviewStatusInput struct {
+	ID string `path:"id"`
+}
+
+type ReviewStatusOutput struct {
+	Body BatchProgress
+}
+
+func (js *ReviewJobs) handleStatus(ctx context.Context, input *ReviewStatusInput) (*ReviewStatusOutput, error) {
+	// No DELETE: Chi answers DELETE with 405 before this handler runs (§3).
+	// Old-tab teardowns already swallow teardown failures.
+	job := js.byID(input.ID)
+	if job == nil {
+		return nil, apiError(http.StatusNotFound, "not_found", "unknown review batch")
 	}
-	// No DELETE: the route falls to the 405 default (§3). Old-tab teardowns
-	// already swallow teardown failures.
-	switch r.Method {
-	case http.MethodGet:
-		job := js.byID(id)
-		if job == nil {
-			writeAPIError(w, http.StatusNotFound, "not_found", "unknown review batch")
-			return
-		}
-		writeJSON(w, http.StatusOK, job.progress())
-	default:
-		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET is required")
-	}
+	return &ReviewStatusOutput{Body: job.progress()}, nil
 }
 
 // drain executes one slot lane at a time per engine (sf stays single-lane;
@@ -825,31 +814,27 @@ func (js *ReviewJobs) runEntry(job *batchJob, entry *batchEntry) {
 // cumulative, so the latest tick supersedes earlier ones; the server keeps
 // no replay buffer and ignores Last-Event-ID.
 func (js *ReviewJobs) reviewEvents(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET is required")
-		return
-	}
 	id := strings.TrimPrefix(r.URL.Path, "/reviews/")
 	id = strings.TrimSuffix(id, "/events")
 	if id == "" || strings.Contains(id, "/") {
-		writeAPIError(w, http.StatusNotFound, "not_found", "unknown review batch")
+		writeHumaError(w, http.StatusNotFound, "not_found", "unknown review batch")
 		return
 	}
 	job := js.byID(id)
 	if job == nil {
-		writeAPIError(w, http.StatusNotFound, "not_found", "unknown review batch")
+		writeHumaError(w, http.StatusNotFound, "not_found", "unknown review batch")
 		return
 	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		writeAPIError(w, http.StatusBadGateway, "engine_unavailable", "streaming is unsupported")
+		writeHumaError(w, http.StatusBadGateway, "engine_unavailable", "streaming is unsupported")
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
-	sub := make(chan batchProgress, 16)
+	sub := make(chan BatchProgress, 16)
 	job.mu.Lock()
 	job.subs[sub] = struct{}{}
 	snapshot := job.progressLocked()
@@ -859,7 +844,7 @@ func (js *ReviewJobs) reviewEvents(w http.ResponseWriter, r *http.Request) {
 		delete(job.subs, sub)
 		job.mu.Unlock()
 	}()
-	send := func(progress batchProgress) bool {
+	send := func(progress BatchProgress) bool {
 		payload, _ := json.Marshal(progress)
 		if _, err := fmt.Fprintf(w, "event: progress\ndata: %s\n\n", payload); err != nil {
 			return false

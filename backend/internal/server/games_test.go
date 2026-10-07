@@ -50,8 +50,7 @@ func TestGamesPersistenceBudget(t *testing.T) {
 		}
 		payload := gameFixture("large", moves...)
 		body, _ := json.Marshal(payload)
-		w := httptest.NewRecorder()
-		s.games(w, httptest.NewRequest("POST", "/games", strings.NewReader(string(body))))
+		w := serve(s, "POST", "/games", string(body))
 		expected := 200
 		if count > 4096 {
 			expected = 400
@@ -62,9 +61,8 @@ func TestGamesPersistenceBudget(t *testing.T) {
 	}
 	oversized := gameFixture(strings.Repeat("a", 64*1024), "e2e4")
 	body, _ := json.Marshal(oversized)
-	w := httptest.NewRecorder()
-	s.games(w, httptest.NewRequest("POST", "/games", strings.NewReader(string(body))))
-	if w.Code != 400 {
+	w := serve(s, "POST", "/games", string(body))
+	if w.Code != 413 {
 		t.Fatalf("oversized body status %d", w.Code)
 	}
 }
@@ -82,8 +80,7 @@ func TestGamesPagesIncludeCurrentOutsidePage(t *testing.T) {
 	}
 	s := &Server{store: gameStore}
 	for offset, id := range []string{"new", "middle", "old"} {
-		w := httptest.NewRecorder()
-		s.games(w, httptest.NewRequest("GET", fmt.Sprintf("/games?limit=1&offset=%d", offset), nil))
+		w := serve(s, "GET", fmt.Sprintf("/games?limit=1&offset=%d", offset), "")
 		var page struct {
 			Games   []store.GameRow `json:"games"`
 			Current *store.GameRow  `json:"current_game"`
@@ -101,8 +98,7 @@ func TestGamesPagesIncludeCurrentOutsidePage(t *testing.T) {
 		}
 	}
 	for _, offset := range []string{"-1", "junk"} {
-		w := httptest.NewRecorder()
-		s.games(w, httptest.NewRequest("GET", "/games?offset="+offset, nil))
+		w := serve(s, "GET", "/games?offset="+offset, "")
 		if w.Code != 400 {
 			t.Fatalf("invalid offset accepted: %s", offset)
 		}
@@ -123,8 +119,7 @@ func TestGamesListOrphanMarkerReadsNull(t *testing.T) {
 		t.Fatalf("marker setup failed: %q", id)
 	}
 	s := &Server{store: gameStore}
-	w := httptest.NewRecorder()
-	s.games(w, httptest.NewRequest("GET", "/games?limit=200&offset=0", nil))
+	w := serve(s, "GET", "/games?limit=200&offset=0", "")
 	if w.Code != 200 {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
@@ -143,9 +138,7 @@ func TestGamesHTTP(t *testing.T) {
 	gameStore := testStore(t)
 	s := &Server{store: gameStore}
 	post := func(body string) *httptest.ResponseRecorder {
-		w := httptest.NewRecorder()
-		s.games(w, httptest.NewRequest("POST", "/games", strings.NewReader(body)))
-		return w
+		return serve(s, "POST", "/games", body)
 	}
 	valid := `{"user_color":"white","elo_maia":1600,"elo_user":1400,"model":"79m","moves":["e2e4"],"current":true}`
 	w := post(valid)
@@ -160,11 +153,11 @@ func TestGamesHTTP(t *testing.T) {
 		name, body, code string
 		status           int
 	}{
-		{"malformed", "{", "invalid_json", 400},
-		{"unknown field", `{"user_color":"white","flags":[]}`, "invalid_json", 400},
-		{"trailing", valid + ` {}`, "invalid_json", 400},
+		{"malformed", "{", "", 400},
+		{"unknown field", `{"user_color":"white","flags":[]}`, "", 422},
+		{"trailing", valid + ` {}`, "", 400},
 		{"color", `{"user_color":"green","elo_maia":1,"elo_user":1,"model":"79m","moves":[]}`, "invalid_user_color", 400},
-		{"elo missing", `{"user_color":"white","model":"79m","moves":[]}`, "missing_elo", 400},
+		{"elo missing", `{"user_color":"white","model":"79m","moves":[]}`, "", 422},
 		{"elo range", `{"user_color":"white","elo_maia":9999,"elo_user":1,"model":"79m","moves":[]}`, "invalid_elo", 400},
 		{"model", `{"user_color":"white","elo_maia":1,"elo_user":1,"model":"9m","moves":[]}`, "invalid_model", 400},
 		{"move shape", `{"user_color":"white","elo_maia":1,"elo_user":1,"model":"79m","moves":["e9"]}`, "invalid_move", 400},
@@ -173,14 +166,13 @@ func TestGamesHTTP(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := post(tc.body)
-			if w.Code != tc.status || !strings.Contains(w.Body.String(), `"code":"`+tc.code+`"`) {
+			if w.Code != tc.status || (tc.code != "" && humaCode(t, w) != tc.code) {
 				t.Fatalf("status %d: %s", w.Code, w.Body)
 			}
 		})
 	}
 
-	w = httptest.NewRecorder()
-	s.games(w, httptest.NewRequest("GET", "/games", nil))
+	w = serve(s, "GET", "/games", "")
 	if w.Code != 200 {
 		t.Fatalf("list status %d: %s", w.Code, w.Body)
 	}
@@ -196,49 +188,40 @@ func TestGamesHTTP(t *testing.T) {
 		t.Fatalf("list body: %s", w.Body)
 	}
 
-	w = httptest.NewRecorder()
-	s.games(w, httptest.NewRequest("GET", "/games?limit=0", nil))
+	w = serve(s, "GET", "/games?limit=0", "")
 	if w.Code != 400 {
 		t.Fatalf("bad limit status %d", w.Code)
 	}
 
-	w = httptest.NewRecorder()
-	s.gameByID(w, httptest.NewRequest("GET", "/games/"+saved.ID, nil))
+	w = serve(s, "GET", "/games/"+saved.ID, "")
 	if w.Code != 200 {
 		t.Fatalf("get status %d: %s", w.Code, w.Body)
 	}
-	w = httptest.NewRecorder()
-	s.gameByID(w, httptest.NewRequest("GET", "/games/missing", nil))
-	if w.Code != 404 || !strings.Contains(w.Body.String(), `"code":"not_found"`) {
+	w = serve(s, "GET", "/games/missing", "")
+	if w.Code != 404 || humaCode(t, w) != "not_found" {
 		t.Fatalf("missing get: %d %s", w.Code, w.Body)
 	}
-	w = httptest.NewRecorder()
-	s.gameByID(w, httptest.NewRequest("GET", "/games/", nil))
+	w = serve(s, "GET", "/games/", "")
 	if w.Code != 404 {
 		t.Fatalf("empty id status %d", w.Code)
 	}
-	w = httptest.NewRecorder()
-	s.gameByID(w, httptest.NewRequest("DELETE", "/games/"+saved.ID, nil))
+	w = serve(s, "DELETE", "/games/"+saved.ID, "")
 	if w.Code != 204 {
 		t.Fatalf("delete status %d: %s", w.Code, w.Body)
 	}
-	w = httptest.NewRecorder()
-	s.gameByID(w, httptest.NewRequest("GET", "/games/"+saved.ID, nil))
+	w = serve(s, "GET", "/games/"+saved.ID, "")
 	if w.Code != 404 {
 		t.Fatalf("deleted game still visible: %d", w.Code)
 	}
-	w = httptest.NewRecorder()
-	s.gameByID(w, httptest.NewRequest("DELETE", "/games/"+saved.ID, nil))
+	w = serve(s, "DELETE", "/games/"+saved.ID, "")
 	if w.Code != 204 {
 		t.Fatalf("repeat delete status %d", w.Code)
 	}
-	w = httptest.NewRecorder()
-	s.games(w, httptest.NewRequest("PUT", "/games", nil))
+	w = serve(s, "PUT", "/games", "")
 	if w.Code != 405 {
 		t.Fatalf("method status %d", w.Code)
 	}
-	w = httptest.NewRecorder()
-	(&Server{}).games(w, httptest.NewRequest("GET", "/games", nil))
+	w = serve(&Server{}, "GET", "/games", "")
 	if w.Code != 502 {
 		t.Fatalf("nil store status %d", w.Code)
 	}

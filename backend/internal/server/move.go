@@ -13,7 +13,10 @@ import (
 	"maia-board/backend/internal/sched"
 )
 
-type moveRequest struct {
+// MoveRequest is the /move and /move/analysis wire shape. Huma derives the
+// OpenAPI schema and required keys from these tags; chess-domain validation
+// stays in validateMoveRequest below.
+type MoveRequest struct {
 	FEN          string   `json:"fen"`
 	Moves        []string `json:"moves"`
 	EloMaia      *int     `json:"elo_maia"`
@@ -29,6 +32,18 @@ type moveRequest struct {
 	CacheKey  string `json:"cache_key,omitempty"`
 }
 
+type MoveInput struct {
+	Body MoveRequest
+}
+
+// MoveOutput carries the Maia reply plus the cache header. The header stays
+// empty for sampled (temperature != 0) replies, exactly like the old mux:
+// only hit/miss are ever emitted.
+type MoveOutput struct {
+	Cache string `header:"X-Eval-Cache"`
+	Body  engine.MoveResponse
+}
+
 // /move serves live game replies; /move/analysis serves retrospective Maia
 // analysis with the same payload shape. Separate endpoints keep the
 // endpoint-implied lane mapping exact (Play vs Focus). This split is
@@ -36,9 +51,11 @@ type moveRequest struct {
 // move feedback concurrently, and one depth-1 latest-wins lane would
 // supersede the queued waiter and surface 409 on the live reply. Keep play
 // and analysis on separate lanes (Play queues ahead of Focus) — do not merge.
-func (s *Server) move(w http.ResponseWriter, r *http.Request) { s.serveMove(w, r, sched.PriorityPlay) }
-func (s *Server) moveAnalysis(w http.ResponseWriter, r *http.Request) {
-	s.serveMove(w, r, sched.PriorityFocus)
+func (s *Server) handleMovePlay(ctx context.Context, input *MoveInput) (*MoveOutput, error) {
+	return s.serveMove(ctx, &input.Body, sched.PriorityPlay)
+}
+func (s *Server) handleMoveFocus(ctx context.Context, input *MoveInput) (*MoveOutput, error) {
+	return s.serveMove(ctx, &input.Body, sched.PriorityFocus)
 }
 
 // serveMove runs one Maia inference through the shared executor. The lane
@@ -46,27 +63,29 @@ func (s *Server) moveAnalysis(w http.ResponseWriter, r *http.Request) {
 // /move/analysis → Focus (retrospective analysis). Lanes queue on the shared
 // slot with Play priority instead of superseding each other; same-lane
 // arrivals stay latest-wins.
-func (s *Server) serveMove(w http.ResponseWriter, r *http.Request, prio sched.Priority) {
+//
+// ctx is the request context: it drives the admission wait (a disconnect
+// dequeues), while execution stays detached so a granted op still validates
+// and persists after the client goes away.
+func (s *Server) serveMove(ctx context.Context, request *MoveRequest, prio sched.Priority) (*MoveOutput, error) {
 	started := time.Now()
-	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-	w = rec
-	var request moveRequest
 	var response engine.MoveResponse
 	model, degraded, hit := "", false, false
+	status := http.StatusOK
 	lane := "play"
 	if prio == sched.PriorityFocus {
 		lane = "focus"
 	}
-	// Perf spans: validate_us covers decode + request validation, exec_ms
-	// covers the cache→admission→inference→store path, and wait_ms is the
-	// admission queue wait inside exec_ms (-1 when admission was never
-	// reached: validation error or cache hit). exec_ms - wait_ms ~= engine
+	// Perf spans: validate_us covers request validation, exec_ms covers the
+	// cache→admission→inference→store path, and wait_ms is the admission
+	// queue wait inside exec_ms (-1 when admission was never reached:
+	// validation error or cache hit). exec_ms - wait_ms ~= engine
 	// inference + store on misses.
 	validateMicros, execMillis, waitMillis := int64(-1), int64(-1), int64(-1)
 	defer func() {
 		log.Printf("move status=%d lane=%s plies=%d model=%s degraded=%t duration_ms=%d validate_us=%d exec_ms=%d wait_ms=%d",
-			rec.status, lane, len(request.Moves), model, degraded, time.Since(started).Milliseconds(), validateMicros, execMillis, waitMillis)
-		if rec.status == http.StatusOK {
+			status, lane, len(request.Moves), model, degraded, time.Since(started).Milliseconds(), validateMicros, execMillis, waitMillis)
+		if status == http.StatusOK {
 			cache := "miss"
 			if request.Temperature != 0 {
 				cache = "live"
@@ -82,37 +101,32 @@ func (s *Server) serveMove(w http.ResponseWriter, r *http.Request, prio sched.Pr
 				valueEloPair(request.ValueEloMaia, request.ValueEloUser), modelName, request.MaiaColor, maiaContentFields(response))
 		}
 	}()
-	request, ok := decodeSingle[moveRequest](w, r, 64*1024)
-	if !ok {
-		return
-	}
 	validateStart := time.Now()
-	engineRequest, validated, err := validateMoveRequest(request)
+	engineRequest, validated, err := validateMoveRequest(*request)
 	validateMicros = time.Since(validateStart).Microseconds()
 	if err != nil {
 		if reqErr, ok := errors.AsType[*apierror.RequestError](err); ok {
-			writeAPIError(w, http.StatusBadRequest, reqErr.Code, reqErr.Message)
-			return
+			status = http.StatusBadRequest
+			return nil, apiError(status, reqErr.Code, reqErr.Message)
 		}
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", "request validation failed")
-		return
+		status = http.StatusBadRequest
+		return nil, apiError(status, "invalid_request", "request validation failed")
 	}
 	model = validated
 	if s.pool != nil && !s.pool.Supports(model) {
-		writeAPIError(w, http.StatusBadRequest, "invalid_model", "model 5m is not enabled on this server")
-		return
+		status = http.StatusBadRequest
+		return nil, apiError(status, "invalid_model", "model 5m is not enabled on this server")
 	}
 
-	// waitCtx dequeues on disconnect; execCtx stays detached so a granted op
-	// still validates and persists after the client goes away.
 	useCache := request.Temperature == 0
-	execCtx := context.WithoutCancel(r.Context())
+	execCtx := context.WithoutCancel(ctx)
 	execStart := time.Now()
-	response, hit, predictErr := s.executeMaia(r.Context(), execCtx, prio, 0, engineRequest, model, false)
+	response, hit, predictErr := s.executeMaia(ctx, execCtx, prio, 0, engineRequest, model, false)
 	execMillis = time.Since(execStart).Milliseconds()
 	if predictErr != nil {
-		mapEngineError(w, predictErr, engine.SanitizeError(predictErr.Error()))
-		return
+		failStatus, failCode, failMessage := engineFailure(predictErr, engine.SanitizeError(predictErr.Error()))
+		status = failStatus
+		return nil, apiError(failStatus, failCode, failMessage)
 	}
 	if !hit {
 		waitMillis = response.WaitMs
@@ -125,17 +139,18 @@ func (s *Server) serveMove(w http.ResponseWriter, r *http.Request, prio sched.Pr
 	if prio == sched.PriorityFocus {
 		response = *attachMaiaDelta(serverSource{s}, engineRequest, &response)
 	}
+	out := &MoveOutput{Body: response}
 	if useCache {
 		if hit {
-			w.Header().Set("X-Eval-Cache", "hit")
+			out.Cache = "hit"
 		} else {
-			w.Header().Set("X-Eval-Cache", "miss")
+			out.Cache = "miss"
 		}
 	}
-	writeJSON(w, http.StatusOK, response)
+	return out, nil
 }
 
-func validateMoveRequest(request moveRequest) (engine.MaiaRequest, string, error) {
+func validateMoveRequest(request MoveRequest) (engine.MaiaRequest, string, error) {
 	if !chess.ValidTemperature(request.Temperature) {
 		return engine.MaiaRequest{}, "", &apierror.RequestError{Code: "invalid_request", Message: "temperature must be between 0 and 2"}
 	}

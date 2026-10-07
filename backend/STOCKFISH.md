@@ -24,9 +24,10 @@ normalize to `-`. Both sides to move are supported.
 
 Send the full available history, including when examining an earlier position.
 Repetition and Stockfish search depend on that history. A custom starting FEN
-cannot reconstruct repetitions before that position. Requests accept at most
-64 KiB of JSON and 256 plies (individual player moves). Unknown JSON fields and
-trailing JSON values are rejected. Executables, threads, and memory come from
+cannot reconstruct repetitions before that position. Requests accept under
+64 KiB of JSON (a body at exactly the limit is a `413`) and 256 plies
+(individual player moves). Unknown JSON fields are a `422`, trailing
+JSON values a `400`. Executables, threads, and memory come from
 server configuration.
 
 Optional `settings` configures the search:
@@ -125,11 +126,14 @@ whole-game reviews apply the budget separately to each position.
 Pipe waits are capped at one second. Cleanup also kills survivors after
 a wrapper crash and reaps adopted group members when the server is PID 1.
 
-Errors use `{code, message}`:
+Errors use Huma's `ErrorModel` envelope; the `Code` below rides in
+`errors[0].message`, the human text in `detail`:
 
 | HTTP | Code | Meaning |
 | --- | --- | --- |
-| 400 | `invalid_json` | JSON syntax, shape, unknown fields, extra values, or body limit |
+| 400 | (none) | Malformed JSON or trailing values |
+| 422 | (none) | Unknown fields, missing required keys, or misshapen settings |
+| 413 | (none) | Body at or over the limit |
 | 400 | `invalid_fen` | Malformed FEN |
 | 400 | `invalid_position` | Semantically invalid position or illegal/malformed move |
 | 400 | `position_mismatch` | Replay does not produce the supplied FEN |

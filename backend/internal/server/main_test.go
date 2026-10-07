@@ -17,15 +17,55 @@ import (
 	"testing"
 	"time"
 
-	"maia-board/backend/internal/apierror"
 	"maia-board/backend/internal/engine"
 	"maia-board/backend/internal/ipc"
 	"maia-board/backend/internal/sched"
 )
 
+// serve routes one request through the full Chi+Huma stack, exactly like
+// production (middlewares, Huma validation, Huma envelope). POST/PUT/PATCH
+// carry application/json like every real client.
+func serve(s *Server, method, path, body string) *httptest.ResponseRecorder {
+	var reader *strings.Reader
+	if body == "" {
+		reader = strings.NewReader("")
+	} else {
+		reader = strings.NewReader(body)
+	}
+	req := httptest.NewRequest(method, path, reader)
+	if method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	return w
+}
+
+// humaCode extracts errors[0].message — our machine-readable code vocabulary
+// inside Huma's ErrorModel envelope — from an error response. Empty when the
+// failure is Huma's own (malformed JSON, schema violations, oversize).
+func humaCode(t *testing.T, w *httptest.ResponseRecorder) string {
+	t.Helper()
+	var failure struct {
+		Title  string `json:"title"`
+		Status int    `json:"status"`
+		Detail string `json:"detail"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &failure); err != nil {
+		t.Fatalf("decode error body: %v (%s)", err, w.Body.String())
+	}
+	if len(failure.Errors) == 0 {
+		return ""
+	}
+	return failure.Errors[0].Message
+}
+
 func TestValidateMoveRequest(t *testing.T) {
 	maiaElo, userElo := 1500, 1300
-	request := moveRequest{
+	request := MoveRequest{
 		FEN:       "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
 		Moves:     []string{"e2e4"},
 		EloMaia:   &maiaElo,
@@ -44,7 +84,7 @@ func TestValidateMoveRequest(t *testing.T) {
 
 func TestValidateMoveRequestValueElos(t *testing.T) {
 	maiaElo, userElo, valueMaia, valueUser := 800, 800, 2400, 2400
-	request := moveRequest{
+	request := MoveRequest{
 		FEN:          startFEN,
 		Moves:        []string{},
 		EloMaia:      &maiaElo,
@@ -63,12 +103,12 @@ func TestValidateMoveRequestValueElos(t *testing.T) {
 		t.Fatalf("value Elos not mapped: %+v", engineRequest)
 	}
 	outOfRange := 5001
-	if _, _, err := validateMoveRequest(moveRequest{FEN: startFEN, EloMaia: &maiaElo, EloUser: &userElo,
+	if _, _, err := validateMoveRequest(MoveRequest{FEN: startFEN, EloMaia: &maiaElo, EloUser: &userElo,
 		ValueEloMaia: &outOfRange, Model: "79m", MaiaColor: "white"}); err == nil {
 		t.Fatal("out-of-range value Elo accepted")
 	}
 	// Omitted value Elos stay nil (worker defaults to policy Elos).
-	plain, _, err := validateMoveRequest(moveRequest{FEN: startFEN, EloMaia: &maiaElo, EloUser: &userElo, Model: "79m", MaiaColor: "white"})
+	plain, _, err := validateMoveRequest(MoveRequest{FEN: startFEN, EloMaia: &maiaElo, EloUser: &userElo, Model: "79m", MaiaColor: "white"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,18 +135,16 @@ func TestMoveEndpointsAdmitOnSeparateLanes(t *testing.T) { // /move (live replie
 	rec := &prioRecorder{result: engine.MaiaResult{Move: "e2e4",
 		Candidates: []engine.MaiaCandidate{{Move: "e2e4", Policy: 0.6, WDL: wdl}}, WDL: wdl}}
 	s := &Server{pool: engine.NewEnginePool(rec, rec), store: testStore(t)}
-	post := func(handler func(http.ResponseWriter, *http.Request), eloUser string) *httptest.ResponseRecorder {
+	post := func(path, eloUser string) *httptest.ResponseRecorder {
 		body := `{"fen":"` + startFEN + `","moves":[],"elo_maia":1600,"elo_user":` + eloUser + `,"model":"79m","maia_color":"white"}`
-		w := httptest.NewRecorder()
-		handler(w, httptest.NewRequest(http.MethodPost, "/move", strings.NewReader(body)))
-		return w
+		return serve(s, http.MethodPost, path, body)
 	}
 	// Distinct Elo per call so the second request misses the cache the
 	// first call wrote and actually reaches admission.
-	if w := post(s.move, "1600"); w.Code != http.StatusOK {
+	if w := post("/move", "1600"); w.Code != http.StatusOK {
 		t.Fatalf("play move: %d %s", w.Code, w.Body)
 	}
-	if w := post(s.moveAnalysis, "1601"); w.Code != http.StatusOK {
+	if w := post("/move/analysis", "1601"); w.Code != http.StatusOK {
 		t.Fatalf("move analysis: %d %s", w.Code, w.Body)
 	}
 	if len(rec.prios) != 2 || rec.prios[0] != sched.PriorityPlay || rec.prios[1] != sched.PriorityFocus {
@@ -119,16 +157,26 @@ func TestMoveRejectsDisabledModel(t *testing.T) {
 	s := &Server{pool: engine.NewEnginePool(live, nil), store: testStore(t)}
 	post := func(model string) *httptest.ResponseRecorder {
 		body := `{"fen":"` + startFEN + `","moves":[],"elo_maia":1600,"elo_user":1600,"model":"` + model + `","maia_color":"white"}`
-		w := httptest.NewRecorder()
-		s.move(w, httptest.NewRequest(http.MethodPost, "/move", strings.NewReader(body)))
-		return w
+		return serve(s, http.MethodPost, "/move", body)
 	}
 	if w := post("79m"); w.Code != http.StatusOK {
 		t.Fatalf("enabled 79m: %d %s", w.Code, w.Body)
 	}
-	if w := post("5m"); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_model") {
+	if w := post("5m"); w.Code != http.StatusBadRequest || humaCode(t, w) != "invalid_model" {
 		t.Fatalf("disabled 5m: %d %s, want 400 invalid_model", w.Code, w.Body)
 	}
+}
+
+// statusCapture forwards a live response while recording its status for
+// tests that assert on handler completion through a real HTTP server.
+type statusCapture struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusCapture) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
 }
 
 func TestMoveHandlerPersistsAfterClientStopsWaiting(t *testing.T) {
@@ -154,10 +202,13 @@ func TestMoveHandlerPersistsAfterClientStopsWaiting(t *testing.T) {
 				pool = engine.NewEnginePool(unavailable, worker)
 			}
 			app := &Server{pool: pool, store: testStore(t)}
+			app.reviews = NewReviewJobs(app)
 			finished := make(chan int, 2)
 			serverCanceled := make(chan struct{}, 1)
 			mux := http.NewServeMux()
-			mux.HandleFunc("/move", func(w http.ResponseWriter, r *http.Request) {
+			// The full Chi+Huma stack: disconnect observation and the
+			// detached write-through run through the real router.
+			mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				stop := context.AfterFunc(r.Context(), func() {
 					select {
 					case serverCanceled <- struct{}{}:
@@ -165,11 +216,10 @@ func TestMoveHandlerPersistsAfterClientStopsWaiting(t *testing.T) {
 					}
 				})
 				defer stop()
-				rec := &statusRecorder{ResponseWriter: w, status: 200}
-				app.move(rec, r)
+				rec := &statusCapture{ResponseWriter: w, status: 200}
+				app.Handler().ServeHTTP(rec, r)
 				finished <- rec.status
-			})
-			mux.HandleFunc("/evaluations/lookup", app.evaluationLookup)
+			}))
 			httpServer := httptest.NewServer(mux)
 			httpServer.Client().Timeout = 3 * time.Second
 			t.Cleanup(func() { _ = os.WriteFile(release, []byte("ready"), 0600); httpServer.Close() })
@@ -177,7 +227,7 @@ func TestMoveHandlerPersistsAfterClientStopsWaiting(t *testing.T) {
 			if tc.invalid {
 				opponent = 5
 			}
-			payload := moveRequest{FEN: startFEN, InitialFEN: startFEN, Moves: []string{}, EloMaia: &self, EloUser: &opponent, Model: "79m", MaiaColor: "white"}
+			payload := MoveRequest{FEN: startFEN, InitialFEN: startFEN, Moves: []string{}, EloMaia: &self, EloUser: &opponent, Model: "79m", MaiaColor: "white"}
 			if tc.sampled {
 				payload.Temperature = .7
 			}
@@ -195,6 +245,7 @@ func TestMoveHandlerPersistsAfterClientStopsWaiting(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			request.Header.Set("Content-Type", "application/json")
 			clientDone := make(chan error, 1)
 			go func() {
 				response, err := httpServer.Client().Do(request)
@@ -247,8 +298,8 @@ func TestMoveHandlerPersistsAfterClientStopsWaiting(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("bounded handler did not finish")
 			}
-			query := lookupRequest{Engine: "maia", FEN: startFEN, Ply: 0, EloMaia: &self, EloUser: &opponent, Model: "79m"}
-			lookupBody, err := json.Marshal(map[string]any{"line": batchLine{InitialFEN: startFEN, Moves: []string{}}, "requests": []lookupRequest{query}})
+			query := LookupRequest{Engine: "maia", FEN: startFEN, Ply: 0, EloMaia: &self, EloUser: &opponent, Model: "79m"}
+			lookupBody, err := json.Marshal(map[string]any{"line": BatchLine{InitialFEN: startFEN, Moves: []string{}}, "requests": []LookupRequest{query}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -257,7 +308,7 @@ func TestMoveHandlerPersistsAfterClientStopsWaiting(t *testing.T) {
 				t.Fatal(err)
 			}
 			var result struct {
-				Results []lookupResult `json:"results"`
+				Results []LookupResult `json:"results"`
 			}
 			err = json.NewDecoder(response.Body).Decode(&result)
 			_ = response.Body.Close()
@@ -294,7 +345,7 @@ func TestMoveHandlerPersistsAfterClientStopsWaiting(t *testing.T) {
 
 func TestValidateMoveRequestRejectsNonMaiaTurn(t *testing.T) {
 	maiaElo, userElo := 1500, 1300
-	_, _, err := validateMoveRequest(moveRequest{
+	_, _, err := validateMoveRequest(MoveRequest{
 		FEN:       "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
 		EloMaia:   &maiaElo,
 		EloUser:   &userElo,
@@ -312,8 +363,7 @@ func TestMoveCacheReadThrough(t *testing.T) {
 	live := &fakePredictor{result: engine.MaiaResult{Move: "e2e4", Candidates: []engine.MaiaCandidate{{Move: "e2e4", Policy: 0.6, WDL: wdl}}, WDL: wdl}}
 	s := &Server{pool: engine.NewEnginePool(live, live), store: store}
 	// Miss: predicts live, stores the row, reports miss.
-	w := httptest.NewRecorder()
-	s.move(w, httptest.NewRequest(http.MethodPost, "/move", strings.NewReader(body)))
+	w := serve(s, http.MethodPost, "/move", body)
 	if w.Code != http.StatusOK || w.Header().Get("X-Eval-Cache") != "miss" {
 		t.Fatalf("miss: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
 	}
@@ -324,8 +374,7 @@ func TestMoveCacheReadThrough(t *testing.T) {
 	// Hit: serves from SQLite without touching the pool.
 	broken := &fakePredictor{err: errors.New("boom")}
 	hit := &Server{pool: engine.NewEnginePool(broken, broken), store: store}
-	w = httptest.NewRecorder()
-	hit.move(w, httptest.NewRequest(http.MethodPost, "/move", strings.NewReader(body)))
+	w = serve(hit, http.MethodPost, "/move", body)
 	if w.Code != http.StatusOK || w.Header().Get("X-Eval-Cache") != "hit" {
 		t.Fatalf("hit: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
 	}
@@ -336,13 +385,11 @@ func TestMoveCacheReadThrough(t *testing.T) {
 	large := &fakePredictor{err: errors.New("79m failed")}
 	small := &fakePredictor{result: engine.MaiaResult{Move: "e2e4", Candidates: []engine.MaiaCandidate{{Move: "e2e4", Policy: 0.6, WDL: wdl}}, WDL: wdl}}
 	degradedBody := `{"fen":"` + startFEN + `","moves":[],"elo_maia":1700,"elo_user":1600,"model":"79m","maia_color":"white","cache_hash":"def456","cache_key":"degraded"}`
-	w = httptest.NewRecorder()
-	(&Server{pool: engine.NewEnginePool(large, small), store: store}).move(w, httptest.NewRequest(http.MethodPost, "/move", strings.NewReader(degradedBody)))
+	w = serve(&Server{pool: engine.NewEnginePool(large, small), store: store}, http.MethodPost, "/move", degradedBody)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"degraded":true`) {
 		t.Fatalf("degraded: %d %s", w.Code, w.Body)
 	}
-	w = httptest.NewRecorder()
-	hit.move(w, httptest.NewRequest(http.MethodPost, "/move", strings.NewReader(degradedBody)))
+	w = serve(hit, http.MethodPost, "/move", degradedBody)
 	if w.Code == http.StatusOK && w.Header().Get("X-Eval-Cache") == "hit" {
 		t.Fatal("degraded answer was persisted")
 	}
@@ -357,8 +404,7 @@ func TestMoveAnalysisAttachesDeltaWithoutStoring(t *testing.T) {
 	wdl := [3]float64{0.437, 0.063, 0.5}
 	live := &fakePredictor{result: engine.MaiaResult{Move: "e2e4", Candidates: []engine.MaiaCandidate{{Move: "e2e4", Policy: 0.6, WDL: wdl}}, WDL: wdl}}
 	s := &Server{pool: engine.NewEnginePool(live, live), store: store}
-	w := httptest.NewRecorder()
-	s.moveAnalysis(w, httptest.NewRequest(http.MethodPost, "/move/analysis", strings.NewReader(body)))
+	w := serve(s, http.MethodPost, "/move/analysis", body)
 	if w.Code != http.StatusOK {
 		t.Fatalf("analysis: %d %s", w.Code, w.Body)
 	}
@@ -396,9 +442,7 @@ func TestMoveCacheGuards(t *testing.T) {
 	store := testStore(t)
 	s := &Server{pool: engine.NewEnginePool(live, live), store: store}
 	post := func(body string) *httptest.ResponseRecorder {
-		w := httptest.NewRecorder()
-		s.move(w, httptest.NewRequest(http.MethodPost, "/move", strings.NewReader(body)))
-		return w
+		return serve(s, http.MethodPost, "/move", body)
 	}
 	base := `{"fen":"` + startFEN + `","moves":[],"elo_maia":1600,"elo_user":1600,"model":"79m","maia_color":"white"`
 	seed := func(hash, value string) {
@@ -425,8 +469,7 @@ func TestMoveCacheGuards(t *testing.T) {
 	if w.Code != http.StatusOK || w.Header().Get("X-Eval-Cache") != "" || live.calls != 3 {
 		t.Fatalf("sampled: %d %s header=%q calls=%d", w.Code, w.Body, w.Header().Get("X-Eval-Cache"), live.calls)
 	}
-	get := httptest.NewRecorder()
-	s.evaluations(get, httptest.NewRequest("GET", "/evaluations/aa03", nil))
+	get := serve(s, "GET", "/evaluations/aa03", "")
 	if get.Code != 404 {
 		t.Fatalf("sampled answer persisted: %d %s", get.Code, get.Body)
 	}
@@ -444,14 +487,12 @@ func TestMoveCacheGuards(t *testing.T) {
 func TestHealthzMethod(t *testing.T) {
 	app := &Server{pool: engine.NewEnginePool(engine.NewWorker("79m", nil), engine.NewWorker("5m", nil))}
 
-	get := httptest.NewRecorder()
-	app.healthz(get, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	get := serve(app, http.MethodGet, "/healthz", "")
 	if get.Code != http.StatusOK {
 		t.Fatalf("GET /healthz status = %d, want %d", get.Code, http.StatusOK)
 	}
 
-	post := httptest.NewRecorder()
-	app.healthz(post, httptest.NewRequest(http.MethodPost, "/healthz", nil))
+	post := serve(app, http.MethodPost, "/healthz", "")
 	if post.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST /healthz status = %d, want %d", post.Code, http.StatusMethodNotAllowed)
 	}
@@ -466,11 +507,16 @@ func TestRecoverJSONEmitsErrorBeforeCrash(t *testing.T) {
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("panic status = %d, want %d", recorder.Code, http.StatusInternalServerError)
 	}
-	var body apierror.Error
+	var body struct {
+		Detail string `json:"detail"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("panic body is not JSON: %v", err)
 	}
-	if body.Code != "internal" || body.Message == "" {
+	if len(body.Errors) == 0 || body.Errors[0].Message != "internal" || body.Detail == "" {
 		t.Fatalf("unexpected panic body: %+v", body)
 	}
 }

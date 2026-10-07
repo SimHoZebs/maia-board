@@ -1,8 +1,7 @@
 package server
 
 import (
-	"encoding/json"
-	"log"
+	"context"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -34,36 +33,16 @@ func NewServer(pool *engine.EnginePool, evaluator *engine.Evaluator, gameStore *
 	return s
 }
 
-// Routes registers every endpoint. Lane mapping is endpoint-implied:
-// /move → Play, /move/analysis + /evaluate → Focus, /reviews → Batch.
-func (s *Server) Routes() *http.ServeMux {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", s.healthz)
-	mux.HandleFunc("/move", s.move)
-	mux.HandleFunc("/move/analysis", s.moveAnalysis)
-	mux.HandleFunc("/evaluate", s.evaluate)
-	mux.HandleFunc("/games", s.games)
-	mux.HandleFunc("/games/", s.gameByID)
-	mux.HandleFunc("/evaluations", s.evaluations)
-	mux.HandleFunc("/evaluations/", s.evaluations)
-	mux.HandleFunc("/evaluations/lookup", s.evaluationLookup)
-	mux.HandleFunc("/openings", s.openingsHandler)
-	mux.HandleFunc("/reviews", s.reviews.reviews)
-	mux.HandleFunc("/reviews/", s.reviews.reviewRouter)
-	mux.HandleFunc("/", s.frontend)
-	return mux
-}
+// Handler is defined in api.go: it builds the Chi+Huma router and wraps it
+// with panic recovery and baseline hardening headers.
 
-// Handler wraps Routes with panic recovery and baseline hardening headers.
-func (s *Server) Handler() http.Handler {
-	return recoverJSON(securityHeaders(s.Routes()))
-}
-
+// recoverJSON catches handler panics and answers Huma-envelope 500s. It runs
+// outside the router so panics anywhere (Huma ops, SSE, static) stay JSON.
 func recoverJSON(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				writeAPIError(w, http.StatusInternalServerError, "internal", "the server hit an unexpected error")
+				writeHumaError(w, http.StatusInternalServerError, "internal", "the server hit an unexpected error")
 			}
 		}()
 		next.ServeHTTP(w, r)
@@ -93,9 +72,38 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// retryAfter supplies the backpressure headers Huma errors cannot carry:
+// every 503 we emit is engine_busy (retry in 1s) and every 429 is an
+// over-cap batch submit (retry in 5s). Explicitly set values win; this only
+// fills gaps. Health 503s honestly ask for a 1s retry too.
+func retryAfter(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(&statusRecorder{ResponseWriter: w, status: http.StatusOK}, r)
+	})
+}
+
+// statusRecorder captures the response status and injects backpressure
+// defaults before the headers go out. Handlers log their own per-request
+// timing lines with the status they return, so this stays a dumb observer.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	if status == http.StatusServiceUnavailable && r.Header().Get("Retry-After") == "" {
+		r.Header().Set("Retry-After", "1")
+	}
+	if status == http.StatusTooManyRequests && r.Header().Get("Retry-After") == "" {
+		r.Header().Set("Retry-After", "5")
+	}
+	r.ResponseWriter.WriteHeader(status)
+}
+
 func (s *Server) frontend(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET or HEAD is required")
+		writeHumaError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET or HEAD is required")
 		return
 	}
 
@@ -123,38 +131,24 @@ func (s *Server) frontend(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, indexPath)
 }
 
-func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET or HEAD is required")
-		return
-	}
+// HealthBody is the /healthz document. Status is dynamic: 200 normally,
+// 503 when every model failed.
+type HealthBody struct {
+	Status string                         `json:"status"`
+	Models map[string]engine.WorkerStatus `json:"models"`
+}
+
+// HealthOutput is the pool-health document. Status is dynamic: 200 normally,
+// 503 when every model failed.
+type HealthOutput struct {
+	Status int `json:"-"`
+	Body   HealthBody
+}
+
+func (s *Server) handleHealth(ctx context.Context, _ *struct{}) (*HealthOutput, error) {
 	status, models, code := s.pool.Health()
-	writeJSON(w, code, map[string]any{"status": status, "models": models})
-}
-
-// statusRecorder captures the response status so handlers can log one
-// per-request timing line (method/path/status/duration) for analysis
-// slowdown diagnosis. Interactive analysis issues one /move/analysis + one /evaluate
-// per examined position; whole-game batches instead emit one review-batch
-// entry line per position from the drain loop, so `docker logs` (Komodo)
-// shows the per-ply latency curve either way: a second-half cliff points
-// at ply-correlated cost (history length, hash pressure, thermal), while
-// flat-but-slow lines point at the search budget itself
-// (time_ms/lines/depth).
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
-func (r *statusRecorder) WriteHeader(status int) {
-	r.status = status
-	r.ResponseWriter.WriteHeader(status)
-}
-
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(value); err != nil {
-		log.Printf("http response encoding/write failed: %v", err)
-	}
+	out := &HealthOutput{Status: code}
+	out.Body.Status = status
+	out.Body.Models = models
+	return out, nil
 }

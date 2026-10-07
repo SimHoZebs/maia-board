@@ -1,13 +1,18 @@
 // Package server owns the HTTP boundary: routes, handlers, the shared
-// envelope, batch orchestration, and cache read/write-through. Engine
+// error mapping, batch orchestration, and cache read/write-through. Engine
 // admission and process lifecycle live in internal/engine, persistence in
 // internal/store.
+//
+// Routing is Chi with Huma operations (see api.go for the topology).
+// Request bodies are decoded and schema-validated by Huma: malformed JSON
+// is a 400, unknown fields or missing required keys are a 422, oversized
+// bodies are a 413. Domain validation (chess rules, Elo ranges, identities)
+// stays in the hand-written validate functions and answers 400 with our
+// machine-readable code in errors[0].message.
 package server
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 
 	"maia-board/backend/internal/apierror"
@@ -15,59 +20,27 @@ import (
 	"maia-board/backend/internal/sched"
 )
 
-// decodeSingle owns the shared HTTP envelope for single-JSON-object POST
-// endpoints: method check, body cap, strict decode rejecting unknown fields,
-// trailing-data rejection, and invalid_json writes. Callers keep their own
-// maxBytes value, validation, limits, and success shapes.
-func decodeSingle[T any](w http.ResponseWriter, r *http.Request, maxBytes int64) (T, bool) {
-	var zero T
-	if r.Method != http.MethodPost {
-		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST is required")
-		return zero, false
-	}
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBytes))
-	decoder.DisallowUnknownFields()
-	var value T
-	if err := decoder.Decode(&value); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_json", "request body must be a valid JSON object")
-		return zero, false
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		writeAPIError(w, http.StatusBadRequest, "invalid_json", "request body must contain one JSON object")
-		return zero, false
-	}
-	return value, true
-}
-
-func writeAPIError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, apierror.Error{Code: code, Message: message})
-}
-
-// mapEngineError owns the engine-error-to-HTTP mapping shared by the live
-// inference endpoints (/move, /move/analysis, /evaluate). Statuses and codes are preserved;
-// busy/superseded/validation messages are unified to neutral wording
-// (previously per-engine). The engine-unavailable fallback stays per-endpoint:
-// /move sanitizes the underlying error while /evaluate keeps its fixed
-// message, matching pre-unification behavior.
-func mapEngineError(w http.ResponseWriter, err error, engineUnavailable string) {
+// engineFailure maps engine/scheduler failures to the HTTP status, our
+// machine-readable code, and the human message shared by the live inference
+// endpoints (/move, /move/analysis, /evaluate). Statuses and codes are the
+// pre-Huma contract; only the envelope changed. Retry-After for 503/429 is
+// applied by the retryAfter middleware in server.go, not here.
+func engineFailure(err error, engineUnavailable string) (status int, code, message string) {
 	if reqErr, ok := errors.AsType[*apierror.RequestError](err); ok {
-		writeAPIError(w, http.StatusBadRequest, reqErr.Code, reqErr.Message)
-		return
+		return http.StatusBadRequest, reqErr.Code, reqErr.Message
 	}
 	switch {
 	case errors.Is(err, sched.ErrSuperseded):
-		writeAPIError(w, http.StatusConflict, "superseded", "a newer request superseded this position")
+		return http.StatusConflict, "superseded", "a newer request superseded this position"
 	case errors.Is(err, engine.ErrWorkerBusy):
-		w.Header().Set("Retry-After", "1")
-		writeAPIError(w, http.StatusServiceUnavailable, "engine_busy", "the engine is busy")
+		return http.StatusServiceUnavailable, "engine_busy", "the engine is busy"
 	case errors.Is(err, engine.ErrPositionMismatch):
-		writeAPIError(w, http.StatusBadRequest, "position_mismatch", "moves do not produce fen")
+		return http.StatusBadRequest, "position_mismatch", "moves do not produce fen"
 	case errors.Is(err, engine.ErrInvalidPosition):
-		writeAPIError(w, http.StatusBadRequest, "invalid_position", "position or move history is invalid")
+		return http.StatusBadRequest, "invalid_position", "position or move history is invalid"
 	case errors.Is(err, engine.ErrNoLegalMoves):
-		writeAPIError(w, http.StatusBadRequest, "game_over", "position has no legal moves")
+		return http.StatusBadRequest, "game_over", "position has no legal moves"
 	default:
-		writeAPIError(w, http.StatusBadGateway, "engine_unavailable", engineUnavailable)
+		return http.StatusBadGateway, "engine_unavailable", engineUnavailable
 	}
 }
