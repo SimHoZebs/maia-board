@@ -1,9 +1,9 @@
-import { normalizeBoardOrientation } from '../domain';
-import { KEYS, readStorage } from '../storage';
-import { normalizeStockfishSettings, STOCKFISH_STORAGE_KEY } from '../stockfishSettings';
-import { defaultArrowBasis, defaultArrowSettings, normalizeArrowBasis, normalizeArrowSettings, sameArrowSettings } from '../arrowSettings';
-import { normalizeBestLineWindow } from '../material';
-import type { BadgeLoading } from '../ReviewCharts';
+import { normalizeBoardOrientation } from '../shared/domain';
+import { KEYS, readStorage } from '../history/storage';
+import { normalizeStockfishSettings, STOCKFISH_STORAGE_KEY } from '../eval/stockfishSettings';
+import { defaultArrowBasis, defaultArrowSettings, normalizeArrowBasis, normalizeArrowSettings, sameArrowSettings } from '../settings/arrowSettings';
+import { normalizeBestLineWindow } from '../theory/material';
+import type { BadgeLoading } from '../review/ReviewCharts';
 import type { Action, State } from './types';
 
 // Display-settings slice: board presentation + engine preferences. These

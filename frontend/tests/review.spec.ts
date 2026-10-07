@@ -1,10 +1,10 @@
 import { test, expect, type Page, type Route } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { replay } from '../src/domain';
-import { defaultStockfishSettings, stockfishPolicy } from '../src/stockfishSettings';
+import { replay } from '../src/shared/domain';
+import { defaultStockfishSettings, stockfishPolicy } from '../src/eval/stockfishSettings';
 const SEARCH_POLICY = stockfishPolicy(defaultStockfishSettings);
-import { KEYS } from '../src/storage';
+import { KEYS } from '../src/history/storage';
 import { EvaluationFixture, evaluationIdentity } from './evaluation-fixture';
 
 async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,20,200,-700,-680]) {

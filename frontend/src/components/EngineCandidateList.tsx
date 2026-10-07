@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { candidateSan } from "../domain";
+import { candidateSan } from "../shared/domain";
 import { CandidateList } from "./CandidateList";
 import { CandidateRow } from "./CandidateRow";
 

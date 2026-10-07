@@ -2,9 +2,9 @@ import { test, expect, type Page } from '@playwright/test';
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Chess } from 'chess.js';
-import { replay } from '../../src/domain';
+import { replay } from '../../src/shared/domain';
 import { EvaluationFixture } from '../evaluation-fixture';
-import { defaultStockfishSettings, stockfishPolicy } from '../../src/stockfishSettings';
+import { defaultStockfishSettings, stockfishPolicy } from '../../src/eval/stockfishSettings';
 
 const SEARCH_POLICY = stockfishPolicy(defaultStockfishSettings);
 // Seeded random client: same seed replays the same line, so runs are

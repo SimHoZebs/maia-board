@@ -1,13 +1,13 @@
-import type { MoveResponse } from '../api';
+import type { MoveResponse } from '../eval/api';
 import {
   GRADING_BOT_SETTINGS,
   gradingBotKey,
   type Engine,
   type ReviewNode,
   type ReviewSettings,
-} from '../evaluationStore';
-import type { ReviewCoordinator, SettingsInput } from '../reviewCoordinator';
-import { type Evaluation, type ObjectiveCandidates, type ObjectivePoint } from '../reviewMetrics';
+} from '../eval/evaluationStore';
+import type { ReviewCoordinator, SettingsInput } from '../review/reviewCoordinator';
+import { type Evaluation, type ObjectiveCandidates, type ObjectivePoint } from '../review/reviewMetrics';
 import { botExpected, botPoint, botWhiteWdl } from './winrate';
 
 // Grader role: objective grading (best + expected per position), currently

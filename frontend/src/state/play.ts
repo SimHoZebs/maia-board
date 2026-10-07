@@ -1,7 +1,7 @@
 import { Chess } from 'chess.js';
-import { readableApiError } from '../api';
-import { toGroundColor } from '../board-colors';
-import { defaultSettings, extendLine, lineRecord, parseSquare, retreatLine, START_FEN, type Settings } from '../domain';
+import { readableApiError } from '../eval/api';
+import { toGroundColor } from '../board/board-colors';
+import { defaultSettings, extendLine, lineRecord, parseSquare, retreatLine, START_FEN, type Settings } from '../shared/domain';
 import { botTurn, queueRequest, transition, withPlay } from './shared';
 import type { Action, PlayDraft, State } from './types';
 

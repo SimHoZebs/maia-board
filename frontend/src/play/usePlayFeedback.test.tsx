@@ -1,0 +1,281 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { computePlayQualities, getNavigatorOnLine, hasExhaustedPlayRetries, isOfflineNow, isOfflineValue, PLAY_RETRY_EXHAUSTED_MESSAGE, playExhaustedError, unsettledReviewNodes, wantedPlayPair, type PlayQualitiesMemo } from './usePlayFeedback';
+import { computeReviewQualities, translateReviewQualities } from '../review/useReview';
+import { qualityGlyphs } from '../review/ReviewCharts';
+import { initialState, reducer } from '../state/index';
+import { KEYS } from '../history/storage';
+import { buildTimeline, START_FEN, timelineBuildsForTests } from '../shared/domain';
+import { reviewKey, reviewNodes, stablePositionKey, type ReviewNode, type ReviewSettings } from '../review/reviewCoordinator';
+import { laneKey, lanePoints } from '../objective/grader';
+import type { ObjectiveLane } from '../review/qualities';
+import { sfFixture } from '../eval/evaluationTestFixtures';
+import { defaultStockfishSettings } from '../eval/stockfishSettings';
+import type { Evaluation } from '../review/reviewMetrics';
+
+beforeEach(() => {
+  const data = new Map<string, string>();
+  vi.stubGlobal('localStorage', { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => data.set(key, value) });
+});
+describe('feedback settings', () => {
+  it('defaults off and round-trips through storage', () => {
+    expect(initialState().feedback).toBe(false);
+    const on = reducer(initialState(), { type: 'feedback', enabled: true });
+    expect(on.feedback).toBe(true);
+    expect(reducer(on, { type: 'feedback', enabled: true })).toBe(on);
+    localStorage.setItem(KEYS.feedback, JSON.stringify(true));
+    expect(initialState().feedback).toBe(true);
+  });
+  it('defaults play verdict off and round-trips through storage', () => {
+    expect(initialState().playVerdict).toBe(false);
+    const on = reducer(initialState(), { type: 'play-verdict', enabled: true });
+    expect(on.playVerdict).toBe(true);
+    expect(reducer(on, { type: 'play-verdict', enabled: true })).toBe(on);
+    localStorage.setItem(KEYS.playVerdict, JSON.stringify(true));
+    expect(initialState().playVerdict).toBe(true);
+  });
+  it('preserves loading indicator settings', () => {
+    expect(initialState().badgeLoading).toBe('reel');
+    expect(reducer(initialState(), { type: 'badge-loading', loading: 'shimmer' }).badgeLoading).toBe('shimmer');
+    localStorage.setItem(KEYS.badgeLoading, JSON.stringify('placeholder'));
+    expect(initialState().badgeLoading).toBe('placeholder');
+    localStorage.setItem(KEYS.badgeLoading, JSON.stringify(true));
+    expect(initialState().badgeLoading).toBe('reel');
+  });
+  it('defaults coordinates inside squares and round-trips through storage', () => {
+    expect(initialState().coordinatesOnSquares).toBe(true);
+    const outside = reducer(initialState(), { type: 'coordinates-on-squares', enabled: false });
+    expect(outside.coordinatesOnSquares).toBe(false);
+    expect(reducer(outside, { type: 'coordinates-on-squares', enabled: false })).toBe(outside);
+    localStorage.setItem(KEYS.coordinatesOnSquares, JSON.stringify(false));
+    expect(initialState().coordinatesOnSquares).toBe(false);
+    localStorage.setItem(KEYS.coordinatesOnSquares, JSON.stringify('squares'));
+    expect(initialState().coordinatesOnSquares).toBe(true);
+  });
+  it('defaults board orientation to auto and round-trips through storage', () => {
+    expect(initialState().boardOrientation).toBe('auto');
+    const fixed = reducer(initialState(), { type: 'board-orientation', orientation: 'black' });
+    expect(fixed.boardOrientation).toBe('black');
+    expect(reducer(fixed, { type: 'board-orientation', orientation: 'black' })).toBe(fixed);
+    localStorage.setItem(KEYS.boardOrientation, JSON.stringify('white'));
+    expect(initialState().boardOrientation).toBe('white');
+    localStorage.setItem(KEYS.boardOrientation, JSON.stringify('sideways'));
+    expect(initialState().boardOrientation).toBe('auto');
+  });
+});
+
+describe('timeline-backed move feedback', () => {
+  const settings: ReviewSettings = { botElo: 1600, userElo: 1600, model: '79m', stockfish: defaultStockfishSettings };
+  const timeline = buildTimeline(START_FEN, ['e2e4', 'e7e5', 'g1f3', 'b8c6']);
+  const nodes = reviewNodes(timeline);
+  const values = new Map(nodes.map(node => [stablePositionKey(node), sfFixture(node.fen)]));
+  const lookup = (node: ReviewNode) => values.get(stablePositionKey(node));
+  const compute = (prev: PlayQualitiesMemo | null = null, overrides: Partial<Parameters<typeof computePlayQualities>[0]> = {}) => computePlayQualities({ gameId: 'game', timeline, userColor: 'white', settings, sfLookup: lookup, botLookup: () => undefined, sfPending: new Set(), botPending: new Set(), prev, ...overrides });
+
+  it('grades only the user side and reuses raw verdicts across unrelated cache updates', () => {
+    const first = compute(), stats = { reviews: 0 };
+    expect(first.qualities[0]).toBeDefined(); expect(first.qualities[1]).toBeUndefined();
+    expect(first.qualities[2]).toBeDefined(); expect(first.qualities[3]).toBeUndefined();
+    expect(first.grades).toHaveLength(first.qualities.length);
+    const count = timelineBuildsForTests(), second = compute(first.memo, { stats });
+    // Raw SF verdicts reuse (zero reviews); the translated display array is
+    // fresh per call since Top/Holds translate into new Best/Good objects.
+    expect(second.qualities).toEqual(first.qualities);
+    expect(stats.reviews).toBe(0); expect(timelineBuildsForTests()).toBe(count);
+    const black = compute(first.memo, { userColor: 'black' });
+    expect(black.qualities[0]).toBeUndefined(); expect(black.qualities[1]).toBeDefined();
+  });
+  it('pending verdicts clear on failure and settle only after both evaluations exist', () => {
+    const missing = (node: ReviewNode) => node.ply === 1 ? undefined : lookup(node);
+    expect(compute(null, { sfLookup: missing }).qualities[0]).toBeUndefined();
+    expect(compute(null, { sfLookup: missing, sfPending: new Set([reviewKey('sf', nodes[1], settings)]) }).qualities[0]?.label).toBe('Unreviewed');
+    expect(compute().qualities[0]?.label).not.toBe('Unreviewed');
+  });
+  it('a changed evaluation recomputes only affected user verdicts', () => {
+    const first = compute(), stats = { reviews: 0 };
+    const changed: Evaluation = { ...values.get(stablePositionKey(nodes[1]))!, score: { type: 'cp', value: -250 } };
+    const second = compute(first.memo, { stats, sfLookup: node => node.ply === 1 ? changed : lookup(node) });
+    expect(stats.reviews).toBe(1);
+    expect(second.qualities[0]).not.toEqual(first.qualities[0]);
+    expect(second.qualities[2]).toEqual(first.qualities[2]);
+  });
+  it('takebacks and branches reuse surviving histories without retaining the wrong move verdict', () => {
+    const first = compute();
+    const shorter = compute(first.memo, { timeline: buildTimeline(START_FEN, ['e2e4', 'e7e5']) });
+    expect(shorter.qualities).toHaveLength(2); expect(shorter.qualities[0]).toEqual(first.qualities[0]);
+    const branch = buildTimeline(START_FEN, ['e2e4', 'e7e5', 'f1c4']);
+    const branched = compute(first.memo, { timeline: branch });
+    expect(branched.qualities[0]).toEqual(first.qualities[0]); expect(branched.qualities[2]).toBeUndefined();
+  });
+  it('uses side-to-move from custom-start timelines', () => {
+    const custom = buildTimeline(nodes[1].fen, ['e7e5']);
+    const result = compute(null, { timeline: custom, userColor: 'black', sfLookup: node => sfFixture(node.fen) });
+    expect(result.qualities[0]).toBeDefined();
+  });
+  it('settles non-critical badges without the bot but holds engine-critical praise for it', () => {
+    const line = buildTimeline(START_FEN, ['e2e4']);
+    const [beforeNode, afterNode] = reviewNodes(line);
+    const critical = { ...sfFixture(beforeNode.fen), best_move: 'e2e4', score: { type: 'cp' as const, value: 50 },
+      lines: [{ move: 'e2e4', score: { type: 'cp' as const, value: 50 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp' as const, value: -300 }, depth: 12 }] };
+    const held = { ...sfFixture(afterNode.fen), score: { type: 'cp' as const, value: 50 } };
+    const sfLookup = (node: ReviewNode) => node.ply === 0 ? critical : held;
+    const botKey = reviewKey('maia', beforeNode, settings);
+    const absent = { move: 'd2d4', top_moves: [{ move: 'd2d4', prob: 0.4, wdl: [0.2, 0.3, 0.5] as [number, number, number] }], wdl: [0.2, 0.3, 0.5] as [number, number, number], model_used: '79m' as const, degraded: false };
+    const expected = { ...absent, top_moves: [{ move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] as [number, number, number] }, { move: 'd2d4', prob: 0.4, wdl: [0.2, 0.3, 0.5] as [number, number, number] }] };
+    const base = { gameId: 'praise', timeline: line, userColor: 'white' as const, settings, sfLookup, botLookup: (_node: ReviewNode) => undefined, sfPending: new Set<string>(), botPending: new Set<string>(), prev: null };
+    // Bot still queued: spinner, not a provisional Best.
+    expect(computePlayQualities({ ...base, botPending: new Set([botKey]) }).qualities[0]?.label).toBe('Unreviewed');
+    // Bot absent from the top 5 with a critical engine gap: Excellent.
+    expect(computePlayQualities({ ...base, botLookup: () => absent }).qualities[0]?.label).toBe('Excellent');
+    // Bot expects it: Best.
+    expect(computePlayQualities({ ...base, botLookup: () => expected }).qualities[0]?.label).toBe('Best');
+  });
+  it('grades play negatives from the objective lane, holding the spinner while pending', () => {
+    const line = buildTimeline(START_FEN, ['e2e4']);
+    const [beforeNode, afterNode] = reviewNodes(line);
+    const flat = { ...sfFixture(beforeNode.fen), best_move: 'e2e4', score: { type: 'cp' as const, value: 20 },
+      lines: [{ move: 'e2e4', score: { type: 'cp' as const, value: 20 }, depth: 12 }] };
+    const flatAfter = { ...sfFixture(afterNode.fen), score: { type: 'cp' as const, value: 20 } };
+    const sfLookup = (node: ReviewNode) => node.ply === 0 ? flat : flatAfter;
+    const grade = (top: string, wdl: [number, number, number]) =>
+      ({ move: top, top_moves: [{ move: top, prob: 0.4, wdl: [0.2, 0.3, 0.5] as [number, number, number] }], wdl, model_used: '79m' as const, degraded: false });
+    const base = { gameId: 'grading', timeline: line, userColor: 'white' as const, settings, sfLookup,
+      botLookup: (_node: ReviewNode) => undefined, sfPending: new Set<string>(), botPending: new Set<string>(), prev: null };
+    const laneNodes = reviewNodes(line);
+    const laneFor = (rows: (Parameters<typeof lanePoints>[0][number])[], pending: Set<string>): ObjectiveLane => ({
+      points: lanePoints(rows, laneNodes),
+      pending,
+      keyFor: (node: ReviewNode) => laneKey(node, () => settings),
+    });
+    // 2400s top d2d4 (exp 80); e4 leaves White at 60: Blunder despite flat SF.
+    const blunder = computePlayQualities({ ...base,
+      objective: laneFor([grade('d2d4', [0.1, 0.2, 0.7]), grade('e7e5', [0.5, 0.2, 0.3])], new Set<string>()) });
+    expect(blunder.qualities[0]?.label).toBe('Blunder');
+    // Objective lane pending: spinner, not the SF Top.
+    const waiting = computePlayQualities({ ...base,
+      objective: laneFor([undefined, grade('e7e5', [0.5, 0.2, 0.3])], new Set([laneKey(beforeNode, () => settings)])) });
+    expect(waiting.qualities[0]?.label).toBe('Unreviewed');
+  });
+});
+
+describe('wantedPlayPair', () => {
+
+  const pairNodes = (moves: string[]) => reviewNodes(buildTimeline(START_FEN, moves));
+  it('selects nothing without nodes or without a move to grade', () => {
+    expect(wantedPlayPair([], 'white')).toEqual({ sfNodes: [], botNode: null });
+    expect(wantedPlayPair(pairNodes([]), 'white')).toEqual({ sfNodes: [], botNode: null });
+    expect(wantedPlayPair(pairNodes([]), 'black')).toEqual({ sfNodes: [], botNode: null });
+  });
+  it('grades the newest move: SF pair plus the bot for a user mover', () => {
+    const nodes = pairNodes(['e2e4']);
+    expect(wantedPlayPair(nodes, 'white')).toEqual({ sfNodes: [nodes[0], nodes[1]], botNode: nodes[0] });
+  });
+  it('skips the bot fetch when the newest move is the opponent reply', () => {
+    const nodes = pairNodes(['e2e4', 'e7e5']);
+    const pair = wantedPlayPair(nodes, 'white');
+    expect(pair.sfNodes).toEqual([nodes[1], nodes[2]]);
+    expect(pair.botNode).toBeNull();
+  });
+  it('mirrors sides for black', () => {
+    const mover = pairNodes(['e2e4']);
+    expect(wantedPlayPair(mover, 'black').botNode).toBeNull();
+    const replied = pairNodes(['e2e4', 'e7e5']);
+    const pair = wantedPlayPair(replied, 'black');
+    expect(pair.sfNodes).toEqual([replied[1], replied[2]]);
+    expect(pair.botNode).toBe(replied[1]);
+  });
+});
+
+describe('play retry offline/exhaustion helpers', () => {
+  it('treats only explicit offline as offline', () => {
+    expect(isOfflineValue(false)).toBe(true);
+    expect(isOfflineValue(true)).toBe(false);
+    expect(isOfflineValue(undefined)).toBe(false);
+    expect(isOfflineValue(null)).toBe(false);
+    expect(isOfflineValue(0)).toBe(false);
+  });
+  it('reads navigator onLine guarded (no window in vitest node env)', () => {
+    expect(getNavigatorOnLine()).toBeUndefined();
+    expect(isOfflineNow()).toBe(false);
+  });
+  it('supports injectable online reads and never throws', () => {
+    expect(isOfflineNow(() => false)).toBe(true);
+    expect(isOfflineNow(() => true)).toBe(false);
+    expect(isOfflineNow(() => undefined)).toBe(false);
+    expect(isOfflineNow(() => { throw new Error('boom'); })).toBe(false);
+  });
+  it('exhausts exactly at the capped attempt budget', () => {
+    expect(hasExhaustedPlayRetries(0)).toBe(false);
+    expect(hasExhaustedPlayRetries(2)).toBe(false);
+    expect(hasExhaustedPlayRetries(3)).toBe(true);
+    expect(hasExhaustedPlayRetries(99)).toBe(true);
+  });
+  it('surfaces an error only with failures present at the cap', () => {
+    expect(playExhaustedError(false, 3)).toBeUndefined();
+    expect(playExhaustedError(true, 2)).toBeUndefined();
+    expect(playExhaustedError(true, 0)).toBeUndefined();
+    expect(playExhaustedError(true, 3)).toBe(PLAY_RETRY_EXHAUSTED_MESSAGE);
+    expect(playExhaustedError(true, 4)).toBe(PLAY_RETRY_EXHAUSTED_MESSAGE);
+  });
+});
+
+describe('unsettledReviewNodes', () => {
+  const nodes = reviewNodes(buildTimeline(START_FEN, ['e2e4', 'e7e5']));
+  const ctxFor = (settled: readonly number[], busy: readonly number[]) => ({
+    settled: (node: ReviewNode) => settled.includes(node.ply),
+    busy: (node: ReviewNode) => busy.includes(node.ply),
+  });
+  it('keeps only nodes with no row and nothing in flight', () => {
+    // ply 0 settled, ply 1 busy (pending/failure/restoring), ply 2 healable.
+    expect(unsettledReviewNodes(nodes, ctxFor([0], [1]))).toEqual([nodes[2]]);
+  });
+  it('returns nothing when everything settles or stays busy', () => {
+    expect(unsettledReviewNodes(nodes, ctxFor([0, 1, 2], []))).toEqual([]);
+    expect(unsettledReviewNodes(nodes, ctxFor([], [0, 1, 2]))).toEqual([]);
+  });
+  it('skips outcome nodes, which never fetch', () => {
+    const mated = reviewNodes(buildTimeline(START_FEN, ['f2f3', 'e7e5', 'g2g4', 'd8h4']));
+    const terminal = mated[mated.length - 1];
+    expect(terminal.outcome).not.toBeNull();
+    expect(unsettledReviewNodes(mated, { settled: () => false, busy: () => false }))
+      .not.toContain(terminal);
+  });
+});
+
+describe('settled badges only use labels the badge can render', () => {
+  const settings: ReviewSettings = { botElo: 1600, userElo: 1600, model: '79m', stockfish: defaultStockfishSettings };
+  const glyphs = new Set(Object.keys(qualityGlyphs));
+  // Engine Top (best move, no drama) and Holds (not best, nothing lost):
+  // a line with no Critical anywhere must still translate both, or the
+  // badge renders its gray box with no glyph.
+  const topBefore: Evaluation = { engine: 'Stockfish 19', search_policy: 'sf19-n100k-ms750-mpv2-t4-h128-v3', terminal: null, depth: 12, best_move: 'e2e4', score: { type: 'cp', value: 50 },
+    lines: [{ move: 'e2e4', score: { type: 'cp', value: 50 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: 30 }, depth: 12 }] };
+  const topAfter: Evaluation = { ...topBefore, lines: topBefore.lines };
+  const holdsBefore: Evaluation = { engine: 'Stockfish 19', search_policy: 'sf19-n100k-ms750-mpv2-t4-h128-v3', terminal: null, depth: 12, best_move: 'e2e4', score: { type: 'cp', value: 50 },
+    lines: [{ move: 'e2e4', score: { type: 'cp', value: 50 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: 48 }, depth: 12 }] };
+  const holdsAfter: Evaluation = { ...holdsBefore, score: { type: 'cp', value: 48 }, lines: holdsBefore.lines.map(line => ({ ...line })) };
+  it('translates Top to Best and Holds to Good in play without any Critical', () => {
+    const top = computePlayQualities({ gameId: 'glyphs', timeline: buildTimeline(START_FEN, ['e2e4']), userColor: 'white', settings,
+      sfLookup: node => node.ply === 0 ? topBefore : topAfter, botLookup: () => undefined,
+      sfPending: new Set(), botPending: new Set(), prev: null });
+    expect(top.qualities[0]?.label).toBe('Best');
+    const holds = computePlayQualities({ gameId: 'glyphs', timeline: buildTimeline(START_FEN, ['d2d4']), userColor: 'white', settings,
+      sfLookup: node => node.ply === 0 ? holdsBefore : holdsAfter, botLookup: () => undefined,
+      sfPending: new Set(), botPending: new Set(), prev: null });
+    expect(holds.qualities[0]?.label).toBe('Good');
+    for (const quality of [...top.qualities, ...holds.qualities]) {
+      if (quality && quality.label !== 'Unreviewed') expect(glyphs.has(quality.label)).toBe(true);
+    }
+  });
+  it('translates engine-only labels in review as well', () => {
+    const timeline = buildTimeline(START_FEN, ['d2d4']);
+    const nodes = reviewNodes(timeline);
+    const raw = computeReviewQualities({ line: timeline, nodes,
+      evaluations: [holdsBefore, holdsAfter], settingsForNode: () => settings, pending: new Set(), prev: null });
+    expect(raw.qualities[0]?.label).toBe('Holds');
+    const qualities = translateReviewQualities({ grades: raw.qualities, nodes,
+      botResults: [undefined, undefined], rarities: [undefined, undefined],
+      settingsForNode: () => settings, isBotPending: () => false });
+    expect(qualities[0]?.label).toBe('Good');
+    if (qualities[0] && qualities[0].label !== 'Unreviewed') expect(glyphs.has(qualities[0].label)).toBe(true);
+  });
+});

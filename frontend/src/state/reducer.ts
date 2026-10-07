@@ -1,10 +1,10 @@
 import { Chess } from 'chess.js';
-import { toGroundColor } from '../board-colors';
-import { analysisLength, lineRecord, loadLine, newId, type Analysis, type Mode, type Settings } from '../domain';
-import { sameLine, type UrlLine } from '../analysisUrl';
-import { KEYS, loadSettings, readStorage } from '../storage';
-import { mergeSync } from '../serverGames';
-import { readGameRepository } from '../gameRepository';
+import { toGroundColor } from '../board/board-colors';
+import { analysisLength, lineRecord, loadLine, newId, type Analysis, type Mode, type Settings } from '../shared/domain';
+import { sameLine, type UrlLine } from '../app/analysisUrl';
+import { KEYS, loadSettings, readStorage } from '../history/storage';
+import { mergeSync } from '../history/serverGames';
+import { readGameRepository } from '../history/gameRepository';
 import { currentPosition, commitMove, botTurn, queueRequest, transition } from './shared';
 import { initialDisplayState } from './display';
 import { newPlayDraft } from './play';

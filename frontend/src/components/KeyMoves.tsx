@@ -1,6 +1,6 @@
 import { Bot, Fish, TrendingDown, Users } from "lucide-react";
-import { candidateSan } from "../domain";
-import { formatKeyDelta, formatProb, type KeyMove } from "../keyMoves";
+import { candidateSan } from "../shared/domain";
+import { formatKeyDelta, formatProb, type KeyMove } from "../review/keyMoves";
 import { CandidateList } from "./CandidateList";
 
 // The only marker is the Stockfish fish: best/likely at 2400 already read

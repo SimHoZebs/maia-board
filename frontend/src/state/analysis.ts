@@ -1,9 +1,9 @@
 import { Chess } from 'chess.js';
-import { analysisLength, applyUci, loadLine, parseSquare, uciFromMove } from '../domain';
-import { sameLine } from '../analysisUrl';
-import { KEYS, readStorage } from '../storage';
+import { analysisLength, applyUci, loadLine, parseSquare, uciFromMove } from '../shared/domain';
+import { sameLine } from '../app/analysisUrl';
+import { KEYS, readStorage } from '../history/storage';
 import { currentPosition, commitMove, transition } from './shared';
-import { clampBotElo } from '../BoardTools';
+import { clampBotElo } from '../board/BoardTools';
 import type { Action, AnalysisSnapshot, State } from './types';
 
 // Analysis slice: the reviewed line (cursor, branches, importer inputs) plus

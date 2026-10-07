@@ -1,8 +1,8 @@
 import { Chess, type Square } from 'chess.js';
-import { toGroundColor } from '../board-colors';
-import { analysisLine, extendLine, lineRecord, oppositeColor, START_FEN, type Position } from '../domain';
-import type { Evaluation } from '../reviewMetrics';
-import { clampBotElo } from '../BoardTools';
+import { toGroundColor } from '../board/board-colors';
+import { analysisLine, extendLine, lineRecord, oppositeColor, START_FEN, type Position } from '../shared/domain';
+import type { Evaluation } from '../review/reviewMetrics';
+import { clampBotElo } from '../board/BoardTools';
 import type { State } from './types';
 
 // Cross-slice board mechanics shared by the play, analysis, and root

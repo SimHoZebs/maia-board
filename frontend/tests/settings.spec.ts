@@ -1,8 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { replay } from '../src/domain';
-import { stockfishPolicy } from '../src/stockfishSettings';
+import { replay } from '../src/shared/domain';
+import { stockfishPolicy } from '../src/eval/stockfishSettings';
 import { EvaluationFixture } from './evaluation-fixture';
 
 for (const width of [320, 360, 1440]) test(`engine settings and Play temperature at ${width}px`, async ({ page }, info) => {

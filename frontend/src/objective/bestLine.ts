@@ -9,8 +9,8 @@
 // disposes — as rows land, the line converges deeper. Missing Maia rows name
 // a frontier so the caller can fetch exactly one step ahead; the walk never
 // fetches itself, so it stays pure and testable.
-import { buildTimeline } from '../domain';
-import { isMateFor, type Score } from '../reviewMetrics';
+import { buildTimeline } from '../shared/domain';
+import { isMateFor, type Score } from '../review/reviewMetrics';
 
 // Top move at the position reached by `moves` (from the walk's initialFen):
 // - { kind: 'top', uci } — settled row names the objective top.

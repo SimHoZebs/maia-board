@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { START_FEN } from '../domain';
+import { START_FEN } from '../shared/domain';
 import { walkObjectiveLine, type WalkScore, type WalkTop } from './bestLine';
 
 const top = (uci: string): WalkTop => ({ kind: 'top', uci });

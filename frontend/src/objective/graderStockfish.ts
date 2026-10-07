@@ -3,9 +3,9 @@ import {
   type Engine,
   type ReviewNode,
   type ReviewSettings,
-} from '../evaluationStore';
-import type { ReviewCoordinator, SettingsInput } from '../reviewCoordinator';
-import { whiteWin, type Evaluation, type ObjectiveCandidates, type ObjectivePoint } from '../reviewMetrics';
+} from '../eval/evaluationStore';
+import type { ReviewCoordinator, SettingsInput } from '../review/reviewCoordinator';
+import { whiteWin, type Evaluation, type ObjectiveCandidates, type ObjectivePoint } from '../review/reviewMetrics';
 
 // Grader role, dormant alternate implementation: pure-engine behavior.
 // Same role surface as ./grader name-for-name; nothing imports this module

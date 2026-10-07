@@ -1,10 +1,10 @@
 import type { Square } from 'chess.js';
-import type { SideColor, MoveRequest, MoveResponse } from '../api';
-import type { Analysis, BoardOrientationSetting, Insight, Mode, Settings, StoredGame } from '../domain';
-import type { OutboxOp } from '../serverGames';
-import type { StockfishSettings } from '../stockfishSettings';
-import type { ArrowBasis, ArrowSettings, ArrowSettingsKey, ArrowStyle } from '../arrowSettings';
-import type { BadgeLoading } from '../ReviewCharts';
+import type { SideColor, MoveRequest, MoveResponse } from '../eval/api';
+import type { Analysis, BoardOrientationSetting, Insight, Mode, Settings, StoredGame } from '../shared/domain';
+import type { OutboxOp } from '../history/serverGames';
+import type { StockfishSettings } from '../eval/stockfishSettings';
+import type { ArrowBasis, ArrowSettings, ArrowSettingsKey, ArrowStyle } from '../settings/arrowSettings';
+import type { BadgeLoading } from '../review/ReviewCharts';
 
 type Request = { id: number; mode: 'play'; payload: MoveRequest };
 export type Draft = Pick<Settings, 'botElo' | 'model'> & { userColor: 'white' | 'black' | 'random' };

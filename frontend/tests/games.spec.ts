@@ -1,8 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { KEYS } from '../src/storage';
-import { defaultSettings } from '../src/domain';
+import { KEYS } from '../src/history/storage';
+import { defaultSettings } from '../src/shared/domain';
 
 type Row = {
   id: string; created_at: string; updated_at: string; user_color: string;

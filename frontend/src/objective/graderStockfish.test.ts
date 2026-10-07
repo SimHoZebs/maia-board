@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { Chess } from 'chess.js';
-import { SEARCH_POLICY, reviewMove, whiteWin, type Evaluation } from '../reviewMetrics';
+import { SEARCH_POLICY, reviewMove, whiteWin, type Evaluation } from '../review/reviewMetrics';
 import { candidatesFor, fixedElo, sfPoint } from './graderStockfish';
 
 const evaluation = (cp: number, best = 'e2e4'): Evaluation => ({

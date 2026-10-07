@@ -1,5 +1,5 @@
-import type { MoveResponse } from '../api';
-import type { ObjectivePoint } from '../reviewMetrics';
+import type { MoveResponse } from '../eval/api';
+import type { ObjectivePoint } from '../review/reviewMetrics';
 
 // Winrate math + candidate-display formatting for bot-model rows. Serves
 // the candidate-display responsibility (winrate columns in the panel),

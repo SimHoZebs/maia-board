@@ -1,9 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { replay } from '../src/domain';
+import { replay } from '../src/shared/domain';
 import { EvaluationFixture } from './evaluation-fixture';
-import { defaultStockfishSettings, stockfishPolicy } from '../src/stockfishSettings';
+import { defaultStockfishSettings, stockfishPolicy } from '../src/eval/stockfishSettings';
 const SEARCH_POLICY = stockfishPolicy(defaultStockfishSettings);
 
 // History-game load: saved evaluations arrive over the network (prime) with

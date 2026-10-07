@@ -2,11 +2,11 @@ import { test, expect, type Page, type Route } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Chess } from 'chess.js';
-import { KEYS } from '../src/storage';
-import { defaultSettings, replay, type StoredGame } from '../src/domain';
-import type { MoveRequest } from '../src/api';
+import { KEYS } from '../src/history/storage';
+import { defaultSettings, replay, type StoredGame } from '../src/shared/domain';
+import type { MoveRequest } from '../src/eval/api';
 import { EvaluationFixture } from './evaluation-fixture';
-import { defaultStockfishSettings, stockfishPolicy } from '../src/stockfishSettings';
+import { defaultStockfishSettings, stockfishPolicy } from '../src/eval/stockfishSettings';
 const SEARCH_POLICY = stockfishPolicy(defaultStockfishSettings);
 
 const record = (moves: string[], color: 'white' | 'black' = 'white', id = 'fixture'): StoredGame => ({ id, createdAt: '2026-09-10T00:00:00Z', moves, settings: { ...defaultSettings, userColor: color } });

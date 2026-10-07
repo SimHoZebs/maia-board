@@ -2,8 +2,8 @@ import { test, expect, type Page, type Route } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Chess } from 'chess.js';
-import { KEYS } from '../src/storage';
-import { stockfishPolicy } from '../src/stockfishSettings';
+import { KEYS } from '../src/history/storage';
+import { stockfishPolicy } from '../src/eval/stockfishSettings';
 
 // Play grades through the foreground lanes (single /evaluate per new
 // endpoint, single /move/analysis for the mover) plus the read-only bulk prime. The
