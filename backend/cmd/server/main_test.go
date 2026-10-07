@@ -73,6 +73,13 @@ func TestWorkerCommandDeviceArgs(t *testing.T) {
 	if !strings.Contains(cuda, "--device cuda:0") || strings.Contains(cuda, "no-use-amp") {
 		t.Fatalf("cuda command must select the GPU with AMP on, got %q", cuda)
 	}
+	// Baked-in weights + offline runtime: every device variant must resolve
+	// checkpoints from the image cache without touching the Hub.
+	for _, device := range []string{"auto", "cpu", "cuda:0"} {
+		if got := join(workerCommand("python3", "/app/maia3_worker.py", "79m", device)); !strings.Contains(got, "--local-files-only") {
+			t.Fatalf("device %q command must run offline from baked-in weights, got %q", device, got)
+		}
+	}
 	for _, device := range []string{"auto", "cpu", "cuda", "cuda:0"} {
 		if !validDevice(device) {
 			t.Fatalf("validDevice(%q) = false, want true", device)

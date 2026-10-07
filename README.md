@@ -121,9 +121,10 @@ docker compose up --build
 ```
 
 Open `http://localhost:8080`. The image bundles the static frontend, Go server,
-Python workers, and Stockfish 19. The [`compose.yaml`](compose.yaml) persists
-games in `maia-board-data` and Maia weights in `maia-board-models`; first start
-downloads the weights (under 500 MiB), so expect a slow first game.
+Python workers, Stockfish 19, and both Maia weights (79M + 5M, under 500 MiB),
+so starts never touch Hugging Face at runtime. The [`compose.yaml`](compose.yaml) persists
+games in `maia-board-data`; `maia-board-models` seeds from the image on first use
+and keeps existing caches working offline unchanged.
 
 Hardware: NVIDIA (driver R560+, container toolkit, uncomment the `deploy`
 block for GPU access), AMD, Intel, or no GPU all work — Maia falls back to CPU

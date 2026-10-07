@@ -25,6 +25,10 @@ RUN curl -fL --retry 3 https://github.com/official-stockfish/Stockfish/archive/r
 FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6
 
 ARG MAIA3_REF=1e13597c42d4858b7cfd7cfdae01e297263364b2
+# Optional Hugging Face token for the build-time weight download only.
+# The public Maia3 repos do not require it, but authenticated fetches get
+# higher rate limits. Never promoted to ENV, so it never lands in the image.
+ARG HF_TOKEN=""
 # PyTorch wheel index. The default CUDA build runs on GPU hosts (needs the
 # host NVIDIA driver + container toolkit, see backend/README.md) and still
 # falls back to CPU where no GPU is visible; override with --build-arg
@@ -32,8 +36,12 @@ ARG MAIA3_REF=1e13597c42d4858b7cfd7cfdae01e297263364b2
 # image. Keep the index's CUDA generation at or below what the host driver
 # supports (cu126 needs R560+).
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu126
+# HF_HUB_OFFLINE=1 makes the runtime immune to Hugging Face outages: workers
+# start with --local-files-only and only read the baked-in cache below.
+# The pre-download RUN step overrides it back to 0 for that layer only.
 ENV HF_HOME=/models/huggingface \
     HF_HUB_CACHE=/models/huggingface/hub \
+    HF_HUB_OFFLINE=1 \
     PYTHONUNBUFFERED=1
 
 COPY backend/workers/requirements.txt /tmp/requirements.txt
@@ -43,6 +51,15 @@ RUN python -m pip install --no-cache-dir \
     && python -m pip install --no-cache-dir -r /tmp/requirements.txt \
     && python -m pip install --no-cache-dir --no-deps \
       "https://github.com/CSSLab/maia3/archive/${MAIA3_REF}.tar.gz#sha256=774c363dd2f2d10d6996ef5ef0bdba473ae769a79e442132bd82d0e999b7b488"
+# Bake both Maia3 checkpoints into the image so containers never download
+# weights at runtime. Named volumes created from this image are seeded with
+# these files on first use; existing volumes already holding the same
+# checkpoints keep working offline unchanged.
+RUN if [ -n "$HF_TOKEN" ]; then \
+      HF_HUB_OFFLINE=0 maia3-cache --model maia3-79m --model maia3-5m --hf-token "$HF_TOKEN"; \
+    else \
+      HF_HUB_OFFLINE=0 maia3-cache --model maia3-79m --model maia3-5m; \
+    fi
 
 WORKDIR /app
 COPY --from=build /out/maia-board /app/maia-board

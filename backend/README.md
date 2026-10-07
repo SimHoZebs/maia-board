@@ -296,8 +296,15 @@ mock tests do not measure model quality or cold-loading performance.
 | `STOCKFISH_BINARY` | `/app/stockfish` | Native engine |
 
 The [combined Dockerfile](Dockerfile) pins the Torch wheel index and Maia3 revision
-`1e13597c42d4858b7cfd7cfdae01e297263364b2`. Its `/models/huggingface` cache holds
-downloaded model files. Build from the repository root as described in the
+`1e13597c42d4858b7cfd7cfdae01e297263364b2`. It bakes both Maia3 checkpoints
+(79M + 5M) into `/models/huggingface` at build time via `maia3-cache`
+(pass `--build-arg HF_TOKEN=...` for authenticated fetches with higher rate
+limits; the arg never lands in the image). At runtime the server passes
+`--local-files-only` to every Maia worker and sets `HF_HUB_OFFLINE=1`, so
+restarts and idle-timeout reloads only read the baked-in cache and a Hugging
+Face outage cannot take the app down. Named volumes created from the image are
+seeded with those files on first use; pre-existing volumes holding the same
+checkpoints keep working offline unchanged. Build from the repository root as described in the
 [root README](../README.md#combined-container-and-hosting).
 
 ## GPU inference

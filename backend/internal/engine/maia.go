@@ -380,7 +380,11 @@ func (w *Worker) startLocked(ctx context.Context) error {
 		return fmt.Errorf("%w: empty command", ErrProtocol)
 	}
 	cmd := exec.Command(w.command[0], w.command[1:]...)
-	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1")
+	// HF_HUB_OFFLINE=1 is belt-and-suspenders next to --local-files-only:
+	// any Hugging Face Hub call inside the worker fails fast from cache
+	// instead of hanging on network, including local `go run` dev setups
+	// that lack the Dockerfile ENV.
+	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1", "HF_HUB_OFFLINE=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stderr = ipc.NewWorkerDiagnostics(w.name)
 	cmd.WaitDelay = time.Second

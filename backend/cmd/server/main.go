@@ -102,13 +102,17 @@ func workerCommand(python, workerPath, model, device string) []string {
 	// GPU, else cpu) with AMP on; explicit cpu keeps today's deterministic
 	// flags. AMP only engages on cuda (upstream autocast guard), so omitting
 	// --no-use-amp on the cuda path is what unlocks mixed precision.
+	// --local-files-only pairs with the checkpoints baked into the image
+	// (see backend/Dockerfile): workers never touch the Hugging Face Hub at
+	// runtime, so a Hub outage cannot block restarts or idle-timeout reloads.
+	// A missing cache fails fast with a clear error instead of hanging.
 	if device != "auto" {
 		args = append(args, "--device", device)
 		if device == "cpu" {
 			args = append(args, "--no-use-amp")
 		}
 	}
-	return append(args, "--multipv", "5", "--temperature", "0", "--use-uci-history")
+	return append(args, "--multipv", "5", "--temperature", "0", "--use-uci-history", "--local-files-only")
 }
 
 // validDevice gates MAIA3_DEVICE: auto (upstream default), cpu, or

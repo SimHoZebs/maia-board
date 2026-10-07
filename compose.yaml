@@ -1,7 +1,9 @@
 # Local self-hosting: `docker compose up --build`, then open http://localhost:8080.
 # Works with NVIDIA, AMD, Intel, or no GPU: Maia falls back to CPU automatically
-# when torch sees no CUDA device. First start downloads the Maia weights
-# (under 500 MiB) into the models volume, so expect a slow first game.
+# when torch sees no CUDA device. Maia weights (79M + 5M, under 500 MiB) are
+# baked into the image, so starts never download from Hugging Face at runtime.
+# The models volume seeds from the image on first use and keeps existing
+# caches working offline unchanged.
 services:
   maia-board:
     build:
