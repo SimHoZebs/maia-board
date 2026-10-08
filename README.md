@@ -27,34 +27,23 @@ position/line/posId/reviewKey, eval stages, restore, lanes, and limits live in
 
 ### Reading analysis
 
-Current-position candidates answer “what could be played from this board?”
+Current-position candidates answer "what could be played from this board?"
 Retrospective move grades compare evaluations before and after a played move.
-A starting position can have candidates without having a previous move to grade.
-An explored continuation has its own positions; candidate previews and actions
-belong to the board position that produced them.
+A starting position has candidates but no previous move to grade; an explored
+continuation owns its positions, and candidate previews belong to the board
+position that produced them.
 
-Maia reports model move probabilities conditioned on rating and position. These
-are predictions, not measured percentages of people who play a move. Its displayed
-top candidates need not sum to 100%. The win/draw/loss estimate describes the first
-candidate after that move, expressed for the choosing side by the API. A response's
-`model_used` and `degraded` fields identify a 79M-to-5M fallback, which the
-interface labels with the model actually used.
+Maia `top_moves` carry model policy probabilities per rating; they need not
+sum to 100%. WDL describes the first candidate, choosing-side perspective.
+`model_used` and `degraded` flag 79M-to-5M fallback. Scores show Maia 2400
+White winning chances, not centipawns; mates and material notes come from
+Stockfish underneath. Grades derive from Maia 2400 expectation deltas and are
+estimates, not guarantees.
 
-Scores, the balance bar, and graphs show Maia 2400 White winning chances
-from human-like play, not centipawns. Move grades compare Maia 2400
-expectations before and after the played move; the top Maia 2400 choice is
-the objective best. Forced mates and the concrete "this line wins material"
-notes still come from Stockfish running underneath, as does praise for
-finding the engine's only good move. Grades are project-specific estimates,
-rather than guarantees about a move's quality.
-
-Successful evaluations can be reused from browser memory and the server's SQLite
-cache. Reuse depends on position history, engine identity, ratings/model for Maia,
-and search settings for Stockfish. Restoring cached analysis and generating missing
-analysis are separate operations. Sampled Maia play moves and degraded fallback
-results do not populate the deterministic server cache. Saved games are independent
-of evaluation-cache eviction. Server-derived versioned cache identities are
-independent of saved games and pending browser writes.
+Deterministic evaluations reuse from browser memory and the server SQLite
+cache, keyed on position history plus engine identity, ratings/model for Maia,
+and search settings for Stockfish. Sampled play moves and degraded fallbacks
+bypass the server cache. Saved games are independent of cache eviction.
 See [backend storage and cache](backend/README.md#storage-and-cache).
 
 Games can be saved with up to 4096 plies within a 64 KiB request. Engine analysis
@@ -133,10 +122,12 @@ commented build arg away; see the comments in `compose.yaml`. Stockfish always
 runs on CPU. Builds assume x86-64 Linux; ARM hosts are not covered. No ROCm
 build is provided.
 
-Managed hosting lives in the separate `home-server` repository. It serves
-`https://chess.home.simho.xyz` on the LAN through Traefik; tailnet access uses the
-service-directory link described in [`deployment/README.md`](deployment/README.md).
-Compose and Komodo configuration belong to that repository.
+Managed hosting lives in the separate `home-server` repository
+(`maia-board/compose.yaml`, `maia-board/maia-board-komodo.toml`, and the
+`maia-board` entry in `services.toml`). It serves
+`https://chess.home.simho.xyz` on the LAN through Traefik; tailnet clients use
+the service-directory Tailnet port link (`http://debian-server.<tailnet>:18080`,
+bound to the tailnet interface only).
 
 ## Source ownership
 
@@ -157,12 +148,10 @@ Compose and Komodo configuration belong to that repository.
 | `backend/workers/stockfish_worker.py` | History-aware position validation and native Stockfish search |
 | `backend/workers/openings_lookup.py` | One-shot ECO opening-book lookup |
 | `backend/Dockerfile` | Combined build, pinned engine inputs and runtime dependencies |
-| `deployment/README.md` | Pointer to separately owned hosting configuration |
 
 The [frontend architecture](frontend/README.md#state-boundaries) describes timeline,
 session, evaluation, and persistence ownership. The [backend README](backend/README.md)
-defines the HTTP and worker boundaries. [`PLAN.md`](PLAN.md) retains the original
-product decisions for historical context.
+defines the HTTP and worker boundaries.
 
 Upstream dependencies: [Maia3](https://github.com/CSSLab/maia3/tree/1e13597c42d4858b7cfd7cfdae01e297263364b2),
 [Stockfish](https://github.com/official-stockfish/Stockfish/tree/sf_19),
