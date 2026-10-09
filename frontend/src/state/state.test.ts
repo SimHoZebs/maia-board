@@ -154,9 +154,7 @@ describe('task lifecycles', () => {
     let state = reducer(started(), { type: 'mode', mode: 'analysis' });
     state = reducer(state, { type: 'inputs', inputs: { pgn: '1. e4 e5 2. Nf3' } });
     state = reducer(state, { type: 'load' });
-    state = reducer(state, { type: 'preview', uci: 'g8f6' });
     state = reducer(state, { type: 'explore', uci: 'g8f6' });
-    expect(state.preview).toBeNull();
     expect(state.analysis.branchFromPly).toBe(3);
     expect(analysisLine(state.analysis).moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'g8f6']);
     expect(state.analysis.index).toBe(4);
@@ -175,7 +173,6 @@ describe('task lifecycles', () => {
     expect(state.analysis.branchMoves).toEqual(['b8c6', 'f1c4']);
     expect(state.analysis.index).toBe(4);
     expect(analysisLine(state.analysis).moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'b8c6']);
-    expect(state.preview).toBeNull();
     // Stepping forward enters the rest of the spawned line.
     state = reducer(state, { type: 'view', ply: 5 });
     expect(analysisLine(state.analysis).moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4']);

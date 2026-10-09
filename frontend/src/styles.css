@@ -193,7 +193,7 @@ summary { cursor: pointer; min-height: 44px; padding: 12px 0; color: var(--muted
 .key-roles { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .key-role { display: inline-flex; align-items: center; font-size: 10px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
 .key-role svg { display: block; }
-.key-role--sf-best { color: #d6b85c; border-color: #6b5f2e; }
+.key-role--sf-best { color: #facc15; border-color: #6b5f2e; }
 .key-role--best-2400 { color: var(--accent); border-color: #4a5d3a; }
 .key-role--likely-2400 { color: #9db8d6; border-color: #3d4f63; }
 .key-role--played { color: #eee; border-color: #899d6b; }

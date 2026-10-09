@@ -15,7 +15,8 @@ describe('arrow settings', () => {
       actual: { color: '#ffffff', width: 12 },
       bot: { color: '#ef4444', width: 8 },
       objective: { color: '#3b82f6', width: 4 },
-      candidate: { color: '#d6b85c', width: 2 },
+      stockfish: { color: '#facc15', width: 6 },
+      next: { color: '#92400e', width: 10 },
     });
     expect(defaultArrowBasis).toBe('past');
     expect(normalizeArrowBasis('past')).toBe('past');
@@ -26,7 +27,8 @@ describe('arrow settings', () => {
     expect(reviewBrushes.actual).toMatchObject({ color: '#ffffff', opacity: 0.45, lineWidth: 12 });
     expect(reviewBrushes.bot).toMatchObject({ color: '#ef4444', opacity: 0.45, lineWidth: 8 });
     expect(reviewBrushes.objective).toMatchObject({ color: '#3b82f6', opacity: 0.45, lineWidth: 4 });
-    expect(reviewBrushes.candidate).toMatchObject({ color: '#d6b85c', opacity: 0.65, lineWidth: 2 });
+    expect(reviewBrushes.stockfish).toMatchObject({ color: '#facc15', opacity: 0.45, lineWidth: 6 });
+    expect(reviewBrushes.next).toMatchObject({ color: '#92400e', opacity: 0.45, lineWidth: 10 });
   });
   it('normalizes junk storage to defaults', () => {
     expect(normalizeArrowSettings(null)).toBe(defaultArrowSettings);
@@ -35,10 +37,20 @@ describe('arrow settings', () => {
     expect(normalizeArrowSettings({ actual: { color: 'red', width: 999 } })).toBe(defaultArrowSettings);
     expect(normalizeArrowSettings({ bot: { color: '#abc', width: 8 } }).bot).toBe(defaultArrowSettings.bot);
     expect(normalizeArrowSettings({ objective: { color: '#3b82f6', width: 12.5 } }).objective).toBe(defaultArrowSettings.objective);
-    expect(normalizeArrowSettings({ candidate: { color: 'junk', width: 0 } }).candidate).toBe(defaultArrowSettings.candidate);
+    expect(normalizeArrowSettings({ next: { color: 'junk', width: 0 } }).next).toBe(defaultArrowSettings.next);
   });
   it('migrates the legacy stockfish key to the objective slot', () => {
     expect(normalizeArrowSettings({ stockfish: { color: '#00ff00', width: 64 } }).objective).toEqual({ color: '#00ff00', width: 64 });
+  });
+  it('keeps a legacy lone stockfish value off the Stockfish-best arrow', () => {
+    // Old storage keyed the blue objective arrow 'stockfish' with no
+    // objective sibling; that value migrates to objective only, leaving the
+    // Stockfish-best arrow at its default until the user sets it.
+    const migrated = normalizeArrowSettings({ stockfish: { color: '#00ff00', width: 64 } });
+    expect(migrated.stockfish).toBe(defaultArrowSettings.stockfish);
+    const current = normalizeArrowSettings({ objective: { color: '#3b82f6', width: 4 }, stockfish: { color: '#00ff00', width: 64 } });
+    expect(current.stockfish).toEqual({ color: '#00ff00', width: 64 });
+    expect(current.objective).toBe(defaultArrowSettings.objective);
   });
   it('migrates the legacy maia key to the bot slot, preferring the new key', () => {
     expect(normalizeArrowSettings({ maia: { color: '#00ff00', width: 64 } }).bot).toEqual({ color: '#00ff00', width: 64 });
@@ -55,19 +67,19 @@ describe('arrow settings', () => {
   it('builds brushes from settings with fixed opacities', () => {
     const brushes = buildReviewBrushes(normalizeArrowSettings({ actual: { color: '#00ff00', width: 64 } }));
     expect(brushes.actual).toMatchObject({ key: 'actual', color: '#00ff00', opacity: 0.45, lineWidth: 64 });
-    expect(brushes.candidate.opacity).toBe(0.65);
+    expect(brushes.next.opacity).toBe(0.45);
     expect(brushes.green.lineWidth).toBe(10);
   });
   it('embeds the arrow style in the shape hash so live edits repaint', () => {
-    const moves = { actual: 'e2e4', bot: 'e2e4', objective: 'e2e4' } as const;
-    const toggles = { actual: true, bot: true, objective: true } as const;
-    const base = reviewShapes({ ...moves }, { ...toggles }, null, null, defaultArrowSettings);
-    const custom = reviewShapes({ ...moves }, { ...toggles }, null, null, normalizeArrowSettings({ actual: { color: '#00ff00', width: 64 } }));
-    expect(base.map(shape => shape.brush)).toEqual(['actual', 'bot', 'objective']);
-    expect(custom.map(shape => shape.brush)).toEqual(['actual', 'bot', 'objective']);
+    const moves = { actual: 'e2e4', next: 'd2d4', bot: 'e2e4', objective: 'e2e4', stockfish: 'e2e4' } as const;
+    const toggles = { actual: true, next: true, bot: true, objective: true, stockfish: true } as const;
+    const base = reviewShapes({ ...moves }, { ...toggles }, null, defaultArrowSettings);
+    const custom = reviewShapes({ ...moves }, { ...toggles }, null, normalizeArrowSettings({ actual: { color: '#00ff00', width: 64 } }));
+    expect(base.map(shape => shape.brush)).toEqual(['actual', 'next', 'bot', 'stockfish', 'objective']);
+    expect(custom.map(shape => shape.brush)).toEqual(['actual', 'next', 'bot', 'stockfish', 'objective']);
     expect(JSON.stringify(base)).not.toBe(JSON.stringify(custom));
     // Back-compat: omitting settings keeps the legacy signature working.
-    expect(reviewShapes({ ...moves }, { ...toggles }).map(shape => shape.brush)).toEqual(['actual', 'bot', 'objective']);
+    expect(reviewShapes({ ...moves }, { ...toggles }).map(shape => shape.brush)).toEqual(['actual', 'next', 'bot', 'stockfish', 'objective']);
   });
   it('merges single-source edits, resets, and restores persisted arrows', () => {
     expect(initialState().arrows).toBe(defaultArrowSettings);

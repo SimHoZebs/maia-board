@@ -59,7 +59,8 @@ export function SettingsPage({ state, dispatch }: Props) {
     { key: 'actual', label: 'Game move' },
     { key: 'bot', label: 'Bot at your rating' },
     { key: 'objective', label: 'Bot 2400 reference' },
-    { key: 'candidate', label: 'Lookahead' },
+    { key: 'stockfish', label: 'Stockfish' },
+    { key: 'next', label: 'Next best move' },
   ];
   return <section className="engine-settings panel" aria-labelledby="settings-title">
     <p className="settings-eyebrow">BOARD</p>

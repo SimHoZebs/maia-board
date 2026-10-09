@@ -53,7 +53,7 @@ export function initialState(mode: Mode = 'play', urlLine?: UrlLine, repository 
     started: !!restored, setup: restored ? null : newPlayDraft(settings), viewedPly: null,
     saved: repository.games, analysis, analysisSettings: { botElo: settings.botElo, model: settings.model, userColor: settings.userColor }, analysisLoaded, importing: !analysisLoaded, analysisSourceId,
     ...initialDisplayState(),
-    inputs, flipped: false, preview: null, promotion: null, insight: null, error: '', request: null, revision: 0 };
+    inputs, flipped: false, promotion: null, insight: null, error: '', request: null, revision: 0 };
   return mode === 'play' && botTurn(state) ? queueRequest(state) : state;
 }
 

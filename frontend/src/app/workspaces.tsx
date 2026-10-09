@@ -231,7 +231,7 @@ export function PlayWorkspace({ state, dispatch }: Props) {
     else if (ready && game.isCheckmate()) loser = toGroundColor(game.turn());
   } catch { loser = null; }
   const loserSquare = loser ? kingSquare(position.fen, loser) : undefined;
-  const playShapes = loserSquare ? reviewShapes({ actual: null, bot: null, objective: null }, { actual: true, bot: true, objective: true }, null, { square: loserSquare, glyph: '⚑' }) : [];
+  const playShapes = loserSquare ? reviewShapes({ actual: null, bot: null, objective: null, stockfish: null, next: null }, { actual: true, bot: true, objective: true, stockfish: true, next: true }, { square: loserSquare, glyph: '⚑' }) : [];
   const mobileBar = useMobileBar();
   const tools = <><IconButton id="flip-board" label="Flip board" onClick={() => dispatch({ type: 'flip' })}><RotateCw size={16} aria-hidden="true" /></IconButton><IconButton id="takeback" label="Takeback" disabled={!state.play.moves.length || !!resigned} onClick={() => dispatch({ type: 'takeback' })}><Undo2 size={16} aria-hidden="true" /></IconButton>{!over && <IconButton id="resign" label="Resign" onClick={() => setConfirmResign(true)}><Flag size={16} aria-hidden="true" /></IconButton>}{mobileBar && ready && <IconButton id="new-game" label="New game" onClick={() => dispatch({ type: 'setup' })}><Plus size={18} aria-hidden="true" /></IconButton>}</>;
   return <>
@@ -283,12 +283,14 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   // Arrow basis: 'next' projects forward from the viewed position (after x,
   // before y); 'past' shows the options for the move leading into it (from
   // the before-position of x). White draws the played move; red is the
-  // display-Elo bot top choice; blue is the objective (bot 2400) top.
+  // display-Elo bot top choice; blue is the objective (bot 2400) top; yellow
+  // is the Stockfish best move. Brown always projects forward from the
+  // viewed position (the best move to play next), in either basis.
   const pastArrows = state.arrowBasis === 'past';
   const before = ply - 1;
   const arrowMoves = pastArrows
-    ? { actual: ply > 0 ? review.nodes[ply]?.uci ?? undefined : undefined, bot: ply > 0 ? review.bot?.top_moves[0]?.move : undefined, objective: ply > 0 ? review.objective[before]?.top ?? undefined : undefined }
-    : { actual: review.nodes[ply + 1]?.uci ?? undefined, bot: review.botCurrent?.top_moves[0]?.move, objective: review.objective[ply]?.top ?? undefined };
+    ? { actual: ply > 0 ? review.nodes[ply]?.uci ?? undefined : undefined, bot: ply > 0 ? review.bot?.top_moves[0]?.move : undefined, objective: ply > 0 ? review.objective[before]?.top ?? undefined : undefined, stockfish: ply > 0 ? review.focus?.best_move ?? undefined : undefined, next: review.current?.best_move ?? undefined }
+    : { actual: review.nodes[ply + 1]?.uci ?? undefined, bot: review.botCurrent?.top_moves[0]?.move, objective: review.objective[ply]?.top ?? undefined, stockfish: review.current?.best_move ?? undefined, next: review.current?.best_move ?? undefined };
   const playedQuality = ready && ply > 0 ? review.qualities[ply - 1] : undefined;
   const playedUci = ready && ply > 0 ? review.nodes[ply]?.uci : undefined;
   const badgeSquare = playedUci === undefined ? undefined : parseKey(playedUci.slice(2, 4));
@@ -302,7 +304,7 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   const matedSquare = matedLoser ? kingSquare(position.fen, matedLoser) : undefined;
   const flagBadge: SquareBadge | null = matedSquare ? { square: matedSquare, glyph: '⚑' } : null;
   const badges = flagBadge && badge ? [flagBadge, badge] : flagBadge ?? badge;
-  const shapes = ready ? reviewShapes(arrowMoves, { actual: true, bot: true, objective: true }, state.preview, badges, state.arrows) : [];
+  const shapes = ready ? reviewShapes(arrowMoves, { actual: true, bot: true, objective: true, stockfish: true, next: true }, badges, state.arrows) : [];
   const brushes = useMemo(() => buildReviewBrushes(state.arrows), [state.arrows]);
   const boardResetKey = JSON.stringify(['analysis', state.play.id, state.play.moves.length, state.analysis.index, state.analysisSourceId, orientation]);
   const insightResetKey = JSON.stringify([state.analysis.initialFen, state.analysis.moves, state.analysisSourceId]);

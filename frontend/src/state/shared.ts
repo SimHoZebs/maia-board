@@ -49,7 +49,7 @@ export function queueRequest(state: State): State {
   return { ...state, error: '', request };
 }
 export function transition(state: State, changes: Partial<State>, resumePlay = true): State {
-  const next = { ...state, ...changes, revision: state.revision + 1, request: null, promotion: null, preview: null, insight: null, error: '' };
+  const next = { ...state, ...changes, revision: state.revision + 1, request: null, promotion: null, insight: null, error: '' };
   return resumePlay && next.mode === 'play' && botTurn(next) ? queueRequest(next) : next;
 }
 export function withPlay(state: State, play: State['play']): State {

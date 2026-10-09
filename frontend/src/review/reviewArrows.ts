@@ -3,32 +3,26 @@ import type { Key } from '@lichess-org/chessground/types';
 import { parseKey } from '../shared/domain';
 import { buildReviewBrushes, defaultArrowSettings, type ArrowSettings } from '../settings/arrowSettings';
 export const reviewBrushes = buildReviewBrushes(defaultArrowSettings);
-export type ArrowSource = 'actual' | 'bot' | 'objective';
+export type ArrowSource = 'actual' | 'bot' | 'objective' | 'stockfish' | 'next';
 export type ArrowToggles = Record<ArrowSource, boolean>;
 export type SquareBadge = { square: Key; glyph: '💀' | '??' | '?' | '⚑' };
 const validMove = (move: unknown): move is string => typeof move === 'string' && /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(move);
 const validSquare = (square: unknown): square is Key => typeof square === 'string' && /^[a-h][1-8]$/.test(square);
-// Single owner for preview→candidate synthesis. reviewShapes uses it for the
-// analysis overlay; ChessBoard uses it for the standalone preview fallback so
-// both agree on validity and brush. Invalid previews yield no shape.
-export function candidatePreviewShape(preview: string | null | undefined): DrawShape[] {
-  if (!validMove(preview)) return [];
-  const orig = parseKey(preview.slice(0, 2));
-  const dest = parseKey(preview.slice(2, 4));
-  if (orig === undefined || dest === undefined) return [];
-  return [{ orig, dest, brush: 'candidate' }];
-}
-export function reviewShapes(moves: Record<ArrowSource, string | null | undefined>, toggles: ArrowToggles, preview?: string | null, badge?: SquareBadge | SquareBadge[] | null, arrows?: ArrowSettings): DrawShape[] {
-  const entries: { move: string; brush: string }[] = (['actual', 'bot', 'objective'] as const).filter(source => toggles[source] && validMove(moves[source])).map(source => ({ move: moves[source]!, brush: source }));
-  if (validMove(preview) && !entries.some(entry => entry.move === preview)) entries.push({ move: preview, brush: 'candidate' });
+export function reviewShapes(moves: Record<ArrowSource, string | null | undefined>, toggles: ArrowToggles, badge?: SquareBadge | SquareBadge[] | null, arrows?: ArrowSettings): DrawShape[] {
+  // Lane arrows draw widest-first (actual 12, next 10, bot 8, stockfish 6,
+  // objective 4) so coincident arrows layer with the thinnest on top. The
+  // forward next-best arrow is skipped when it coincides with the Stockfish
+  // arrow (same source and position in next basis): a duplicate shaft.
+  const entries: { move: string; brush: string }[] = (['actual', 'next', 'bot', 'stockfish', 'objective'] as const).filter(source => toggles[source] && validMove(moves[source])).map(source => ({ move: moves[source]!, brush: source }));
+  const ranked = entries.filter(entry => entry.brush !== 'next' || !entries.some(other => other.brush === 'stockfish' && other.move === entry.move));
   // Changing the complete set gives all shapes a fresh hash. Chessground appends
   // new SVG groups; a shared hash suffix preserves widest-first layering after toggles.
   // The arrow style signature forces the same fresh hash when colors/widths
   // change, so a live brushes update repaints instead of hitting the
   // prevSvgHash early-return (brush color/width are not part of the hash).
-  const style = arrows ? (['actual', 'bot', 'objective', 'candidate'] as const).map(key => `${key}=${arrows[key].color},${arrows[key].width}`).join('|') : '';
-  const signature = `${entries.map(entry => `${entry.brush}:${entry.move}`).join('|')}#${style}`;
-  const shapes: DrawShape[] = entries.map(({ move, brush }) => {
+  const style = arrows ? (['actual', 'next', 'bot', 'stockfish', 'objective'] as const).map(key => `${key}=${arrows[key].color},${arrows[key].width}`).join('|') : '';
+  const signature = `${ranked.map(entry => `${entry.brush}:${entry.move}`).join('|')}#${style}`;
+  const shapes: DrawShape[] = ranked.map(({ move, brush }) => {
     const orig = parseKey(move.slice(0, 2));
     const dest = parseKey(move.slice(2, 4));
     if (orig === undefined || dest === undefined) throw new Error(`Invalid review arrow move: ${move}`);

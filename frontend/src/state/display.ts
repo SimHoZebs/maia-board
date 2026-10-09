@@ -27,7 +27,7 @@ export function normalizeSoundEnabled(stored: unknown): boolean {
   return stored === false ? false : true;
 }
 
-export type DisplayState = Pick<State, 'stockfish' | 'feedback' | 'playVerdict' | 'badgeLoading' | 'coordinatesOnSquares' | 'soundEnabled' | 'boardOrientation' | 'bestLineWindow' | 'arrows' | 'arrowBasis' | 'flipped' | 'preview'>;
+export type DisplayState = Pick<State, 'stockfish' | 'feedback' | 'playVerdict' | 'badgeLoading' | 'coordinatesOnSquares' | 'soundEnabled' | 'boardOrientation' | 'bestLineWindow' | 'arrows' | 'arrowBasis' | 'flipped'>;
 
 export function initialDisplayState(): DisplayState {
   return {
@@ -42,7 +42,6 @@ export function initialDisplayState(): DisplayState {
     arrows: normalizeArrowSettings(readStorage<unknown>(KEYS.arrows)),
     arrowBasis: normalizeArrowBasis(readStorage<unknown>(KEYS.arrowBasis)),
     flipped: false,
-    preview: null,
   };
 }
 
@@ -68,7 +67,6 @@ export function reduceDisplay(state: State, action: Action): State | undefined {
     case 'arrow-settings-reset': return sameArrowSettings(state.arrows, defaultArrowSettings) ? state : { ...state, arrows: defaultArrowSettings };
     case 'arrow-basis': { const basis = normalizeArrowBasis(action.basis); return state.arrowBasis === basis ? state : { ...state, arrowBasis: basis }; }
     case 'flip': return { ...state, flipped: !state.flipped };
-    case 'preview': return { ...state, preview: action.uci };
     default: return undefined;
   }
 }

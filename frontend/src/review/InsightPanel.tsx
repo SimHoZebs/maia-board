@@ -167,14 +167,11 @@ export function MoveAnalysis({
   const verdict = verdictFacts ? describeMove(verdictFacts) : null;
   const exploreBestLine = () => {
     if (!bestLine) return;
-    // Single dispatch: explore-line goes through transition(), which already
-    // clears the preview, so no separate preview-clear commit is needed.
     dispatch({ type: "explore-line", ucis: bestLine.ucis });
   };
   // Exploring a candidate means playing it instead of x, so step back to
   // x's before-position first: the reducer branches from the viewed position.
   const exploreFromFocus = (uci: string) => {
-    dispatch({ type: "preview", uci: null });
     if (hasMove) dispatch({ type: "view", ply: focus });
     dispatch({ type: "explore", uci });
   };
@@ -287,12 +284,12 @@ export function MoveAnalysis({
               fen={insight.fen}
               played={played}
               hasMove={hasMove}
-              previewUci={state.preview}
               moves={keyMoves}
               deltaTitle={deltaTitle}
               mineTitle={mineTitle}
-              onPreview={(uci) => dispatch({ type: "preview", uci })}
-              onClear={() => dispatch({ type: "preview", uci: null })}
+              objectiveColor={state.arrows.objective.color}
+              botColor={state.arrows.bot.color}
+              stockfishColor={state.arrows.stockfish.color}
               onSelect={exploreFromFocus}
             />
           </div>

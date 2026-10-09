@@ -13,7 +13,7 @@ export type State = {
   mode: Mode; play: StoredGame; saved: StoredGame[];
   started: boolean; setup: PlayDraft | null; viewedPly: number | null; stockfish: StockfishSettings; feedback: boolean; playVerdict: boolean; badgeLoading: BadgeLoading; coordinatesOnSquares: boolean; soundEnabled: boolean; boardOrientation: BoardOrientationSetting; bestLineWindow: number; arrows: ArrowSettings; arrowBasis: ArrowBasis;
   analysis: Analysis; analysisSettings: Draft; analysisLoaded: boolean; importing: boolean; analysisSourceId: string | null;
-  inputs: { fen: string; pgn: string }; flipped: boolean; preview: string | null;
+  inputs: { fen: string; pgn: string }; flipped: boolean;
   promotion: { from: Square; to: Square } | null;
   insight: Insight | null; error: string; request: Request | null; revision: number;
 };
@@ -37,7 +37,7 @@ export type Action =
   | { type: 'move'; from: Square; to: Square }
   | { type: 'explore'; uci: string }
   | { type: 'explore-line'; ucis: string[] }
-  | { type: 'preview'; uci: string | null } | { type: 'original' }
+  | { type: 'original' }
   | { type: 'promote'; piece: string | null }
   | { type: 'inputs'; inputs: Partial<State['inputs']> }
   | { type: 'load' } | { type: 'unload' } | { type: 'url-line'; initialFen: string; moves: string[] } | { type: 'step'; delta: number } | { type: 'advance' } | { type: 'view'; ply: number | null }

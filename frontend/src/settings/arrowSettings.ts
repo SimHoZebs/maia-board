@@ -1,6 +1,6 @@
 import type { DrawBrushes } from '@lichess-org/chessground/draw';
 
-export type ArrowSettingsKey = 'actual' | 'bot' | 'objective' | 'candidate';
+export type ArrowSettingsKey = 'actual' | 'bot' | 'objective' | 'stockfish' | 'next';
 export type ArrowStyle = { color: string; width: number };
 export type ArrowSettings = Record<ArrowSettingsKey, ArrowStyle>;
 export type ArrowBasis = 'next' | 'past';
@@ -16,7 +16,8 @@ export const defaultArrowSettings: ArrowSettings = {
   actual: { color: '#ffffff', width: 12 },
   bot: { color: '#ef4444', width: 8 },
   objective: { color: '#3b82f6', width: 4 },
-  candidate: { color: '#d6b85c', width: 2 },
+  stockfish: { color: '#facc15', width: 6 },
+  next: { color: '#92400e', width: 10 },
 };
 export const defaultArrowBasis: ArrowBasis = 'past';
 
@@ -40,26 +41,32 @@ export function normalizeArrowSettings(value: unknown): ArrowSettings {
   // Legacy migration: the blue arrow was keyed 'stockfish' before the
   // objective (bot 2400) lane took over that slot; the red arrow was keyed
   // 'maia' before the role rename. New keys win when both are present.
+  // A stored stockfish value with no objective sibling is that legacy blue,
+  // not the Stockfish-best arrow (persisted objects always carry objective
+  // now), so the Stockfish arrow only reads stockfish alongside objective.
   const objectiveRaw = record.objective ?? record.stockfish;
+  const stockfishRaw = record.objective === undefined ? undefined : record.stockfish;
   const next: ArrowSettings = {
     actual: normalizeStyle(record.actual, defaultArrowSettings.actual),
     bot: normalizeStyle(record.bot ?? record.maia, defaultArrowSettings.bot),
     objective: normalizeStyle(objectiveRaw, defaultArrowSettings.objective),
-    candidate: normalizeStyle(record.candidate, defaultArrowSettings.candidate),
+    stockfish: normalizeStyle(stockfishRaw, defaultArrowSettings.stockfish),
+    next: normalizeStyle(record.next, defaultArrowSettings.next),
   };
   return next.actual === defaultArrowSettings.actual && next.bot === defaultArrowSettings.bot
-    && next.objective === defaultArrowSettings.objective && next.candidate === defaultArrowSettings.candidate
+    && next.objective === defaultArrowSettings.objective && next.stockfish === defaultArrowSettings.stockfish
+    && next.next === defaultArrowSettings.next
     ? defaultArrowSettings : next;
 }
 
 export function sameArrowSettings(a: ArrowSettings, b: ArrowSettings): boolean {
-  return (['actual', 'bot', 'objective', 'candidate'] as const).every(key =>
+  return (['actual', 'bot', 'objective', 'stockfish', 'next'] as const).every(key =>
     a[key].color === b[key].color && a[key].width === b[key].width);
 }
 
-// Opacities stay fixed (the request covers color + size only): actual, bot
-// and objective share .45 so coincident arrows layer by width; the preview
-// candidate stays slightly stronger at .65.
+// Opacities stay fixed (the request covers color + size only): the lane
+// arrows (actual, next, bot, stockfish, objective) share .45 so coincident
+// arrows layer by width, widest first.
 export function buildReviewBrushes(settings: ArrowSettings): DrawBrushes {
   return {
     green: { key: 'g', color: '#15781B', opacity: 1, lineWidth: 10 },
@@ -69,6 +76,7 @@ export function buildReviewBrushes(settings: ArrowSettings): DrawBrushes {
     actual: { key: 'actual', color: settings.actual.color, opacity: 0.45, lineWidth: settings.actual.width },
     bot: { key: 'bot', color: settings.bot.color, opacity: 0.45, lineWidth: settings.bot.width },
     objective: { key: 'objective', color: settings.objective.color, opacity: 0.45, lineWidth: settings.objective.width },
-    candidate: { key: 'candidate', color: settings.candidate.color, opacity: 0.65, lineWidth: settings.candidate.width },
+    stockfish: { key: 'stockfish', color: settings.stockfish.color, opacity: 0.45, lineWidth: settings.stockfish.width },
+    next: { key: 'next', color: settings.next.color, opacity: 0.45, lineWidth: settings.next.width },
   };
 }

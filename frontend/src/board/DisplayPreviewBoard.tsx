@@ -50,9 +50,8 @@ function PreviewBoard({ orientation, coordinatesOnSquares, arrows, fen, turnColo
         visible: true,
         brushes: buildReviewBrushes(arrows),
         autoShapes: reviewShapes(
-          { actual: 'e2e4', bot: 'e2e4', objective: 'e2e3' },
-          { actual: true, bot: true, objective: true },
-          'e1f1',
+          { actual: 'e2e4', bot: 'e2e4', objective: 'e2e3', stockfish: 'd2d4', next: 'e1f1' },
+          { actual: true, bot: true, objective: true, stockfish: true, next: true },
           null,
           arrows,
         ),

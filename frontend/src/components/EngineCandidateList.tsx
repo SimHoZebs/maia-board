@@ -14,15 +14,12 @@ import { CandidateRow } from "./CandidateRow";
 export type EngineCandidateItem = { uci: string; metric: string; delta?: string };
 export type EngineCandidateHeaders = { metric: ReactNode; delta?: ReactNode; label: string };
 
-export function EngineCandidateList({ fen, played, hasMove, previewUci, items, headers, onPreview, onClear, onSelect }: {
+export function EngineCandidateList({ fen, played, hasMove, items, headers, onSelect }: {
   fen: string;
   played?: string;
   hasMove: boolean;
-  previewUci: string | null;
   items: EngineCandidateItem[];
   headers?: EngineCandidateHeaders;
-  onPreview: (uci: string | null) => void;
-  onClear: () => void;
   onSelect: (uci: string) => void;
 }) {
   return (
@@ -51,11 +48,8 @@ export function EngineCandidateList({ fen, played, hasMove, previewUci, items, h
             metric={candidate.metric}
             delta={candidate.delta}
             isPlayed={isPlayed}
-            preview={{
+            action={{
               label: `Explore ${san}${isPlayed ? " (played)" : ""}${hasMove ? " from before this move" : ""}`,
-              active: !hasMove && previewUci === candidate.uci,
-              onPreview: () => onPreview(hasMove ? null : candidate.uci),
-              onClear,
               onSelect: () => onSelect(candidate.uci),
             }}
           />

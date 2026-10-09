@@ -6,7 +6,7 @@ import type { Color, Key } from '@lichess-org/chessground/types';
 import { legalDests, parseKey, parseSquare } from '../shared/domain';
 import { toGroundColor } from './board-colors';
 import type { DrawBrushes, DrawShape } from '@lichess-org/chessground/draw';
-import { candidatePreviewShape, reviewBrushes } from '../review/reviewArrows';
+import { reviewBrushes } from '../review/reviewArrows';
 
 // Chessground renders its built-in red radial `square.check` style (already
 // imported via chessground.brown.css) for whatever `check` names. chess.js
@@ -21,9 +21,9 @@ function checkForFen(fen: string): Color | false {
 }
 export type BoardPosition = { fen: string; lastMove?: readonly string[] | null };
 export type BoardTransition = { line: string; ply: number };
-type Props = { position: BoardPosition; transition: BoardTransition; orientation: Color; enabled: boolean; thinking: boolean; interactionVersion: number; coordinatesOnSquares: boolean; preview?: string | null; shapes?: DrawShape[]; brushes?: DrawBrushes; onMove: (from: Square, to: Square) => void };
+type Props = { position: BoardPosition; transition: BoardTransition; orientation: Color; enabled: boolean; thinking: boolean; interactionVersion: number; coordinatesOnSquares: boolean; shapes?: DrawShape[]; brushes?: DrawBrushes; onMove: (from: Square, to: Square) => void };
 
-export function ChessBoard({ position, transition, orientation, enabled, thinking, interactionVersion, coordinatesOnSquares, preview, shapes, brushes = reviewBrushes, onMove }: Props) {
+export function ChessBoard({ position, transition, orientation, enabled, thinking, interactionVersion, coordinatesOnSquares, shapes, brushes = reviewBrushes, onMove }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const api = useRef<Api | null>(null);
   const callback = useRef(onMove);
@@ -120,8 +120,8 @@ export function ChessBoard({ position, transition, orientation, enabled, thinkin
     if (!singleStep) ground.set({ animation: { enabled: true } });
   }, [position.fen, transition.line, transition.ply, orientation, enabled, lastMove, gesture, interactionVersion]);
   useLayoutEffect(() => {
-    api.current?.setAutoShapes(shapes ?? candidatePreviewShape(preview));
-  }, [position.fen, preview, shapes, interactionVersion, orientation]);
+    api.current?.setAutoShapes(shapes ?? []);
+  }, [position.fen, shapes, interactionVersion, orientation]);
   // Shafts repaint through the shapes hash (reviewShapes embeds the arrow
   // style signature); arrowhead markers are append-only defs keyed by brush
   // name, so callers remount via key on brushes change for fresh heads. This

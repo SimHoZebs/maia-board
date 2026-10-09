@@ -30,7 +30,7 @@ position/line/posId/reviewKey, eval stages, restore, lanes, and limits live in
 Current-position candidates answer "what could be played from this board?"
 Retrospective move grades compare evaluations before and after a played move.
 A starting position has candidates but no previous move to grade; an explored
-continuation owns its positions, and candidate previews belong to the board
+continuation owns its positions, and candidate branches belong to the board
 position that produced them.
 
 Maia `top_moves` carry model policy probabilities per rating; they need not
