@@ -40,7 +40,10 @@ async function bootGames(page: Page, seed: Record<string, unknown> = {}, offline
         const rows = [...store.games.values()].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
         const offset = Number(url.searchParams.get('offset') ?? 0);
         const limit = Number(url.searchParams.get('limit') ?? 100);
-        await route.fulfill({ json: { games: rows.slice(offset, offset + limit), current_id: store.currentId, current_game: store.games.get(store.currentId ?? '') ?? null, total: rows.length, next_offset: offset + limit < rows.length ? offset + limit : null } });
+        // current_game is optional-but-never-null in the schema: omit it when
+        // no game is current instead of sending null.
+        const currentGame = store.games.get(store.currentId ?? '');
+        await route.fulfill({ json: { games: rows.slice(offset, offset + limit), current_id: store.currentId, ...(currentGame ? { current_game: currentGame } : {}), total: rows.length, next_offset: offset + limit < rows.length ? offset + limit : null } });
       } else if (method === 'POST') {
         store.writes.push('POST');
         const body = route.request().postDataJSON();

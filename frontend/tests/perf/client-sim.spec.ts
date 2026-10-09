@@ -362,7 +362,7 @@ test('client sim: boot, play, review batch, scrub, hover, branch, history', asyn
     }
     if (path === '/games' || path.startsWith('/games/')) {
       if (route.request().method() === 'GET' && path === '/games') {
-        await route.fulfill({ json: { games: [], current_id: null, total: 0 } });
+        await route.fulfill({ json: { games: [], current_id: null, total: 0, next_offset: null } });
         return;
       }
       if (route.request().method() === 'POST') {
@@ -516,8 +516,8 @@ test('client sim: boot, play, review batch, scrub, hover, branch, history', asyn
     ratingSummary = stats;
   });
 
-  // 5. Candidate hover sweep: each mouseenter dispatches a preview render and
-  // each row change clears the last one — a sweep is a small render storm.
+  // 5. Candidate hover sweep: rows are plain click-to-branch buttons with no
+  // hover preview, so a sweep is near-free — it measures exactly that.
   // Buttons only: the list header shares the .candidate-reading class on a
   // static span.
   await timed('analysis: candidate hover sweep', async () => {

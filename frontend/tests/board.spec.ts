@@ -7,7 +7,6 @@ import { defaultSettings, replay, type StoredGame } from '../src/shared/domain';
 import type { MoveRequest } from '../src/eval/api';
 import { EvaluationFixture } from './evaluation-fixture';
 import { defaultStockfishSettings, stockfishPolicy } from '../src/eval/stockfishSettings';
-const SEARCH_POLICY = stockfishPolicy(defaultStockfishSettings);
 
 const record = (moves: string[], color: 'white' | 'black' = 'white', id = 'fixture'): StoredGame => ({ id, createdAt: '2026-09-10T00:00:00Z', moves, settings: { ...defaultSettings, userColor: color } });
 
@@ -92,8 +91,18 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
     if (path === '/evaluate') {
       const payload = route.request().postDataJSON();
       const game = replay(payload.moves, payload.initial_fen);
-      const moves = game.moves({ verbose: true }).slice(0, 2).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
-      const value = { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 14, terminal: null, best_move: moves[0] ?? null, score: { type: 'cp', value: 20 }, lines: moves.map(move => ({ move, score: { type: 'cp', value: 20 }, depth: 14 })) };
+      const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
+      // Best follows the main test line while legal (mirroring review.spec's
+      // bestMove): analysis specs choreograph every lane agreeing on it, so
+      // the strict key-moves card fuses to one row with the Stockfish mark.
+      const preferred = ['e2e4', 'e7e5', 'g1f3', 'b8c6'][payload.moves.length];
+      const best = (preferred && legal.includes(preferred)) ? preferred : legal[0];
+      // The app hardcodes Stockfish lines to 1: return exactly the requested
+      // rank count with a matching policy, or parseEvaluation rejects the row.
+      const count = Math.max(1, Math.min(payload.settings?.lines ?? 1, legal.length));
+      const ranked = [best, ...legal.filter(move => move !== best)].slice(0, count);
+      const score = { type: 'cp', value: 20 };
+      const value = { engine: 'Stockfish 19', search_policy: stockfishPolicy(payload.settings ?? defaultStockfishSettings), depth: 14, terminal: null, best_move: ranked[0] ?? null, score, lines: ranked.map(move => ({ move, score, depth: 14 })) };
       cache.set('sf', payload, value);
       await route.fulfill({ json: value }); return;
     }
@@ -102,7 +111,7 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
       const id = path === '/games' ? null : decodeURIComponent(path.slice('/games/'.length));
       if (method === 'GET' && id === null) {
         const rows = [...gameStore.games.values()].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-        await route.fulfill({ json: { games: rows, current_id: gameStore.currentId, total: rows.length } });
+        await route.fulfill({ json: { games: rows, current_id: gameStore.currentId, total: rows.length, next_offset: null } });
         return;
       }
       if (method === 'POST') {
@@ -150,7 +159,7 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
     const item = requests[index];
     const chosen = move ?? new Chess(item.payload.fen).moves({ verbose: true }).map(m => `${m.from}${m.to}${m.promotion ?? ''}`)[0];
     const delivered = page.waitForResponse(response => response.request() === item.route.request());
-    await item.route.fulfill({ status, json: status === 200 ? { move: chosen, top_moves: topMoves ?? [{ move: chosen, prob: 0.6, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], model_used: item.payload.model, degraded: false } : { code: 'engine_busy', message: 'busy' } });
+    await item.route.fulfill({ status, json: status === 200 ? { move: chosen, top_moves: topMoves ?? [{ move: chosen, prob: 0.6, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], model_used: item.payload.model, degraded: false } : { errors: [{ message: 'engine_busy' }], detail: 'busy' } });
     await (await delivered).finished();
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   }
@@ -586,6 +595,9 @@ test('pending takeback/new game/mode/settings transitions reject obsolete replie
 test('busy retries are bounded, then manual retry recovers controls', async ({ page }) => {
   const app = await boot(page);
   await move(page, 'e2', 'e4');
+  // Transport-level busy retries are bounded (3 attempts): the three 503s
+  // are consumed by one logical request's retries, then the banner offers
+  // the manual retry. No app-level hot-loop on top.
   for (let index = 0; index < 3; index++) await app.reply(index, undefined, 503);
   await expect(page.locator('#error-banner')).toContainText('Bot is busy. Wait a moment and try again.');
   await expect(page.locator('#retry-request')).toBeVisible();
@@ -686,7 +698,8 @@ test('setup disappears; draft cancel preserves a reply arriving while historical
   await expect(page.locator('.insight-panel, .saved-panel, .turn-chip, .stage-heading')).toHaveCount(0);
   await move(page, 'e2', 'e4');
   await expect.poll(() => app.requests.length).toBe(1);
-  expect(app.requests[0].payload).toMatchObject({ elo_maia: 1800, elo_user: 1800 });
+  // Fresh users default to the adaptive Elo floor (800), not the bot Elo.
+  expect(app.requests[0].payload).toMatchObject({ elo_maia: 1800, elo_user: 800 });
   await page.locator('#analysis-first').click();
   await piece(page, 'e2', 'white pawn');
   await move(page, 'd2', 'd4');
@@ -704,7 +717,7 @@ test('setup disappears; draft cancel preserves a reply arriving while historical
   await expect(page.locator('.player-strip').filter({ hasText: 'Bot' })).toContainText('1800');
 });
 
-test('analysis candidate preview, independent rating, branch replay and PGN copies', async ({ page }, testInfo) => {
+test('analysis candidate list, independent rating, branch replay and PGN copies', async ({ page }, testInfo) => {
   await stubClipboard(page);
   const app = await boot(page);
   await page.locator('#mode-analysis').click();
@@ -735,8 +748,6 @@ test('analysis candidate preview, independent rating, branch replay and PGN copi
   await expect(page.locator('.balance-white-tag')).toHaveText('50%');
   await expect(page.locator('.balance-draw-tag')).toHaveText('30%');
   await expect(page.locator('.balance-black-tag')).toHaveText('20%');
-  await page.getByRole('button', { name: 'Explore Nc6 (played) from before this move' }).hover();
-  await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(0);
   await piece(page, 'c6', 'black knight');
   await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
   await expect(keyMoves.locator('.candidate-list')).toContainText('Nc6');

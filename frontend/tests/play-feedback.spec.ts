@@ -15,7 +15,10 @@ type Hits = { reviews: string[]; evaluates: any[]; botEvals: any[]; playMoves: a
 function sfEvaluation(fen: string, settings: any) {
   const policy = stockfishPolicy(settings);
   const game = new Chess(fen);
-  const legal = game.moves({ verbose: true }).slice(0, 2).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
+  const all = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
+  // The app hardcodes Stockfish lines to 1: return exactly the requested
+  // rank count, or parseEvaluation rejects the row as incomplete.
+  const legal = all.slice(0, Math.max(1, Math.min(settings?.lines ?? 1, all.length)));
   const score = { type: 'cp', value: 20 };
   return { engine: 'Stockfish 19', search_policy: policy, depth: 12, terminal: null, best_move: legal[0] ?? null, score, lines: legal.map(move => ({ move, score, depth: 12 })) };
 }
@@ -87,10 +90,12 @@ async function bootPlay(page: Page, behavior: Behavior) {
     }
     if (path === '/games' || path.startsWith('/games/')) {
       const method = route.request().method();
-      if (method === 'GET' && path === '/games') { await route.fulfill({ json: { games: [], current_id: null, total: 0 } }); return; }
+      if (method === 'GET' && path === '/games') { await route.fulfill({ json: { games: [], current_id: null, total: 0, next_offset: null } }); return; }
       if (method === 'POST') {
         const body = route.request().postDataJSON();
-        await route.fulfill({ json: { id: body.id ?? 'mock-game', created_at: '2026-09-10T00:00:00Z', updated_at: '2026-09-10T00:00:00Z', user_color: body.user_color, elo_maia: body.elo_maia, elo_user: body.elo_user, model: body.model, moves: body.moves } });
+        // Echo the saved row including temperature: the save-response schema
+        // requires it, and a missing field surfaces as a sync error banner.
+        await route.fulfill({ json: { id: body.id ?? 'mock-game', created_at: '2026-09-10T00:00:00Z', updated_at: '2026-09-10T00:00:00Z', user_color: body.user_color, elo_maia: body.elo_maia, elo_user: body.elo_user, model: body.model, moves: body.moves, temperature: body.temperature ?? 0 } });
         return;
       }
       await route.fulfill({ status: 204, body: '' }); return;

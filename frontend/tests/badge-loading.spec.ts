@@ -4,7 +4,6 @@ import { resolve } from 'node:path';
 import { replay } from '../src/shared/domain';
 import { EvaluationFixture } from './evaluation-fixture';
 import { defaultStockfishSettings, stockfishPolicy } from '../src/eval/stockfishSettings';
-const SEARCH_POLICY = stockfishPolicy(defaultStockfishSettings);
 
 // History-game load: saved evaluations arrive over the network (prime) with
 // no batch running. Pending badges must animate during the restore and go
@@ -29,11 +28,14 @@ async function bootHistory(page: Page, pgn: string, primeMs: number) {
       const payload = route.request().postDataJSON();
       const game = replay(payload.moves, payload.initial_fen);
       const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
+      // The app hardcodes Stockfish lines to 1: return exactly the requested
+      // rank count with a matching policy, or parseEvaluation rejects the row.
+      const count = Math.max(1, Math.min(payload.settings?.lines ?? 1, legal.length));
       const best = legal[0];
       const score = { type: 'cp', value: 20 };
       await route.fulfill({ json: {
-        engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12, terminal: null, best_move: best, score,
-        lines: [{ move: best, score, depth: 12 }, { move: legal[1] ?? best, score: { type: 'cp', value: 0 }, depth: 12 }],
+        engine: 'Stockfish 19', search_policy: stockfishPolicy(payload.settings ?? defaultStockfishSettings), depth: 12, terminal: null, best_move: best, score,
+        lines: [{ move: best, score, depth: 12 }].slice(0, count),
       } });
       return;
     }
@@ -45,7 +47,7 @@ async function bootHistory(page: Page, pgn: string, primeMs: number) {
       return;
     }
     if (path === '/games' || path.startsWith('/games/')) {
-      if (route.request().method() === 'GET' && path === '/games') { await route.fulfill({ json: { games: [], current_id: null, total: 0 } }); return; }
+      if (route.request().method() === 'GET' && path === '/games') { await route.fulfill({ json: { games: [], current_id: null, total: 0, next_offset: null } }); return; }
       await route.fulfill({ status: 204, body: '' }); return;
     }
     const filename = path.startsWith('/assets/') ? path.slice(1) : 'index.html';

@@ -18,9 +18,12 @@ for (const width of [320, 360, 1440]) test(`engine settings and Play temperature
       if (route.request().method() === 'POST') {
         const body = route.request().postDataJSON();
         requests.push({ path, body });
-        current = { ...body, updated_at: '2026-09-11T00:00:00Z' };
+        // Echo the saved row without the request-only `current` flag: the
+        // save-response schema is strict and rejects unknown keys.
+        const { current: _current, ...row } = body;
+        current = { ...row, updated_at: '2026-09-11T00:00:00Z' };
         await route.fulfill({ json: current });
-      } else await route.fulfill({ json: { games: current ? [current] : [], current_id: current?.id ?? null, total: current ? 1 : 0 } });
+      } else await route.fulfill({ json: { games: current ? [current] : [], current_id: current?.id ?? null, total: current ? 1 : 0, next_offset: null } });
       return;
     }
     if (await cache.lookup(route)) return;
@@ -72,8 +75,6 @@ for (const width of [320, 360, 1440]) test(`engine settings and Play temperature
   await expect(page.locator('#stockfish-time')).toHaveValue('0.75');
   await page.locator('#stockfish-time').fill('2');
   await expect(page.locator('#stockfish-time-cap')).toHaveValue('2');
-  await page.locator('.segmented label', { hasText: '5' }).click();
-  await expect(page.getByRole('radio', { name: '5', exact: true })).toBeChecked();
   await expect(page.getByRole('radio', { name: 'Stop after time' })).toBeChecked();
   await expect(page.locator('#stockfish-depth')).toHaveValue('0');
   await page.locator('#stockfish-depth').fill('12');
@@ -82,7 +83,6 @@ for (const width of [320, 360, 1440]) test(`engine settings and Play temperature
   await page.reload();
   await expect(page.getByRole('radio', { name: 'Reach depth' })).toBeChecked();
   await expect(page.locator('#stockfish-time')).toHaveValue('2');
-  await expect(page.getByRole('radio', { name: '5', exact: true })).toBeChecked();
   await expect(page.locator('#stockfish-depth')).toHaveValue('18');
   await expect(page.locator('#stockfish-time-cap')).toHaveValue('2');
   // Board orientation defaults to auto and persists the fixed side.
@@ -108,12 +108,12 @@ for (const width of [320, 360, 1440]) test(`engine settings and Play temperature
   await page.getByRole('button', { name: 'Starting position', exact: true }).click();
   await page.locator('#load-analysis').click();
   await expect.poll(() => requests.some(r => r.path === '/evaluate')).toBe(true);
-  // Fast-then-refine fires the MPV1 fast request first; the custom settings
+  // Fast-then-refine fires the 250ms fast request first; the custom settings
   // ride the full refine that follows, so assert on that flight, not the
-  // first one.
-  await expect.poll(() => requests.some(r => r.path === '/evaluate' && r.body.settings?.lines === 5)).toBe(true);
-  const sf = requests.filter(r => r.path === '/evaluate').find(r => r.body.settings?.lines === 5)!;
-  expect(sf.body.settings).toEqual({ time_ms: 2000, lines: 5, depth: 18 });
+  // first one. Lines stay hardcoded to 1.
+  await expect.poll(() => requests.some(r => r.path === '/evaluate' && r.body.settings?.time_ms === 2000)).toBe(true);
+  const sf = requests.filter(r => r.path === '/evaluate').find(r => r.body.settings?.time_ms === 2000)!;
+  expect(sf.body.settings).toEqual({ time_ms: 2000, lines: 1, depth: 18 });
   await expect.poll(() => requests.filter(r => r.path === '/move/analysis').length).toBeGreaterThan(0);
   expect(requests.filter(r => r.path === '/move/analysis').at(-1)!.body).not.toHaveProperty('temperature');
   await expect(page.getByText('Stockfish returned an incomplete evaluation.')).toHaveCount(0);

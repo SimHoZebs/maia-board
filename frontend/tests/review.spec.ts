@@ -3,12 +3,11 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { replay } from '../src/shared/domain';
 import { defaultStockfishSettings, stockfishPolicy } from '../src/eval/stockfishSettings';
-const SEARCH_POLICY = stockfishPolicy(defaultStockfishSettings);
 import { KEYS } from '../src/history/storage';
 import { EvaluationFixture, evaluationIdentity } from './evaluation-fixture';
 
 async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,20,200,-700,-680]) {
-  const requests: { engine: string; moves: string[]; initial_fen: string; elo_maia?: number }[] = [];
+  const requests: { engine: string; moves: string[]; initial_fen: string; elo_maia?: number; live: boolean }[] = [];
   const cache = new EvaluationFixture();
   const evaluations = cache.entries;
   const errors: string[] = [];
@@ -76,9 +75,15 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
     const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
     const best = bestMove(payload);
     const score = { type: 'cp', value: scores[payload.moves.length] ?? 0 };
+    // The app hardcodes Stockfish lines to 1: return exactly the requested
+    // rank count with a matching policy, or parseEvaluation rejects the row
+    // (lines.length > policy lines reads as an incomplete evaluation).
+    const count = Math.max(1, Math.min(payload.settings?.lines ?? 1, legal.length));
+    const depth = 12 + payload.moves.length;
+    const ranked = [best, ...legal.filter(move => move !== best)].slice(0, count);
     return {
-      engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 12 + payload.moves.length, terminal: null, best_move: best, score,
-      lines: [{ move: best, score, depth: 12 + payload.moves.length }, ...legal.filter(move => move !== best).slice(0, 1).map(move => ({ move, score: { type: 'cp', value: game.turn() === 'w' ? -500 : 500 }, depth: 12 + payload.moves.length }))],
+      engine: 'Stockfish 19', search_policy: stockfishPolicy(payload.settings ?? defaultStockfishSettings), depth, terminal: null, best_move: ranked[0] ?? null, score,
+      lines: ranked.map(move => ({ move, score, depth })),
     };
   };
   const fileBatch = (jobId: string) => {
@@ -119,7 +124,7 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
       const job = batches.get(segments[0]);
       if (job === undefined) { await route.fulfill({ status: 404, body: '' }); return; }
       fileBatch(segments[0]);
-      const progress = { job_id: segments[0], total: job.total, done: job.total, failed: 0, cancelled: false, finished: true };
+      const progress = { job_id: segments[0], total: job.total, done: job.total, failed: 0, finished: true };
       if (segments[1] === 'events') {
         await route.fulfill({ body: `data: ${JSON.stringify({ progress })}\n\n`, contentType: 'text/event-stream' });
         return;
@@ -128,11 +133,15 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
       return;
     }
     if (path === '/move' || path === '/move/analysis' || path === '/evaluate') {
-      const payload = route.request().postDataJSON(); requests.push({ engine: path, ...payload });
+      const payload = route.request().postDataJSON();
       const engine = path === '/evaluate' ? 'sf' : 'maia';
       // Read-through emulation: serve a matching stored row, else compute
-      // live and file it, mirroring the backend contract.
+      // live and file it, mirroring the backend contract. The live flag
+      // records whether this send caused real inference (a miss) or served
+      // a stored row (a hit): reload tests assert no live inference after
+      // restore even when foreground duplicates re-send settled rows.
       const hit = cache.get(engine, payload);
+      requests.push({ engine: path, ...payload, live: !hit });
       if (hit) {
         await route.fulfill({ json: hit.value, headers: { 'X-Eval-Cache': 'hit' } });
         return;
@@ -143,10 +152,10 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
     }
     if (path === '/games' || path.startsWith('/games/')) {
       const method = route.request().method();
-      if (method === 'GET' && path === '/games') { await route.fulfill({ json: { games: [], current_id: null, total: 0 } }); return; }
+      if (method === 'GET' && path === '/games') { await route.fulfill({ json: { games: [], current_id: null, total: 0, next_offset: null } }); return; }
       if (method === 'POST') {
         const body = route.request().postDataJSON();
-        await route.fulfill({ json: { id: body.id ?? 'mock-game', created_at: '2026-09-10T00:00:00Z', updated_at: '2026-09-10T00:00:00Z', user_color: body.user_color, elo_maia: body.elo_maia, elo_user: body.elo_user, model: body.model, moves: body.moves } });
+        await route.fulfill({ json: { id: body.id ?? 'mock-game', created_at: '2026-09-10T00:00:00Z', updated_at: '2026-09-10T00:00:00Z', user_color: body.user_color, elo_maia: body.elo_maia, elo_user: body.elo_user, model: body.model, moves: body.moves, temperature: body.temperature ?? 0 } });
         return;
       }
       await route.fulfill({ status: 204, body: '' }); return;
@@ -163,6 +172,17 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
   return { requests, errors, evaluations, batches };
 }
 const lines = (page: Page) => page.locator('#board svg.cg-shapes line');
+// Quiescence: foreground follow-ons (true-delta children, best-line walk
+// frontiers) trail settled evaluations by design, so request-count snapshots
+// must wait for the count to stabilize first instead of racing them.
+async function settleRequests(page: Page, app: { requests: unknown[] }, rounds = 3) {
+  let stable = 0, last = -1;
+  while (stable < rounds) {
+    await page.waitForTimeout(200);
+    if (app.requests.length === last) stable++;
+    else { last = app.requests.length; stable = 0; }
+  }
+}
 // Click-click board move for analysis branching (mirrors board.spec's helper:
 // the strict card's single fused row offers no candidate to branch on).
 async function boardMove(page: Page, from: string, to: string) {
@@ -177,7 +197,7 @@ async function boardMove(page: Page, from: string, to: string) {
   const a = point(from), b = point(to);
   await page.mouse.click(a.x, a.y); await page.mouse.click(b.x, b.y);
 }
-test('standalone FEN shows a fused key row; candidate previews clear by frame', async ({ page }) => {
+test('standalone FEN shows a fused key row; click branches', async ({ page }) => {
   const app = await bootReview(page);
   const fen = '4k3/8/8/8/8/8/4P3/4K3 w - - 0 23';
   await page.goto(`http://maia.test/analyze?fen=${encodeURIComponent(fen)}`);
@@ -190,29 +210,14 @@ test('standalone FEN shows a fused key row; candidate previews clear by frame', 
   // Role-less runners-up (like e3) stay out of the strict card.
   await expect(bot.getByRole('button', { name: 'Explore e3', exact: true })).toHaveCount(0);
   await expect(bot.locator('.key-role--sf-best svg')).toBeVisible();
-  // Hovering the fused top move draws no extra arrow: the preview duplicates
-  // the lane arrows by design.
-  await bot.getByRole('button', { name: 'Explore e4', exact: true }).hover();
-  await expect(page.locator('#board svg.cg-shapes line[stroke="#d6b85c"]')).toHaveCount(0);
+  // Rows branch on click with no hover preview: there is no lookahead arrow.
   await bot.getByRole('button', { name: 'Explore e4', exact: true }).click();
   await expect(page.locator('.move-cell')).toContainText('23. e4');
   await expect(bot.getByRole('button', { name: 'Explore e4 (played) from before this move', exact: true })).toBeVisible();
-  // Preview-state lifecycle back at the branch root: hover/focus set it (the
-  // arrow itself stays deduplicated against the lane arrows), frame moves
-  // clear it.
+  // Back at the branch root the same row branches again.
   await page.locator('#analysis-first').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 2');
-  const rootCandidate = bot.getByRole('button', { name: 'Explore e4', exact: true });
-  await expect(rootCandidate).toBeVisible();
-  await rootCandidate.hover();
-  await expect(rootCandidate).toHaveAttribute('aria-pressed', 'true');
-  await page.locator('.brand').hover();
-  await expect(rootCandidate).toHaveAttribute('aria-pressed', 'false');
-  await rootCandidate.focus();
-  await expect(rootCandidate).toHaveAttribute('aria-pressed', 'true');
-  // Focusing away clears the preview.
-  await page.getByRole('button', { name: 'New analysis' }).focus();
-  await expect(rootCandidate).toHaveAttribute('aria-pressed', 'false');
+  await expect(bot.getByRole('button', { name: 'Explore e4', exact: true })).toBeVisible();
   expect(app.errors).toEqual([]);
 });
 
@@ -248,17 +253,17 @@ test('adjacent backward navigation animates and loaded positions start settled',
 });
 async function atStart(page: Page) {
   await page.locator('#analysis-first').click();
-  await expect(lines(page)).toHaveCount(3);
+  await expect(lines(page)).toHaveCount(4);
 }
 test('automatic review shows real overlapping SVG arrows', async ({ page }, info) => {
   const app = await bootReview(page); await atStart(page);
   const strokes = async () => lines(page).evaluateAll(elements => elements.map(el => ({ color: el.getAttribute('stroke'), opacity: el.getAttribute('opacity'), width: el.getAttribute('stroke-width'), from: [el.getAttribute('x1'), el.getAttribute('y1')], to: [el.getAttribute('x2'), el.getAttribute('y2')] })));
   const arrows = await strokes();
-  expect(arrows.map(arrow => arrow.color)).toEqual(['#ffffff','#ef4444','#3b82f6']);
-  expect(arrows.map(arrow => arrow.width)).toEqual(['0.1875','0.125','0.0625']);
-  expect(arrows.map(arrow => arrow.opacity)).toEqual(['0.45','0.45','0.45']);
+  expect(arrows.map(arrow => arrow.color)).toEqual(['#ffffff','#ef4444','#facc15','#3b82f6']);
+  expect(arrows.map(arrow => arrow.width)).toEqual(['0.1875','0.125','0.09375','0.0625']);
+  expect(arrows.map(arrow => arrow.opacity)).toEqual(['0.45','0.45','0.45','0.45']);
   expect(arrows.every(arrow => JSON.stringify(arrow.from) === JSON.stringify(arrows[0].from) && JSON.stringify(arrow.to) === JSON.stringify(arrows[0].to))).toBe(true);
-  await expect(lines(page)).toHaveCount(3);
+  await expect(lines(page)).toHaveCount(4);
   // Analysis board defaults to auto orientation (reviewed side at bottom, white here) with no flip button.
   await expect(page.locator('#flip-board')).toHaveCount(0);
   await expect(page.locator('#board .cg-wrap')).toHaveClass(/orientation-white/);
@@ -286,11 +291,11 @@ test('whole game completes independently of viewing and updates the position bal
   await expect(page.locator('.move-cell .quality-best')).toHaveCount(2);
   await expect(page.locator('.move-cell .quality-mistake')).toHaveCount(1);
   await expect(page.locator('.move-cell .quality-blunder')).toHaveCount(1);
-  // Viewing must not infer: capture the foreground count before navigating
-  // and require it unchanged after. (A fixed count would encode the focus
-  // window; the batch covers the rest server-side now.)
+  // Viewing settles once: the first visit to a mistake focus runs the
+  // best-line walk frontier (live inference by design). (A fixed count
+  // would encode the focus window; the batch covers the rest server-side
+  // now.)
   const inferred = () => app.requests.filter(request => request.engine === '/evaluate').length;
-  const settled = inferred();
   await page.locator('.move-cell').nth(2).click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
   await expect(page.locator('.balance-white-tag')).toHaveText('7%');
@@ -300,7 +305,16 @@ test('whole game completes independently of viewing and updates the position bal
   await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
   await page.screenshot({ path: info.outputPath('completed-review.png'), fullPage: true });
   expect(app.errors).toEqual([]);
-  expect(inferred()).toBe(settled);
+  // First visit to a mistake focus runs the best-line walk frontier (live
+  // inference by design), so let it land, then re-viewing settled positions
+  // must fire nothing further. The tip agrees everywhere (Best), so the
+  // return trip is quiet.
+  await settleRequests(page, app);
+  const resettled = inferred();
+  await page.locator('.move-cell').nth(3).click();
+  await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
+  await settleRequests(page, app);
+  expect(inferred()).toBe(resettled);
 });
 for (const width of [320, 1440]) {
   test(`analysis container spaces both sides of section dividers at ${width}px`, async ({ page }, info) => {
@@ -549,29 +563,33 @@ test('server-cached positions skip inference after reload', async ({ page }) => 
   await expect.poll(() => app.evaluations.size).toBe(8);
   const calls = app.requests.length;
   await page.reload();
-  // The loaded line restores from the snapshot with the import panel closed;
-  // cached positions resolve without new inference.
+  // The loaded line restores from the snapshot with the import panel closed.
+  // Foreground duplicates of settled rows may re-send while restoring, but
+  // every post-reload send must serve a stored row: no live inference
+  // happens after restore.
   await expect(page.locator('#insight-content')).toBeVisible();
   await expect(page.locator('.candidate-list li')).not.toHaveCount(0);
-  expect(app.requests).toHaveLength(calls);
+  await settleRequests(page, app);
+  expect(app.requests.slice(calls).every(request => !request.live)).toBe(true);
   expect(app.errors).toEqual([]);
 });
 test('completed analysis restores automatically across reload without inference', async ({ page }) => {
   const app = await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
-  const inferred = () => app.requests.filter(request => request.engine === '/move' || request.engine === '/move/analysis' || request.engine === '/evaluate').length;
   // Settle first: foreground prime trails the instant-mock batch by design
   // (priority-lane delay), so a synchronous request count here would race
-  // it. Rendered candidates prove values landed; the count below only needs
-  // to be unchanged by the reload, whatever foreground fired pre-reload.
+  // it. Rendered candidates prove values landed; the live flag below only
+  // needs every post-reload send to serve a stored row, whatever foreground
+  // fired pre-reload.
   await expect(page.locator('.candidate-list li').first()).toBeVisible();
-  const before = inferred();
+  const before = app.requests.length;
   await page.reload();
   // No click: the fresh record primes itself from the server eval cache.
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   await expect(page.locator('.candidate-list li').first()).toBeVisible();
-  expect(inferred()).toBe(before);
+  await settleRequests(page, app);
+  expect(app.requests.slice(before).every(request => !request.live)).toBe(true);
 });
 test('partially evicted analysis restores cached positions and gates the rest', async ({ page }) => {
   const app = await bootReview(page);
@@ -624,7 +642,9 @@ test('changed analysis settings gate the missing positions behind a new batch', 
 test('mixed arrow sources retain their own endpoints', async ({ page }, info) => {
   await bootReview(page);
   // Display bot and objective (2400) lanes share /move/analysis: split by elo so the
-  // white actual, red display, and blue objective arrows diverge.
+  // white actual, red display, and blue objective arrows diverge (yellow
+  // Stockfish follows the PGN here, coinciding with actual, and brown next
+  // coincides with Stockfish, so 4 lines give 3 distinct endpoints).
   await page.route('http://maia.test/move**', route => {
     const body = route.request().postDataJSON();
     const move = body?.elo_maia === 2400 ? 'd2d4' : 'g1f3';
@@ -682,12 +702,12 @@ test('analysis progress replaces the analyze button while running without a canc
   await expect(page.getByRole('button', { name: 'Cancel analysis' })).toHaveCount(0);
   for (const route of heldStatus) {
     const match = /\/reviews\/([^/]+)$/.exec(new URL(route.request().url()).pathname);
-    const progress = { job_id: match?.[1] ?? 'mock-batch-1', total: 10, done: 10, failed: 0, cancelled: false, finished: true };
+    const progress = { job_id: match?.[1] ?? 'mock-batch-1', total: 10, done: 10, failed: 0, finished: true };
     await route.fulfill({ json: progress });
   }
   for (const route of heldEvents) {
     const match = /\/reviews\/([^/]+)\/events/.exec(route.request().url());
-    const progress = { job_id: match?.[1] ?? 'mock-batch-1', total: 10, done: 10, failed: 0, cancelled: false, finished: true };
+    const progress = { job_id: match?.[1] ?? 'mock-batch-1', total: 10, done: 10, failed: 0, finished: true };
     await route.fulfill({ body: `data: ${JSON.stringify({ progress })}\n\n`, contentType: 'text/event-stream' });
   }
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
@@ -757,11 +777,16 @@ test('evaluation bar follows rendered board dimensions on resize and fractional 
 });
 
 test('terminal repetition skips the bot and keeps the local draw result', async ({ page }) => {
+  const full = ['g1f3', 'g8f6', 'f3g1', 'f6g8', 'g1f3', 'g8f6', 'f3g1', 'f6g8'];
   const app = await bootReview(page, '1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. Ng1 Ng8');
   await expect(page.locator('.balance-track')).toHaveAccessibleName('Draw · White 0% · Draw 100% · Black 0% · estimated White winning chance 50%');
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Cancel analysis' })).toHaveCount(0);
-  expect(app.requests.some(request => request.moves.length === 8)).toBe(false);
+  // The terminal node itself is never evaluated (synthesized locally), but
+  // off-line candidate children still grade. Let follow-ons settle, then
+  // assert no request targeted the terminal position itself.
+  await settleRequests(page, app);
+  expect(app.requests.some(request => request.moves.join() === full.join())).toBe(false);
 });
 test('touch move selection updates the position balance', async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
@@ -772,7 +797,7 @@ test('touch move selection updates the position balance', async ({ browser }) =>
   await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 5');
   await page.locator('.move-cell').nth(1).tap();
   await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 5');
-  await expect(page.locator('#board svg.cg-shapes line')).toHaveCount(3);
+  await expect(page.locator('#board svg.cg-shapes line')).toHaveCount(4);
   await context.close();
 });
 test('explored branches keep the original line badges', async ({ page }) => {
@@ -813,10 +838,11 @@ for (const bit of [0, 1]) test(`random side resolves once with crypto bit ${bit}
 test('custom arrow colors and widths repaint shafts and heads', async ({ page }) => {
   const app = await bootReview(page); await atStart(page);
   const strokes = () => lines(page).evaluateAll(elements => elements.map(el => ({ color: el.getAttribute('stroke'), width: el.getAttribute('stroke-width') })));
-  await expect.poll(async () => (await strokes()).length).toBe(3);
+  await expect.poll(async () => (await strokes()).length).toBe(4);
   expect(await strokes()).toEqual([
     { color: '#ffffff', width: '0.1875' },
     { color: '#ef4444', width: '0.125' },
+    { color: '#facc15', width: '0.09375' },
     { color: '#3b82f6', width: '0.0625' },
   ]);
   // Seed custom arrows (width 64 = full square => stroke-width 1) and reload:
@@ -826,22 +852,26 @@ test('custom arrow colors and widths repaint shafts and heads', async ({ page })
       actual: { color: '#00ff00', width: 64 },
       bot: { color: '#ff00ff', width: 32 },
       objective: { color: '#0000ff', width: 16 },
-      candidate: { color: '#d6b85c', width: 2 },
+      stockfish: { color: '#ffff00', width: 8 },
+      next: { color: '#964b00', width: 10 },
     }));
   }, KEYS.arrows);
   await page.reload();
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 5');
-  await expect.poll(async () => (await strokes()).length).toBe(3);
+  await expect.poll(async () => (await strokes()).length).toBe(4);
   expect(await strokes()).toEqual([
     { color: '#00ff00', width: '1' },
     { color: '#ff00ff', width: '0.5' },
+    { color: '#ffff00', width: '0.125' },
     { color: '#0000ff', width: '0.25' },
   ]);
   const heads = await page.locator('#board svg.cg-shapes defs marker path').evaluateAll(elements => elements.map(el => el.getAttribute('fill')));
-  expect(heads).toEqual(expect.arrayContaining(['#00ff00', '#ff00ff', '#0000ff']));
+  expect(heads).toEqual(expect.arrayContaining(['#00ff00', '#ff00ff', '#ffff00', '#0000ff']));
   // Settings controls reflect and persist the seeded values.
   await page.locator('#mode-settings').click();
   await expect(page.locator('#arrow-bot-color')).toHaveValue('#ff00ff');
+  await expect(page.locator('#arrow-stockfish-color')).toHaveValue('#ffff00');
+  await expect(page.locator('#arrow-next-color')).toHaveValue('#964b00');
   await expect(page.locator('#arrow-actual-width')).toHaveValue('64');
   await page.locator('#arrow-objective-width-number').fill('20');
   await expect.poll(() => page.evaluate(key => JSON.parse(localStorage.getItem(key)!).objective.width, KEYS.arrows)).toBe(20);
@@ -853,33 +883,40 @@ test('past arrow basis shows prior-move options and persists', async ({ page }) 
   const app = await bootReview(page); await atStart(page);
   const endpoints = () => lines(page).evaluateAll(elements => elements.map(el => `${el.getAttribute('x1')},${el.getAttribute('y1')}:${el.getAttribute('x2')},${el.getAttribute('y2')}`));
   // Next-move basis at the root projects the first-move options.
-  await expect.poll(async () => (await endpoints()).length).toBe(3);
+  await expect.poll(async () => (await endpoints()).length).toBe(4);
   const nextRoot = await endpoints();
-  // Past-move basis at the root has no prior move, so no arrows.
+  // Past-move basis at the root has no prior move, so only the forward
+  // next-best arrow draws.
   await page.locator('#mode-settings').click();
   await page.locator('div[role="radiogroup"][aria-labelledby="arrows-basis-label"] label', { hasText: 'Past move' }).click();
   await expect(page.locator('#arrow-basis-past')).toBeChecked();
   await expect.poll(() => page.evaluate(key => localStorage.getItem(key), 'maia-board.arrow-basis.v1')).toBe('"past"');
   await page.goBack();
-  await expect(lines(page)).toHaveCount(0);
-  // Step forward: past arrows show the e2e4 options from the before-position,
-  // which differ from the next-move e7e5 projections at the same ply.
+  await expect(lines(page)).toHaveCount(1);
+  // Step forward: past lanes show the e2e4 options from the before-position
+  // plus the brown next-best projection, which differ from the next-move
+  // e7e5 projections at the same ply.
   await page.locator('#analysis-next').click();
-  await expect.poll(async () => (await endpoints()).length).toBe(3);
+  await expect.poll(async () => (await endpoints()).length).toBe(5);
   const pastPly1 = await endpoints();
   await page.evaluate(() => localStorage.setItem('maia-board.arrow-basis.v1', '"next"'));
   await page.reload();
   await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 5');
-  await expect.poll(async () => (await endpoints()).length).toBe(3);
+  await expect.poll(async () => (await endpoints()).length).toBe(4);
   const nextPly1 = await endpoints();
-  // Past ply-1 options all follow the played e2e4 (no loss there), while the
+  // Past ply-1 lanes all follow the played e2e4 (no loss there) with the
+  // brown next-best arrow projecting the e7e5 reply forward, while the
   // next-move projections at ply 1 include the objective sidestep. Past at
-  // ply 1 matches next at the root: the same e2e4 decision.
-  expect(new Set(pastPly1).size).toBe(1);
+  // ply 1 matches next at the root on the four past lanes: the same
+  // e2e4 decision.
+  expect(new Set(pastPly1).size).toBe(2);
   expect(pastPly1).not.toEqual(nextPly1);
-  expect(pastPly1).toEqual(nextRoot);
+  expect(pastPly1.filter(endpoint => endpoint === nextRoot[0])).toEqual(nextRoot);
   // Basis setting survives reload.
   await page.locator('#mode-settings').click();
   await expect(page.locator('#arrow-basis-next')).toBeChecked();
   expect(app.errors).toEqual([]);
 });
+
+
+
