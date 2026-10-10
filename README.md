@@ -52,46 +52,48 @@ History loads older pages explicitly. Failed pending writes remain available for
 retry or export. If another tab changes the browser repository, this tab stops
 syncing and asks you to export its pending work before reloading.
 
-## Development and checks
+## Development
 
-Prerequisites: Node.js 22, Go per [`backend/go.mod`](backend/go.mod),
+Requires Node.js 22, Go (see [`backend/go.mod`](backend/go.mod)), and
 Python 3.12.
 
-One-time machine setup from the repo root:
+Setup (once):
 
 ```sh
-scripts/env-setup.sh   # Stockfish -> backend/bin/stockfish, venv -> ~/.venvs/maia-board
+scripts/env-setup.sh   # builds backend/bin/stockfish, creates ~/.venvs/maia-board
 (cd frontend && npm ci)
-npx playwright install chromium   # browser/e2e tests only
+npx playwright install chromium   # browser tests only
 ```
 
-### Run it
-
-Full stack with real engines (easiest first run):
+Run everything:
 
 ```sh
-docker compose up --build   # app at http://localhost:8080
+docker compose up --build
 ```
 
-Split dev servers:
+Open http://localhost:8080.
+
+Or run backend and frontend separately. Backend, from `backend/`:
 
 ```sh
-# Terminal 1, backend API (from backend/):
-# Games/history work with no extra setup. Stockfish and openings need the
-# env-setup outputs; Maia inference needs the container (the host venv has
-# no torch/weights), so /move stays unavailable here.
 STOCKFISH_BINARY=$PWD/bin/stockfish STOCKFISH_WORKER=$PWD/workers/stockfish_worker.py \
 OPENINGS_LOOKUP=$PWD/workers/openings_lookup.py PYTHON=$HOME/.venvs/maia-board/bin/python \
-go run ./cmd/server   # API at http://localhost:8080
-
-# Terminal 2, frontend with hot reload (from frontend/):
-MAIA_API_TARGET=http://127.0.0.1:8080 npm run dev   # UI at http://localhost:5173
+go run ./cmd/server
 ```
 
-Vite proxies game and engine API requests to `MAIA_API_TARGET`.
-Without it, `npm run dev` serves the UI only (no backend calls).
-After `npm run build`, `MAIA_API_TARGET=http://127.0.0.1:8080 npm run preview`
-serves that bundle (default `http://localhost:4173`).
+Listens on http://localhost:8080. Serves games, history, openings, and
+Stockfish. Does not serve Maia moves: the host venv has no torch or
+weights, so `/move` needs the container.
+
+Frontend, from `frontend/`:
+
+```sh
+MAIA_API_TARGET=http://127.0.0.1:8080 npm run dev
+```
+
+Open http://localhost:5173. `MAIA_API_TARGET` is the backend URL; without
+it, API calls fail. `MAIA_API_TARGET=http://127.0.0.1:8080 npm run preview`
+serves the last production build at http://localhost:4173.
 
 ### Checks
 
