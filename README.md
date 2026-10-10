@@ -54,9 +54,46 @@ syncing and asks you to export its pending work before reloading.
 
 ## Development and checks
 
-Use Node.js 22, Go as specified in [`backend/go.mod`](backend/go.mod), and Python
-3.12 for worker tests. Bootstrap once with `scripts/env-setup.sh`, plus `npm ci`
-in `frontend/` and `npx playwright install chromium` for browser tests.
+Prerequisites: Node.js 22, Go per [`backend/go.mod`](backend/go.mod),
+Python 3.12.
+
+Bootstrap once from the repo root:
+
+```sh
+scripts/env-setup.sh   # Stockfish -> backend/bin/stockfish, venv -> ~/.venvs/maia-board
+(cd frontend && npm ci)
+npx playwright install chromium   # browser/e2e tests only
+```
+
+### Run it
+
+Full stack with real engines (easiest first run):
+
+```sh
+docker compose up --build   # app at http://localhost:8080
+```
+
+Split dev servers:
+
+```sh
+# Terminal 1, backend API (from backend/):
+# Games/history work with no extra setup. Stockfish and openings need the
+# env-setup outputs; Maia inference needs the container (the host venv has
+# no torch/weights), so /move stays unavailable here.
+STOCKFISH_BINARY=$PWD/bin/stockfish STOCKFISH_WORKER=$PWD/workers/stockfish_worker.py \
+OPENINGS_LOOKUP=$PWD/workers/openings_lookup.py PYTHON=$HOME/.venvs/maia-board/bin/python \
+go run ./cmd/server   # API at http://localhost:8080
+
+# Terminal 2, frontend with hot reload (from frontend/):
+MAIA_API_TARGET=http://127.0.0.1:8080 npm run dev   # UI at http://localhost:5173
+```
+
+Vite proxies game and engine API requests to `MAIA_API_TARGET`.
+Without it, `npm run dev` serves the UI only (no backend calls).
+After `npm run build`, `MAIA_API_TARGET=http://127.0.0.1:8080 npm run preview`
+serves that bundle (default `http://localhost:4173`).
+
+### Checks
 
 Run checks via `scripts/` (each supports `--help`):
 
@@ -81,25 +118,6 @@ There is no CI workflow; local verification runs the same stages in order:
 Go/mock-worker checks, the frontend typecheck, then the packaged Stockfish
 engine extraction and browser fixture build. Run the TypeScript typecheck
 once before building the browser fixtures.
-
-### Agent checks
-
-Agents run `scripts/verify.sh` before finishing any code task.
-Use `--frontend-only`, `--backend-only`, or `--file <vitest-path>` for scoped changes.
-Pre-commit runs staged typecheck/vet/gofmt; pre-push runs the full verify.
-
-For a frontend development server or preview against an existing backend:
-
-```sh
-# frontend/
-MAIA_API_TARGET=http://127.0.0.1:8080 npm run dev
-# After npm run build:
-MAIA_API_TARGET=http://127.0.0.1:8080 npm run preview
-```
-
-Vite proxies game and engine API requests to `MAIA_API_TARGET`. Without that setting,
-Vite serves the frontend only. The default local URLs are `http://localhost:5173`
-for development and `http://localhost:4173` for preview.
 
 ## Combined container and hosting
 
