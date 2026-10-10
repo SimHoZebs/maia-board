@@ -17,7 +17,7 @@ export const defaultArrowSettings: ArrowSettings = {
   bot: { color: '#ef4444', width: 8 },
   objective: { color: '#3b82f6', width: 4 },
   stockfish: { color: '#facc15', width: 6 },
-  next: { color: '#92400e', width: 10 },
+  next: { color: '#facc15', width: 10 },
 };
 export const defaultArrowBasis: ArrowBasis = 'past';
 

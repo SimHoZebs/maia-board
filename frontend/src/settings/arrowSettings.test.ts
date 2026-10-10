@@ -16,7 +16,7 @@ describe('arrow settings', () => {
       bot: { color: '#ef4444', width: 8 },
       objective: { color: '#3b82f6', width: 4 },
       stockfish: { color: '#facc15', width: 6 },
-      next: { color: '#92400e', width: 10 },
+      next: { color: '#facc15', width: 10 },
     });
     expect(defaultArrowBasis).toBe('past');
     expect(normalizeArrowBasis('past')).toBe('past');
@@ -28,7 +28,7 @@ describe('arrow settings', () => {
     expect(reviewBrushes.bot).toMatchObject({ color: '#ef4444', opacity: 0.45, lineWidth: 8 });
     expect(reviewBrushes.objective).toMatchObject({ color: '#3b82f6', opacity: 0.45, lineWidth: 4 });
     expect(reviewBrushes.stockfish).toMatchObject({ color: '#facc15', opacity: 0.45, lineWidth: 6 });
-    expect(reviewBrushes.next).toMatchObject({ color: '#92400e', opacity: 0.45, lineWidth: 10 });
+    expect(reviewBrushes.next).toMatchObject({ color: '#facc15', opacity: 0.45, lineWidth: 10 });
   });
   it('normalizes junk storage to defaults', () => {
     expect(normalizeArrowSettings(null)).toBe(defaultArrowSettings);

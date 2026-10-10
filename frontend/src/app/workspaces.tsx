@@ -284,8 +284,9 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   // before y); 'past' shows the options for the move leading into it (from
   // the before-position of x). White draws the played move; red is the
   // display-Elo bot top choice; blue is the objective (bot 2400) top; yellow
-  // is the Stockfish best move. Brown always projects forward from the
-  // viewed position (the best move to play next), in either basis.
+  // is the Stockfish best move. The yellow next-best arrow always projects
+  // forward from the viewed position (the best move to play next), in
+  // either basis: same engine as Stockfish, same color, wider shaft.
   const pastArrows = state.arrowBasis === 'past';
   const before = ply - 1;
   const arrowMoves = pastArrows

@@ -643,7 +643,7 @@ test('mixed arrow sources retain their own endpoints', async ({ page }, info) =>
   await bootReview(page);
   // Display bot and objective (2400) lanes share /move/analysis: split by elo so the
   // white actual, red display, and blue objective arrows diverge (yellow
-  // Stockfish follows the PGN here, coinciding with actual, and brown next
+  // Stockfish follows the PGN here, coinciding with actual, and yellow next
   // coincides with Stockfish, so 4 lines give 3 distinct endpoints).
   await page.route('http://maia.test/move**', route => {
     const body = route.request().postDataJSON();
@@ -853,7 +853,7 @@ test('custom arrow colors and widths repaint shafts and heads', async ({ page })
       bot: { color: '#ff00ff', width: 32 },
       objective: { color: '#0000ff', width: 16 },
       stockfish: { color: '#ffff00', width: 8 },
-      next: { color: '#964b00', width: 10 },
+      next: { color: '#800080', width: 10 },
     }));
   }, KEYS.arrows);
   await page.reload();
@@ -871,7 +871,7 @@ test('custom arrow colors and widths repaint shafts and heads', async ({ page })
   await page.locator('#mode-settings').click();
   await expect(page.locator('#arrow-bot-color')).toHaveValue('#ff00ff');
   await expect(page.locator('#arrow-stockfish-color')).toHaveValue('#ffff00');
-  await expect(page.locator('#arrow-next-color')).toHaveValue('#964b00');
+  await expect(page.locator('#arrow-next-color')).toHaveValue('#800080');
   await expect(page.locator('#arrow-actual-width')).toHaveValue('64');
   await page.locator('#arrow-objective-width-number').fill('20');
   await expect.poll(() => page.evaluate(key => JSON.parse(localStorage.getItem(key)!).objective.width, KEYS.arrows)).toBe(20);
@@ -894,7 +894,7 @@ test('past arrow basis shows prior-move options and persists', async ({ page }) 
   await page.goBack();
   await expect(lines(page)).toHaveCount(1);
   // Step forward: past lanes show the e2e4 options from the before-position
-  // plus the brown next-best projection, which differ from the next-move
+  // plus the yellow next-best projection, which differ from the next-move
   // e7e5 projections at the same ply.
   await page.locator('#analysis-next').click();
   await expect.poll(async () => (await endpoints()).length).toBe(5);
@@ -905,7 +905,7 @@ test('past arrow basis shows prior-move options and persists', async ({ page }) 
   await expect.poll(async () => (await endpoints()).length).toBe(4);
   const nextPly1 = await endpoints();
   // Past ply-1 lanes all follow the played e2e4 (no loss there) with the
-  // brown next-best arrow projecting the e7e5 reply forward, while the
+  // yellow next-best arrow projecting the e7e5 reply forward, while the
   // next-move projections at ply 1 include the objective sidestep. Past at
   // ply 1 matches next at the root on the four past lanes: the same
   // e2e4 decision.
