@@ -57,8 +57,7 @@ syncing and asks you to export its pending work before reloading.
 Prerequisites: Node.js 22, Go per [`backend/go.mod`](backend/go.mod),
 Python 3.12.
 
-One-time machine setup from the repo root (rerunning is harmless; each step
-skips work that already exists):
+One-time machine setup from the repo root:
 
 ```sh
 scripts/env-setup.sh   # Stockfish -> backend/bin/stockfish, venv -> ~/.venvs/maia-board
