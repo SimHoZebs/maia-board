@@ -62,7 +62,6 @@ Setup (once):
 ```sh
 scripts/env-setup.sh   # builds backend/bin/stockfish, creates ~/.venvs/maia-board
 (cd frontend && npm ci)
-npx playwright install chromium   # browser tests only
 ```
 
 Run everything:
@@ -111,7 +110,8 @@ scripts/env-setup.sh            # Stockfish and Python venv bootstrap
 ```
 
 Browser fixtures mock engine responses. They do not exercise
-real model inference. Keep concurrent browser runs' output directories separate; see
+real model inference. Browser specs need `npx playwright install chromium`
+once. Keep concurrent browser runs' output directories separate; see
 [`frontend/README.md`](frontend/README.md).
 
 Python setup details, mocked-worker commands, and real-engine checks are in
