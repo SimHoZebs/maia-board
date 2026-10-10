@@ -14,7 +14,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-FE_FAIL=0; BE_FAIL=0
+FE_FAIL=0; BE_FAIL=0; SYNC_FAIL=0
 if [ "$FE" -eq 1 ]; then
   echo "### frontend: typecheck"
   (cd "$ROOT/frontend" && npm run typecheck) || FE_FAIL=1
@@ -27,7 +27,10 @@ if [ "$BE" -eq 1 ]; then
   echo "### backend: go test"
   (cd "$ROOT/backend" && CGO_ENABLED=0 go test ./...) || BE_FAIL=1
 fi
+echo "### lifecycle sync (manifest <-> code <-> viz)"
+(cd "$ROOT" && node scripts/check-lifecycle-sync.mjs) || SYNC_FAIL=1
 echo; echo "=== summary ==="
 [ "$FE" -eq 1 ] && { [ "$FE_FAIL" -eq 0 ] && echo "frontend: PASS" || echo "frontend: FAIL"; }
 [ "$BE" -eq 1 ] && { [ "$BE_FAIL" -eq 0 ] && echo "backend:  PASS" || echo "backend:  FAIL"; }
-[ "$FE_FAIL" -eq 0 ] && [ "$BE_FAIL" -eq 0 ]
+{ [ "$SYNC_FAIL" -eq 0 ] && echo "lifecycle-sync: PASS" || echo "lifecycle-sync: FAIL"; }
+[ "$FE_FAIL" -eq 0 ] && [ "$BE_FAIL" -eq 0 ] && [ "$SYNC_FAIL" -eq 0 ]

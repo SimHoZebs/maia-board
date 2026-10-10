@@ -114,4 +114,8 @@ the LogQL above with Loki datasource `loki`. This repo's job is to keep
 the log lines stable and parseable. When adding a new backend signal,
 use the `key=value` logfmt style on one line with a stable prefix
 (`game-save`, `move`, `evaluate`, `review-batch ...`), and document it
-in the table above.
+in the table above. Also add it to `spec/lifecycle-manifest.json` (signals):
+`scripts/check-lifecycle-sync.mjs` (run by `scripts/verify.sh`) fails when a
+route, lane, component, signal, or limit drifts from the code or the
+`lifecycle-visualization.html` diagram. New endpoints and worker adapters need
+manifest entries too — the reverse checks reject undocumented ones.

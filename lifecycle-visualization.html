@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<!-- sync-checked: spec/lifecycle-manifest.json via scripts/check-lifecycle-sync.mjs (verify.sh).
+     If you rename a route, lane, symbol, log prefix, or limit, update the manifest + this file. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maia Board — Live Lifecycle Traffic</title>
+<style>
+  :root{--bg:#0b0f16;--panel:#121826;--panel2:#0e1421;--line:#233048;--txt:#e6edf7;--mut:#8fa0b8;
+    --play:#5aa9ff;--focus:#ffb454;--batch:#c792ea;--hit:#3ddc84;--bad:#ff6b6b;--dur:#4de3d1;
+    --mono:ui-monospace,Menlo,Consolas,monospace}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.45 system-ui,sans-serif}
+  header{padding:12px 18px;border-bottom:1px solid var(--line);display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+  header h1{font-size:16px;margin:0} header h1 span{color:var(--play)}
+  header p{margin:0;color:var(--mut);font-size:12px;max-width:820px}
+  #auto-pill{font-family:var(--mono);font-size:12px;padding:5px 12px;border-radius:20px;border:1px solid var(--hit);color:var(--hit)}
+  #auto-pill.off{border-color:var(--bad);color:var(--bad)}
+  #layout{display:grid;grid-template-columns:308px 1fr 350px;min-height:calc(100vh - 64px)}
+  #controls{border-right:1px solid var(--line);padding:14px;background:var(--panel2);overflow:auto;max-height:calc(100vh - 64px)}
+  #stageWrap{position:relative;background:radial-gradient(1000px 520px at 50% 0%,#14203a 0%,var(--bg) 62%)}
+  #side{border-left:1px solid var(--line);background:var(--panel2);display:flex;flex-direction:column;min-height:0}
+  h2{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--mut);margin:14px 0 8px}
+  h2:first-child{margin-top:0}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
+  button{border:1px solid var(--line);background:#1a2440;color:var(--txt);border-radius:8px;padding:7px 11px;cursor:pointer;font-size:12.5px}
+  button:hover{border-color:var(--play)} button.primary{background:var(--play);border-color:var(--play);color:#06121f;font-weight:700}
+  button.warn{border-color:var(--bad);color:var(--bad)} button.on{box-shadow:0 0 0 1px currentColor inset}
+  input[type=range]{width:100%} select,input[type=number]{background:#0b1220;color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:5px 7px;font-size:12.5px}
+  label.f{display:flex;justify-content:space-between;font-size:12px;color:var(--mut);margin:6px 0 2px}
+  .mix{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .mix button{font-size:11.5px;padding:6px 8px}
+  .inj{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .legend{font-size:11.5px;color:var(--mut)}
+  .sw{display:inline-block;width:12px;height:12px;margin-right:6px;vertical-align:-1px}
+  #clock{font-family:var(--mono);font-size:12.5px;background:#00000055;border:1px solid var(--line);border-radius:8px;padding:6px 9px}
+  #stageScroll{overflow:auto;max-width:100%}
+  #svg{width:100%;height:660px;display:block;min-width:760px}
+  #zoombar{position:absolute;right:12px;top:12px;display:flex;gap:6px;z-index:5}
+  #zoombar button{font-size:15px;padding:6px 12px;background:#060b14ee}
+  .callbox{fill:#060b14f2;stroke-width:2}
+  .callline1{font-family:var(--mono);font-size:12px;fill:#fff;font-weight:700}
+  .callline2{font-family:var(--mono);font-size:11px;fill:#cfe0ff}
+  .callcount{font-family:var(--mono);font-size:11px;fill:var(--dur,#4de3d1)}
+  @media(max-width:700px){
+    #svg{min-width:860px;height:120vw;max-height:560px}
+    #payload{font-size:12.5px;max-width:calc(100vw - 24px)}
+    #log{max-height:34vh;font-size:12px}
+    .node text{font-size:12px}
+  }
+  .node{cursor:pointer}
+  .node .shape{stroke-width:2}
+  .node:hover .shape{stroke:#fff}
+  .node text{fill:#fff;font-size:11px;font-weight:600}
+  .node .sub{fill:#ffffffaa;font-size:9.5px;font-weight:400}
+  .node .ico{font-size:19px}
+  .node.busy .shape{stroke:#fff;stroke-width:3.5;filter:drop-shadow(0 0 8px #ffffff88)}
+  .lane{fill:none;stroke:#26365a;stroke-width:2}
+  .lane.play{stroke:#5aa9ff55}.lane.focus{stroke:#ffb45455}.lane.batch{stroke:#c792ea55}
+  .lane.hot{stroke:#fff;stroke-width:3}
+  #packetLabel{font-family:var(--mono);font-size:11px;fill:#fff;paint-order:stroke;stroke:#000d;stroke-width:3px}
+  #nodeInfo{padding:12px 14px;border-bottom:1px solid var(--line);min-height:120px}
+  #nodeInfo h3{margin:0 0 4px;font-size:14px} #nodeInfo code{color:var(--dur);font-size:11px}
+  #nodeInfo p{margin:6px 0;color:#c6d2e4;font-size:12px}
+  #bars{padding:10px 12px;border-bottom:1px solid var(--line);font-size:11px}
+  .bar{height:8px;background:#1a2440;border-radius:5px;overflow:hidden;margin:3px 0 8px}
+  .bar i{display:block;height:100%;border-radius:5px}
+  #log{flex:1;overflow:auto;padding:10px 12px;font-family:var(--mono);font-size:11px;max-height:46vh}
+  #signals{padding:10px 12px;border-top:1px solid var(--line);font-family:var(--mono);font-size:10.5px;color:var(--mut)}
+  #signals code{color:var(--dur);font-size:10.5px}
+  #log div{padding:4px 6px;border-bottom:1px dotted #1d2942}
+  #log .t{color:var(--dur)} #log .hit{color:var(--hit)} #log .miss{color:var(--focus)} #log .err{color:var(--bad)} #log .bt{color:var(--batch)}
+  #payload{position:absolute;left:12px;bottom:12px;max-width:560px;background:#060b14ee;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-family:var(--mono);font-size:11px}
+  #payload b{color:var(--play)}
+  @media(max-width:1100px){#layout{grid-template-columns:1fr}#controls,#side{border:0;border-bottom:1px solid var(--line);max-height:none}#svg{height:600px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Maia Board <span>— live lifecycle traffic</span></h1>
+  <span id="auto-pill">● AUTO TRAFFIC ON</span>
+  <p>Requests flow on their own — <b style="color:var(--play)">● play</b>, <b style="color:var(--focus)">◆ analysis</b>, <b style="color:var(--batch)">■ batch</b>, <b style="color:var(--dur)">⬣ saves</b> — across visually distinct components. No reading needed: <b>shape + color + icon = component type</b>. Use the left panel only to steer the storm or inject your own.</p>
+</header>
+<div id="layout">
+  <div id="controls">
+    <h2>⏯ Autopilot (random live load)</h2>
+    <div class="row">
+      <button id="autoBtn" class="primary on">⏸ Pause auto</button>
+      <button id="burst">⚡ Burst ×3</button>
+      <button id="clear">Clear</button>
+    </div>
+    <label class="f"><span>Traffic rate</span><span id="rateVal">0.4 req/s</span></label>
+    <input id="rate" type="range" min="0.1" max="2" step="0.1" value="0.4">
+    <label class="f"><span>Animation speed</span><span id="spdVal">1×</span></label>
+    <input id="speed" type="range" min="0.25" max="2" step="0.25" value="1">
+    <div class="legend">⏳ Every stop holds ≥3s: the packet card shows what that component <b>does with the data</b> (keys, checks, transforms).</div>
+    <h2>🎛 Traffic mix presets</h2>
+    <div class="mix">
+      <button data-mix="balanced" class="on">Balanced</button>
+      <button data-mix="play">♟ Play-heavy</button>
+      <button data-mix="analysis">🔍 Analysis-heavy</button>
+      <button data-mix="batch">📦 Batch storm</button>
+    </div>
+    <h2>🧪 Chaos (fault injection)</h2>
+    <div class="row">
+      <button id="chaosDeg" title="79M fails, 5M serves degraded">79M→5M: 4%</button>
+      <button id="chaosPrs" title="503/409/429 pressure responses">Pressure: 5%</button>
+    </div>
+    <h2>💉 Manual inject (on top of auto)</h2>
+    <div class="inj">
+      <button data-inj="play">● Play move</button>
+      <button data-inj="analysis">◆ Analyze pos</button>
+      <button data-inj="sf">▲ Stockfish</button>
+      <button data-inj="batch">■ Batch line</button>
+      <button data-inj="save">⬣ Save game</button>
+      <button data-inj="openings">⬟ Openings</button>
+    </div>
+    <h2>✏️ Custom payload (applies to next manual inject)</h2>
+    <label class="f"><span>model</span></label>
+    <select id="cModel"><option>79m</option><option>5m</option></select>
+    <div class="row">
+      <div><label class="f"><span>elo_maia</span></label><input id="cEloM" type="number" value="1500" style="width:90px"></div>
+      <div><label class="f"><span>elo_user</span></label><input id="cEloU" type="number" value="1300" style="width:90px"></div>
+      <div><label class="f"><span>plies</span></label><input id="cPly" type="number" value="12" style="width:70px"></div>
+    </div>
+    <div class="row">
+      <div><label class="f"><span>temp</span></label><input id="cTemp" type="number" value="0" step="0.5" min="0" max="2" style="width:70px"></div>
+      <div><label class="f"><span>sf ms</span></label><input id="cSfMs" type="number" value="750" style="width:80px"></div>
+      <div><label class="f"><span>sf lines</span></label><input id="cSfL" type="number" value="2" min="1" max="5" style="width:70px"></div>
+    </div>
+    <h2>🔑 Read without reading</h2>
+    <div class="legend">
+      <div><span class="sw" style="background:#ffd54d;border-radius:50%"></span>👤 <b>gold circle</b> = user / workspaces</div>
+      <div><span class="sw" style="background:#5aa9ff;border-radius:4px"></span>♟🎛📡 <b>blue pills</b> = frontend (timeline / coordinator / transport)</div>
+      <div><span class="sw" style="background:#3ddc84;border-radius:4px"></span>🗄💾 <b>green</b> = caches (browser store / server evalcache)</div>
+      <div><span class="sw" style="background:#ff9f43;clip-path:polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%)"></span>🚪🚦 <b>orange/red chamfer</b> = API + scheduler gates</div>
+      <div><span class="sw" style="background:#c792ea;border-radius:8px"></span>🧠⚙️✨ <b>glowing pills</b> = engines + composer</div>
+      <div style="margin-top:6px">Packets: <b style="color:var(--play)">● play</b> · <b style="color:var(--focus)">◆ maia analysis</b> · <b style="color:var(--hit)">▲ stockfish</b> · <b style="color:var(--batch)">■ batch</b> · <b style="color:var(--dur)">⬣ save</b> · <b style="color:#e6c34d">⬟ openings</b> · <b style="color:var(--bad)">✖ pressure</b></div>
+    </div>
+  </div>
+  <div id="stageWrap">
+    <div id="zoombar"><button id="zin" title="zoom in">＋</button><button id="zout" title="zoom out">－</button><button id="zfit" title="fit">⤢</button></div>
+    <div id="stageScroll">
+    <svg id="svg" viewBox="0 0 1000 660" role="img" aria-label="live traffic diagram">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#5a6f99"></path></marker>
+        <filter id="glow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      </defs>
+      <g id="edgeLayer"></g><g id="nodeLayer"></g><g id="packetLayer"></g>
+      <text id="packetLabel" x="0" y="0"></text>
+    </svg>
+    </div>
+    <div id="payload"><b>live payload ›</b> <span id="payloadTxt">autopilot running slow — each packet parks ≥3s per component and shows what it does with the data.</span></div>
+  </div>
+  <div id="side">
+    <div id="nodeInfo"><h3>👆 Components are shape-coded</h3><p>Gold circle = user. Blue pills = frontend. Orange/red chamfer = backend gates. Green = caches. Glowing pills = engines. Click any component for its contract.</p></div>
+    <div id="bars">
+      <div style="display:flex;justify-content:space-between"><span>⚡ throughput <b id="bRate">–</b></span><span>✅ hit-rate <b id="bHit">–</b></span><span>⏱ <b id="clock">t=0s</b></span></div>
+      <div style="color:var(--mut)">🧠 79M load</div><div class="bar"><i id="bar79" style="background:var(--play);width:0%"></i></div>
+      <div style="color:var(--mut)">⚙️ Stockfish load</div><div class="bar"><i id="barSf" style="background:var(--hit);width:0%"></i></div>
+      <div style="color:var(--mut)">📦 Batch queue</div><div class="bar"><i id="barBt" style="background:var(--batch);width:0%"></i></div>
+      <div style="display:flex;gap:12px;color:var(--mut)">totals: <b id="sReq" style="color:#fff">0</b> hits <b id="sHit" style="color:var(--hit)">0</b> miss <b id="sMiss" style="color:var(--focus)">0</b> <b id="sErr" style="color:var(--bad)">0 err</b></div>
+    </div>
+    <div id="log"></div>
+    <div id="signals">signals honored here: <code>game-save status=</code> · <code>game-delete status=</code> · <code>move status=</code> · <code>evaluate status=</code> · <code>eval-content engine=maia</code> · <code>eval-content engine=sf</code> · <code>review-batch submit</code> · <code>review-batch entry</code> · <code>review-batch finish</code> · <code>review-batch busy</code> · <code>openings status=</code> · <code>X-Eval-Cache</code> · caps <code>8 jobs</code> · <code>768 entries</code> · <code>1024/chunk</code> · <code>25k rows</code> · <code>64 timelines</code> — contract: <code>spec/lifecycle-manifest.json</code></div>
+  </div>
+</div>
+<script>
+// ---------- nodes: shape+color+icon coded, no reading required ----------
+const NODES=[
+ {id:'user',c:0,y:36, kind:'user', fill:'#3a2c07',stroke:'#ffd54d',ico:'👤',t:'User workspaces',s:'Play·Analyze·History',d:'Emits {fen,moves,elos,model,settings}. Sampled play (temp>0) never populates the deterministic cache.'},
+ {id:'timeline',c:1,y:24, kind:'front',fill:'#12294d',stroke:'#5aa9ff',ico:'♟',t:'Timeline (domain)',s:'position=(initial,prefix)',d:'Move list + row per ply incl. root. posId=JSON([initial,prefix]); lineKey=full line. Selects read rows, no fetch.'},
+ {id:'store',c:1,y:118, kind:'cache',fill:'#0e3a24',stroke:'#3ddc84',ico:'🗄',t:'Browser EvalStore',s:'4096 rows · restore()',d:'reviewKey=JSON([posId,engine,hash]). restore() = bounded POST /evaluations/lookup chunks (≤1024, 4MiB). Visible-pair-first.'},
+ {id:'coord',c:1,y:212, kind:'front',fill:'#241a4d',stroke:'#8b7bff',ico:'🎛',t:'ReviewCoordinator',s:'1 live/eng · latest-wins',d:'ensure/pump/execute. Leaving workspace cancels flights, keeps shared rows. playMove = single tracked flight.'},
+ {id:'transport',c:1,y:306, kind:'front',fill:'#0b3540',stroke:'#4de3d1',ico:'📡',t:'Transport+gameClient',s:'postJson · SSE · games',d:'Shared POST sender + gameClient + SSE batch stream (optimization; GET status = truth). Sets X-Eval-Cache.'},
+ {id:'batchfe',c:1,y:400, kind:'front',fill:'#3a1c4d',stroke:'#c792ea',ico:'📦',t:'Batch/openings FE',s:'POST /reviews · /openings',d:'Bulk lookup first (hits settle at intake), submit misses ≤768. Openings once per lineKey.'},
+ {id:'api',c:2,y:24, kind:'gate',fill:'#4d2a0e',stroke:'#ff9f43',ico:'🚪',t:'Go HTTP API',s:'validate → admit',d:'/move→Play, /move/analysis+/evaluate→Focus, /reviews→Batch. ≤256 plies engine, ≤4096 history, 64KiB/4MiB. Unknown fields 400.'},
+ {id:'sched',c:2,y:118, kind:'gate',fill:'#4d0f1f',stroke:'#ff6b6b',ico:'🚦',t:'Scheduler lanes',s:'Play>Focus>Batch',d:'Play/Focus depth-1 latest-wins (409 superseded). Batch FIFO + rotation. Sync ≤100ms else 503. Batch caps → 429.'},
+ {id:'evalcache',c:2,y:212, kind:'cache',fill:'#0e3a2a',stroke:'#3ddc84',ico:'💾',t:'EvalCache·SQLite',s:'evaluations_v2 · 25k',d:'v2:JSON(engine,fen,initial,moves,cfg,rev). Deterministic-only writes. Lookup never infers. SF compatible-reuse: same time+depth, more lines.'},
+ {id:'games',c:2,y:306, kind:'cache',fill:'#07333a',stroke:'#4de3d1',ico:'📚',t:'Games store',s:'games+marker',d:'POST /games ≤4096 plies; GET pages 200/500; DELETE idempotent. Independent of eval eviction. Browser opVersion ack.'},
+ {id:'openings',c:2,y:400, kind:'gate',fill:'#3d2c07',stroke:'#e6c34d',ico:'📖',t:'Openings table',s:'ECO · mutex',d:'POST /openings → matches[{ply,eco,name}]+book_flags. Custom-start/missing table degrade to empty, never error.'},
+ {id:'maia79',c:3,y:24, kind:'engine',fill:'#0f2f5e',stroke:'#5aa9ff',ico:'🧠',t:'Maia 79M',s:'predict · 1 slot',d:'Primary pool, serial slot/replica. Full-history replay must reproduce fen. 120s deadline; fail → 5M fallback.'},
+ {id:'maia5',c:3,y:118, kind:'engine',fill:'#2a3348',stroke:'#9fb3c8',ico:'🧠',t:'Maia 5M fallback',s:'degraded=true',d:'Fallback pool. degraded+sampled served, never stored. UI labels model_used.'},
+ {id:'sf',c:3,y:212, kind:'engine',fill:'#3a2408',stroke:'#ffb454',ico:'⚙️',t:'Stockfish live',s:'Focus lane',d:'Warm helper/slot; cancel kills pgroup. time 250–30000ms, lines 1–5, depth 0–40.'},
+ {id:'sfbatch',c:3,y:306, kind:'engine',fill:'#2c1540',stroke:'#c792ea',ico:'⚙️',t:'Batch drain',s:'FIFO · SSE done',d:'Entries route by engine+role (grade/display). Per-index fails → errors map. Last 8 jobs kept.'},
+ {id:'back',c:3,y:400, kind:'engine',fill:'#3a3005',stroke:'#ffe082',ico:'✨',t:'Composer',s:'deltas·provenance',d:'Attaches delta_baseline/delta from before-position 2400 row at serve time. Keeps search_policy/actual_settings.'},
+];
+const XS=[16,285,560,800], W=184, H=66;
+const nodeById=Object.fromEntries(NODES.map(n=>[n.id,n]));
+nodeById.user.xs=XS[0];
+function center(id){const n=nodeById[id];const x=XS[n.c];return{x:x+(n.kind==='user'?36:W/2),y:n.y+H/2};}
+function pathFor(a,b){
+  const A=center(a),B=center(b);
+  const sameCol=nodeById[a].c===nodeById[b].c;
+  if(sameCol){const x=A.x+(A.x<500?110:-110);return `M ${A.x} ${A.y} C ${x} ${A.y}, ${x} ${B.y}, ${B.x} ${B.y}`;}
+  const mx=(A.x+B.x)/2;return `M ${A.x} ${A.y} C ${mx} ${A.y}, ${mx} ${B.y}, ${B.x} ${B.y}`;
+}
+const svg=document.getElementById('svg'),edgeLayer=document.getElementById('edgeLayer'),
+ nodeLayer=document.getElementById('nodeLayer'),packetLayer=document.getElementById('packetLayer'),
+ packetLabel=document.getElementById('packetLabel'),logEl=document.getElementById('log'),
+ payloadTxt=document.getElementById('payloadTxt'),nodeInfo=document.getElementById('nodeInfo');
+const edgePaths={};
+[['user','timeline','play'],['timeline','coord','play'],['timeline','store','play'],['coord','transport','play'],
+ ['store','transport','play'],['batchfe','transport','batch'],['transport','api','play'],['api','sched','play'],
+ ['sched','evalcache','play'],['evalcache','games','play'],['api','games','play'],['api','openings','play'],
+ ['evalcache','maia79','focus'],['evalcache','sf','focus'],['maia79','maia5','focus'],['maia79','back','focus'],
+ ['maia5','back','focus'],['sf','back','focus'],['sfbatch','back','batch'],['evalcache','sfbatch','batch'],
+ ['back','api','play'],['api','transport','play'],['transport','coord','play'],['coord','user','play'],
+ ['games','transport','play'],['openings','api','play']
+].forEach(([a,b,lane])=>{
+  const p=document.createElementNS('http://www.w3.org/2000/svg','path');
+  p.setAttribute('d',pathFor(a,b));p.setAttribute('class','lane '+lane);
+  p.setAttribute('marker-end','url(#arr)');edgeLayer.appendChild(p);
+  if(!edgePaths[a+'>'+b])edgePaths[a+'>'+b]=p;
+});
+['LIVE LOAD IN (left→right)','FRONTEND','BACKEND GATES + CACHES','ENGINES'].forEach((c,i)=>{
+  const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+  t.setAttribute('x',XS[i]);t.setAttribute('y',12);t.setAttribute('fill','#8fa0b8');
+  t.setAttribute('font-size','10');t.setAttribute('letter-spacing','1');t.textContent=c;svg.insertBefore(t,edgeLayer);
+});
+// draw nodes: user=circle, cache=double rect, gate=chamfer polygon, front/engine=pill
+const NS='http://www.w3.org/2000/svg';
+const busy={}; NODES.forEach(n=>busy[n.id]=0);
+const badges={};
+NODES.forEach(n=>{
+  const g=document.createElementNS(NS,'g');g.setAttribute('class','node');g.dataset.id=n.id;
+  const x=XS[n.c],y=n.y;
+  if(n.kind==='user'){
+    const c=document.createElementNS(NS,'circle');
+    c.setAttribute('cx',x+36);c.setAttribute('cy',y+H/2);c.setAttribute('r',32);
+    c.setAttribute('fill',n.fill);c.setAttribute('stroke',n.stroke);c.setAttribute('class','shape');c.setAttribute('stroke-width','2.5');
+    g.appendChild(c);
+    const e=document.createElementNS(NS,'text');e.setAttribute('x',x+36);e.setAttribute('y',y+H/2+2);
+    e.setAttribute('text-anchor','middle');e.setAttribute('class','ico');e.textContent=n.ico;g.appendChild(e);
+    const t=document.createElementNS(NS,'text');t.setAttribute('x',x+74);t.setAttribute('y',y+26);t.textContent=n.t;g.appendChild(t);
+    const s=document.createElementNS(NS,'text');s.setAttribute('x',x+74);s.setAttribute('y',y+42);s.setAttribute('class','sub');s.textContent=n.s;g.appendChild(s);
+  } else if(n.kind==='gate'){
+    const p=document.createElementNS(NS,'polygon');
+    const k=14;p.setAttribute('points',`${x+k},${y} ${x+W-k},${y} ${x+W},${y+H/2} ${x+W-k},${y+H} ${x+k},${y+H} ${x},${y+H/2}`);
+    p.setAttribute('fill',n.fill);p.setAttribute('stroke',n.stroke);p.setAttribute('class','shape');g.appendChild(p);
+    const e=document.createElementNS(NS,'text');e.setAttribute('x',x+12);e.setAttribute('y',y+30);e.setAttribute('class','ico');e.textContent=n.ico;g.appendChild(e);
+    const t=document.createElementNS(NS,'text');t.setAttribute('x',x+38);t.setAttribute('y',y+26);t.textContent=n.t;g.appendChild(t);
+    const s=document.createElementNS(NS,'text');s.setAttribute('x',x+38);s.setAttribute('y',y+42);s.setAttribute('class','sub');s.textContent=n.s;g.appendChild(s);
+  } else {
+    const r=document.createElementNS(NS,'rect');
+    r.setAttribute('x',x);r.setAttribute('y',y);r.setAttribute('width',W);r.setAttribute('height',H);
+    r.setAttribute('rx',n.kind==='engine'?30:14);
+    r.setAttribute('fill',n.fill);r.setAttribute('stroke',n.stroke);r.setAttribute('class','shape');
+    if(n.kind==='cache')r.setAttribute('stroke-dasharray','7 3');
+    if(n.kind==='engine'){r.setAttribute('filter','url(#glow)');}
+    g.appendChild(r);
+    const e=document.createElementNS(NS,'text');e.setAttribute('x',x+12);e.setAttribute('y',y+32);e.setAttribute('class','ico');e.textContent=n.ico;g.appendChild(e);
+    const t=document.createElementNS(NS,'text');t.setAttribute('x',x+38);t.setAttribute('y',y+26);t.textContent=n.t.length>20?n.t.slice(0,20):n.t;g.appendChild(t);
+    const s=document.createElementNS(NS,'text');s.setAttribute('x',x+38);s.setAttribute('y',y+42);s.setAttribute('class','sub');s.textContent=n.s;g.appendChild(s);
+  }
+  const b=document.createElementNS(NS,'g');
+  const bc=document.createElementNS(NS,'circle');bc.setAttribute('r',10);bc.setAttribute('fill','#ff6b6b');bc.setAttribute('stroke','#000');
+  const bt=document.createElementNS(NS,'text');bt.setAttribute('text-anchor','middle');bt.setAttribute('y',4);bt.setAttribute('font-size','11');bt.textContent='';
+  const bx=n.kind==='user'?XS[n.c]+62:XS[n.c]+W-8, by=n.y+2;
+  b.setAttribute('transform',`translate(${bx},${by})`);b.style.display='none';
+  b.append(bc,bt);g.appendChild(b);badges[n.id]={g:b,t:bt};
+  nodeLayer.appendChild(g);
+  g.addEventListener('click',()=>{
+    document.querySelectorAll('.node').forEach(e=>e.classList.remove('selected'));g.classList.add('selected');
+    nodeInfo.innerHTML=`<h3>${n.ico} ${n.t}</h3><code>${n.id} · ${n.s}</code><p>${n.d}</p>`;
+  });
+});
+function setBusy(id,v){busy[id]=Math.max(0,(busy[id]||0)+v);
+  const el=[...nodeLayer.children].find(e=>e.dataset.id===id);
+  if(el)el.classList.toggle('busy',busy[id]>0);
+  const bd=badges[id];if(bd){bd.t.textContent=busy[id]>0?busy[id]:'';bd.g.style.display=busy[id]>0?'block':'none';}
+  bars();
+}
+// ---------- routes (multi-hop journeys) ----------
+const C=()=>({m:document.getElementById('cModel').value,em:document.getElementById('cEloM').value,
+ eu:document.getElementById('cEloU').value,ply:document.getElementById('cPly').value,
+ tmp:document.getElementById('cTemp').value,sfms:document.getElementById('cSfMs').value,sfl:document.getElementById('cSfL').value});
+function R(kind,custom){
+  const c=custom?C():null;
+  const tag=custom?` custom[${c.m},${c.em}/${c.eu},ply${c.ply}]`:'';
+  switch(kind){
+   case 'play-hit':return{hops:[
+     ['user','timeline',260,'e2e4 · revisit'],['timeline','store',260,'store.get ✓'],['store','transport',220,'X-Eval-Cache: hit'],
+     ['transport','coord',220,'settle'],['coord','user',300,'instant render']],
+     color:'#3ddc84',shape:'circle',label:'● hit',cls:'hit',pay:'reviewKey → settled row · wait_ms=-1'+tag,hit:1};
+   case 'play':return{hops:[
+     ['user','timeline',280,'user plays'],['timeline','coord',240,'ensure()'],['coord','transport',260,'POST /move'],
+     ['transport','api',320,'validate replay'],['api','sched',280,'admit Play'],['sched','evalcache',300,'lookup MISS'],
+     ['evalcache','maia79',700,'🧠 79M infer'],['maia79','back',300,'store row'],['back','api',240,'compose'],
+     ['api','transport',240,'200 {move}'],['transport','coord',220,'settle'],['coord','user',300,'board plays']],
+     color:'#5aa9ff',shape:'circle',label:'● play',cls:'miss',pay:`POST /move {model:${c?c.m:'79m'},elo:${c?c.em+'/':''}1500…,temp:${c?c.tmp:0}} → miss → infer → store`+tag,miss:1,eng:'maia79'};
+   case 'analysis':return{hops:[
+     ['user','timeline',260,'select ply'],['timeline','coord',240,'ensure ×3'],['coord','transport',240,'/move/analysis'],
+     ['transport','api',300,'validate'],['api','sched',260,'admit Focus'],['sched','evalcache',280,'maia MISS'],
+     ['evalcache','maia79',650,'🧠 focus infer'],['maia79','back',280,'+delta_baseline'],['back','user',320,'grades render']],
+     color:'#ffb454',shape:'diamond',label:'◆ analysis',cls:'miss',pay:'POST /move/analysis {focus lane} + delta from 2400 row'+tag,miss:1,eng:'maia79'};
+   case 'sf':return{hops:[
+     ['user','timeline',240,'select pos'],['timeline','coord',220,'ensure sf'],['coord','transport',240,'POST /evaluate'],
+     ['transport','api',300,'validate set.'],['api','sched',260,'admit SF'],['sched','evalcache',280,'lookup'],
+     ['evalcache','sf',650,'⚙️ search'],['sf','back',280,'compose PV'],['back','user',300,'lines render']],
+     color:'#3ddc84',shape:'triangle',label:'▲ stockfish',cls:'miss',pay:`POST /evaluate {time_ms:${c?c.sfms:750},lines:${c?c.sfl:2}} → search → store`+tag,miss:1,eng:'sf'};
+   case 'batch':return{hops:[
+     ['user','batchfe',300,'analyze line'],['batchfe','transport',260,'lookup chunk'],['transport','api',320,'POST /reviews 202'],
+     ['api','sched',300,'batch admit'],['sched','sfbatch',1100,'drain FIFO ×N'],['sfbatch','back',320,'SSE progress'],
+     ['back','transport',280,'finish'],['transport','user',320,'grades fill']],
+     color:'#c792ea',shape:'square',label:'■ batch',cls:'bt',pay:'POST /reviews {total,cached,pending} → SSE done/failed/finished'+tag,miss:3,eng:'sfbatch'};
+   case 'save':return{hops:[
+     ['user','timeline',240,'game over'],['timeline','transport',260,'pending op'],['transport','api',280,'POST /games'],
+     ['api','games',420,'SQLite withTx'],['games','transport',260,'ack opVersion'],['transport','user',280,'History row']],
+     color:'#4de3d1',shape:'hex',label:'⬣ save',cls:'hit',pay:'POST /games {moves,result} → games+marker, eval rows untouched'+tag};
+   case 'openings':return{hops:[
+     ['user','batchfe',240,'load line'],['batchfe','transport',220,'POST /openings'],['transport','api',260,'validate'],
+     ['api','openings',420,'📖 ECO query'],['openings','api',220,'matches[]'],['api','user',300,'book chips']],
+     color:'#e6c34d',shape:'penta',label:'⬟ openings',cls:'hit',pay:'POST /openings → matches[{ply,eco,name}]+book_flags'+tag};
+   case 'degraded':return{hops:[
+     ['user','timeline',240,'play req'],['timeline','transport',240,'POST /move'],['transport','maia79',500,'79M ✖ FAIL'],
+     ['maia79','maia5',500,'↩ 5M retry'],['maia5','back',280,'serve degraded'],['back','user',320,'UI labels 5M']],
+     color:'#ffb454',shape:'diamond',label:'◆ degraded',cls:'miss',pay:'{degraded:true,model_used:"5m"} served, NEVER stored'+tag,miss:1,err:0,eng:'maia5'};
+   case 'pressure':return{hops:[
+     ['user','coord',240,'scrub ×3'],['coord','transport',240,'409 superseded'],['transport','api',280,'503 busy'],
+     ['api','sched',300,'429 caps'],['sched','user',320,'retry backoff']],
+     color:'#ff6b6b',shape:'cross',label:'✖ pressure',cls:'err',pay:'409 same-lane · 503 Retry-After:1 · 429 Retry-After:5'+tag,err:1};
+  }
+}
+// ---------- packet renderer ----------
+function shapeEl(shape,color){
+  const g=document.createElementNS(NS,'g');let s;
+  if(shape==='diamond'){s=document.createElementNS(NS,'rect');s.setAttribute('width',13);s.setAttribute('height',13);s.setAttribute('x',-6.5);s.setAttribute('y',-6.5);s.setAttribute('transform','rotate(45)');}
+  else if(shape==='square'){s=document.createElementNS(NS,'rect');s.setAttribute('width',14);s.setAttribute('height',14);s.setAttribute('x',-7);s.setAttribute('y',-7);s.setAttribute('rx',2);}
+  else if(shape==='triangle'){s=document.createElementNS(NS,'polygon');s.setAttribute('points','0,-9 8,6 -8,6');}
+  else if(shape==='hex'){s=document.createElementNS(NS,'polygon');s.setAttribute('points','8,0 4,7 -4,7 -8,0 -4,-7 4,-7');}
+  else if(shape==='penta'){s=document.createElementNS(NS,'polygon');s.setAttribute('points','0,-9 8,-3 5,7 -5,7 -8,-3');}
+  else if(shape==='cross'){s=document.createElementNS(NS,'text');s.setAttribute('text-anchor','middle');s.setAttribute('y',7);s.setAttribute('font-size','17');s.setAttribute('fill',color);s.textContent='✖';g.appendChild(s);return g;}
+  else{s=document.createElementNS(NS,'circle');s.setAttribute('r',8);}
+  s.setAttribute('fill',color);s.setAttribute('stroke','#000000aa');g.appendChild(s);return g;
+}
+let speed=1, simS=0, tot=0,hits=0,miss=0,errs=0, inflight=0, engLoad={maia79:0,sf:0,sfbatch:0}, recent=[];
+const MAX_INFLIGHT=3, DWELL_MS=3000, TRAVEL_MS=1700;
+const $=id=>document.getElementById(id);
+// zoom: scale the svg viewBox so mobile users can enlarge components
+let zoom=1; const VB={w:1000,h:660};
+function applyZoom(){const w=VB.w/zoom,h=VB.h/zoom;
+  $('svg').setAttribute('viewBox',`0 0 ${w} ${h}`);}
+$('zin').onclick=()=>{zoom=Math.min(2.6,zoom+0.3);applyZoom();};
+$('zout').onclick=()=>{zoom=Math.max(0.7,zoom-0.3);applyZoom();};
+$('zfit').onclick=()=>{zoom=1;applyZoom();};
+if(window.innerWidth<700){zoom=0.85;applyZoom();
+  $('stageScroll').scrollLeft=0;}
+function log(html,cls=''){const d=document.createElement('div');if(cls)d.className=cls;
+  d.innerHTML=`<span class="t">${simS.toFixed(1)}s</span> ${html}`;logEl.prepend(d);
+  while(logEl.children.length>180)logEl.lastChild.remove();}
+function bars(){
+  $('bar79').style.width=Math.min(100,engLoad.maia79*22)+'%';
+  $('barSf').style.width=Math.min(100,engLoad.sf*22)+'%';
+  $('barBt').style.width=Math.min(100,engLoad.sfbatch*14)+'%';
+  $('sReq').textContent=tot;$('sHit').textContent=hits;$('sMiss').textContent=miss;$('sErr').textContent=errs+' err';
+  const tot2=hits+miss||1;$('bHit').textContent=Math.round(100*hits/tot2)+'%';
+  $('clock').textContent='t='+simS.toFixed(0)+'s';
+}
+function nodeName(id){const n=nodeById[id];return n?`${n.ico} ${n.t}`:id;}
+// what the DESTINATION component actually does with the packet's data
+const EDGE_WORK={
+ 'user>timeline':'appends UCI prefix · posId=JSON([initial,prefix])',
+ 'timeline>coord':'ensure(priority): viewed ply first · 1 live req/engine',
+ 'timeline>store':'reviewKey=JSON([posId,engine,hash]) · 4096-row probe',
+ 'timeline>transport':'materializes moves[:ply] · POST body ≤64KiB',
+ 'coord>transport':'latest-wins flight · AbortController armed',
+ 'store>transport':'HIT row served · wait_ms=-1, no admission',
+ 'batchfe>transport':'bulk {line,requests[]} · ≤768 entries · 4MiB',
+ 'transport>api':'validates FEN↔replay · elos 0–5000 · plies≤256',
+ 'api>sched':'lane=Play|Focus|Batch · priority Play>Focus>Batch',
+ 'api>games':'writes game row: settings+moves+result · ≤4096 plies',
+ 'api>openings':'ECO query {initial,moves} · standard-start only',
+ 'sched>evalcache':'identity=v2:JSON(eng,fen,init,moves,cfg,rev) · probe',
+ 'sched>user':'backs off on 429/503 · honors Retry-After',
+ 'sched>sfbatch':'FIFO drain · role=grade/display · per-index errors map',
+ 'evalcache>maia79':'MISS → infer: SelfElo/OppoElo, temp, MultiPV+WDL',
+ 'evalcache>sf':'search time_ms/lines/depth · keeps search_policy',
+ 'evalcache>games':'games live apart from eval-row eviction',
+ 'evalcache>sfbatch':'misses queue into batch scheduler',
+ 'transport>maia79':'79M ✖ timeout/protocol → kills + reaps pgroup',
+ 'maia79>maia5':'79M failed → 5M fallback · degraded=true',
+ 'maia79>back':'persists deterministic row · 25k LRU · degraded never stored',
+ 'maia5>back':'serves degraded row · model_used=5m · never stored',
+ 'sf>back':'attaches search_policy+actual_settings · slices lines',
+ 'sfbatch>back':'SSE progress {done,failed,finished} · :ping 15s',
+ 'back>api':'derives delta_baseline/delta off 2400 row · read-time only',
+ 'back>transport':'200 {move,top_moves,wdl} · X-Eval-Cache: hit|miss',
+ 'back>user':'grades EngineGrade→Quality→verdict · rarity+material notes',
+ 'api>transport':'200 reply · hit|miss header · Retry-After when busy',
+ 'transport>coord':'settles store · checks vs active flight · notifies UI',
+ 'transport>user':'renders board · badges, bars, graphs update',
+ 'games>transport':'ack removes that opVersion only · newer work kept',
+ 'openings>api':'matches[{ply,eco,name}]+book_flags · empty if custom-start',
+ 'api>user':'book chips render · deepest ancestor derived locally',
+ 'user>coord':'scrub ×3 · latest wins, older cancelled (409)',
+ 'user>batchfe':'builds {line,requests[]} per ply × engine',
+ 'coord>user':'instant render from cache · ~25ms vs ~900ms miss',
+};
+function workFor(f,t){return EDGE_WORK[f+'>'+t]||'hands off validated payload';}
+function animateRoute(route){
+  if(inflight>=MAX_INFLIGHT){log(`… queue full (${inflight} live) — ${route.label} waits for a free lane`,route.cls);
+    setTimeout(()=>animateRoute(route),2500);return;}
+  inflight++;
+  tot++; if(route.hit)hits++; if(route.miss)miss+=route.miss; if(route.err)errs++;
+  recent.push(Date.now()); bars();
+  const g=shapeEl(route.shape,route.color);packetLayer.appendChild(g);
+  // per-packet narration card: follows the packet, holds ≥3s per stop, names next step
+  const card=document.createElementNS(NS,'g');card.style.display='none';
+  const cb=document.createElementNS(NS,'rect');
+  cb.setAttribute('class','callbox');cb.setAttribute('stroke',route.color);
+  cb.setAttribute('rx',9);cb.setAttribute('width',252);cb.setAttribute('height',64);
+  const cl1=document.createElementNS(NS,'text');cl1.setAttribute('class','callline1');
+  cl1.setAttribute('x',12);cl1.setAttribute('y',20);
+  const cl2=document.createElementNS(NS,'text');cl2.setAttribute('class','callline2');
+  cl2.setAttribute('x',12);cl2.setAttribute('y',38);
+  const cl3=document.createElementNS(NS,'text');cl3.setAttribute('class','callcount');
+  cl3.setAttribute('x',12);cl3.setAttribute('y',55);
+  card.append(cb,cl1,cl2,cl3);packetLayer.appendChild(card);
+  const trunc=(s,n)=>s.length>n?s.slice(0,n-1)+'…':s;
+  payloadTxt.innerHTML=`<b>${route.label}</b> · ${route.pay}`;
+  let hi=0;
+  setBusy(route.hops[0][0],1);
+  function placeCard(px,py){
+    let cx=px+18, cy=py-92;
+    cx=Math.max(4,Math.min(VB.w/zoom-260,cx)); cy=Math.max(4,cy);
+    card.setAttribute('transform',`translate(${cx},${cy})`);}
+  function hop(){
+    if(hi>=route.hops.length){g.remove();card.remove();inflight--;bars();return;}
+    const [f,t,ms,label]=route.hops[hi];
+    const work=workFor(f,t);
+    const ref=edgePaths[f+'>'+t];if(!ref){hi++;hop();return;}
+    const L=ref.getTotalLength();ref.classList.add('hot');
+    setBusy(t,1);
+    const isEngine=(t==='maia79'||t==='maia5'||t==='sf'||t==='sfbatch');
+    const key=t==='maia79'?'maia79':t==='sf'?'sf':t==='sfbatch'?'sfbatch':null;
+    if(key){engLoad[key]=(engLoad[key]||0)+1;bars();}
+    if(isEngine){const el=[...nodeLayer.children].find(e=>e.dataset.id===t);if(el)el.classList.add('busy');}
+    // phase 1: travel along the wire (slow, readable)
+    const dur=TRAVEL_MS/speed;let k=0,last=performance.now();
+    card.style.display='none';
+    const step=(now)=>{
+      k=Math.min(1,k+((now-last)/dur));last=now;
+      try{const p=ref.getPointAtLength(k*L);g.setAttribute('transform',`translate(${p.x},${p.y})`);
+        packetLabel.setAttribute('x',p.x+14);packetLabel.setAttribute('y',p.y-12);
+        packetLabel.textContent=`${route.label} · ${label} → ${nodeName(t)}`;}catch(e){}
+      if(k<1){requestAnimationFrame(step);return;}
+      // phase 2: park ≥3s ON the component, card shows what it DOES with the data
+      ref.classList.remove('hot');
+      let p;try{p=ref.getPointAtLength(L);}catch(e){p={x:0,y:0};}
+      g.setAttribute('transform',`translate(${p.x},${p.y})`);
+      packetLabel.textContent='';
+      cl1.textContent=trunc(`${route.label} @ ${nodeName(t)}`,34);
+      cl2.textContent=trunc(work,38);
+      cl3.textContent=trunc(`${label} · ${route.pay}`,38);
+      card.style.display='block';placeCard(p.x,p.y);
+      payloadTxt.innerHTML=`<b>${route.label} @ ${nodeName(t)}</b> — ${work}. <span style="color:var(--mut)">${label} · ${route.pay}</span>`;
+      setBusy(f,-1);
+      const dwell=DWELL_MS/speed, t0=performance.now();
+      const tick=()=>{
+        try{const q=ref.getPointAtLength(L);placeCard(q.x,q.y);}catch(e){}
+        if(performance.now()-t0<dwell){requestAnimationFrame(tick);return;}
+        card.style.display='none';
+        if(isEngine){const el=[...nodeLayer.children].find(e=>e.dataset.id===t);if(el&&busy[t]<=1)el.classList.remove('busy');}
+        if(key){engLoad[key]=Math.max(0,engLoad[key]-1);}
+        simS+=dur/1000+dwell/1000;
+        log(`${route.label} @ ${nodeName(t)} · ${work}`,route.cls);
+        hi++;setTimeout(hop,300/speed);
+      };
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(step);
+  }
+  hop();
+  setTimeout(()=>setBusy(route.hops[0][0],-1),(TRAVEL_MS+DWELL_MS)/speed);
+}
+// ---------- autopilot (slow: one request at a time, readable) ----------
+let auto=true, rate=0.4, mix='balanced', chaosDeg=0.04, chaosPrs=0.05;
+const MIXES={balanced:{play:26,'play-hit':22,analysis:16,sf:10,batch:8,save:8,openings:7,degraded:1,pressure:2},
+ play:{play:45,'play-hit':30,analysis:8,sf:5,batch:3,save:5,openings:3,degraded:0,pressure:1},
+ analysis:{play:10,'play-hit':12,analysis:32,sf:22,batch:8,save:5,openings:8,degraded:1,pressure:2},
+ batch:{play:8,'play-hit':8,analysis:10,sf:12,batch:40,save:8,openings:6,degraded:2,pressure:6}};
+function pick(){
+  const w={...MIXES[mix]};w.degraded=Math.max(w.degraded,chaosDeg*40);w.pressure=Math.max(w.pressure,chaosPrs*60);
+  // chaos overrides: roll pressure/degraded first
+  if(Math.random()<chaosPrs)return 'pressure';
+  if(Math.random()<chaosDeg)return 'degraded';
+  let s=0;for(const k in w)s+=w[k];let r=Math.random()*s;
+  for(const k in w){r-=w[k];if(r<=0)return k;}return 'play';
+}
+setInterval(()=>{if(!auto)return;
+  if(inflight===0 && Math.random()<rate*1.4){const k=pick();animateRoute(R(k,false));}
+  const now=Date.now();recent=recent.filter(t=>now-t<8000);$('bRate').textContent=(recent.length/8).toFixed(1)+' r/s';
+},800);
+setInterval(()=>{simS+=0.5;bars();},500);
+// ---------- controls ----------
+$('autoBtn').onclick=e=>{auto=!auto;e.target.textContent=auto?'⏸ Pause auto':'▶ Resume auto';
+  e.target.classList.toggle('on',auto);$('auto-pill').textContent=auto?'● AUTO TRAFFIC ON':'○ AUTO PAUSED';
+  $('auto-pill').classList.toggle('off',!auto);};
+$('burst').onclick=()=>{for(let i=0;i<3;i++)setTimeout(()=>animateRoute(R(pick(),false)),i*9000);};
+$('clear').onclick=()=>{packetLayer.innerHTML='';logEl.innerHTML='';};
+$('rate').oninput=e=>{rate=+e.target.value;$('rateVal').textContent=rate.toFixed(1)+' req/s';};
+$('speed').oninput=e=>{speed=+e.target.value;$('spdVal').textContent=speed+'×';};
+document.querySelectorAll('[data-mix]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('[data-mix]').forEach(x=>x.classList.remove('on'));b.classList.add('on');mix=b.dataset.mix;});
+$('chaosDeg').onclick=e=>{chaosDeg=chaosDeg>=0.3?0:chaosDeg+0.06;e.target.textContent=`79M→5M: ${Math.round(chaosDeg*100)}%`;e.target.classList.toggle('on',chaosDeg>0);};
+$('chaosPrs').onclick=e=>{chaosPrs=chaosPrs>=0.3?0:chaosPrs+0.05;e.target.textContent=`Pressure: ${Math.round(chaosPrs*100)}%`;e.target.classList.toggle('on',chaosPrs>0);};
+document.querySelectorAll('[data-inj]').forEach(b=>b.onclick=()=>animateRoute(R(b.dataset.inj,true)));
+// seed + go (staggered so the slow narration never overlaps)
+log('autopilot on (slow) — one request at a time, ≥3s per stop, next step on the card. Inject on the left anytime.','bt');
+animateRoute(R('play',false));
+bars();
+</script>
+</body>
+</html>

@@ -1,0 +1,196 @@
+{
+  "$comment": "Single source of truth for lifecycle-visualization.html. scripts/check-lifecycle-sync.mjs verifies every entry against the code (file + patterns must match), against AGENTS.md where applicable, and against the visualization (viz tokens must appear verbatim). Reverse checks ensure new routes/workers cannot land without a manifest entry. Run via scripts/verify.sh.",
+  "version": 1,
+  "viz": "lifecycle-visualization.html",
+  "routes": [
+    {
+      "id": "move",
+      "covers": ["/move"],
+      "server_anchor": "Path:\\s*\"/move\"",
+      "lane": {"file": "backend/internal/server/move.go", "patterns": ["handleMovePlay", "PriorityPlay"]},
+      "viz": ["POST /move", "admit Play"]
+    },
+    {
+      "id": "move-analysis",
+      "covers": ["/move/analysis"],
+      "server_anchor": "Path:\\s*\"/move/analysis\"",
+      "lane": {"file": "backend/internal/server/move.go", "patterns": ["handleMoveFocus", "PriorityFocus"]},
+      "viz": ["/move/analysis", "admit Focus"]
+    },
+    {
+      "id": "evaluate",
+      "covers": ["/evaluate"],
+      "server_anchor": "Path:\\s*\"/evaluate\"",
+      "lane": {"file": "backend/internal/server/evaluate.go", "patterns": ["sched\\.PriorityFocus"]},
+      "viz": ["POST /evaluate", "Stockfish"]
+    },
+    {
+      "id": "lookup",
+      "covers": ["/evaluations/lookup"],
+      "server_anchor": "Path:\\s*\"/evaluations/lookup\"",
+      "lane": {"file": "backend/internal/server/identity.go", "patterns": ["at most 1024 entries"], "note": "read-only: never admits, never infers"},
+      "viz": ["POST /evaluations/lookup", "1024"]
+    },
+    {
+      "id": "evaluations-stats",
+      "covers": ["/evaluations/stats"],
+      "server_anchor": "Path:\\s*\"/evaluations/stats\"",
+      "lane": {"file": "backend/internal/server/evaluations.go", "patterns": ["CacheStats"]},
+      "viz": ["evaluations_v2 · 25k"]
+    },
+    {
+      "id": "evaluations-get",
+      "covers": ["/evaluations/{hash}"],
+      "server_anchor": "Path:\\s*\"/evaluations/\\{hash\\}\"",
+      "lane": {"file": "backend/internal/server/evaluations.go", "patterns": ["ValidHash"]},
+      "viz": ["evaluations_v2 · 25k"]
+    },
+    {
+      "id": "reviews-submit",
+      "covers": ["/reviews"],
+      "server_anchor": "Path:\\s*\"/reviews\"",
+      "lane": {"file": "backend/internal/server/reviews.go", "patterns": ["sched\\.PriorityBatch"]},
+      "viz": ["POST /reviews", "Batch drain"]
+    },
+    {
+      "id": "reviews-status",
+      "covers": ["/reviews/{id}", "/reviews/{id}/events"],
+      "server_anchor": "Path:\\s*\"/reviews/\\{id\\}\"",
+      "lane": {"file": "backend/internal/server/reviews.go", "patterns": ["Play>Focus>Batch"]},
+      "viz": ["SSE progress", "finished"]
+    },
+    {
+      "id": "games",
+      "covers": ["/games"],
+      "server_anchor": "Path:\\s*\"/games\"",
+      "lane": {"file": "backend/internal/server/games.go", "patterns": ["store\\.ValidateGamePayload"]},
+      "viz": ["POST /games", "SQLite withTx"]
+    },
+    {
+      "id": "games-by-id",
+      "covers": ["/games/{id}"],
+      "server_anchor": "Path:\\s*\"/games/\\{id\\}\"",
+      "lane": {"file": "backend/internal/server/games.go", "patterns": ["game-delete status=%d"]},
+      "viz": ["History row"]
+    },
+    {
+      "id": "openings",
+      "covers": ["/openings"],
+      "server_anchor": "Path:\\s*\"/openings\"",
+      "lane": {"file": "backend/internal/server/openings.go", "patterns": ["openings\\.ValidateRequest"]},
+      "viz": ["POST /openings", "ECO query"]
+    },
+    {
+      "id": "healthz",
+      "covers": ["/healthz"],
+      "server_anchor": "Path:\\s*\"/healthz\"",
+      "lane": null,
+      "viz": []
+    }
+  ],
+  "frontend": [
+    {
+      "id": "timeline",
+      "file": "frontend/src/shared/domain.ts",
+      "patterns": ["export function posId", "TIMELINE_CACHE_LIMIT = 64"],
+      "viz": ["posId=JSON", "Timeline (domain)"]
+    },
+    {
+      "id": "store",
+      "file": "frontend/src/eval/evaluationStore.ts",
+      "patterns": ["export function reviewKey", "cache\\.size > 4096"],
+      "viz": ["reviewKey=JSON", "Browser EvalStore"]
+    },
+    {
+      "id": "coord",
+      "file": "frontend/src/review/reviewCoordinator.ts",
+      "patterns": ["ensure\\(", "pump\\("],
+      "viz": ["ReviewCoordinator", "latest-wins"]
+    },
+    {
+      "id": "transport",
+      "file": "frontend/src/eval/evaluationTransport.ts",
+      "patterns": ["postJson"],
+      "viz": ["Transport+gameClient", "X-Eval-Cache"]
+    },
+    {
+      "id": "gameClient",
+      "file": "frontend/src/history/serverGames.ts",
+      "patterns": ["gameClient"],
+      "viz": ["Transport+gameClient"]
+    },
+    {
+      "id": "repo",
+      "file": "frontend/src/history/gameRepository.ts",
+      "patterns": ["maia-board\\.games\\.v2"],
+      "viz": ["pending op", "opVersion"]
+    },
+    {
+      "id": "batch",
+      "file": "frontend/src/review/batchReview.ts",
+      "patterns": ["BATCH_PERSIST_KEY = 'maia-board\\.review-batch\\.v1'"],
+      "viz": ["POST /reviews", "■ batch"]
+    },
+    {
+      "id": "openings-fe",
+      "file": "frontend/src/theory/openings.ts",
+      "patterns": ["OpeningMatch"],
+      "viz": ["book chips"]
+    }
+  ],
+  "workers": [
+    {
+      "id": "maia",
+      "file": "backend/workers/maia3_worker.py",
+      "patterns": ["Maia3UCIEngine"],
+      "viz": ["Maia 79M", "5M fallback"]
+    },
+    {
+      "id": "stockfish",
+      "file": "backend/workers/stockfish_worker.py",
+      "patterns": ["push_uci"],
+      "viz": ["Stockfish live", "search"]
+    },
+    {
+      "id": "openings-worker",
+      "file": "backend/workers/openings_lookup.py",
+      "patterns": ["def lookup\\(request, table\\)"],
+      "viz": ["Openings table", "ECO query"]
+    }
+  ],
+  "signals": [
+    {"id": "game-save", "code": {"file": "backend/internal/server/games.go", "patterns": ["game-save status=%d"]}, "agents": "game-save", "viz": ["game-save status="]},
+    {"id": "game-delete", "code": {"file": "backend/internal/server/games.go", "patterns": ["game-delete status=%d"]}, "agents": "game-delete", "viz": ["game-delete status="]},
+    {"id": "move", "code": {"file": "backend/internal/server/move.go", "patterns": ["move status=%d"]}, "agents": "move status=", "viz": ["move status="]},
+    {"id": "evaluate", "code": {"file": "backend/internal/server/evaluate.go", "patterns": ["evaluate status=%d"]}, "agents": "`evaluate`", "viz": ["evaluate status="]},
+    {"id": "eval-maia", "code": {"file": "backend/internal/server/move.go", "patterns": ["eval-content engine=maia"]}, "agents": "eval-content engine=maia", "viz": ["eval-content engine=maia"]},
+    {"id": "eval-sf", "code": {"file": "backend/internal/server/evaluate.go", "patterns": ["eval-content engine=sf"]}, "agents": "eval-content engine=sf", "viz": ["eval-content engine=sf"]},
+    {"id": "batch-submit", "code": {"file": "backend/internal/server/reviews.go", "patterns": ["review-batch submit job="]}, "agents": "review-batch submit", "viz": ["review-batch submit"]},
+    {"id": "batch-entry", "code": {"file": "backend/internal/server/reviews.go", "patterns": ["review-batch entry job="]}, "agents": "review-batch entry", "viz": ["review-batch entry"]},
+    {"id": "batch-finish", "code": {"file": "backend/internal/server/reviews.go", "patterns": ["review-batch finish job="]}, "agents": "review-batch finish", "viz": ["review-batch finish"]},
+    {"id": "batch-busy", "code": {"file": "backend/internal/server/reviews.go", "patterns": ["review-batch busy unfinished="]}, "agents": "review-batch busy", "viz": ["review-batch busy"]},
+    {"id": "openings", "code": {"file": "backend/internal/server/openings.go", "patterns": ["openings status=%d"]}, "agents": "openings", "viz": ["openings status="]},
+    {"id": "eval-cache-header", "code": {"file": "backend/internal/server/move.go", "patterns": ["header:\"X-Eval-Cache\""]}, "agents": "X-Eval-Cache", "viz": ["X-Eval-Cache"]}
+  ],
+  "limits": [
+    {"id": "engine-256", "code": {"file": "backend/internal/server/move.go", "patterns": ["at most 256 plies"]}, "viz": ["plies≤256"]},
+    {"id": "history-4096", "code": {"file": "backend/internal/server/identity.go", "patterns": ["at most 4096 plies"]}, "viz": ["≤4096 plies"]},
+    {"id": "body-64k", "code": {"file": "backend/internal/server/api.go", "patterns": ["64 \\* 1024"]}, "viz": ["64KiB"]},
+    {"id": "bulk-4m", "code": {"file": "backend/internal/server/api.go", "patterns": ["4 \\* 1024 \\* 1024"]}, "viz": ["4MiB"]},
+    {"id": "lookup-1024", "code": {"file": "backend/internal/server/identity.go", "patterns": ["at most 1024 entries"]}, "viz": ["1024/chunk"]},
+    {"id": "batch-768", "code": {"file": "backend/internal/server/reviews.go", "patterns": ["maxBatchRequests = 768"]}, "viz": ["768 entries"]},
+    {"id": "jobs-8", "code": {"file": "backend/internal/server/reviews.go", "patterns": ["maxUnfinishedJobs = 8"]}, "viz": ["8 jobs"]},
+    {"id": "rows-25k", "code": {"file": "backend/internal/evalcache/evalcache.go", "patterns": ["MaxRows = 25000"]}, "viz": ["25k"]},
+    {"id": "fe-4096", "code": {"file": "frontend/src/eval/evaluationStore.ts", "patterns": ["cache\\.size > 4096"]}, "viz": ["4096 rows"]},
+    {"id": "timelines-64", "code": {"file": "frontend/src/shared/domain.ts", "patterns": ["TIMELINE_CACHE_LIMIT = 64"]}, "viz": ["64 timelines"]}
+  ],
+  "reverse": {
+    "routes_file": "backend/internal/server/api.go",
+    "route_pattern": "\"(/(move|evaluate|evaluations|reviews|games|openings|healthz)[^\"]*)\"",
+    "ignore_paths": ["/", "/evaluations", "/evaluations/", "/games/", "/reviews/"],
+    "ignore_reason": "SPA fallback (no path literal) + empty-id 404 shims and legacy compat shims, intentionally not visualized",
+    "workers_dir": "backend/workers",
+    "worker_suffix": ".py",
+    "worker_ignore_prefix": "test_"
+  }
+}
