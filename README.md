@@ -142,13 +142,6 @@ commented build arg away; see the comments in `compose.yaml`. Stockfish always
 runs on CPU. Builds assume x86-64 Linux; ARM hosts are not covered. No ROCm
 build is provided.
 
-Managed hosting lives in the separate `home-server` repository
-(`maia-board/compose.yaml`, `maia-board/maia-board-komodo.toml`, and the
-`maia-board` entry in `services.toml`). It serves
-`https://chess.home.simho.xyz` on the LAN through Traefik; tailnet clients use
-the service-directory Tailnet port link (`http://debian-server.<tailnet>:18080`,
-bound to the tailnet interface only).
-
 ## Source ownership
 
 | Location | Responsibility |
