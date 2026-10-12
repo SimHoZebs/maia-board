@@ -36,11 +36,11 @@ re-defining. One name per concept — no aliases.
   marker, not the identity. `${gameId}|${userColor}` memo scopes and
   `job_id` batch IDs (shared `newHexID` generator, separate namespaces:
   SQLite games vs in-memory review jobs) are not identities.
-- `pos_hash / cache_hash / cache_key` — log-only or legacy-client fields.
-  Live `/move`, `/move/analysis`, `/evaluate` accept-and-ignore them;
-  bulk `/evaluations/lookup`, `/reviews` accept only `pos_hash` and reject
-  `cache_hash`/`cache_key` as unknown fields. Server derives identity from
-  `(fen, initial_fen, moves)`. See `backend/internal/server/identity.go`.
+- Server derives identity from `(fen, initial_fen, moves)` — no client
+  coordinates. The removed `pos_hash / cache_hash / cache_key` fields
+  (legacy clients) are rejected as unknown fields on strict bulk bodies
+  and ignored elsewhere by the JSON decoder.
+  See `backend/internal/server/identity.go`.
   Backend identity: `evaluationIdentity.coordinates()` =
   `v2:JSON(engine, fen, initial_fen, moves, settings|elos, model, revision)`.
   Frontend `posId ~= (initialFen, prefix)` slice; `reviewKey ~= hash +

@@ -33,7 +33,7 @@ func apiError(status int, code, message string) error {
 }
 
 // writeHumaError serializes the same shape for plain-Chi paths that bypass
-// Huma handlers: the SSE stream, 405/404 shims, and panic recovery.
+// Huma handlers: the SSE stream and panic recovery.
 func writeHumaError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -151,22 +151,6 @@ func (s *Server) registerOps(r chi.Router, api huma.API) {
 		Errors:        []int{502},
 	}, s.handleGameDelete)
 	huma.Register(api, huma.Operation{
-		OperationID:   "evaluations-stats",
-		Method:        http.MethodGet,
-		Path:          "/evaluations/stats",
-		Summary:       "Evaluation cache stats",
-		DefaultStatus: http.StatusOK,
-		Errors:        []int{502},
-	}, s.handleEvalStats)
-	huma.Register(api, huma.Operation{
-		OperationID:   "evaluations-get",
-		Method:        http.MethodGet,
-		Path:          "/evaluations/{hash}",
-		Summary:       "Fetch one cached evaluation by key hash",
-		DefaultStatus: http.StatusOK,
-		Errors:        []int{400, 404, 502},
-	}, s.handleEvalGet)
-	huma.Register(api, huma.Operation{
 		OperationID:   "evaluations-lookup",
 		Method:        http.MethodPost,
 		Path:          "/evaluations/lookup",
@@ -213,18 +197,4 @@ func (s *Server) registerOps(r chi.Router, api huma.API) {
 	// cannot answer pre-stream 404s, and the framing (named progress events
 	// plus :ping heartbeats the client ignores) is load-bearing.
 	r.Get("/reviews/{id}/events", s.reviews.reviewEvents)
-	// Empty-id and legacy shims answer 404 exactly like the old prefix
-	// mux did (id check ran before the method switch there).
-	r.Handle("/games/", notFound("unknown game"))
-	r.Get("/reviews/", notFound("unknown review batch"))
-	r.Get("/evaluations", notFound("unknown evaluation"))
-	r.Get("/evaluations/", notFound("unknown evaluation"))
-}
-
-// notFound answers exact-path shims with a Huma 404. The detail wording
-// matches the old prefix-mux messages.
-func notFound(message string) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		writeHumaError(w, http.StatusNotFound, "not_found", message)
-	}
 }

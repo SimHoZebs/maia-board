@@ -194,7 +194,6 @@ type LookupRequest struct {
 	Engine       string                    `json:"engine"`
 	FEN          string                    `json:"fen"`
 	Ply          int                       `json:"ply"`
-	PosHash      string                    `json:"pos_hash,omitempty"`
 	Settings     *engine.StockfishSettings `json:"settings,omitempty"`
 	EloMaia      *int                      `json:"elo_maia,omitempty"`
 	EloUser      *int                      `json:"elo_user,omitempty"`
@@ -360,15 +359,15 @@ func (s *Server) handleEvalLookup(ctx context.Context, input *LookupInput) (*Loo
 		case "sf":
 			if value, ok := s.cachedSFFrom(src, entry.sfReq); ok {
 				results = append(results, LookupResult{index, value, value.ActualSettings})
-				log.Printf("eval-content engine=sf cache=hit via=lookup index=%d fen=%s plies=%d pos=%s %s",
-					index, query.FEN, query.Ply, orDash(query.PosHash), sfContentFields(value))
+				log.Printf("eval-content engine=sf cache=hit via=lookup index=%d fen=%s plies=%d %s",
+					index, query.FEN, query.Ply, sfContentFields(value))
 			}
 		case "maia":
 			if value, ok := s.cachedMaiaFrom(src, entry.maiaReq, entry.model); ok {
 				value = attachMaiaDelta(src, entry.maiaReq, value)
 				results = append(results, LookupResult{Index: index, Value: value})
-				log.Printf("eval-content engine=maia cache=hit via=lookup index=%d fen=%s plies=%d pos=%s elo=%s value=%s model=%s %s",
-					index, query.FEN, query.Ply, orDash(query.PosHash), eloPair(query.EloMaia, query.EloUser),
+				log.Printf("eval-content engine=maia cache=hit via=lookup index=%d fen=%s plies=%d elo=%s value=%s model=%s %s",
+					index, query.FEN, query.Ply, eloPair(query.EloMaia, query.EloUser),
 					valueEloPair(query.ValueEloMaia, query.ValueEloUser), entry.model, maiaContentFields(*value))
 			}
 		}

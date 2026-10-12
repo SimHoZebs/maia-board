@@ -10,12 +10,9 @@ import * as zod from 'zod';
  * @summary Stockfish search (Focus lane)
  */
 export const EvaluateBody = zod.strictObject({
-  "cache_hash": zod.string().optional(),
-  "cache_key": zod.string().optional(),
   "fen": zod.string(),
   "initial_fen": zod.string().optional(),
   "moves": zod.array(zod.string()).nullable(),
-  "pos_hash": zod.string().optional(),
   "settings": zod.strictObject({
   "depth": zod.int(),
   "lines": zod.int(),
@@ -68,7 +65,6 @@ export const EvaluationsLookupBody = zod.strictObject({
   "fen": zod.string(),
   "model": zod.string().optional(),
   "ply": zod.int(),
-  "pos_hash": zod.string().optional(),
   "settings": zod.strictObject({
   "depth": zod.int(),
   "lines": zod.int(),
@@ -90,34 +86,6 @@ export const EvaluationsLookupResponse = zod.strictObject({
   "index": zod.int(),
   "value": zod.unknown()
 })).nullable()
-})
-
-
-/**
- * @summary Evaluation cache stats
- */
-export const EvaluationsStatsResponse = zod.strictObject({
-  "$schema": zod.url().optional().describe('A URL to the JSON Schema for this object.'),
-  "bytes": zod.int(),
-  "count": zod.int(),
-  "max_rows": zod.int()
-})
-
-
-/**
- * @summary Fetch one cached evaluation by key hash
- */
-export const EvaluationsGetParams = zod.object({
-  "hash": zod.string()
-})
-
-export const EvaluationsGetResponse = zod.strictObject({
-  "$schema": zod.url().optional().describe('A URL to the JSON Schema for this object.'),
-  "created_at": zod.string(),
-  "engine": zod.string(),
-  "key": zod.string(),
-  "key_hash": zod.string(),
-  "value": zod.unknown()
 })
 
 
@@ -243,8 +211,6 @@ export const HealthzResponse = zod.strictObject({
  * @summary Live Maia game reply (Play lane)
  */
 export const MoveBody = zod.strictObject({
-  "cache_hash": zod.string().optional(),
-  "cache_key": zod.string().optional(),
   "elo_maia": zod.int().nullable(),
   "elo_user": zod.int().nullable(),
   "fen": zod.string(),
@@ -288,8 +254,6 @@ export const MoveResponse = zod.strictObject({
  * @summary Retrospective Maia analysis (Focus lane)
  */
 export const MoveAnalysisBody = zod.strictObject({
-  "cache_hash": zod.string().optional(),
-  "cache_key": zod.string().optional(),
   "elo_maia": zod.int().nullable(),
   "elo_user": zod.int().nullable(),
   "fen": zod.string(),
@@ -364,7 +328,6 @@ export const ReviewsSubmitBody = zod.strictObject({
   "fen": zod.string(),
   "model": zod.string().optional(),
   "ply": zod.int(),
-  "pos_hash": zod.string().optional(),
   "settings": zod.strictObject({
   "depth": zod.int(),
   "lines": zod.int(),

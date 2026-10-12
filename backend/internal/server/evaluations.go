@@ -1,13 +1,11 @@
 package server
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"net/http"
 	"strings"
 	"time"
 
@@ -56,73 +54,6 @@ func (s *Server) storeCache(hash, eng, key string, value any) {
 	log.Printf("evaluation cache write engine=%s bytes=%d duration_us=%d error=%v", eng, len(encoded), time.Since(started).Microseconds(), err)
 }
 
-func (s *Server) handleEvalStats(ctx context.Context, _ *struct{}) (*EvalStatsOutput, error) {
-	if s.store == nil {
-		return nil, apiError(http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
-	}
-	count, bytes, err := s.store.CacheStats()
-	if err != nil {
-		return nil, apiError(http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
-	}
-	return &EvalStatsOutput{Body: EvalStatsBody{Count: count, Bytes: bytes, MaxRows: evalcache.MaxRows}}, nil
-}
-
-// EvalStatsBody is the GET /evaluations/stats document.
-type EvalStatsBody struct {
-	Count   int `json:"count"`
-	Bytes   int `json:"bytes"`
-	MaxRows int `json:"max_rows"`
-}
-
-type EvalStatsOutput struct {
-	Body EvalStatsBody
-}
-
-type EvalGetInput struct {
-	Hash string `path:"hash"`
-}
-
-// EvalCacheBody is one disposable v2 cache row. Value stays free-form
-// (json.RawMessage would schema as bytes and lie to Orval clients).
-type EvalCacheBody struct {
-	KeyHash   string `json:"key_hash"`
-	Engine    string `json:"engine"`
-	Key       string `json:"key"`
-	Value     any    `json:"value"`
-	CreatedAt string `json:"created_at"`
-}
-
-type EvalCacheOutput struct {
-	Body EvalCacheBody
-}
-
-func (s *Server) handleEvalGet(ctx context.Context, input *EvalGetInput) (*EvalCacheOutput, error) {
-	if s.store == nil {
-		return nil, apiError(http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
-	}
-	if !evalcache.ValidHash(input.Hash) {
-		return nil, apiError(http.StatusBadRequest, "invalid_request", "evaluation key must be hex")
-	}
-	entry, err := s.store.CacheGet(input.Hash)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, apiError(http.StatusNotFound, "not_found", "unknown evaluation")
-	}
-	if err != nil {
-		return nil, apiError(http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
-	}
-	out := &EvalCacheOutput{}
-	out.Body.KeyHash = entry.KeyHash
-	out.Body.Engine = entry.Engine
-	out.Body.Key = entry.Key
-	out.Body.CreatedAt = entry.CreatedAt
-	var value any
-	if err := json.Unmarshal(entry.Value, &value); err != nil {
-		return nil, apiError(http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
-	}
-	out.Body.Value = value
-	return out, nil
-}
-
 // Eval-content log lines: one per served evaluation — fresh inference or
 // cache hit — so any number on screen traces to a server-log line. WDL
 // triples print loss/draw/win (mover-relative, three decimals); exp is
@@ -151,13 +82,6 @@ func valueEloPair(a, b *int) string {
 		return "-"
 	}
 	return eloPair(a, b)
-}
-
-func orDash(value string) string {
-	if value == "" {
-		return "-"
-	}
-	return value
 }
 
 func maiaContentFields(resp engine.MoveResponse) string {

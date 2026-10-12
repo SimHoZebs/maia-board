@@ -10,8 +10,9 @@ import (
 )
 
 // Cache fixtures are inserted directly. Public PUT is intentionally
-// disabled; corruption fixtures are untrusted producers. Short legacy ids
-// address nothing since the legacy table was dropped: they 404.
+// disabled. Unknown evaluation paths fall through to the frontend shell
+// (404 without a build present): they address nothing since the debug
+// per-hash GET was removed and the legacy table was dropped.
 func TestLegacyEvaluationIdsAreGone(t *testing.T) {
 	s := &Server{store: testStore(t)}
 	w := serve(s, "GET", "/evaluations/abc123", "")

@@ -98,8 +98,7 @@ export function reviewKey(engine: Engine, node: ReviewNode, settings: ReviewSett
 
 // Line-oriented bulk wire: the full line ships once per POST, entries carry
 // only ply. Client keys stay prefix-based locally (reviewKey/posId via
-// prefixOf); only the wire payload changes. pos_hash rides along allowlisted
-// and ignored for identity, as before.
+// prefixOf). Server derives cache identity from (fen, initial_fen, moves).
 export type BatchLine = { initial_fen: string; moves: string[] };
 export function batchLineFor(timeline: { initialFen: string; moves: readonly string[] }): BatchLine {
   return { initial_fen: timeline.initialFen, moves: [...timeline.moves] };
@@ -109,11 +108,11 @@ export function lineKeyForNode(node: ReviewNode): string {
 }
 export function evaluationRequest(engine: Engine, node: ReviewNode, settings: ReviewSettings) {
   if (engine === 'sf') {
-    return { engine, ply: node.ply, fen: node.fen, pos_hash: stablePositionKey(node),
+    return { engine, ply: node.ply, fen: node.fen,
       ...(settings.stockfish ? { settings: settings.stockfish } : {}) };
   }
   const split = splitValueElos(settings);
-  return { engine, ply: node.ply, fen: node.fen, pos_hash: stablePositionKey(node),
+  return { engine, ply: node.ply, fen: node.fen,
     elo_maia: clampBotElo(settings.botElo), elo_user: clampBotElo(settings.userElo), model: settings.model,
     ...(split.valueBotElo !== undefined ? { value_elo_maia: split.valueBotElo } : {}),
     ...(split.valueUserElo !== undefined ? { value_elo_user: split.valueUserElo } : {}) };
@@ -221,9 +220,9 @@ export function parseEvaluation(body: unknown, settings?: StockfishSettings, act
 export async function fetchEvaluation(node: ReviewNode, signal: AbortSignal, fetcher: typeof fetch = fetch, settings?: StockfishSettings): Promise<StockfishResult> {
   let response: Response;
   let body: unknown;
-  // pos_hash rides along (backend allowlists it, ignored for identity) so
-  // /evaluate and /evaluations/lookup share the same position identity.
-  const sfWire = { fen: node.fen, initial_fen: node.initialFen, moves: prefixOf(node), pos_hash: stablePositionKey(node) };
+  // /evaluate and /evaluations/lookup share the same position identity,
+  // derived server-side from (fen, initial_fen, moves).
+  const sfWire = { fen: node.fen, initial_fen: node.initialFen, moves: prefixOf(node) };
   try {
     ({ response, body } = await fetchJsonWithBusyRetry(fetcher, '/evaluate', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings ? { ...sfWire, settings } : sfWire) }, signal));

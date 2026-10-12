@@ -21,16 +21,13 @@ import (
 
 const SearchPolicy = "sf19-n100k-ms750-mpv2-t4-h128-v3"
 
-// EvaluationRequest is a Stockfish search request. CacheHash/CacheKey are
-// accepted for older clients; cache identity is derived by the server.
+// EvaluationRequest is a Stockfish search request. Cache identity is derived
+// by the server from (fen, initial_fen, moves, settings).
 type EvaluationRequest struct {
 	FEN        string             `json:"fen"`
 	Moves      []string           `json:"moves"`
 	InitialFEN string             `json:"initial_fen,omitempty"`
-	PosHash    string             `json:"pos_hash,omitempty"`
 	Settings   *StockfishSettings `json:"settings,omitempty"`
-	CacheHash  string             `json:"cache_hash,omitempty"`
-	CacheKey   string             `json:"cache_key,omitempty"`
 }
 
 // EvaluationScore is a position score from the side-to-move perspective:

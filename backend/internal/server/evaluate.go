@@ -47,8 +47,8 @@ func (s *Server) handleEvaluate(ctx context.Context, input *EvaluateInput) (*Eva
 			if hit {
 				cache = "hit"
 			}
-			log.Printf("eval-content engine=sf cache=%s policy=%s fen=%s plies=%d pos=%s %s",
-				cache, policy, request.FEN, len(request.Moves), orDash(request.PosHash), sfContentFields(result))
+			log.Printf("eval-content engine=sf cache=%s policy=%s fen=%s plies=%d %s",
+				cache, policy, request.FEN, len(request.Moves), sfContentFields(result))
 		}
 	}()
 	validateStart := time.Now()

@@ -27,9 +27,6 @@ type MoveRequest struct {
 	MaiaColor    string   `json:"maia_color"`
 	InitialFEN   string   `json:"initial_fen,omitempty"`
 	Temperature  float64  `json:"temperature,omitempty"`
-	// Accepted for older clients; cache identity is derived by the server.
-	CacheHash string `json:"cache_hash,omitempty"`
-	CacheKey  string `json:"cache_key,omitempty"`
 }
 
 type MoveInput struct {

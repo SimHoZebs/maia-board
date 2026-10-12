@@ -32,20 +32,6 @@
       "viz": ["POST /evaluations/lookup", "1024"]
     },
     {
-      "id": "evaluations-stats",
-      "covers": ["/evaluations/stats"],
-      "server_anchor": "Path:\\s*\"/evaluations/stats\"",
-      "lane": {"file": "backend/internal/server/evaluations.go", "patterns": ["CacheStats"]},
-      "viz": ["evaluations_v2 · 25k"]
-    },
-    {
-      "id": "evaluations-get",
-      "covers": ["/evaluations/{hash}"],
-      "server_anchor": "Path:\\s*\"/evaluations/\\{hash\\}\"",
-      "lane": {"file": "backend/internal/server/evaluations.go", "patterns": ["ValidHash"]},
-      "viz": ["evaluations_v2 · 25k"]
-    },
-    {
       "id": "reviews-submit",
       "covers": ["/reviews"],
       "server_anchor": "Path:\\s*\"/reviews\"",
@@ -187,8 +173,8 @@
   "reverse": {
     "routes_file": "backend/internal/server/api.go",
     "route_pattern": "\"(/(move|evaluate|evaluations|reviews|games|openings|healthz)[^\"]*)\"",
-    "ignore_paths": ["/", "/evaluations", "/evaluations/", "/games/", "/reviews/"],
-    "ignore_reason": "SPA fallback (no path literal) + empty-id 404 shims and legacy compat shims, intentionally not visualized",
+    "ignore_paths": ["/"],
+    "ignore_reason": "SPA fallback (no path literal), intentionally not visualized",
     "workers_dir": "backend/workers",
     "worker_suffix": ".py",
     "worker_ignore_prefix": "test_"

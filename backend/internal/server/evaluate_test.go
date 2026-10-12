@@ -182,7 +182,7 @@ func TestEvaluateHTTP(t *testing.T) {
 }
 
 func TestEvaluateCacheReadThrough(t *testing.T) {
-	cached := `{"fen":"` + startFEN + `","moves":[],"cache_hash":"abc123","cache_key":"test-key"}`
+	cached := `{"fen":"` + startFEN + `","moves":[]}`
 	store := testStore(t)
 	// Miss: computes live, stores the row, reports miss.
 	s := &Server{evaluator: fakeEvaluator(t, "ok"), store: store}
@@ -200,13 +200,12 @@ func TestEvaluateCacheReadThrough(t *testing.T) {
 	if normalizeJSON(t, w.Body.String()) != normalizeJSON(t, first) {
 		t.Fatalf("cached body changed:\n%s\n%s", first, w.Body)
 	}
-	// Client-provided coordinates cannot alter the server-derived identity.
-	stale := `{"fen":"` + startFEN + `","moves":[],"cache_hash":"abc123","cache_key":"other-key"}`
-	w = serve(s, "POST", "/evaluate", stale)
+	// Repeat requests reuse the server-derived identity.
+	w = serve(s, "POST", "/evaluate", cached)
 	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "hit" {
-		t.Fatalf("ignored coordinates: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
+		t.Fatalf("identity reuse: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
 	}
-	w = serve(hit, "POST", "/evaluate", stale)
+	w = serve(hit, "POST", "/evaluate", cached)
 	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "hit" {
 		t.Fatalf("stale overwrite: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
 	}
@@ -215,7 +214,7 @@ func TestEvaluateCacheReadThrough(t *testing.T) {
 	if _, err := store.CachePut(hash, "sf", key, `{"a":1}`); err != nil {
 		t.Fatal(err)
 	}
-	w = serve(s, "POST", "/evaluate", `{"fen":"`+startFEN+`","moves":[],"cache_hash":"deadbeef","cache_key":"k"}`)
+	w = serve(s, "POST", "/evaluate", `{"fen":"`+startFEN+`","moves":[]}`)
 	if w.Code != 200 || w.Header().Get("X-Eval-Cache") != "miss" {
 		t.Fatalf("corrupt: %d %s header=%q", w.Code, w.Body, w.Header().Get("X-Eval-Cache"))
 	}
