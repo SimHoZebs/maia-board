@@ -424,21 +424,53 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     });
     return map;
   }, [trueChildNodes, trueChildPoints, objectivePoints, focusNode, focusPly, currentPly, version, coordinator]);
+  // While the server batch runs, its in-flight keys are pending too: each
+  // progress tick restores through a short-lived lookup whose `restoring`
+  // set notifies on/off, and without this union a cache miss flips the
+  // badge reel -> placeholder -> reel on every poll until evals land. The
+  // union holds the reel steady (the play-room ca7effd precedent); misses
+  // still settle progressively as rows land and failures never join.
+  const batchRunning = !!batch.progress?.running;
+  const sfPendingForGrades = useMemo(() => {
+    const base = coordinator.sfPendingKeys();
+    if (!active || !batchRunning) return base;
+    for (const node of nodes) {
+      if (node.outcome) continue;
+      const nodeSettings = settingsForNode(node);
+      const key = reviewKey('sf', node, nodeSettings);
+      if (coordinator.store.peek('sf', key)) continue;
+      if (coordinator.error('sf', node, nodeSettings)) continue;
+      base.add(key);
+    }
+    return base;
+  }, [coordinator, version, nodes, settingsForNode, active, batchRunning]);
+  const objectivePendingForGrades = useMemo(() => {
+    const base = lanePending(coordinator);
+    if (!active || !batchRunning) return base;
+    for (const node of nodes) {
+      if (node.outcome) continue;
+      const key = laneKey(node, settingsForNode);
+      if (coordinator.store.peek('maia', key)) continue;
+      if (laneError(coordinator, node) !== undefined) continue;
+      base.add(key);
+    }
+    return base;
+  }, [coordinator, version, nodes, settingsForNode, active, batchRunning]);
   const objectiveLane: ObjectiveLane = useMemo(() => ({
     points: objectivePoints,
-    pending: lanePending(coordinator),
+    pending: objectivePendingForGrades,
     keyFor: (node: ReviewNode) => laneKey(node, settingsForNode),
-  }), [objectivePoints, nodes, settingsForNode, version, coordinator]);
+  }), [objectivePoints, nodes, settingsForNode, objectivePendingForGrades]);
   const previous = useRef<ReviewQualitiesMemo | null>(null);
   // Memo cache without an effect: the ref carries the last computed memo into
   // the next computation synchronously, so reuse never lags one commit
   // behind. Worst case (abandoned concurrent render) is a recompute — keys
   // are stable content, so correctness never depends on the cache.
   const computed = useMemo(() => {
-    const result = computeReviewQualities({ line: timeline, nodes, evaluations, settingsForNode, pending: coordinator.sfPendingKeys(), prev: previous.current, objective: objectiveLane });
+    const result = computeReviewQualities({ line: timeline, nodes, evaluations, settingsForNode, pending: sfPendingForGrades, prev: previous.current, objective: objectiveLane });
     previous.current = result.memo;
     return result;
-  }, [timeline, nodes, evaluations, settingsForNode, objectiveLane, version, coordinator]);
+  }, [timeline, nodes, evaluations, settingsForNode, objectiveLane, sfPendingForGrades]);
   const rarities = useMemo(() => timeline.moves.map((move, ply) => botRarity(botResults[ply], move)), [timeline, botResults]);
   // Played-move rarity at 2400 (objective lane policy): the second praise
   // axis. Missing/degraded objective rows yield undefined → Unknown downstream,
@@ -463,9 +495,10 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   // (The translated array is fresh per call; raw memo reuse underneath is
   // what avoids recompute.)
   const qualities = useMemo(() => translateReviewQualities({ grades: computed.qualities, nodes, botResults, rarities,
-    settingsForNode, isBotPending: (node, settings) => coordinator.isPending('maia', node, settings),
+    settingsForNode, isBotPending: (node, settings) => coordinator.isPending('maia', node, settings)
+      || (batchRunning && active && !node.outcome && !coordinator.result('maia', node, settings) && !coordinator.error('maia', node, settings)),
     alien: { rarity2400, sfGap } }),
-  [computed.qualities, rarities, rarity2400, sfGap, botResults, nodes, settingsForNode, version, coordinator]);
+  [computed.qualities, rarities, rarity2400, sfGap, botResults, nodes, settingsForNode, version, coordinator, batchRunning, active]);
   const bestRarities = useMemo(() => timeline.moves.map((_move, ply) => {
     // Avoidance difficulty is the findability of the objective best move
     // at the displayed (user) level, not the engine best.
