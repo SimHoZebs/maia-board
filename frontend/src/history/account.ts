@@ -92,32 +92,57 @@ export async function startLichessLogin(fetchImpl: FetchLike = fetch): Promise<v
 
 export type ImportPayload = {
   user_color: string; elo_maia: number; elo_user: number; model: string;
-  moves: string[]; created_at?: string; result?: string;
+  moves: string[]; created_at?: string; result?: string; source?: string;
 };
 
-export async function bulkImport(games: ImportPayload[], fetchImpl: FetchLike = fetch): Promise<{ saved: StoredGame[]; errors: Record<string, string> }> {
+export type ImportRun = {
+  id: string; user_id: string; provider: string; username: string;
+  requested: number; saved: number; skipped: number; created_at: string;
+};
+
+export type ImportStatus = { last: ImportRun | null; total: number };
+
+export async function importStatus(fetchImpl: FetchLike = fetch): Promise<ImportStatus> {
+  let response: Response;
+  try {
+    response = await fetchImpl('/imports/status', { credentials: 'include' });
+  } catch {
+    throw new AccountError('server_unreachable', 'The game server could not be reached.');
+  }
+  const body = await readJson(response) as { last?: unknown; total?: unknown };
+  if (!response.ok) throw new AccountError('unknown', 'Import status failed.', response.status);
+  const last = body.last;
+  return {
+    last: last && typeof last === 'object' ? last as ImportRun : null,
+    total: typeof body.total === 'number' ? body.total : 0,
+  };
+}
+
+export async function bulkImport(games: ImportPayload[], opts?: { provider?: string; username?: string }, fetchImpl: FetchLike = fetch): Promise<{ saved: StoredGame[]; errors: Record<string, string>; skipped: number }> {
   const saved: StoredGame[] = [];
   const errors: Record<string, string> = {};
-  for (let at = 0; at < games.length; at += 50) {
-    const chunk = games.slice(at, at + 50);
+  let skipped = 0;
+  for (let at = 0; at < games.length; at += 100) {
+    const chunk = games.slice(at, at + 100);
     let response: Response;
     try {
       response = await fetchImpl('/imports/games', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ games: chunk }),
+        body: JSON.stringify({ games: chunk, ...(opts?.provider ? { provider: opts.provider, username: opts?.username ?? '' } : {}) }),
       });
     } catch {
       throw new AccountError('server_unreachable', 'The game server could not be reached.');
     }
-    const body = await readJson(response) as { saved?: unknown; errors?: unknown };
+    const body = await readJson(response) as { saved?: unknown; errors?: unknown; skipped?: unknown };
     if (!response.ok && response.status !== 400) throw new AccountError('unknown', 'Import failed.', response.status);
     const rows = Array.isArray(body.saved) ? body.saved as StoredGame[] : [];
     for (const row of rows) saved.push(row);
+    if (typeof body.skipped === 'number') skipped += body.skipped;
     const errs = (body.errors ?? {}) as Record<string, string>;
     for (const [key, code] of Object.entries(errs)) errors[String(Number(key) + at)] = code;
     if (!response.ok && saved.length === 0) throw new AccountError('unknown', 'Import failed.', response.status);
   }
-  return { saved, errors };
+  return { saved, errors, skipped };
 }
 
 export async function adoptLegacyGames(fetchImpl: FetchLike = fetch): Promise<number> {

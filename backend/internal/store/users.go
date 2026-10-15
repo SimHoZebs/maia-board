@@ -66,6 +66,9 @@ func ensureUserSchema(db *sql.DB) error {
 	if _, err := db.Exec(schema); err != nil {
 		return err
 	}
+	if err := ensureImportSchema(db); err != nil {
+		return err
+	}
 	return ensureGameOwnerColumn(db)
 }
 
@@ -76,7 +79,14 @@ func ensureGameOwnerColumn(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_games_owner ON games(owner_id, updated_at DESC)`); err != nil {
 		return err
 	}
-	return nil
+	if err := ensureGameColumn(db, "source", "ALTER TABLE games ADD COLUMN source TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	// External imports dedupe per owner: re-running the same Lichess import
+	// skips rows instead of duplicating them. Legacy and local games carry
+	// source '' and never collide.
+	_, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_games_owner_source ON games(owner_id, source) WHERE source <> ''`)
+	return err
 }
 
 func scanUser(scanner gameScanner) (User, error) {

@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../components';
-import { adoptLegacyGames, bulkImport, startLichessLogin, unownedGamesCount, type ImportPayload } from '../history/account';
+import { adoptLegacyGames, bulkImport, importStatus, startLichessLogin, unownedGamesCount, type ImportPayload, type ImportStatus } from '../history/account';
 import { useSessionSnapshot, useSessionStore } from '../history/session';
 import { loadLine } from '../shared/domain';
 
 type LichessGame = {
-  pgn?: string; createdAt?: number; winner?: string; status?: string;
+  id?: string; pgn?: string; createdAt?: number; winner?: string; status?: string;
   players?: { white?: { rating?: number; user?: { id?: string } }; black?: { rating?: number; user?: { id?: string } } };
 };
 
@@ -37,7 +37,13 @@ function toImportPayload(game: LichessGame, username: string): ImportPayload | u
     moves,
     ...(typeof game.createdAt === 'number' ? { created_at: new Date(game.createdAt).toISOString() } : {}),
     ...(resigned ? { result: 'resigned' } : {}),
+    ...(typeof game.id === 'string' && /^[A-Za-z0-9]{4,16}$/.test(game.id) ? { source: `lichess:${game.id}` } : {}),
   };
+}
+
+function formatRunDate(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 export function AccountPanel() {
@@ -52,6 +58,16 @@ export function AccountPanel() {
   const [importState, setImportState] = useState<string | null>(null);
   const [adoptState, setAdoptState] = useState<string | null>(null);
   const [unowned, setUnowned] = useState<number | null>(null);
+  const [status, setStatus] = useState<ImportStatus | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  const refreshStatus = async () => {
+    try {
+      setStatus(await importStatus());
+    } catch {
+      setStatus(null);
+    }
+  };
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -71,6 +87,7 @@ export function AccountPanel() {
     unownedGamesCount()
       .then(count => { if (live) setUnowned(count); })
       .catch(() => { if (live) setUnowned(null); });
+    void refreshStatus();
     return () => { live = false; };
   }, [account]);
 
@@ -94,6 +111,8 @@ export function AccountPanel() {
       setImportState(null);
       setAdoptState(null);
       setUnowned(null);
+      setStatus(null);
+      setMoreOpen(false);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Logout failed.');
     } finally {
@@ -126,9 +145,9 @@ export function AccountPanel() {
     }
   };
 
-  const doImport = async () => {
-    const username = lichessUser.trim();
-    if (!username) {
+  const runImport = async (username: string, max: number) => {
+    const trimmed = username.trim();
+    if (!trimmed) {
       setError('Enter a Lichess username first.');
       return;
     }
@@ -136,17 +155,17 @@ export function AccountPanel() {
     setError(null);
     setImportState('Downloading games from Lichess…');
     try {
-      const url = `https://lichess.org/api/games/user/${encodeURIComponent(username)}?max=${Math.max(1, Math.min(1000, maxGames))}&pgnInJson=true`;
+      const url = `https://lichess.org/api/games/user/${encodeURIComponent(trimmed)}?max=${Math.max(1, Math.min(1000, max))}&pgnInJson=true`;
       const response = await fetch(url, { headers: { Accept: 'application/x-ndjson' } });
       if (!response.ok || !response.body) throw new Error(`Lichess answered ${response.status}.`);
       const text = await response.text();
       const payloads: ImportPayload[] = [];
       let skipped = 0;
       for (const line of text.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
+        const row = line.trim();
+        if (!row) continue;
         try {
-          const parsed = toImportPayload(JSON.parse(trimmed) as LichessGame, username);
+          const parsed = toImportPayload(JSON.parse(row) as LichessGame, trimmed);
           if (parsed) payloads.push(parsed);
           else skipped++;
         } catch {
@@ -158,9 +177,15 @@ export function AccountPanel() {
         return;
       }
       setImportState(`Saving ${payloads.length} games…`);
-      const result = await bulkImport(payloads);
+      const result = await bulkImport(payloads, { provider: 'lichess', username: trimmed });
       const failed = Object.keys(result.errors).length;
-      setImportState(`Imported ${result.saved.length} games${failed ? `, ${failed} failed` : ''}${skipped ? `, ${skipped} skipped` : ''}. See History.`);
+      if (result.saved.length === 0 && failed === 0) {
+        setImportState(`Already up to date: ${result.skipped} known, ${skipped} skipped.`);
+      } else {
+        setImportState(`Imported ${result.saved.length} new${failed ? `, ${failed} failed` : ''}${result.skipped ? `, ${result.skipped} already here` : ''}${skipped ? `, ${skipped} skipped` : ''}. See History.`);
+      }
+      setMoreOpen(false);
+      await refreshStatus();
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Import failed.');
       setImportState(null);
@@ -176,14 +201,15 @@ export function AccountPanel() {
     {error && <p role="alert">{error}</p>}
     {session.error && <p role="alert">{session.error}</p>}
     <p>Log in to own your games. History, reviews, and engine calls scope to your account.</p>
-    <label className="field">Display name<input value={name} maxLength={40} onChange={event => setName(event.target.value)} placeholder="Player" /></label>
     <div className="account-actions">
       <Button variant="primary" onClick={doConnect} disabled={busy}>Log in with Lichess</Button>
       <Button onClick={doLogin} disabled={busy}>{busy ? 'Logging in…' : 'Continue with a local name'}</Button>
     </div>
+    <label className="field">Display name<input value={name} maxLength={40} onChange={event => setName(event.target.value)} placeholder="Player" /></label>
   </section>;
 
   const initial = (account.display_name.trim()[0] ?? '?').toUpperCase();
+  const last = status?.last ?? null;
   return <section aria-label="Account" className="settings-control">
     <div className="account-identity">
       <span className="account-avatar" aria-hidden="true">{initial}</span>
@@ -199,12 +225,19 @@ export function AccountPanel() {
       : <div className="account-actions">
         <Button variant="primary" onClick={doConnect} disabled={busy}>Connect Lichess</Button>
       </div>}
-    <h3 className="settings-subhead">Import Lichess history</h3>
-    <label className="field">Lichess username<input value={lichessUser} maxLength={40} onChange={event => setLichessUser(event.target.value)} placeholder="username" /></label>
-    <label className="field">Max games<input type="number" min={1} max={1000} value={maxGames} onChange={event => setMaxGames(event.target.valueAsNumber || 100)} /></label>
-    <div className="account-actions">
-      <Button onClick={doImport} disabled={busy}>{busy ? 'Importing…' : 'Append history'}</Button>
-    </div>
+    <h3 className="settings-subhead">Lichess history</h3>
+    {last
+      ? <>
+        <p className="account-note">
+          {last.saved > 0 ? `+${last.saved} new from @${last.username}` : `Up to date with @${last.username}`} · {formatRunDate(last.created_at)} · {status?.total ?? 0} games in your history.
+        </p>
+        <div className="account-actions">
+          <Button onClick={() => runImport(last.username, 100)} disabled={busy}>{busy ? 'Checking…' : 'Check for new games'}</Button>
+          <Button variant="quiet" onClick={() => setMoreOpen(open => !open)} disabled={busy}>{moreOpen ? 'Close' : 'Import more'}</Button>
+        </div>
+        {moreOpen && <ImportForm lichessUser={lichessUser} setLichessUser={setLichessUser} maxGames={maxGames} setMaxGames={setMaxGames} busy={busy} onImport={() => runImport(lichessUser, maxGames)} />}
+      </>
+      : <ImportForm lichessUser={lichessUser} setLichessUser={setLichessUser} maxGames={maxGames} setMaxGames={setMaxGames} busy={busy} onImport={() => runImport(lichessUser, maxGames)} />}
     {importState && <p className="account-note">{importState}</p>}
     {(unowned !== 0 || adoptState) && <>
       <h3 className="settings-subhead">Existing games</h3>
@@ -218,4 +251,18 @@ export function AccountPanel() {
       <Button variant="quiet" onClick={doLogout} disabled={busy}>Log out</Button>
     </div>
   </section>;
+}
+
+function ImportForm({ lichessUser, setLichessUser, maxGames, setMaxGames, busy, onImport }: {
+  lichessUser: string; setLichessUser: (value: string) => void;
+  maxGames: number; setMaxGames: (value: number) => void;
+  busy: boolean; onImport: () => void;
+}) {
+  return <>
+    <label className="field">Lichess username<input value={lichessUser} maxLength={40} onChange={event => setLichessUser(event.target.value)} placeholder="username" /></label>
+    <label className="field">Max games<input type="number" min={1} max={1000} value={maxGames} onChange={event => setMaxGames(event.target.valueAsNumber || 100)} /></label>
+    <div className="account-actions">
+      <Button onClick={onImport} disabled={busy}>{busy ? 'Importing…' : 'Append history'}</Button>
+    </div>
+  </>;
 }

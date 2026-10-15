@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { bulkImport, fetchMe, loginLocal, startLichessLogin, unownedGamesCount } from './account';
+import { bulkImport, fetchMe, importStatus, loginLocal, startLichessLogin, unownedGamesCount } from './account';
 
 function jsonResponse(body: unknown, status = 200, cookies: string[] = []) {
   return {
@@ -27,9 +27,10 @@ describe('account client', () => {
     const games = Array.from({ length: 55 }, (_, index) => ({
       user_color: 'white', elo_maia: 1500, elo_user: 1300, model: '79m', moves: ['e2e4'], created_at: `2024-01-${String(index % 28 + 1).padStart(2, '0')}T00:00:00Z`,
     }));
-    const result = await bulkImport(games, fetchImpl);
-    expect(result.saved).toHaveLength(2);
-    expect(fetchImpl.mock.calls.filter(([url]) => String(url) === '/imports/games')).toHaveLength(2);
+    const result = await bulkImport(games, undefined, fetchImpl);
+    expect(result.saved).toHaveLength(1);
+    expect(result.skipped).toBe(0);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url) === '/imports/games')).toHaveLength(1);
   });
 
   it('follows the authorization url instead of showing the start json', async () => {
@@ -49,5 +50,22 @@ describe('account client', () => {
   it('reads the unowned count for the claim gate', async () => {
     await expect(unownedGamesCount(async () => jsonResponse({ unowned: 3 }))).resolves.toBe(3);
     await expect(unownedGamesCount(async () => jsonResponse({}, 401))).rejects.toThrow('Adoption check failed');
+  });
+
+  it('reads import status with last run and total', async () => {
+    const last = { id: 'r1', user_id: 'u1', provider: 'lichess', username: 'bob', requested: 10, saved: 8, skipped: 2, created_at: '2024-05-01T00:00:00Z' };
+    await expect(importStatus(async () => jsonResponse({ last, total: 42 }))).resolves.toEqual({ last, total: 42 });
+    await expect(importStatus(async () => jsonResponse({ last: null, total: 0 }))).resolves.toEqual({ last: null, total: 0 });
+  });
+
+  it('sends provider runs and sums skipped duplicates', async () => {
+    const seen: unknown[] = [];
+    const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(JSON.parse(String(init?.body)));
+      return jsonResponse({ saved: [], errors: {}, skipped: 2 });
+    }) as typeof fetch;
+    const result = await bulkImport([{ user_color: 'white', elo_maia: 1, elo_user: 1, model: '79m', moves: [] }], { provider: 'lichess', username: 'bob' }, fetchImpl);
+    expect(result.skipped).toBe(2);
+    expect(seen[0]).toMatchObject({ provider: 'lichess', username: 'bob' });
   });
 });

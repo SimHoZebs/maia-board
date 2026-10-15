@@ -109,6 +109,7 @@ export const GamesListResponse = zod.strictObject({
   "moves": zod.array(zod.string()).nullable(),
   "owner_id": zod.string().optional(),
   "result": zod.string().optional(),
+  "source": zod.string().optional(),
   "temperature": zod.number(),
   "updated_at": zod.string(),
   "user_color": zod.string()
@@ -124,6 +125,7 @@ export const GamesListResponse = zod.strictObject({
   "moves": zod.array(zod.string()).nullable(),
   "owner_id": zod.string().optional(),
   "result": zod.string().optional(),
+  "source": zod.string().optional(),
   "temperature": zod.number(),
   "updated_at": zod.string(),
   "user_color": zod.string()
@@ -146,6 +148,7 @@ export const GamesCreateBody = zod.strictObject({
   "moves": zod.array(zod.string()).nullable(),
   "owner_id": zod.string().optional(),
   "result": zod.string().optional(),
+  "source": zod.string().optional(),
   "temperature": zod.number().optional(),
   "user_color": zod.string()
 })
@@ -160,6 +163,7 @@ export const GamesCreateResponse = zod.strictObject({
   "moves": zod.array(zod.string()).nullable(),
   "owner_id": zod.string().optional(),
   "result": zod.string().optional(),
+  "source": zod.string().optional(),
   "temperature": zod.number(),
   "updated_at": zod.string(),
   "user_color": zod.string()
@@ -193,6 +197,7 @@ export const GamesGetResponse = zod.strictObject({
   "moves": zod.array(zod.string()).nullable(),
   "owner_id": zod.string().optional(),
   "result": zod.string().optional(),
+  "source": zod.string().optional(),
   "temperature": zod.number(),
   "updated_at": zod.string(),
   "user_color": zod.string()

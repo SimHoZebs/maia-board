@@ -242,11 +242,34 @@ Bulk history append into the caller's owned store (at most 100 entries,
 4 MiB body; per-entry `current` is ignored).
 
 ```json
-// request
-{"games": [{"user_color": "white", "elo_maia": 1500, "elo_user": 1300,
-  "model": "79m", "moves": ["e2e4"], "created_at": "2024-01-01T00:00:00Z"}]}
-// response 200 (400 when nothing saved)
-{"saved": [{...}], "errors": {"3": "invalid_move"}}
+// request (provider/username record an import run; entries may carry source)
+{"provider": "lichess", "username": "bob",
+ "games": [{"user_color": "white", "elo_maia": 1500, "elo_user": 1300,
+  "model": "79m", "moves": ["e2e4"], "created_at": "2024-01-01T00:00:00Z",
+  "source": "lichess:abc123xy"}]}
+// response 200 (400 when nothing saved and real errors exist)
+{"saved": [{...}], "errors": {"3": "invalid_move"}, "skipped": 5}
+```
+
+- Entries validate exactly like `POST /games`; ownership is forced from
+  the session. `source` accepts `lichess:<gameId>` only
+  (`400 invalid_source` otherwise); entries whose source the owner already
+  has are skipped, never duplicated. An all-skipped run is `200`
+  ("already up to date"). Errors: `400 invalid_request` (empty or >100
+  entries, unknown provider), `401 unauthenticated`, per-index codes in
+  `errors`.
+
+## GET /imports/status
+
+History lifecycle summary for the panel: newest Lichess run plus owned total.
+
+```json
+// response 200
+{"last": {"id": "<hex>", "provider": "lichess", "username": "bob",
+  "requested": 10, "saved": 8, "skipped": 2, "created_at": "<rfc3339>"},
+ "total": 42}
+// no run yet
+{"last": null, "total": 0}
 ```
 
 - Entries validate exactly like `POST /games`; ownership is forced from

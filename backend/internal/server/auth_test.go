@@ -168,6 +168,59 @@ func TestAdoptEndpoint(t *testing.T) {
 	_ = alice
 }
 
+func TestImportDedupeAndStatus(t *testing.T) {
+	s := authedServer(t)
+	_, token := loginAs(t, s, "Importer")
+	entry := func(source string) string {
+		return `{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"` + source + `"}`
+	}
+	body := `{"provider":"lichess","username":"bob","games":[` + entry("lichess:aaa11111") + `,` + entry("lichess:bbb22222") + `]}`
+	w := authed(t, s, http.MethodPost, "/imports/games", body, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("import: %d %s", w.Code, w.Body)
+	}
+	var first struct {
+		Saved   []store.GameRow `json:"saved"`
+		Skipped int             `json:"skipped"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &first); err != nil || len(first.Saved) != 2 || first.Skipped != 0 {
+		t.Fatalf("first import: %s err=%v", w.Body, err)
+	}
+	w = authed(t, s, http.MethodPost, "/imports/games", body, token)
+	var second struct {
+		Saved   []store.GameRow `json:"saved"`
+		Skipped int             `json:"skipped"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &second); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusOK || len(second.Saved) != 0 || second.Skipped != 2 {
+		t.Fatalf("re-import: status %d body %s", w.Code, w.Body)
+	}
+	w = authed(t, s, http.MethodPost, "/imports/games", `{"provider":"lichess","games":[`+entry("bogus")+`]}`, token)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("bad source: %d %s", w.Code, w.Body)
+	}
+	w = authed(t, s, http.MethodPost, "/imports/games", `{"provider":"chesscom","games":[`+entry("lichess:ccc33333")+`]}`, token)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("bad provider: %d %s", w.Code, w.Body)
+	}
+	w = authed(t, s, http.MethodGet, "/imports/status", "", token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: %d %s", w.Code, w.Body)
+	}
+	var status struct {
+		Last  *store.ImportRun `json:"last"`
+		Total int              `json:"total"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil || status.Last == nil || status.Last.Skipped != 2 || status.Total != 2 {
+		t.Fatalf("status body: %s err=%v", w.Body, err)
+	}
+	if w := authed(t, s, http.MethodGet, "/imports/status", "", ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("anon status: %d", w.Code)
+	}
+}
+
 func TestReviewOwnership(t *testing.T) {
 	s := authedServer(t)
 	alice, aliceToken := loginAs(t, s, "Alice")

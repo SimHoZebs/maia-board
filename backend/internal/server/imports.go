@@ -1,10 +1,12 @@
 package server
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -14,11 +16,17 @@ import (
 // Bulk import lets a verified account append external history (e.g. Lichess
 // exports the client fetched) into its own owned store. Every entry is
 // validated and saved exactly like POST /games, with ownership forced from
-// the session — clients cannot set another owner's rows.
+// the session — clients cannot set another owner's rows. Re-running an
+// import is safe: entries stamped with an already-imported source are
+// skipped, never duplicated.
 
 // maxImportGames bounds one append call: 100 games x 4096 plies would already
 // approach the 4 MiB body cap; pagination stays client-side.
 const maxImportGames = 100
+
+// importSourcePattern gates the server-owned source stamp: `lichess:<gameId>`
+// only. Anything else is a client bug, rejected before it reaches the store.
+var importSourcePattern = regexp.MustCompile(`^lichess:[A-Za-z0-9]{4,16}$`)
 
 func (s *Server) serveBulkImport(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
@@ -40,21 +48,48 @@ func (s *Server) serveBulkImport(w http.ResponseWriter, r *http.Request) {
 		ownerID = user.ID
 	}
 	var body struct {
-		Games []store.GamePayload `json:"games"`
+		Games    []store.GamePayload `json:"games"`
+		Provider string              `json:"provider"`
+		Username string              `json:"username"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024*1024)).Decode(&body); err != nil {
 		writeHumaError(w, http.StatusBadRequest, "invalid_request", "request body is invalid")
+		return
+	}
+	if body.Provider != "" && body.Provider != "lichess" {
+		writeHumaError(w, http.StatusBadRequest, "invalid_request", "provider must be lichess")
 		return
 	}
 	if len(body.Games) < 1 || len(body.Games) > maxImportGames {
 		writeHumaError(w, http.StatusBadRequest, "invalid_request", "games must contain 1-100 entries")
 		return
 	}
+	sources := make([]string, 0, len(body.Games))
+	for index := range body.Games {
+		source := body.Games[index].Source
+		if source == "" {
+			continue
+		}
+		if !importSourcePattern.MatchString(source) {
+			writeHumaError(w, http.StatusBadRequest, "invalid_source", "game source must be lichess:<gameId>")
+			return
+		}
+		sources = append(sources, source)
+	}
+	known, err := s.store.ExistingSources(ownerID, sources)
+	if err != nil {
+		writeHumaError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
+		return
+	}
 	saved := make([]store.GameRow, 0, len(body.Games))
 	errs := make(map[string]string)
-	isNew := 0
+	skipped, isNew := 0, 0
 	for index := range body.Games {
 		entry := body.Games[index]
+		if entry.Source != "" && known[entry.Source] {
+			skipped++
+			continue
+		}
 		entry.OwnerID = ownerID
 		entry.Current = false
 		if err := store.ValidateGamePayload(&entry); err != nil {
@@ -70,19 +105,69 @@ func (s *Server) serveBulkImport(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
+		if entry.Source != "" {
+			known[entry.Source] = true
+		}
 		if fresh {
 			isNew++
 		}
 		saved = append(saved, row)
 	}
+	if body.Provider != "" {
+		if _, err := s.store.RecordImportRun(ownerID, body.Provider, body.Username, len(body.Games), len(saved), skipped+len(errs)); err != nil {
+			writeHumaError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
+			return
+		}
+	}
 	status := http.StatusOK
+	// An all-skipped run is success ("already up to date"), not failure;
+	// 400 stays for genuinely invalid batches.
 	if len(saved) == 0 && len(errs) > 0 {
 		status = http.StatusBadRequest
 	}
-	log.Printf("import-save status=%d user=%s saved=%d failed=%d new=%d duration_ms=%d", status, ownerID, len(saved), len(errs), isNew, time.Since(started).Milliseconds())
+	log.Printf("import-save status=%d user=%s saved=%d failed=%d skipped=%d new=%d duration_ms=%d", status, ownerID, len(saved), len(errs), skipped, isNew, time.Since(started).Milliseconds())
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{"saved": saved, "errors": errs})
+	_ = json.NewEncoder(w).Encode(map[string]any{"saved": saved, "errors": errs, "skipped": skipped})
+}
+
+// serveImportStatus summarizes the account's history lifecycle: the newest
+// import run per provider plus the owned game total. The panel renders from
+// this instead of presenting an eternal blank form.
+func (s *Server) serveImportStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeHumaError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
+	}
+	if s.store == nil {
+		writeHumaError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
+		return
+	}
+	user, authErr := s.requireUser(r.Context())
+	if authErr != nil {
+		writeHumaError(w, http.StatusUnauthorized, "unauthenticated", "login is required")
+		return
+	}
+	ownerID := ""
+	if user != nil {
+		ownerID = user.ID
+	}
+	_, total, err := s.store.ListForUser(1, ownerID)
+	if err != nil {
+		writeHumaError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
+		return
+	}
+	last, err := s.store.LastImportRun(ownerID, "lichess")
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		writeHumaError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		_ = json.NewEncoder(w).Encode(map[string]any{"last": nil, "total": total})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"last": last, "total": total})
 }
 
 // serveAdoptCount reports how many pre-user rows await adoption, so the UI

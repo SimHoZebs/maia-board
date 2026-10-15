@@ -290,6 +290,8 @@ components:
           type: string
         result:
           type: string
+        source:
+          type: string
         temperature:
           format: double
           type: number
@@ -333,6 +335,8 @@ components:
         owner_id:
           type: string
         result:
+          type: string
+        source:
           type: string
         temperature:
           format: double

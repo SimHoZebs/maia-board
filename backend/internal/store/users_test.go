@@ -46,6 +46,39 @@ func TestUserPrimitive(t *testing.T) {
 	}
 }
 
+func TestImportRunsAndSources(t *testing.T) {
+	store := testStore(t)
+	user, err := store.CreateLocalUser("Carol")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := gameFixture("src", "e2e4")
+	payload.OwnerID = user.ID
+	payload.Source = "lichess:zzz99999"
+	if _, _, err := store.Save(payload); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get("src")
+	if err != nil || got.Source != "lichess:zzz99999" {
+		t.Fatalf("source roundtrip: %+v %v", got, err)
+	}
+	known, err := store.ExistingSources(user.ID, []string{"lichess:zzz99999", "lichess:missing"})
+	if err != nil || !known["lichess:zzz99999"] || known["lichess:missing"] {
+		t.Fatalf("existing sources: %+v %v", known, err)
+	}
+	run, err := store.RecordImportRun(user.ID, "lichess", "carol", 10, 8, 2)
+	if err != nil || run.Saved != 8 {
+		t.Fatalf("record run: %+v %v", run, err)
+	}
+	last, err := store.LastImportRun(user.ID, "lichess")
+	if err != nil || last.ID != run.ID || last.Skipped != 2 {
+		t.Fatalf("last run: %+v %v", last, err)
+	}
+	if _, err := store.LastImportRun(user.ID, "other"); err == nil {
+		t.Fatal("expected no run for unknown provider")
+	}
+}
+
 func TestAdoptLegacyGames(t *testing.T) {
 	store := testStore(t)
 	if _, _, err := store.Save(gameFixture("legacy", "e2e4")); err != nil {
