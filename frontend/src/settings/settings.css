@@ -71,7 +71,10 @@
 .display-slice-inner.slice-black { left: -50%; top: 0; }
 .display-slice-inner .display-preview-board { width: 100%; height: 100%; border: none; border-radius: 0; overflow: visible; }
 /* Account identity: avatar + name, action rows with real gaps, muted notes.
-   Every button group wraps in .account-actions — never bare adjacent buttons. */
+   Every button group wraps in .account-actions — never bare adjacent buttons.
+   Rows pair text left with actions right (wrapping on narrow screens). */
+.account-row { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
+.account-row > .account-identity { flex: 1 1 auto; min-width: 0; }
 .account-identity { display: flex; align-items: center; gap: 12px; }
 .account-avatar { flex: none; width: 40px; height: 40px; border-radius: 50%; background: var(--accent); color: #202619;
   display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 18px; }

@@ -205,11 +205,16 @@ export function AccountPanel() {
   const initial = (account.display_name.trim()[0] ?? '?').toUpperCase();
   const last = status?.last ?? null;
   return <section aria-label="Account" className="settings-control">
-    <div className="account-identity">
-      <span className="account-avatar" aria-hidden="true">{initial}</span>
-      <div>
-        <p className="account-name">{account.display_name}</p>
-        <p className="account-sub">{account.lichess_username ? `Lichess @${account.lichess_username}` : 'Local account'}</p>
+    <div className="account-row">
+      <div className="account-identity">
+        <span className="account-avatar" aria-hidden="true">{initial}</span>
+        <div>
+          <p className="account-name">{account.display_name}</p>
+          <p className="account-sub">{account.lichess_username ? `Lichess @${account.lichess_username}` : 'Local account'}</p>
+        </div>
+      </div>
+      <div className="account-actions">
+        <Button variant="quiet" onClick={doLogout} disabled={busy}>Log out</Button>
       </div>
     </div>
     {error && <p role="alert">{error}</p>}
@@ -217,29 +222,24 @@ export function AccountPanel() {
     {!account.lichess_username && <div className="account-actions">
       <Button variant="primary" onClick={doConnect} disabled={busy}>Connect Lichess</Button>
     </div>}
-    {account.lichess_username && (last
-      ? <>
-        <p className="account-note">
-          {last.saved > 0 ? `+${last.saved} new from @${last.username}` : `Up to date with @${last.username}`} · {formatRunDate(last.created_at)} · {status?.total ?? 0} games in your history.
-        </p>
-        <div className="account-actions">
-          <Button onClick={() => runImport(account.lichess_username as string, last.created_at)} disabled={busy}>{busy ? 'Checking…' : 'Check for new games'}</Button>
-        </div>
-      </>
-      : <div className="account-actions">
-        <Button variant="primary" onClick={() => runImport(account.lichess_username as string)} disabled={busy}>{busy ? 'Importing…' : `Import @${account.lichess_username}'s games`}</Button>
-      </div>)}
+    {account.lichess_username && last && <div className="account-row">
+      <p className="account-note">
+        {last.saved > 0 ? `+${last.saved} new from @${last.username}` : `Up to date with @${last.username}`} · {formatRunDate(last.created_at)} · {status?.total ?? 0} games in your history.
+      </p>
+      <div className="account-actions">
+        <Button onClick={() => runImport(account.lichess_username as string, last.created_at)} disabled={busy}>{busy ? 'Checking…' : 'Check for new games'}</Button>
+      </div>
+    </div>}
+    {account.lichess_username && !last && <div className="account-actions">
+      <Button variant="primary" onClick={() => runImport(account.lichess_username as string)} disabled={busy}>{busy ? 'Importing…' : `Import @${account.lichess_username}'s games`}</Button>
+    </div>}
     {importState && <p className="account-note">{importState}</p>}
-    {(unowned !== 0 || adoptState) && <>
-      <h3 className="settings-subhead">Existing games</h3>
+    {(unowned !== 0 || adoptState) && <div className="account-row">
       <p className="account-note">Games saved before accounts existed belong to nobody. Claim them into your account.</p>
       {unowned !== 0 && <div className="account-actions">
         <Button onClick={doAdopt} disabled={busy}>Claim existing games</Button>
       </div>}
-      {adoptState && <p className="account-note">{adoptState}</p>}
-    </>}
-    <div className="account-actions">
-      <Button variant="quiet" onClick={doLogout} disabled={busy}>Log out</Button>
-    </div>
+    </div>}
+    {adoptState && <p className="account-note">{adoptState}</p>}
   </section>;
 }
