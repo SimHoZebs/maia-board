@@ -220,11 +220,9 @@ export function AccountPanel() {
     </div>
     {error && <p role="alert">{error}</p>}
     {session.error && <p role="alert">{session.error}</p>}
-    {account.lichess_username
-      ? <p className="account-note">Lichess is linked. Imports attribute to this account.</p>
-      : <div className="account-actions">
-        <Button variant="primary" onClick={doConnect} disabled={busy}>Connect Lichess</Button>
-      </div>}
+    {!account.lichess_username && <div className="account-actions">
+      <Button variant="primary" onClick={doConnect} disabled={busy}>Connect Lichess</Button>
+    </div>}
     <h3 className="settings-subhead">Lichess history</h3>
     {last
       ? <>
