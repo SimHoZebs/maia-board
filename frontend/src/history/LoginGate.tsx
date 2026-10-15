@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button } from '../components';
-import { lichessStartUrl } from '../history/account';
+import { startLichessLogin } from '../history/account';
 import type { SessionSnapshot } from '../history/session';
 
 // First-run gate: the backend requires login for every interaction, so a
@@ -14,6 +14,16 @@ export function LoginGate({ session, onLogin }: {
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const startLichess = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await startLichessLogin();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Lichess login failed to start.');
+      setBusy(false);
+    }
+  };
   const submit = async () => {
     setBusy(true);
     setError(null);
@@ -30,7 +40,7 @@ export function LoginGate({ session, onLogin }: {
     <p>Play, analyze, and keep your games on your own server. Log in first — your history belongs to your account.</p>
     {session.error && <p role="alert">{session.error}</p>}
     {error && <p role="alert">{error}</p>}
-    <Button variant="primary" onClick={() => window.location.assign(lichessStartUrl(`${window.location.origin}/auth/lichess/callback`))}>Log in with Lichess</Button>
+    <Button variant="primary" onClick={startLichess} disabled={busy}>{busy ? 'Contacting Lichess…' : 'Log in with Lichess'}</Button>
     <div className="login-local">
       <label className="field">Display name<input value={name} maxLength={40} onChange={event => setName(event.target.value)} placeholder="Player" /></label>
       <Button onClick={submit} disabled={busy}>{busy ? 'Logging in…' : 'Continue with a local name'}</Button>

@@ -73,6 +73,23 @@ export function lichessStartUrl(redirectUri: string): string {
   return `/auth/lichess/start?redirect_uri=${encodeURIComponent(redirectUri)}`;
 }
 
+// Full Lichess login leg: ask our server for its authorization URL, then
+// leave to Lichess. Navigating to /auth/lichess/start directly only prints
+// its JSON; this helper follows the URL it names.
+export async function startLichessLogin(fetchImpl: FetchLike = fetch): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetchImpl(lichessStartUrl(`${window.location.origin}/auth/lichess/callback`), { credentials: 'include' });
+  } catch {
+    throw new AccountError('server_unreachable', 'The game server could not be reached.');
+  }
+  const body = (await response.json().catch(() => null)) as { authorization_url?: unknown } | null;
+  if (!response.ok || typeof body?.authorization_url !== 'string') {
+    throw new AccountError('unknown', response.status === 501 ? 'Lichess login is not configured on this server.' : 'Lichess login failed to start.', response.status);
+  }
+  window.location.assign(body.authorization_url);
+}
+
 export type ImportPayload = {
   user_color: string; elo_maia: number; elo_user: number; model: string;
   moves: string[]; created_at?: string; result?: string;

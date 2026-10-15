@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { bulkImport, fetchMe, loginLocal } from './account';
+import { bulkImport, fetchMe, loginLocal, startLichessLogin } from './account';
 
 function jsonResponse(body: unknown, status = 200, cookies: string[] = []) {
   return {
@@ -30,5 +30,19 @@ describe('account client', () => {
     const result = await bulkImport(games, fetchImpl);
     expect(result.saved).toHaveLength(2);
     expect(fetchImpl.mock.calls.filter(([url]) => String(url) === '/imports/games')).toHaveLength(2);
+  });
+
+  it('follows the authorization url instead of showing the start json', async () => {
+    const assigned: string[] = [];
+    vi.stubGlobal('window', { location: { origin: 'https://x.test', assign: (url: string) => { assigned.push(url); } } });
+    try {
+      const fetchImpl = (async () => jsonResponse({ authorization_url: 'https://lichess.org/oauth?x=1', state: 's' })) as typeof fetch;
+      await startLichessLogin(fetchImpl);
+      expect(assigned).toEqual(['https://lichess.org/oauth?x=1']);
+      const failing = (async () => jsonResponse({}, 501)) as typeof fetch;
+      await expect(startLichessLogin(failing)).rejects.toThrow('not configured');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

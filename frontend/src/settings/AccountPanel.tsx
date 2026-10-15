@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../components';
-import { adoptLegacyGames, bulkImport, lichessStartUrl, type ImportPayload } from '../history/account';
+import { adoptLegacyGames, bulkImport, startLichessLogin, type ImportPayload } from '../history/account';
 import { useSessionSnapshot, useSessionStore } from '../history/session';
 import { loadLine } from '../shared/domain';
 
@@ -158,7 +158,7 @@ export function AccountPanel() {
     </> : <>
       <p>Signed in as <strong>{account.display_name}</strong>{account.lichess_username ? ` · Lichess @${account.lichess_username}` : ''}.</p>
       <div className="row">
-        <Button onClick={() => window.location.assign(lichessStartUrl(`${window.location.origin}/auth/lichess/callback`))}>Connect Lichess</Button>
+        <Button onClick={() => { setBusy(true); void startLichessLogin().catch((error: unknown) => { setError(error instanceof Error ? error.message : 'Lichess login failed to start.'); setBusy(false); }); }} disabled={busy}>Connect Lichess</Button>
         <Button onClick={doLogout} disabled={busy}>Log out</Button>
       </div>
       <h3>Existing games</h3>
