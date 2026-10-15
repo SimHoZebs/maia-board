@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import {
   matchPath,
@@ -19,6 +19,8 @@ import { NotFound } from "./NotFound";
 import type { Action, State } from "../state/index";
 import { useBotBoard } from "../play/useBotBoard";
 import { SyncContext } from "../history/syncStore";
+import { SessionContext, SessionStore, subscribeUnauthorized } from "../history/session";
+import { LoginGate } from "../history/LoginGate";
 import { analysisPath, analysisSearch, parseAnalysisSearch, sameLine } from "./analysisUrl";
 import { RegionRecorder } from "./perfCommits";
 
@@ -88,6 +90,16 @@ export function BoardRouter() {
     [mode, search],
   );
   const { state, dispatch: boardDispatch, sync } = useBotBoard(mode, urlLine);
+  // Login gate: the backend requires a session for every interaction, so a
+  // logged-out visitor gets the gate instead of a board of failing requests.
+  // Any 401 observed by any sender re-checks here; the gate owns no fetching
+  // itself beyond the store.
+  const [sessionStore] = useState(() => new SessionStore());
+  const session = useSyncExternalStore(sessionStore.subscribe, sessionStore.snapshot);
+  useEffect(() => {
+    void sessionStore.refresh();
+    return subscribeUnauthorized(sessionStore.onUnauthorized);
+  }, [sessionStore]);
   // Loaded analyses own their URL: the address bar carries the game's content
   // (normalized FEN + UCI moves), so each game is linkable and Back walks games.
   // One effect serves both directions. A mismatch alone cannot tell a stale URL
@@ -278,12 +290,17 @@ export function BoardRouter() {
   const workspace = (
     <RegionRecorder id="app">
       <SyncContext.Provider value={sync}>
-        <App state={state} dispatch={dispatch}>
-          <DestinationNav state={state} dispatch={dispatch} />
-        </App>
+        <SessionContext.Provider value={sessionStore}>
+          <App state={state} dispatch={dispatch}>
+            <DestinationNav state={state} dispatch={dispatch} />
+          </App>
+        </SessionContext.Provider>
       </SyncContext.Provider>
     </RegionRecorder>
   );
+  const authed = session.status === 'signed-in' ? workspace : session.status === 'checking'
+    ? <main aria-label="Checking login"><p>Checking login…</p></main>
+    : <LoginGate session={session} onLogin={name => sessionStore.login(name)} />;
   // Invariant: every destination change dispatches its mode at the event
   // (tab taps, NotFound links, popstate, the review/unload/saved navigations
   // above, and the pre-mount canonicalization in main.tsx). No new <Navigate>
@@ -299,7 +316,7 @@ export function BoardRouter() {
       <Route path="/dev/eval-loading" element={<Suspense fallback={null}><EvalLoadingLab /></Suspense>} />
       <Route path="/dev/verdict-lab" element={<Suspense fallback={null}><VerdictLab /></Suspense>} />
       {destinations.map(({ path }) => (
-        <Route key={path} path={path} element={workspace} />
+        <Route key={path} path={path} element={authed} />
       ))}
       <Route path="/" element={<Navigate to="/play" replace />} />
       <Route path="*" element={<NotFound state={state} dispatch={dispatch} />} />

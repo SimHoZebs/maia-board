@@ -3,6 +3,7 @@
 // Race the complete operation, including body consumption. Abort-ignoring fetch
 // implementations cannot retain a coordinator slot after cancellation/deadline.
 import { isRecord } from '../shared/guards';
+import { notifyUnauthorized } from '../history/session';
 // Shared engine deadline: play replies and analysis fetches share one stall
 // policy, with play passing tighter numbers at the call site when needed.
 export const ENGINE_DEADLINE_MS = 150_000;
@@ -60,8 +61,9 @@ export async function readJsonBody(response: Response): Promise<unknown> {
 export async function postJson(
   fetcher: typeof fetch, input: RequestInfo | URL, payload: unknown, signal?: AbortSignal,
 ): Promise<{ response: Response; body: unknown }> {
-  const response = await fetcher(input, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+  const response = await fetcher(input, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
     body: JSON.stringify(payload), ...(signal ? { signal } : {}) });
+  if (response.status === 401) notifyUnauthorized();
   return { response, body: await readJsonBody(response) };
 }
 // Single fetch path for engine work: deadline + structured busy retry +
@@ -71,7 +73,9 @@ export async function fetchJsonWithBusyRetry(
   fetcher: typeof fetch, input: RequestInfo | URL, init: RequestInit, signal?: AbortSignal, timeout = ENGINE_DEADLINE_MS,
 ): Promise<{ response: Response; body: unknown }> {
   return withDeadline(async transportSignal => {
-    const response = await retryBusy(fetcher, input, init, transportSignal);
+    const initWithAuth: RequestInit = { credentials: 'include', ...init };
+    const response = await retryBusy(fetcher, input, initWithAuth, transportSignal);
+    if (response.status === 401) notifyUnauthorized();
     // Callers map unreadable bodies to domain errors.
     return { response, body: await readJsonBody(response) };
   }, signal, timeout);

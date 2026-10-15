@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '../components';
-import { adoptLegacyGames, bulkImport, fetchMe, lichessStartUrl, loginLocal, logout, type Account, type ImportPayload } from '../history/account';
+import { adoptLegacyGames, bulkImport, lichessStartUrl, type ImportPayload } from '../history/account';
+import { useSessionSnapshot, useSessionStore } from '../history/session';
 import { loadLine } from '../shared/domain';
 
 type LichessGame = {
@@ -40,7 +41,9 @@ function toImportPayload(game: LichessGame, username: string): ImportPayload | u
 }
 
 export function AccountPanel() {
-  const [account, setAccount] = useState<Account | null | undefined>(undefined);
+  const sessionStore = useSessionStore();
+  const session = useSessionSnapshot(sessionStore);
+  const account = session.account;
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,23 +52,13 @@ export function AccountPanel() {
   const [importState, setImportState] = useState<string | null>(null);
   const [adoptState, setAdoptState] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      setAccount(await fetchMe());
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'Account lookup failed.');
-      setAccount(null);
-    }
-  }, []);
-
   useEffect(() => {
-    void refresh();
     const params = new URLSearchParams(window.location.search);
     if (params.get('login') === 'ok') {
       window.history.replaceState(null, '', window.location.pathname);
-      void refresh();
+      void sessionStore.refresh();
     }
-  }, [refresh]);
+  }, [sessionStore]);
 
   useEffect(() => {
     if (account?.lichess_username && !lichessUser) setLichessUser(account.lichess_username);
@@ -75,7 +68,7 @@ export function AccountPanel() {
     setBusy(true);
     setError(null);
     try {
-      setAccount(await loginLocal(name.trim() || 'Player'));
+      await sessionStore.login(name.trim() || 'Player');
       setName('');
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Login failed.');
@@ -87,8 +80,7 @@ export function AccountPanel() {
   const doLogout = async () => {
     setBusy(true);
     try {
-      await logout();
-      setAccount(null);
+      await sessionStore.logout();
       setImportState(null);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Logout failed.');
@@ -153,11 +145,12 @@ export function AccountPanel() {
     }
   };
 
-  if (account === undefined) return <section aria-label="Account"><h2>Account</h2><p>Checking login…</p></section>;
+  if (session.status === 'checking') return <section aria-label="Account"><h2>Account</h2><p>Checking login…</p></section>;
 
   return <section aria-label="Account">
     <h2>Account</h2>
     {error && <p role="alert">{error}</p>}
+    {session.error && <p role="alert">{session.error}</p>}
     {account === null ? <>
       <p>Log in to own your games. History, reviews, and engine calls scope to your account.</p>
       <label className="field">Display name<input value={name} maxLength={40} onChange={event => setName(event.target.value)} placeholder="Player" /></label>
@@ -165,7 +158,7 @@ export function AccountPanel() {
     </> : <>
       <p>Signed in as <strong>{account.display_name}</strong>{account.lichess_username ? ` · Lichess @${account.lichess_username}` : ''}.</p>
       <div className="row">
-        <a className="button" href={lichessStartUrl(`${window.location.origin}/auth/lichess/callback`)}>Connect Lichess</a>
+        <Button onClick={() => window.location.assign(lichessStartUrl(`${window.location.origin}/auth/lichess/callback`))}>Connect Lichess</Button>
         <Button onClick={doLogout} disabled={busy}>Log out</Button>
       </div>
       <h3>Existing games</h3>

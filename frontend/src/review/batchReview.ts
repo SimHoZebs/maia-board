@@ -1,5 +1,6 @@
 import { BotApiError, parseHumaError } from '../eval/api';
 import { postJson, readJsonBody } from '../eval/evaluationTransport';
+import { notifyUnauthorized } from '../history/session';
 import { isNonNegativeInt, isRecord, isStringMap } from '../shared/guards';
 import { ReviewsStatusResponse as BatchProgressSchema, ReviewsSubmitResponse as BatchSubmittedSchema } from '../api/generated/maia.zod';
 import { evaluationRequest, batchLineFor, resolveSettings, reviewKey, type BatchLine, type Engine, type ReviewNode, type SettingsInput } from '../eval/evaluationStore';
@@ -213,8 +214,9 @@ export async function submitBatch(items: BatchItem[], line: BatchLine, fetchImpl
 }
 
 export async function fetchBatchStatus(jobId: string, fetchImpl: FetchLike = fetch): Promise<BatchProgress> {
-  const response = await fetchImpl(`/reviews/${jobId}`, { method: 'GET' })
+  const response = await fetchImpl(`/reviews/${jobId}`, { method: 'GET', credentials: 'include' })
     .catch(() => { throw new BotApiError('server_unreachable', 'The review server could not be reached.'); });
+  if (response.status === 401) notifyUnauthorized();
   if (response.status === 404) throw new BatchGoneError();
   if (!response.ok) throw await readError(response, 'The review server rejected this batch.');
   return parseProgress(await readJsonBody(response));

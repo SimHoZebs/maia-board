@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { lineKeyFor } from '../shared/domain';
 import { isRecord } from '../shared/guards';
+import { notifyUnauthorized } from '../history/session';
 import { OpeningsResponse as OpeningsResponseSchema } from '../api/generated/maia.zod';
 
 export type Opening = { eco: string; name: string; matchedPly: number; isExact: boolean };
@@ -26,9 +27,11 @@ export async function fetchLineOpenings(
   const response = await fetcher('/openings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify({ moves, initial_fen: initialFen }),
     signal,
   });
+  if (response.status === 401) notifyUnauthorized();
   if (!response.ok) throw new Error(`Opening lookup failed (${response.status}).`);
   const body: unknown = await response.json();
   // Shape gate is spec-driven (Orval zod from Huma). Match/flag coherence

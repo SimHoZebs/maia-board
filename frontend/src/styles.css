@@ -104,6 +104,10 @@ p { line-height: 1.5; color: var(--muted); }
 .panel { display: flex; flex-direction: column; gap: 12px; padding: 22px; background: #282a2b; border: 1px solid var(--line); border-radius: 7px; }
 .entry { max-width: 520px; margin: 0 auto; padding-block: 32px; display: flex; flex-direction: column; gap: 0; }
 .entry.panel { margin: 32px auto; padding: 22px; gap: 16px; }
+/* First-run login gate: the backend requires login for every interaction,
+   so logged-out visitors get this screen instead of failing requests. */
+.login-gate { max-width: 520px; margin: 0 auto; padding-block: 32px; display: flex; flex-direction: column; gap: 16px; }
+.login-local { display: flex; flex-direction: column; gap: 8px; }
 .awaiting { display: none; }
 .field { display: grid; gap: 8px; font-size: 14px; }
 #analysis-controls { display: flex; flex-direction: column; gap: 12px; }

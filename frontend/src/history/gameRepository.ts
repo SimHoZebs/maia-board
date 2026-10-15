@@ -1,5 +1,6 @@
 import type { StoredGame } from '../shared/domain';
 import { isRecord } from '../shared/guards';
+import { isUnauthorized, notifyUnauthorized } from './session';
 import { deleteRemote, fetchGames, mergeSync, restoreOutboxOp, saveRemote, toStoredGame, type FetchLike, type OutboxOp } from './serverGames';
 import { KEYS, loadSaved, readStorage, restoreGame, writeStorage } from './storage';
 
@@ -172,6 +173,7 @@ export class GameRepository {
         }
         if (!controller.signal.aborted) this.update({ error: '', failedVersion: null });
       } catch (error) {
+        if (isUnauthorized(error)) notifyUnauthorized();
         if (!controller.signal.aborted) this.update({ error: error instanceof Error ? error.message : String(error), failedVersion: this.value.pending[0]?.version ?? null });
       }
     })();
@@ -215,6 +217,7 @@ export class GameRepository {
       this.persist();
       await this.writes;
     } catch (error) {
+      if (isUnauthorized(error)) notifyUnauthorized();
       if (!controller.signal.aborted) this.update({ error: error instanceof Error ? error.message : String(error) });
     } finally { if (this.pageController === controller) this.update({ loading: false }); }
   }
