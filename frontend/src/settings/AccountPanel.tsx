@@ -53,12 +53,10 @@ export function AccountPanel() {
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lichessUser, setLichessUser] = useState('');
   const [importState, setImportState] = useState<string | null>(null);
   const [adoptState, setAdoptState] = useState<string | null>(null);
   const [unowned, setUnowned] = useState<number | null>(null);
   const [status, setStatus] = useState<ImportStatus | null>(null);
-  const [moreOpen, setMoreOpen] = useState(false);
 
   const refreshStatus = async () => {
     try {
@@ -75,10 +73,6 @@ export function AccountPanel() {
       void sessionStore.refresh();
     }
   }, [sessionStore]);
-
-  useEffect(() => {
-    if (account?.lichess_username && !lichessUser) setLichessUser(account.lichess_username);
-  }, [account, lichessUser]);
 
   useEffect(() => {
     if (!account) return;
@@ -111,7 +105,6 @@ export function AccountPanel() {
       setAdoptState(null);
       setUnowned(null);
       setStatus(null);
-      setMoreOpen(false);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Logout failed.');
     } finally {
@@ -186,7 +179,6 @@ export function AccountPanel() {
       } else {
         setImportState(`Imported ${result.saved.length} new${failed ? `, ${failed} failed` : ''}${result.skipped ? `, ${result.skipped} already here` : ''}${skipped ? `, ${skipped} skipped` : ''}. See History.`);
       }
-      setMoreOpen(false);
       await refreshStatus();
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Import failed.');
@@ -225,18 +217,18 @@ export function AccountPanel() {
     {!account.lichess_username && <div className="account-actions">
       <Button variant="primary" onClick={doConnect} disabled={busy}>Connect Lichess</Button>
     </div>}
-    {last
+    {account.lichess_username && (last
       ? <>
         <p className="account-note">
           {last.saved > 0 ? `+${last.saved} new from @${last.username}` : `Up to date with @${last.username}`} · {formatRunDate(last.created_at)} · {status?.total ?? 0} games in your history.
         </p>
         <div className="account-actions">
-          <Button onClick={() => runImport(last.username, last.created_at)} disabled={busy}>{busy ? 'Checking…' : 'Check for new games'}</Button>
-          <Button variant="quiet" onClick={() => setMoreOpen(open => !open)} disabled={busy}>{moreOpen ? 'Close' : 'Import more'}</Button>
+          <Button onClick={() => runImport(account.lichess_username as string, last.created_at)} disabled={busy}>{busy ? 'Checking…' : 'Check for new games'}</Button>
         </div>
-        {moreOpen && <ImportForm lichessUser={lichessUser} setLichessUser={setLichessUser} busy={busy} onImport={() => runImport(lichessUser)} />}
       </>
-      : <ImportForm lichessUser={lichessUser} setLichessUser={setLichessUser} busy={busy} onImport={() => runImport(lichessUser)} />}
+      : <div className="account-actions">
+        <Button variant="primary" onClick={() => runImport(account.lichess_username as string)} disabled={busy}>{busy ? 'Importing…' : `Import @${account.lichess_username}'s games`}</Button>
+      </div>)}
     {importState && <p className="account-note">{importState}</p>}
     {(unowned !== 0 || adoptState) && <>
       <h3 className="settings-subhead">Existing games</h3>
@@ -250,16 +242,4 @@ export function AccountPanel() {
       <Button variant="quiet" onClick={doLogout} disabled={busy}>Log out</Button>
     </div>
   </section>;
-}
-
-function ImportForm({ lichessUser, setLichessUser, busy, onImport }: {
-  lichessUser: string; setLichessUser: (value: string) => void;
-  busy: boolean; onImport: () => void;
-}) {
-  return <>
-    <label className="field">Lichess username<input value={lichessUser} maxLength={40} onChange={event => setLichessUser(event.target.value)} placeholder="username" /></label>
-    <div className="account-actions">
-      <Button onClick={onImport} disabled={busy}>{busy ? 'Importing…' : 'Append history'}</Button>
-    </div>
-  </>;
 }
