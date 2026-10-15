@@ -55,7 +55,6 @@ export function PlayControls({ state, dispatch }: Props) {
     <section className="setup-section" aria-labelledby="side-heading">
       <h2 id="side-heading">Your side</h2>
       <div className="side-options side-segmented" role="radiogroup" aria-labelledby="side-heading">{(['white', 'black', 'random'] as const).map(color => <label key={color} data-active={setup.userColor === color}><input type="radio" name="user-color" checked={setup.userColor === color} onChange={() => dispatch({ type: 'setup', draft: { userColor: color } })} />{color === 'random' ? <Dices size={18} aria-hidden="true" className="side-icon" /> : <ChessKing size={18} aria-hidden="true" className={`side-icon side-icon-${color}`} />}<span>{color === 'random' ? 'Random' : sideName(color)}</span></label>)}</div>
-      {setup.userColor === 'random' && <p className="hint">A coin flip decides your color when the game starts.</p>}
     </section>
     <section className="setup-section" aria-labelledby="coaching-heading">
       <h2 id="coaching-heading">Coaching</h2>
