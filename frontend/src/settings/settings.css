@@ -70,4 +70,13 @@
 .display-slice-inner.slice-white { left: -75%; top: -100%; }
 .display-slice-inner.slice-black { left: -50%; top: 0; }
 .display-slice-inner .display-preview-board { width: 100%; height: 100%; border: none; border-radius: 0; overflow: visible; }
+/* Account identity: avatar + name, action rows with real gaps, muted notes.
+   Every button group wraps in .account-actions — never bare adjacent buttons. */
+.account-identity { display: flex; align-items: center; gap: 12px; }
+.account-avatar { flex: none; width: 40px; height: 40px; border-radius: 50%; background: var(--accent); color: #202619;
+  display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 18px; }
+.account-name { font-size: 16px; font-weight: 650; margin: 0; color: inherit; }
+.account-sub { margin: 0; }
+.account-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.account-note { margin: 0; }
 @media (max-width: 480px) { .engine-settings { margin: 12px 0; } .settings-footer { align-items: flex-start; flex-direction: column; } }

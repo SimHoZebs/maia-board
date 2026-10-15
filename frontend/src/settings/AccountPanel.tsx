@@ -82,9 +82,21 @@ export function AccountPanel() {
     try {
       await sessionStore.logout();
       setImportState(null);
+      setAdoptState(null);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Logout failed.');
     } finally {
+      setBusy(false);
+    }
+  };
+
+  const doConnect = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await startLichessLogin();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Lichess login failed to start.');
       setBusy(false);
     }
   };
@@ -94,7 +106,7 @@ export function AccountPanel() {
     setError(null);
     try {
       const adopted = await adoptLegacyGames();
-      setAdoptState(adopted === 0 ? 'No unclaimed games found.' : `Claimed ${adopted} existing game${adopted === 1 ? '' : 's'} into your account. See History.`);
+      setAdoptState(adopted === 0 ? 'Nothing to claim: every saved game already belongs to an account.' : `Claimed ${adopted} existing game${adopted === 1 ? '' : 's'} into your account. See History.`);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Adoption failed.');
     } finally {
@@ -147,29 +159,49 @@ export function AccountPanel() {
 
   if (session.status === 'checking') return <section aria-label="Account"><h2>Account</h2><p>Checking login…</p></section>;
 
-  return <section aria-label="Account">
+  if (account === null) return <section aria-label="Account" className="settings-control">
     <h2>Account</h2>
     {error && <p role="alert">{error}</p>}
     {session.error && <p role="alert">{session.error}</p>}
-    {account === null ? <>
-      <p>Log in to own your games. History, reviews, and engine calls scope to your account.</p>
-      <label className="field">Display name<input value={name} maxLength={40} onChange={event => setName(event.target.value)} placeholder="Player" /></label>
-      <Button onClick={doLogin} disabled={busy}>{busy ? 'Logging in…' : 'Log in'}</Button>
-    </> : <>
-      <p>Signed in as <strong>{account.display_name}</strong>{account.lichess_username ? ` · Lichess @${account.lichess_username}` : ''}.</p>
-      <div className="row">
-        <Button onClick={() => { setBusy(true); void startLichessLogin().catch((error: unknown) => { setError(error instanceof Error ? error.message : 'Lichess login failed to start.'); setBusy(false); }); }} disabled={busy}>Connect Lichess</Button>
-        <Button onClick={doLogout} disabled={busy}>Log out</Button>
+    <p>Log in to own your games. History, reviews, and engine calls scope to your account.</p>
+    <label className="field">Display name<input value={name} maxLength={40} onChange={event => setName(event.target.value)} placeholder="Player" /></label>
+    <div className="account-actions">
+      <Button variant="primary" onClick={doConnect} disabled={busy}>Log in with Lichess</Button>
+      <Button onClick={doLogin} disabled={busy}>{busy ? 'Logging in…' : 'Continue with a local name'}</Button>
+    </div>
+  </section>;
+
+  const initial = (account.display_name.trim()[0] ?? '?').toUpperCase();
+  return <section aria-label="Account" className="settings-control">
+    <div className="account-identity">
+      <span className="account-avatar" aria-hidden="true">{initial}</span>
+      <div>
+        <p className="account-name">{account.display_name}</p>
+        <p className="account-sub">{account.lichess_username ? `Lichess @${account.lichess_username}` : 'Local account'}</p>
       </div>
-      <h3>Existing games</h3>
-      <p>Games saved before accounts existed belong to nobody. Claim them into your account.</p>
-      <Button onClick={doAdopt} disabled={busy}>Claim existing games</Button>
-      {adoptState && <p>{adoptState}</p>}
-      <h3>Import Lichess history</h3>
-      <label className="field">Lichess username<input value={lichessUser} maxLength={40} onChange={event => setLichessUser(event.target.value)} placeholder="username" /></label>
-      <label className="field">Max games<input type="number" min={1} max={1000} value={maxGames} onChange={event => setMaxGames(event.target.valueAsNumber || 100)} /></label>
+    </div>
+    {error && <p role="alert">{error}</p>}
+    {session.error && <p role="alert">{session.error}</p>}
+    {account.lichess_username
+      ? <p className="account-note">Lichess is linked. Imports attribute to this account.</p>
+      : <div className="account-actions">
+        <Button variant="primary" onClick={doConnect} disabled={busy}>Connect Lichess</Button>
+      </div>}
+    <h3 className="settings-subhead">Import Lichess history</h3>
+    <label className="field">Lichess username<input value={lichessUser} maxLength={40} onChange={event => setLichessUser(event.target.value)} placeholder="username" /></label>
+    <label className="field">Max games<input type="number" min={1} max={1000} value={maxGames} onChange={event => setMaxGames(event.target.valueAsNumber || 100)} /></label>
+    <div className="account-actions">
       <Button onClick={doImport} disabled={busy}>{busy ? 'Importing…' : 'Append history'}</Button>
-      {importState && <p>{importState}</p>}
-    </>}
+    </div>
+    {importState && <p className="account-note">{importState}</p>}
+    <h3 className="settings-subhead">Existing games</h3>
+    <p className="account-note">Games saved before accounts existed belong to nobody. Claim them into your account.</p>
+    <div className="account-actions">
+      <Button onClick={doAdopt} disabled={busy}>Claim existing games</Button>
+    </div>
+    {adoptState && <p className="account-note">{adoptState}</p>}
+    <div className="account-actions">
+      <Button variant="quiet" onClick={doLogout} disabled={busy}>Log out</Button>
+    </div>
   </section>;
 }

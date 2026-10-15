@@ -40,7 +40,9 @@ export function LoginGate({ session, onLogin }: {
     <p>Play, analyze, and keep your games on your own server. Log in first — your history belongs to your account.</p>
     {session.error && <p role="alert">{session.error}</p>}
     {error && <p role="alert">{error}</p>}
-    <Button variant="primary" onClick={startLichess} disabled={busy}>{busy ? 'Contacting Lichess…' : 'Log in with Lichess'}</Button>
+    <div className="account-actions">
+      <Button variant="primary" onClick={startLichess} disabled={busy}>{busy ? 'Contacting Lichess…' : 'Log in with Lichess'}</Button>
+    </div>
     <div className="login-local">
       <label className="field">Display name<input value={name} maxLength={40} onChange={event => setName(event.target.value)} placeholder="Player" /></label>
       <Button onClick={submit} disabled={busy}>{busy ? 'Logging in…' : 'Continue with a local name'}</Button>
