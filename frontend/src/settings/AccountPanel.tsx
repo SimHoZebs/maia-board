@@ -54,7 +54,6 @@ export function AccountPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lichessUser, setLichessUser] = useState('');
-  const [maxGames, setMaxGames] = useState(100);
   const [importState, setImportState] = useState<string | null>(null);
   const [adoptState, setAdoptState] = useState<string | null>(null);
   const [unowned, setUnowned] = useState<number | null>(null);
@@ -145,7 +144,7 @@ export function AccountPanel() {
     }
   };
 
-  const runImport = async (username: string, max: number) => {
+  const runImport = async (username: string, since?: string) => {
     const trimmed = username.trim();
     if (!trimmed) {
       setError('Enter a Lichess username first.');
@@ -155,7 +154,10 @@ export function AccountPanel() {
     setError(null);
     setImportState('Downloading games from Lichess…');
     try {
-      const url = `https://lichess.org/api/games/user/${encodeURIComponent(trimmed)}?max=${Math.max(1, Math.min(1000, max))}&pgnInJson=true`;
+      const params = new URLSearchParams({ max: '1000', pgnInJson: 'true' });
+      const sinceMs = since ? Date.parse(since) : NaN;
+      if (Number.isFinite(sinceMs)) params.set('since', String(sinceMs));
+      const url = `https://lichess.org/api/games/user/${encodeURIComponent(trimmed)}?${params}`;
       const response = await fetch(url, { headers: { Accept: 'application/x-ndjson' } });
       if (!response.ok || !response.body) throw new Error(`Lichess answered ${response.status}.`);
       const text = await response.text();
@@ -229,12 +231,12 @@ export function AccountPanel() {
           {last.saved > 0 ? `+${last.saved} new from @${last.username}` : `Up to date with @${last.username}`} · {formatRunDate(last.created_at)} · {status?.total ?? 0} games in your history.
         </p>
         <div className="account-actions">
-          <Button onClick={() => runImport(last.username, 100)} disabled={busy}>{busy ? 'Checking…' : 'Check for new games'}</Button>
+          <Button onClick={() => runImport(last.username, last.created_at)} disabled={busy}>{busy ? 'Checking…' : 'Check for new games'}</Button>
           <Button variant="quiet" onClick={() => setMoreOpen(open => !open)} disabled={busy}>{moreOpen ? 'Close' : 'Import more'}</Button>
         </div>
-        {moreOpen && <ImportForm lichessUser={lichessUser} setLichessUser={setLichessUser} maxGames={maxGames} setMaxGames={setMaxGames} busy={busy} onImport={() => runImport(lichessUser, maxGames)} />}
+        {moreOpen && <ImportForm lichessUser={lichessUser} setLichessUser={setLichessUser} busy={busy} onImport={() => runImport(lichessUser)} />}
       </>
-      : <ImportForm lichessUser={lichessUser} setLichessUser={setLichessUser} maxGames={maxGames} setMaxGames={setMaxGames} busy={busy} onImport={() => runImport(lichessUser, maxGames)} />}
+      : <ImportForm lichessUser={lichessUser} setLichessUser={setLichessUser} busy={busy} onImport={() => runImport(lichessUser)} />}
     {importState && <p className="account-note">{importState}</p>}
     {(unowned !== 0 || adoptState) && <>
       <h3 className="settings-subhead">Existing games</h3>
@@ -250,14 +252,12 @@ export function AccountPanel() {
   </section>;
 }
 
-function ImportForm({ lichessUser, setLichessUser, maxGames, setMaxGames, busy, onImport }: {
+function ImportForm({ lichessUser, setLichessUser, busy, onImport }: {
   lichessUser: string; setLichessUser: (value: string) => void;
-  maxGames: number; setMaxGames: (value: number) => void;
   busy: boolean; onImport: () => void;
 }) {
   return <>
     <label className="field">Lichess username<input value={lichessUser} maxLength={40} onChange={event => setLichessUser(event.target.value)} placeholder="username" /></label>
-    <label className="field">Max games<input type="number" min={1} max={1000} value={maxGames} onChange={event => setMaxGames(event.target.valueAsNumber || 100)} /></label>
     <div className="account-actions">
       <Button onClick={onImport} disabled={busy}>{busy ? 'Importing…' : 'Append history'}</Button>
     </div>
