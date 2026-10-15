@@ -223,7 +223,6 @@ export function AccountPanel() {
     {!account.lichess_username && <div className="account-actions">
       <Button variant="primary" onClick={doConnect} disabled={busy}>Connect Lichess</Button>
     </div>}
-    <h3 className="settings-subhead">Lichess history</h3>
     {last
       ? <>
         <p className="account-note">
