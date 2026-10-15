@@ -55,11 +55,23 @@ func methodNotAllowed(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
 	// recoverJSON first (= outermost): panics anywhere stay JSON.
-	r.Use(recoverJSON, securityHeaders, retryAfter)
+	r.Use(recoverJSON, securityHeaders, retryAfter, s.authContext)
 	r.MethodNotAllowed(methodNotAllowed)
 
 	api := newAPI(r)
 	s.registerOps(r, api)
+
+	// Session endpoints use plain Chi (Huma cannot set cookies).
+	// Auth anchors: auth/local-login, auth/logout, auth/me, auth/lichess-start, auth/lichess-callback, imports/adopt.
+	r.Post("/auth/local", s.serveLocalLogin)
+	r.Post("/auth/logout", s.serveLogout)
+	r.Get("/me", s.serveMe)
+	r.Get("/auth/lichess/start", s.serveLichessStart)
+	r.Post("/auth/lichess/start", s.serveLichessStart)
+	r.Get("/auth/lichess/callback", s.serveLichessCallback)
+	r.Post("/auth/lichess/callback", s.serveLichessCallback)
+	r.Post("/imports/games", s.serveBulkImport)
+	r.Post("/imports/adopt", s.serveAdopt)
 
 	// SPA fallback: any other unmatched path serves the frontend shell.
 	r.NotFound(s.frontend)

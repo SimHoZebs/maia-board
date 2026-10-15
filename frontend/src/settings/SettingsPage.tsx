@@ -8,6 +8,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import './settings.css';
 import { useState } from 'react';
 import { computeUserElo, loadUserEloAnchor, normalizeUserElo, saveUserEloAnchor } from '../history/userElo';
+import { AccountPanel } from './AccountPanel';
 
 function NumberSetting({ id, value, min, max, step, onChange, disabled, label }: { id: string; value: number; min: number; max: number; step: number; onChange: (value: number) => void; disabled?: boolean; label: string }) {
   // Uncommitted text lives in draft; null means "show the committed value".
@@ -63,6 +64,7 @@ export function SettingsPage({ state, dispatch }: Props) {
     { key: 'next', label: 'Next best move' },
   ];
   return <section className="engine-settings panel" aria-labelledby="settings-title">
+    <AccountPanel />
     <p className="settings-eyebrow">BOARD</p>
     <h2 className="settings-subhead">Display</h2>
     <DisplayBoardPreview orientation={state.boardOrientation} coordinatesOnSquares={state.coordinatesOnSquares} basis={state.arrowBasis} arrows={state.arrows} />

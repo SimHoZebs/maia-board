@@ -135,8 +135,14 @@ them. Maia identity includes both ratings and the pinned upstream model revision
 Within the batch lane, submits share fairly by rotation (A,B,A,B) with dual
 admission caps (misses per engine + unfinished jobs, 429 wait-once). This is
 fairness-without-auth for self-host scaling to family/friends; priority
-lanes (Play > Focus > Batch) stay regardless. Threat model: trusted
-LAN/tailnet, no auth. Same-key resubmits join instead of growing the queue;
+lanes (Play > Focus > Batch) stay regardless. Threat model: authenticated
+users over a trusted LAN/tailnet. Sessions are HttpOnly cookies; games,
+current markers, and review jobs scope to the session owner, while the
+evaluation cache stays shared content (keyed by position, never by user).
+Lichess OAuth links a verified identity (`POST /auth/lichess/start`,
+`/auth/lichess/callback`; needs `LICHESS_CLIENT_ID` plus redirect URI), and
+`POST /imports/games` appends external history into the caller's owned store.
+Same-key resubmits join instead of growing the queue;
 the caps are tripwires so a runaway client fails visibly with 429. Maia
 large-model misses count against both the large and small tallies because
 79M→5M fallback eligibility is unknowable at intake; mixed submits can

@@ -73,6 +73,12 @@ func (s *Server) serveMove(ctx context.Context, request *MoveRequest, prio sched
 	if prio == sched.PriorityFocus {
 		lane = "focus"
 	}
+	if s.authEnabled() {
+		if _, err := s.requireUser(ctx); err != nil {
+			status = http.StatusUnauthorized
+			return nil, err
+		}
+	}
 	// Perf spans: validate_us covers request validation, exec_ms covers the
 	// cache→admission→inference→store path, and wait_ms is the admission
 	// queue wait inside exec_ms (-1 when admission was never reached:

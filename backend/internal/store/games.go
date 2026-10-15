@@ -35,6 +35,8 @@ type GameRow struct {
 	Model       string   `json:"model"`
 	Moves       []string `json:"moves"`
 	Result      string   `json:"result,omitempty"`
+	// OwnerID scopes the row to one user. Empty means a legacy pre-user row.
+	OwnerID string `json:"owner_id,omitempty"`
 }
 
 type GamePayload struct {
@@ -48,6 +50,10 @@ type GamePayload struct {
 	Moves       []string `json:"moves"`
 	Result      string   `json:"result,omitempty"`
 	Current     bool     `json:"current,omitempty"`
+	// OwnerID is server-owned: handlers overwrite it from the session. It
+	// stays in the payload so the store has one save path for legacy ('')
+	// and owned rows.
+	OwnerID string `json:"owner_id,omitempty"`
 }
 
 // gameStoreDSN carries the connection pragmas in validated shorthand form so
@@ -119,6 +125,10 @@ func NewGameStore(path string) (*GameStore, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := ensureUserSchema(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &GameStore{db: db}, nil
 }
 
@@ -169,7 +179,8 @@ func ValidateGamePayload(payload *GamePayload) *apierror.RequestError {
 }
 
 // Save inserts or updates a game. created_at is immutable once set; updated_at
-// always becomes now. When current is true the current-game marker moves too.
+// always becomes now. When current is true the current-game marker moves too
+// (per-user when OwnerID is set, legacy global meta otherwise).
 // It reports isNew=true when the id was absent (a genuinely new game row),
 // false for updates and unchanged re-saves.
 func (s *GameStore) Save(payload GamePayload) (GameRow, bool, error) {
@@ -191,12 +202,12 @@ func (s *GameStore) Save(payload GamePayload) (GameRow, bool, error) {
 		isNew bool
 	}
 	res, err := withTx(s.db, func(tx *sql.Tx) (saveResult, error) {
-		var created, updated, stored string
+		var created, updated, stored, storedOwner string
 		var storedColor, storedModel, storedResult string
 		var storedMaia, storedUser int
 		var storedTemperature float64
-		err := tx.QueryRow(`SELECT created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result
-			FROM games WHERE id = ?`, id).Scan(&created, &updated, &storedColor, &storedMaia, &storedUser, &storedModel, &stored, &storedTemperature, &storedResult)
+		err := tx.QueryRow(`SELECT created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id
+			FROM games WHERE id = ?`, id).Scan(&created, &updated, &storedColor, &storedMaia, &storedUser, &storedModel, &stored, &storedTemperature, &storedResult, &storedOwner)
 		isNew := false
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
@@ -208,41 +219,54 @@ func (s *GameStore) Save(payload GamePayload) (GameRow, bool, error) {
 		case err != nil:
 			return saveResult{}, err
 		default:
+			// Ownership is load-bearing: one user must not overwrite another's
+			// row (including legacy '' rows) by reusing its id.
+			if storedOwner != payload.OwnerID {
+				return saveResult{}, ErrOwnerMismatch
+			}
 			// Resuming or re-saving unchanged content must not churn recency order.
 			if storedColor == payload.UserColor && storedMaia == *payload.EloMaia && storedUser == *payload.EloUser &&
 				storedModel == payload.Model && stored == moves && storedTemperature == payload.Temperature && storedResult == payload.Result {
 				if payload.Current {
-					if _, err := tx.Exec(`INSERT INTO meta (key, value) VALUES ('current_game_id', ?)
-						ON CONFLICT (key) DO UPDATE SET value = excluded.value`, id); err != nil {
+					if err := setCurrentTx(tx, payload.OwnerID, id); err != nil {
 						return saveResult{}, err
 					}
 				}
 				return saveResult{game: GameRow{ID: id, CreatedAt: created, UpdatedAt: updated, UserColor: payload.UserColor,
-					EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result}}, nil
+					EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result, OwnerID: payload.OwnerID}}, nil
 			}
 		}
-		_, err = tx.Exec(`INSERT INTO games (id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		_, err = tx.Exec(`INSERT INTO games (id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (id) DO UPDATE SET updated_at = excluded.updated_at, user_color = excluded.user_color,
-				elo_maia = excluded.elo_maia, elo_user = excluded.elo_user, model = excluded.model, moves = excluded.moves, temperature = excluded.temperature, result = excluded.result`,
-			id, created, now, payload.UserColor, *payload.EloMaia, *payload.EloUser, payload.Model, moves, payload.Temperature, payload.Result)
+				elo_maia = excluded.elo_maia, elo_user = excluded.elo_user, model = excluded.model, moves = excluded.moves, temperature = excluded.temperature, result = excluded.result, owner_id = excluded.owner_id`,
+			id, created, now, payload.UserColor, *payload.EloMaia, *payload.EloUser, payload.Model, moves, payload.Temperature, payload.Result, payload.OwnerID)
 		if err != nil {
 			return saveResult{}, err
 		}
 		if payload.Current {
-			_, err = tx.Exec(`INSERT INTO meta (key, value) VALUES ('current_game_id', ?)
-				ON CONFLICT (key) DO UPDATE SET value = excluded.value`, id)
-			if err != nil {
+			if err := setCurrentTx(tx, payload.OwnerID, id); err != nil {
 				return saveResult{}, err
 			}
 		}
 		return saveResult{game: GameRow{ID: id, CreatedAt: created, UpdatedAt: now, UserColor: payload.UserColor,
-			EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result}, isNew: isNew}, nil
+			EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result, OwnerID: payload.OwnerID}, isNew: isNew}, nil
 	})
 	if err != nil {
 		return GameRow{}, false, err
 	}
 	return res.game, res.isNew, nil
+}
+
+func setCurrentTx(tx *sql.Tx, ownerID, gameID string) error {
+	if ownerID != "" {
+		_, err := tx.Exec(`INSERT INTO user_current (user_id, game_id) VALUES (?, ?)
+			ON CONFLICT (user_id) DO UPDATE SET game_id = excluded.game_id`, ownerID, gameID)
+		return err
+	}
+	_, err := tx.Exec(`INSERT INTO meta (key, value) VALUES ('current_game_id', ?)
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value`, gameID)
+	return err
 }
 
 type gameScanner interface {
@@ -253,7 +277,7 @@ func scanGame(scanner gameScanner) (GameRow, error) {
 	var game GameRow
 	var moves string
 	if err := scanner.Scan(&game.ID, &game.CreatedAt, &game.UpdatedAt, &game.UserColor,
-		&game.EloMaia, &game.EloUser, &game.Model, &moves, &game.Temperature, &game.Result); err != nil {
+		&game.EloMaia, &game.EloUser, &game.Model, &moves, &game.Temperature, &game.Result, &game.OwnerID); err != nil {
 		return GameRow{}, err
 	}
 	decoded, err := decodeMovesColumn(moves)
@@ -264,8 +288,12 @@ func scanGame(scanner gameScanner) (GameRow, error) {
 	return game, nil
 }
 
+// ErrOwnerMismatch signals a cross-owner id reuse. Handlers map it to
+// 403/404 without leaking the other owner's row.
+var ErrOwnerMismatch = errors.New("game owned by another user")
+
 func (s *GameStore) Get(id string) (GameRow, error) {
-	game, err := scanGame(s.db.QueryRow(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result
+	game, err := scanGame(s.db.QueryRow(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id
 		FROM games WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return GameRow{}, sql.ErrNoRows
@@ -273,18 +301,49 @@ func (s *GameStore) Get(id string) (GameRow, error) {
 	return game, err
 }
 
+// GetForUser returns the row only when it belongs to ownerID; otherwise
+// ErrNoRows (404, no existence leak) or ErrOwnerMismatch when callers need
+// to distinguish a forbidden cross-owner access.
+func (s *GameStore) GetForUser(id, ownerID string) (GameRow, error) {
+	game, err := s.Get(id)
+	if err != nil {
+		return GameRow{}, err
+	}
+	if game.OwnerID != ownerID {
+		return GameRow{}, ErrOwnerMismatch
+	}
+	return game, nil
+}
+
 func (s *GameStore) List(limit int, offsets ...int) ([]GameRow, int, error) {
+	return s.ListForUser(limit, "", offsets...)
+}
+
+// ListForUser scopes history to one owner. Empty ownerID preserves the
+// legacy global view (pre-user rows plus unscoped tests).
+func (s *GameStore) ListForUser(limit int, ownerID string, offsets ...int) ([]GameRow, int, error) {
 	offset := 0
 	if len(offsets) > 0 {
 		offset = offsets[0]
 	}
 	var total int
-	total, err := countRows(s.db, `SELECT COUNT(*) FROM games`)
-	if err != nil {
-		return nil, 0, err
+	var err error
+	var rows *sql.Rows
+	if ownerID == "" {
+		total, err = countRows(s.db, `SELECT COUNT(*) FROM games`)
+		if err != nil {
+			return nil, 0, err
+		}
+		rows, err = s.db.Query(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id
+			FROM games ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`, limit, offset)
+	} else {
+		total, err = countRows(s.db, `SELECT COUNT(*) FROM games WHERE owner_id = ?`, ownerID)
+		if err != nil {
+			return nil, 0, err
+		}
+		rows, err = s.db.Query(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id
+			FROM games WHERE owner_id = ? ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`, ownerID, limit, offset)
 	}
-	rows, err := s.db.Query(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result
-		FROM games ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -308,14 +367,49 @@ func (s *GameStore) CurrentID() string {
 	return id
 }
 
+// CurrentIDForUser reads the per-user marker, falling back to the legacy
+// global marker only for the unscoped (”) owner.
+func (s *GameStore) CurrentIDForUser(ownerID string) string {
+	if ownerID != "" {
+		return s.GetUserCurrent(ownerID)
+	}
+	return s.CurrentID()
+}
+
 // Delete removes a game and clears the current-game marker when it points there.
 // Deleting an unknown id still succeeds, keeping client retries idempotent.
 func (s *GameStore) Delete(id string) error {
+	return s.DeleteForUser(id, "")
+}
+
+// DeleteForUser deletes only when the row belongs to ownerID. Unknown ids
+// and cross-owner ids both succeed silently at the store layer (handlers
+// decide 404 vs 403); the per-user and legacy markers clear when matched.
+func (s *GameStore) DeleteForUser(id, ownerID string) error {
 	_, err := withTx(s.db, func(tx *sql.Tx) (struct{}, error) {
+		if ownerID == "" {
+			if _, err := tx.Exec(`DELETE FROM games WHERE id = ?`, id); err != nil {
+				return struct{}{}, err
+			}
+			if _, err := tx.Exec(`DELETE FROM meta WHERE key = 'current_game_id' AND value = ?`, id); err != nil {
+				return struct{}{}, err
+			}
+			return struct{}{}, nil
+		}
+		var storedOwner string
+		err := tx.QueryRow(`SELECT owner_id FROM games WHERE id = ?`, id).Scan(&storedOwner)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return struct{}{}, nil
+		case err != nil:
+			return struct{}{}, err
+		case storedOwner != ownerID:
+			return struct{}{}, nil
+		}
 		if _, err := tx.Exec(`DELETE FROM games WHERE id = ?`, id); err != nil {
 			return struct{}{}, err
 		}
-		if _, err := tx.Exec(`DELETE FROM meta WHERE key = 'current_game_id' AND value = ?`, id); err != nil {
+		if _, err := tx.Exec(`DELETE FROM user_current WHERE user_id = ? AND game_id = ?`, ownerID, id); err != nil {
 			return struct{}{}, err
 		}
 		return struct{}{}, nil

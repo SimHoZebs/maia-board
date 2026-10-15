@@ -54,6 +54,14 @@ func (s *Server) handleGamesList(ctx context.Context, input *GamesListInput) (*G
 	if s.store == nil {
 		return nil, apiError(http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
 	}
+	ownerID := ""
+	if s.authEnabled() {
+		user, err := s.requireUser(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ownerID = user.ID
+	}
 	limit := 200
 	if raw := input.Limit; raw != "" {
 		parsed, err := strconv.Atoi(raw)
@@ -70,16 +78,19 @@ func (s *Server) handleGamesList(ctx context.Context, input *GamesListInput) (*G
 		}
 		offset = parsed
 	}
-	games, total, err := s.store.List(limit, offset)
+	games, total, err := s.store.ListForUser(limit, ownerID, offset)
 	if err != nil {
 		return nil, apiError(http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
 	}
-	currentID := s.store.CurrentID()
+	currentID := s.store.CurrentIDForUser(ownerID)
 	var current *store.GameRow
 	if currentID != "" {
 		row, err := s.store.Get(currentID)
-		if err == nil {
+		if err == nil && (ownerID == "" || row.OwnerID == ownerID) {
 			current = &row
+		} else if err == nil {
+			// Cross-owner marker: never leak the row, report no current game.
+			currentID = ""
 		} else if errors.Is(err, sql.ErrNoRows) {
 			// Orphan marker (e.g. game deleted between the marker
 			// read and the row fetch): report no current game
@@ -107,9 +118,18 @@ func (s *Server) handleGamesCreate(ctx context.Context, input *GamesCreateInput)
 	if s.store == nil {
 		return nil, apiError(http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
 	}
+	ownerID := ""
+	if s.authEnabled() {
+		user, err := s.requireUser(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ownerID = user.ID
+	}
 	started := time.Now()
 	status := http.StatusOK
 	payload := input.Body
+	payload.OwnerID = ownerID
 	defer func() {
 		if status != http.StatusOK {
 			log.Printf("game-save status=%d plies=%d model=%s result=%q duration_ms=%d", status, len(payload.Moves), payload.Model, payload.Result, time.Since(started).Milliseconds())
@@ -121,6 +141,10 @@ func (s *Server) handleGamesCreate(ctx context.Context, input *GamesCreateInput)
 	}
 	game, isNew, err := s.store.Save(payload)
 	if err != nil {
+		if errors.Is(err, store.ErrOwnerMismatch) {
+			status = http.StatusForbidden
+			return nil, apiError(status, "forbidden", "game id belongs to another user")
+		}
 		status = http.StatusBadGateway
 		return nil, apiError(status, "engine_unavailable", "game history is unavailable")
 	}
@@ -139,6 +163,20 @@ func (s *Server) handleGamesCreate(ctx context.Context, input *GamesCreateInput)
 func (s *Server) handleGameGet(ctx context.Context, input *GameByIDInput) (*GameGetOutput, error) {
 	if s.store == nil {
 		return nil, apiError(http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
+	}
+	if s.authEnabled() {
+		user, err := s.requireUser(ctx)
+		if err != nil {
+			return nil, err
+		}
+		game, err := s.store.GetForUser(input.ID, user.ID)
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, store.ErrOwnerMismatch) {
+			return nil, apiError(http.StatusNotFound, "not_found", "unknown game")
+		}
+		if err != nil {
+			return nil, apiError(http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
+		}
+		return &GameGetOutput{Body: game}, nil
 	}
 	game, err := s.store.Get(input.ID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -159,6 +197,26 @@ func (s *Server) handleGameDelete(ctx context.Context, input *GameByIDInput) (*s
 	defer func() {
 		log.Printf("game-delete status=%d id=%s duration_ms=%d", status, input.ID, time.Since(started).Milliseconds())
 	}()
+	if s.authEnabled() {
+		user, err := s.requireUser(ctx)
+		if err != nil {
+			return nil, err
+		}
+		_, err = s.store.GetForUser(input.ID, user.ID)
+		if errors.Is(err, store.ErrOwnerMismatch) {
+			status = http.StatusNotFound
+			return nil, apiError(status, "not_found", "unknown game")
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			status = http.StatusBadGateway
+			return nil, apiError(status, "engine_unavailable", "game history is unavailable")
+		}
+		if err := s.store.DeleteForUser(input.ID, user.ID); err != nil {
+			status = http.StatusBadGateway
+			return nil, apiError(status, "engine_unavailable", "game history is unavailable")
+		}
+		return &struct{}{}, nil
+	}
 	if err := s.store.Delete(input.ID); err != nil {
 		status = http.StatusBadGateway
 		return nil, apiError(status, "engine_unavailable", "game history is unavailable")

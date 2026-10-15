@@ -72,7 +72,7 @@ function throwServerError(body: unknown, status: number): never {
 export async function fetchGames(fetchImpl: FetchLike = fetch, offset = 0, signal?: AbortSignal): Promise<GamesList> {
   let response: Response;
   try {
-    response = await fetchImpl(`/games?limit=100&offset=${offset}`, { headers: { 'Accept': 'application/json' }, cache: 'no-store', signal });
+    response = await fetchImpl(`/games?limit=100&offset=${offset}`, { headers: { 'Accept': 'application/json' }, credentials: 'include', cache: 'no-store', signal });
   } catch {
     throw new ServerGamesError('server_unreachable', 'The game server could not be reached.');
   }
@@ -110,7 +110,7 @@ export async function saveRemote(game: StoredGame, current: boolean, fetchImpl: 
   let response: Response;
   try {
     response = await fetchImpl('/games', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(toPayload(game, current)), signal,
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(toPayload(game, current)), signal,
     });
   } catch {
     throw new ServerGamesError('server_unreachable', 'The game server could not be reached.');
@@ -126,7 +126,7 @@ export async function saveRemote(game: StoredGame, current: boolean, fetchImpl: 
 export async function deleteRemote(id: string, fetchImpl: FetchLike = fetch, signal?: AbortSignal): Promise<void> {
   let response: Response;
   try {
-    response = await fetchImpl(`/games/${encodeURIComponent(id)}`, { method: 'DELETE', signal });
+    response = await fetchImpl(`/games/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'include', signal });
   } catch {
     throw new ServerGamesError('server_unreachable', 'The game server could not be reached.');
   }

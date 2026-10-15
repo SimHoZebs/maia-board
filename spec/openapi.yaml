@@ -286,6 +286,8 @@ components:
           type:
             - array
             - "null"
+        owner_id:
+          type: string
         result:
           type: string
         temperature:
@@ -328,6 +330,8 @@ components:
           type:
             - array
             - "null"
+        owner_id:
+          type: string
         result:
           type: string
         temperature:

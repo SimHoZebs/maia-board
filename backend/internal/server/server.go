@@ -23,14 +23,28 @@ type Server struct {
 	store     *store.GameStore
 	reviews   *ReviewJobs
 	openings  *openings.OpeningsLookup
+	auth      *AuthService
 }
 
 // NewServer wires a Server; ReviewJobs starts empty (jobs are in-memory,
-// finished plies persist in the store).
+// finished plies persist in the store). Auth is always wired here so
+// production enforces ownership; unit tests using bare &Server{} literals
+// stay in legacy open mode.
 func NewServer(pool *engine.EnginePool, evaluator *engine.Evaluator, gameStore *store.GameStore, lookup *openings.OpeningsLookup, staticDir string) *Server {
 	s := &Server{pool: pool, staticDir: staticDir, store: gameStore, evaluator: evaluator, openings: lookup}
+	if gameStore != nil {
+		s.auth = NewAuthService(gameStore, DefaultSessionTTL)
+	}
 	s.reviews = NewReviewJobs(s)
 	return s
+}
+
+// EnableAuthForTest wires auth on a bare test server. Test seam;
+// production uses NewServer.
+func (s *Server) EnableAuthForTest() {
+	if s.auth == nil && s.store != nil {
+		s.auth = NewAuthService(s.store, DefaultSessionTTL)
+	}
 }
 
 // Handler is defined in api.go: it builds the Chi+Huma router and wraps it

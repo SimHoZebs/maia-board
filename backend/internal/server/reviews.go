@@ -276,6 +276,7 @@ type BatchProgress struct {
 
 type batchJob struct {
 	id        string
+	owner     string
 	createdAt string
 	entries   []*batchEntry
 	done      int
@@ -545,6 +546,14 @@ func (js *ReviewJobs) handleSubmit(ctx context.Context, input *SubmitInput) (*Su
 	if js.s.store == nil {
 		return nil, apiError(http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
 	}
+	ownerID := ""
+	if js.s.authEnabled() {
+		user, err := js.s.requireUser(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ownerID = user.ID
+	}
 	body := input.Body
 	if lineErr := validateBatchLine(body.Line); lineErr != nil {
 		return nil, apiError(http.StatusBadRequest, lineErr.Code, lineErr.Message)
@@ -634,7 +643,7 @@ func (js *ReviewJobs) handleSubmit(ctx context.Context, input *SubmitInput) (*Su
 			js.mu.Unlock()
 			return nil, apiError(http.StatusBadGateway, "engine_unavailable", "could not start review batch")
 		}
-		job := &batchJob{id: id, createdAt: time.Now().UTC().Format(time.RFC3339Nano),
+		job := &batchJob{id: id, owner: ownerID, createdAt: time.Now().UTC().Format(time.RFC3339Nano),
 			entries: entries, subs: make(map[chan BatchProgress]struct{})}
 		job.done = cached
 		js.jobs[id] = job
@@ -675,6 +684,15 @@ func (js *ReviewJobs) handleStatus(ctx context.Context, input *ReviewStatusInput
 	job := js.byID(input.ID)
 	if job == nil {
 		return nil, apiError(http.StatusNotFound, "not_found", "unknown review batch")
+	}
+	if js.s.authEnabled() {
+		user, err := js.s.requireUser(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if job.owner != "" && job.owner != user.ID {
+			return nil, apiError(http.StatusNotFound, "not_found", "unknown review batch")
+		}
 	}
 	return &ReviewStatusOutput{Body: job.progress()}, nil
 }
@@ -824,6 +842,17 @@ func (js *ReviewJobs) reviewEvents(w http.ResponseWriter, r *http.Request) {
 	if job == nil {
 		writeHumaError(w, http.StatusNotFound, "not_found", "unknown review batch")
 		return
+	}
+	if js.s.authEnabled() {
+		user, err := js.s.requireUser(r.Context())
+		if err != nil {
+			writeHumaError(w, http.StatusUnauthorized, "unauthenticated", "login is required")
+			return
+		}
+		if job.owner != "" && job.owner != user.ID {
+			writeHumaError(w, http.StatusNotFound, "not_found", "unknown review batch")
+			return
+		}
 	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {

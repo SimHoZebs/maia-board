@@ -26,6 +26,12 @@ func (s *Server) handleOpenings(ctx context.Context, input *OpeningsInput) (*Ope
 	defer func() {
 		log.Printf("openings status=%d plies=%d duration_ms=%d", status, len(request.Moves), time.Since(started).Milliseconds())
 	}()
+	if s.authEnabled() {
+		if _, err := s.requireUser(ctx); err != nil {
+			status = http.StatusUnauthorized
+			return nil, err
+		}
+	}
 	if err := openings.ValidateRequest(&request); err != nil {
 		status = http.StatusBadRequest
 		return nil, apiError(status, err.Code, err.Message)

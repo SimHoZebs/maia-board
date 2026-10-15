@@ -287,6 +287,11 @@ type LookupOutput struct {
 }
 
 func (s *Server) handleEvalLookup(ctx context.Context, input *LookupInput) (*LookupOutput, error) {
+	if s.authEnabled() {
+		if _, err := s.requireUser(ctx); err != nil {
+			return nil, err
+		}
+	}
 	body := input.Body
 	if lineErr := validateBatchLine(body.Line); lineErr != nil {
 		return nil, apiError(http.StatusBadRequest, lineErr.Code, lineErr.Message)

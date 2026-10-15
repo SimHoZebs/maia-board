@@ -197,6 +197,75 @@ Errors: `404 not_found`, `405 method_not_allowed`.
 - Errors: `400 invalid_fen | invalid_position | history_too_long`,
   `502 openings_unavailable`, `405 method_not_allowed`.
 
+## POST /auth/local, POST /auth/logout, GET /me
+
+Session accounts (plain Chi handlers; Huma cannot set cookies).
+
+```json
+// POST /auth/local → 200 (sets HttpOnly maia_board_session cookie)
+{"display_name": "Alice"}
+// → User row
+{"id": "<hex>", "created_at": "<rfc3339>", "display_name": "Alice",
+ "lichess_username": "alice", "lichess_id": "plain-id"}
+// GET /me → 200 User row; 401 without a session
+// POST /auth/logout → 204 (revokes session, clears cookie)
+```
+
+- Every `/games`, `/move`, `/move/analysis`, `/evaluate`,
+  `/evaluations/lookup`, `/reviews`, `/openings`, `/imports/games` call
+  requires the session cookie (or `Authorization: Bearer`) and returns
+  `401 unauthenticated` without one. Bare `&Server{}` test instances with
+  no auth service stay in legacy open mode.
+- Games scope to the session owner: lists count only owned rows, reads of
+  another owner's id answer `404 not_found`, saves stamping another id
+  answer `403 forbidden`, and the current-game marker is per user.
+
+## GET /auth/lichess/start, GET|POST /auth/lichess/callback
+
+Lichess OAuth (PKCE S256, `scope=preference:read`). Configure
+`LICHESS_CLIENT_ID` (+ secret when confidential, `LICHESS_REDIRECT_URI`).
+
+```json
+// GET /auth/lichess/start?redirect_uri=<url> → 200
+{"authorization_url": "https://lichess.org/oauth?...&state=<hex>", "state": "<hex>"}
+// GET /auth/lichess/callback?code=...&state=... → 302 to /settings?login=ok
+// (sets cookie; browser leg). POST with a JSON {code, state} body → 200 User row.
+```
+
+- Without client configuration `/start` answers `501 oauth_unconfigured`.
+- The callback exchanges the code at `https://lichess.org/api/token`,
+  reads `https://lichess.org/api/account`, and upserts the user by Lichess id.
+
+## POST /imports/games
+
+Bulk history append into the caller's owned store (at most 100 entries,
+4 MiB body; per-entry `current` is ignored).
+
+```json
+// request
+{"games": [{"user_color": "white", "elo_maia": 1500, "elo_user": 1300,
+  "model": "79m", "moves": ["e2e4"], "created_at": "2024-01-01T00:00:00Z"}]}
+// response 200 (400 when nothing saved)
+{"saved": [{...}], "errors": {"3": "invalid_move"}}
+```
+
+- Entries validate exactly like `POST /games`; ownership is forced from
+  the session. Errors: `400 invalid_request` (empty or >100 entries),
+  `401 unauthenticated`, per-index codes in `errors`.
+
+## POST /imports/adopt
+
+One-time migration for pre-user history: every unowned game row becomes the
+caller's, and the legacy global current marker moves onto their marker.
+Idempotent — a second account adopts nothing.
+
+```json
+// response 200
+{"adopted": 12}
+```
+
+- Errors: `401 unauthenticated`.
+
 ## GET /healthz
 
 Liveness plus Maia worker state. `GET` only.

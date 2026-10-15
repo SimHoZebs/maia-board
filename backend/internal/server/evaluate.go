@@ -26,7 +26,12 @@ func (s *Server) handleEvaluate(ctx context.Context, input *EvaluateInput) (*Eva
 	var result *engine.EvaluationResponse
 	var hit bool
 	status := http.StatusOK
-	// Perf spans mirroring serveMove: validate_us covers request
+	if s.authEnabled() {
+		if _, err := s.requireUser(ctx); err != nil {
+			status = http.StatusUnauthorized
+			return nil, err
+		}
+	} // Perf spans mirroring serveMove: validate_us covers request
 	// validation, exec_ms covers cache→admission→search→store, and
 	// wait_ms is the admission queue wait inside exec_ms (-1 when
 	// admission was never reached: validation error or cache hit).
