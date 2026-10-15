@@ -130,6 +130,9 @@ func TestAdoptEndpoint(t *testing.T) {
 	if w := authed(t, s, http.MethodPost, "/imports/adopt", "", ""); w.Code != http.StatusUnauthorized {
 		t.Fatalf("anon adopt: %d", w.Code)
 	}
+	if w := authed(t, s, http.MethodGet, "/imports/adopt", "", ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("anon adopt count: %d", w.Code)
+	}
 	// Legacy row written before auth existed (direct store save, no owner).
 	maia, user := 1600, 1400
 	if _, _, err := s.store.Save(store.GamePayload{ID: "legacy", UserColor: "white", EloMaia: &maia, EloUser: &user, Model: "79m", Moves: []string{"e2e4"}}); err != nil {
@@ -151,6 +154,16 @@ func TestAdoptEndpoint(t *testing.T) {
 	}
 	if w := authed(t, s, http.MethodGet, "/games/legacy", "", aliceToken); w.Code != http.StatusOK {
 		t.Fatalf("adopted row unreadable: %d %s", w.Code, w.Body)
+	}
+	w = authed(t, s, http.MethodGet, "/imports/adopt", "", aliceToken)
+	if w.Code != http.StatusOK {
+		t.Fatalf("adopt count: %d %s", w.Code, w.Body)
+	}
+	var count struct {
+		Unowned int `json:"unowned"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &count); err != nil || count.Unowned != 0 {
+		t.Fatalf("adopt count body: %s err=%v", w.Body, err)
 	}
 	_ = alice
 }

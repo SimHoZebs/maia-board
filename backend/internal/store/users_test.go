@@ -70,6 +70,9 @@ func TestAdoptLegacyGames(t *testing.T) {
 	if id := store.CurrentIDForUser(alice.ID); id != "current" {
 		t.Fatalf("marker not carried: %q", id)
 	}
+	if unowned, err := store.CountUnowned(); err != nil || unowned != 0 {
+		t.Fatalf("unowned=%d err=%v", unowned, err)
+	}
 	bob, err := store.CreateLocalUser("Bob")
 	if err != nil {
 		t.Fatal(err)

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../components';
-import { adoptLegacyGames, bulkImport, startLichessLogin, type ImportPayload } from '../history/account';
+import { adoptLegacyGames, bulkImport, startLichessLogin, unownedGamesCount, type ImportPayload } from '../history/account';
 import { useSessionSnapshot, useSessionStore } from '../history/session';
 import { loadLine } from '../shared/domain';
 
@@ -51,6 +51,7 @@ export function AccountPanel() {
   const [maxGames, setMaxGames] = useState(100);
   const [importState, setImportState] = useState<string | null>(null);
   const [adoptState, setAdoptState] = useState<string | null>(null);
+  const [unowned, setUnowned] = useState<number | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -63,6 +64,15 @@ export function AccountPanel() {
   useEffect(() => {
     if (account?.lichess_username && !lichessUser) setLichessUser(account.lichess_username);
   }, [account, lichessUser]);
+
+  useEffect(() => {
+    if (!account) return;
+    let live = true;
+    unownedGamesCount()
+      .then(count => { if (live) setUnowned(count); })
+      .catch(() => { if (live) setUnowned(null); });
+    return () => { live = false; };
+  }, [account]);
 
   const doLogin = async () => {
     setBusy(true);
@@ -83,6 +93,7 @@ export function AccountPanel() {
       await sessionStore.logout();
       setImportState(null);
       setAdoptState(null);
+      setUnowned(null);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Logout failed.');
     } finally {
@@ -106,6 +117,7 @@ export function AccountPanel() {
     setError(null);
     try {
       const adopted = await adoptLegacyGames();
+      setUnowned(0);
       setAdoptState(adopted === 0 ? 'Nothing to claim: every saved game already belongs to an account.' : `Claimed ${adopted} existing game${adopted === 1 ? '' : 's'} into your account. See History.`);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Adoption failed.');
@@ -194,12 +206,14 @@ export function AccountPanel() {
       <Button onClick={doImport} disabled={busy}>{busy ? 'Importing…' : 'Append history'}</Button>
     </div>
     {importState && <p className="account-note">{importState}</p>}
-    <h3 className="settings-subhead">Existing games</h3>
-    <p className="account-note">Games saved before accounts existed belong to nobody. Claim them into your account.</p>
-    <div className="account-actions">
-      <Button onClick={doAdopt} disabled={busy}>Claim existing games</Button>
-    </div>
-    {adoptState && <p className="account-note">{adoptState}</p>}
+    {(unowned !== 0 || adoptState) && <>
+      <h3 className="settings-subhead">Existing games</h3>
+      <p className="account-note">Games saved before accounts existed belong to nobody. Claim them into your account.</p>
+      {unowned !== 0 && <div className="account-actions">
+        <Button onClick={doAdopt} disabled={busy}>Claim existing games</Button>
+      </div>}
+      {adoptState && <p className="account-note">{adoptState}</p>}
+    </>}
     <div className="account-actions">
       <Button variant="quiet" onClick={doLogout} disabled={busy}>Log out</Button>
     </div>

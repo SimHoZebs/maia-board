@@ -260,7 +260,9 @@ caller's, and the legacy global current marker moves onto their marker.
 Idempotent — a second account adopts nothing.
 
 ```json
-// response 200
+// GET /imports/adopt → 200 (read-only count for the claim gate)
+{"unowned": 12}
+// POST /imports/adopt → 200 (claims rows)
 {"adopted": 12}
 ```
 

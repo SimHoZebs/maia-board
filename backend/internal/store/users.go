@@ -235,6 +235,11 @@ func (s *GameStore) ConsumeOAuthState(state string) (OAuthState, error) {
 	return pending, nil
 }
 
+// CountUnowned reports how many pre-user rows await adoption.
+func (s *GameStore) CountUnowned() (int, error) {
+	return countRows(s.db, `SELECT COUNT(*) FROM games WHERE owner_id = ''`)
+}
+
 // AdoptLegacyGames claims every unowned (pre-user) game row for ownerID and
 // moves the legacy global current marker onto that user's marker when it
 // points at an adopted row. It is idempotent: a second caller adopts nothing.

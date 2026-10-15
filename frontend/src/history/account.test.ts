@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { bulkImport, fetchMe, loginLocal, startLichessLogin } from './account';
+import { bulkImport, fetchMe, loginLocal, startLichessLogin, unownedGamesCount } from './account';
 
 function jsonResponse(body: unknown, status = 200, cookies: string[] = []) {
   return {
@@ -44,5 +44,10 @@ describe('account client', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it('reads the unowned count for the claim gate', async () => {
+    await expect(unownedGamesCount(async () => jsonResponse({ unowned: 3 }))).resolves.toBe(3);
+    await expect(unownedGamesCount(async () => jsonResponse({}, 401))).rejects.toThrow('Adoption check failed');
   });
 });

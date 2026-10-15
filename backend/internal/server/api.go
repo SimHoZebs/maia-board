@@ -71,6 +71,7 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/auth/lichess/callback", s.serveLichessCallback)
 	r.Post("/auth/lichess/callback", s.serveLichessCallback)
 	r.Post("/imports/games", s.serveBulkImport)
+	r.Get("/imports/adopt", s.serveAdoptCount)
 	r.Post("/imports/adopt", s.serveAdopt)
 
 	// SPA fallback: any other unmatched path serves the frontend shell.

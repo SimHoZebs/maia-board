@@ -131,3 +131,17 @@ export async function adoptLegacyGames(fetchImpl: FetchLike = fetch): Promise<nu
   if (!response.ok) throw new AccountError('unknown', 'Adoption failed.', response.status);
   return typeof body.adopted === 'number' ? body.adopted : 0;
 }
+
+// How many pre-user rows await adoption. The claim section renders only
+// when this is non-zero, so finished migrations disappear on their own.
+export async function unownedGamesCount(fetchImpl: FetchLike = fetch): Promise<number> {
+  let response: Response;
+  try {
+    response = await fetchImpl('/imports/adopt', { credentials: 'include' });
+  } catch {
+    throw new AccountError('server_unreachable', 'The game server could not be reached.');
+  }
+  const body = await readJson(response) as { unowned?: unknown };
+  if (!response.ok) throw new AccountError('unknown', 'Adoption check failed.', response.status);
+  return typeof body.unowned === 'number' ? body.unowned : 0;
+}

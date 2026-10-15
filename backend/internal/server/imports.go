@@ -85,6 +85,30 @@ func (s *Server) serveBulkImport(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"saved": saved, "errors": errs})
 }
 
+// serveAdoptCount reports how many pre-user rows await adoption, so the UI
+// only offers the claim button when it can do something.
+func (s *Server) serveAdoptCount(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeHumaError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
+	}
+	if s.store == nil {
+		writeHumaError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
+		return
+	}
+	if _, authErr := s.requireUser(r.Context()); authErr != nil {
+		writeHumaError(w, http.StatusUnauthorized, "unauthenticated", "login is required")
+		return
+	}
+	unowned, err := s.store.CountUnowned()
+	if err != nil {
+		writeHumaError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"unowned": unowned})
+}
+
 // serveAdopt migrates pre-user history: every unowned game row becomes the
 // caller's, and the legacy global current marker moves onto their marker.
 // Idempotent; a second account adopts nothing.
