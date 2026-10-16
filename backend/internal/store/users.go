@@ -272,6 +272,25 @@ func (s *GameStore) UpdateOpponentIfEmpty(ownerID, source, opponent string) (boo
 	return count > 0, nil
 }
 
+// UpdateRatingDiffIfEmpty backfills a missing Lichess ratingDiff on an
+// imported row (re-imports refresh diffs for rows saved before diffs were
+// stamped). Never touches updated_at: a diff refresh must not churn recency.
+func (s *GameStore) UpdateRatingDiffIfEmpty(ownerID, source string, ratingDiff *int) (bool, error) {
+	if ownerID == "" || source == "" || ratingDiff == nil {
+		return false, nil
+	}
+	result, err := s.db.Exec(`UPDATE games SET rating_diff = ? WHERE owner_id = ? AND source = ? AND rating_diff IS NULL`,
+		*ratingDiff, ownerID, source)
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // AdoptLegacyGames claims every unowned (pre-user) game row for ownerID and
 // moves the legacy global current marker onto that user's marker when it
 // points at an adopted row. It is idempotent: a second caller adopts nothing.

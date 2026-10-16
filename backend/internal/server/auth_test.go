@@ -201,6 +201,31 @@ func TestImportDedupeAndStatus(t *testing.T) {
 	if err != nil || got.Opponent != "foe-two" {
 		t.Fatalf("backfilled row: %+v %v", got, err)
 	}
+	// Rating diffs stamp on import, backfill on re-import, and clear on
+	// single play saves (server-owned like opponent/source).
+	diffBody := `{"provider":"lichess","username":"bob","games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"lichess:diff0001","rating_diff":14}]}`
+	w = authed(t, s, http.MethodPost, "/imports/games", diffBody, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("diff import: %d %s", w.Code, w.Body)
+	}
+	var diffed struct {
+		Saved []store.GameRow `json:"saved"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &diffed); err != nil || len(diffed.Saved) != 1 || diffed.Saved[0].RatingDiff == nil || *diffed.Saved[0].RatingDiff != 14 {
+		t.Fatalf("diff stamp: %s err=%v", w.Body, err)
+	}
+	w = authed(t, s, http.MethodPost, "/imports/games", `{"provider":"lichess","username":"bob","games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"lichess:bbb22222","rating_diff":-3}]}`, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("diff backfill import: %d %s", w.Code, w.Body)
+	}
+	got, err = s.store.Get(first.Saved[1].ID)
+	if err != nil || got.RatingDiff == nil || *got.RatingDiff != -3 {
+		t.Fatalf("backfilled diff: %+v %v", got, err)
+	}
+	w = authed(t, s, http.MethodPost, "/imports/games", `{"provider":"lichess","games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"lichess:bad99999","rating_diff":5000}]}`, token)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("bad diff: %d %s", w.Code, w.Body)
+	}
 	w = authed(t, s, http.MethodPost, "/imports/games", body, token)
 	var second struct {
 		Saved   []store.GameRow `json:"saved"`
@@ -229,7 +254,7 @@ func TestImportDedupeAndStatus(t *testing.T) {
 		t.Fatalf("single save: %d %s", w.Code, w.Body)
 	}
 	var single store.GameRow
-	if err := json.Unmarshal(w.Body.Bytes(), &single); err != nil || single.Opponent != "Maia 1600" || single.Source != "" {
+	if err := json.Unmarshal(w.Body.Bytes(), &single); err != nil || single.Opponent != "Maia 1600" || single.Source != "" || single.RatingDiff != nil {
 		t.Fatalf("single save stamp: %s err=%v", w.Body, err)
 	}
 	w = authed(t, s, http.MethodGet, "/imports/status", "", token)
@@ -240,7 +265,7 @@ func TestImportDedupeAndStatus(t *testing.T) {
 		Last  *store.ImportRun `json:"last"`
 		Total int              `json:"total"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil || status.Last == nil || status.Last.Skipped != 2 || status.Total != 3 {
+	if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil || status.Last == nil || status.Total != 4 {
 		t.Fatalf("status body: %s err=%v", w.Body, err)
 	}
 	if w := authed(t, s, http.MethodGet, "/imports/status", "", ""); w.Code != http.StatusUnauthorized {

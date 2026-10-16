@@ -27,7 +27,7 @@ func TestTemperatureMigrationAndRoundtrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	old, err := store.Get("old")
-	if err != nil || old.Temperature != 0 || old.Result != "" {
+	if err != nil || old.Temperature != 0 || old.Result != "" || old.RatingDiff != nil {
 		t.Fatalf("old game: %+v %v", old, err)
 	}
 	elo := 1600

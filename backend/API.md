@@ -42,7 +42,10 @@ Live Maia reply (Play lane). Same payload as `/move/analysis`.
 ```
 
 - `model`: `79m` (default) or `5m`; `maia_color` must match FEN side to move.
-- `elo_maia`/`elo_user` required, 0–5000; `temperature` 0–2 (default 0).
+- `elo_maia`/`elo_user` required, 0–5000; `elo_maia` is the mover (Self,
+  `maia_color` side), `elo_user` the other side (Oppo). History review
+  sends per-mover pairs (user turns swap to Self=userElo).
+  `temperature` 0–2 (default 0).
 - `moves` at most 256 plies, UCI-shaped.
 - Errors: `400 invalid_request | invalid_fen | invalid_elo | invalid_model | invalid_maia_color | not_maia_turn | history_too_long | invalid_move | invalid_initial_fen | position_mismatch | missing_elo | game_over | invalid_position`, `409 superseded` (same-lane newer request won), `503 engine_busy` (`Retry-After: 1`), `502 engine_unavailable`, `405 method_not_allowed`.
 
@@ -168,11 +171,15 @@ Errors: `404 not_found`, `405 method_not_allowed`.
 - List default `limit` 200, max 500; `offset` non-negative;
   `next_offset: null` ends pagination. Game row:
   `{id, created_at, updated_at, user_color, elo_maia, elo_user,
-  model, moves, temperature, result?}`.
+  model, moves, temperature, result?, source?, opponent?, rating_diff?}`.
+  `rating_diff` is the user's Lichess rating change (nil when unknown:
+  local games and pre-diff imports).
 - Save: `user_color` white/black, elos 0–5000, `model` 79m/5m,
   `moves` at most 4096 plies UCI, `result` empty or `resigned`,
   `temperature` 0–2, `created_at` RFC3339 when supplied.
-- Errors: `400 invalid_request | invalid_user_color | missing_elo | invalid_elo | invalid_model | history_too_long | invalid_move | invalid_result | invalid_created_at`, `502 engine_unavailable` (store down), `405 method_not_allowed`.
+  `opponent`/`source`/`rating_diff` are server-owned: single saves stamp
+  `Maia <elo>`/empty/nil and ignore client values.
+- Errors: `400 invalid_request | invalid_user_color | missing_elo | invalid_elo | invalid_model | history_too_long | invalid_move | invalid_result | invalid_created_at | invalid_rating_diff`, `502 engine_unavailable` (store down), `405 method_not_allowed`.
 
 ## GET /games/:id, DELETE /games/:id
 
@@ -246,8 +253,8 @@ Bulk history append into the caller's owned store (at most 100 entries,
 {"provider": "lichess", "username": "bob",
  "games": [{"user_color": "white", "elo_maia": 1500, "elo_user": 1300,
   "model": "79m", "moves": ["e2e4"], "created_at": "2024-01-01T00:00:00Z",
-  "source": "lichess:abc123xy"}]}
-// response 200 (400 when nothing saved and real errors exist)
+  "source": "lichess:abc123xy", "opponent": "foe", "rating_diff": 12}]}
+ // response 200 (400 when nothing saved and real errors exist)
 {"saved": [{...}], "errors": {"3": "invalid_move"}, "skipped": 5}
 ```
 
@@ -256,7 +263,9 @@ Bulk history append into the caller's owned store (at most 100 entries,
   (`400 invalid_source` otherwise); entries whose source the owner already
   has are skipped, never duplicated. `opponent` accepts 1–64 printable
   characters (`400 invalid_opponent` otherwise) and backfills rows saved
-  before names existed. An all-skipped run is `200`
+  before names existed. `rating_diff` accepts -1000..1000
+  (`400 invalid_rating_diff` otherwise) and backfills rows saved before
+  diffs existed. An all-skipped run is `200`
   ("already up to date"). Errors: `400 invalid_request` (empty or >100
   entries, unknown provider), `401 unauthenticated`, per-index codes in
   `errors`.

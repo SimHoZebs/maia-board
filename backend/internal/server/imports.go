@@ -95,9 +95,12 @@ func (s *Server) serveBulkImport(w http.ResponseWriter, r *http.Request) {
 	for index := range body.Games {
 		entry := body.Games[index]
 		if entry.Source != "" && known[entry.Source] {
-			// Re-imports refresh names on rows saved before names existed.
+			// Re-imports refresh names/diffs on rows saved before they existed.
 			if entry.Opponent != "" {
 				_, _ = s.store.UpdateOpponentIfEmpty(ownerID, entry.Source, entry.Opponent)
+			}
+			if entry.RatingDiff != nil {
+				_, _ = s.store.UpdateRatingDiffIfEmpty(ownerID, entry.Source, entry.RatingDiff)
 			}
 			skipped++
 			continue

@@ -88,6 +88,20 @@ func TestImportRunsAndSources(t *testing.T) {
 	if err != nil || got.Opponent != "found-foe" {
 		t.Fatalf("backfilled opponent: %+v %v", got, err)
 	}
+	diff := 9
+	updated, err = store.UpdateRatingDiffIfEmpty(user.ID, "lichess:noname1", &diff)
+	if err != nil || !updated {
+		t.Fatalf("diff backfill: updated=%t err=%v", updated, err)
+	}
+	got, err = store.Get("noname")
+	if err != nil || got.RatingDiff == nil || *got.RatingDiff != 9 {
+		t.Fatalf("backfilled diff: %+v %v", got, err)
+	}
+	other := 3
+	updated, err = store.UpdateRatingDiffIfEmpty(user.ID, "lichess:noname1", &other)
+	if err != nil || updated {
+		t.Fatalf("diff overwrite protection: updated=%t err=%v", updated, err)
+	}
 	known, err := store.ExistingSources(user.ID, []string{"lichess:zzz99999", "lichess:missing"})
 	if err != nil || !known["lichess:zzz99999"] || known["lichess:missing"] {
 		t.Fatalf("existing sources: %+v %v", known, err)

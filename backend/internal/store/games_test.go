@@ -172,6 +172,47 @@ func TestGameStoreResult(t *testing.T) {
 	}
 }
 
+func TestGameStoreRatingDiff(t *testing.T) {
+	store := testStore(t)
+	payload := gameFixture("diff", "e2e4")
+	diff := 12
+	payload.RatingDiff = &diff
+	saved, _, err := store.Save(payload)
+	if err != nil || saved.RatingDiff == nil || *saved.RatingDiff != 12 {
+		t.Fatalf("saved = %+v, err = %v", saved, err)
+	}
+	got, err := store.Get("diff")
+	if err != nil || got.RatingDiff == nil || *got.RatingDiff != 12 {
+		t.Fatalf("get = %+v, err = %v", got, err)
+	}
+	// Unchanged re-save must not churn recency when the diff matches.
+	again, _, err := store.Save(payload)
+	if err != nil || again.UpdatedAt != saved.UpdatedAt {
+		t.Fatalf("unchanged diff churned recency: %+v", again)
+	}
+	// Nil and zero are distinct: zero is a real diff, nil is unknown.
+	zero := 0
+	zeroPayload := gameFixture("zero", "e2e4")
+	zeroPayload.RatingDiff = &zero
+	if _, _, err := store.Save(zeroPayload); err != nil {
+		t.Fatal(err)
+	}
+	gotZero, err := store.Get("zero")
+	if err != nil || gotZero.RatingDiff == nil || *gotZero.RatingDiff != 0 {
+		t.Fatalf("zero diff lost: %+v %v", gotZero, err)
+	}
+	plain, _, err := store.Save(gameFixture("plain", "e2e4"))
+	if err != nil || plain.RatingDiff != nil {
+		t.Fatalf("expected nil diff, got %+v", plain)
+	}
+	bad := gameFixture("bad", "e2e4")
+	out := 5000
+	bad.RatingDiff = &out
+	if err := ValidateGamePayload(&bad); err == nil || err.Code != "invalid_rating_diff" {
+		t.Fatalf("expected invalid_rating_diff, got %v", err)
+	}
+}
+
 func TestGameStoreCurrentMarker(t *testing.T) {
 	store := testStore(t)
 	if id := store.CurrentID(); id != "" {

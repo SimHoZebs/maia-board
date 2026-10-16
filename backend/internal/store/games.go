@@ -42,6 +42,11 @@ type GameRow struct {
 	// Opponent names the other side: a Lichess username for imports, Maia
 	// plus Elo for engine games. Empty on legacy rows (UI falls back).
 	Opponent string `json:"opponent,omitempty"`
+	// RatingDiff is the user's Lichess rating change for this game
+	// (players.<color>.ratingDiff). Nil when unknown: local games and
+	// rows imported before the field existed. Server-trusted like
+	// Opponent: bulk import stamps it, single saves leave it empty.
+	RatingDiff *int `json:"rating_diff,omitempty"`
 	// OwnerID scopes the row to one user. Empty means a legacy pre-user row.
 	OwnerID string `json:"owner_id,omitempty"`
 }
@@ -63,6 +68,9 @@ type GamePayload struct {
 	// Opponent is server-owned: bulk import stamps the Lichess username,
 	// single saves stamp `Maia <elo>`; clients cannot set either.
 	Opponent string `json:"opponent,omitempty"`
+	// RatingDiff is server-owned like Opponent: bulk import stamps the
+	// user's Lichess ratingDiff; single saves must leave it empty.
+	RatingDiff *int `json:"rating_diff,omitempty"`
 	// OwnerID is server-owned: handlers overwrite it from the session. It
 	// stays in the payload so the store has one save path for legacy ('')
 	// and owned rows.
@@ -171,6 +179,9 @@ func ValidateGamePayload(payload *GamePayload) *apierror.RequestError {
 	if err := chess.ValidateElo(payload.EloMaia, payload.EloUser); err != nil {
 		return err
 	}
+	if payload.RatingDiff != nil && (*payload.RatingDiff < -1000 || *payload.RatingDiff > 1000) {
+		return &apierror.RequestError{Code: "invalid_rating_diff", Message: "rating_diff must be between -1000 and 1000"}
+	}
 	if payload.Model != "79m" && payload.Model != "5m" {
 		return &apierror.RequestError{Code: "invalid_model", Message: "model must be lowercase 79m or 5m"}
 	}
@@ -219,8 +230,9 @@ func (s *GameStore) Save(payload GamePayload) (GameRow, bool, error) {
 		var storedColor, storedModel, storedResult string
 		var storedMaia, storedUser int
 		var storedTemperature float64
-		err := tx.QueryRow(`SELECT created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent
-			FROM games WHERE id = ?`, id).Scan(&created, &updated, &storedColor, &storedMaia, &storedUser, &storedModel, &stored, &storedTemperature, &storedResult, &storedOwner, &storedSource, &storedOpponent)
+		var storedRatingDiff sql.NullInt64
+		err := tx.QueryRow(`SELECT created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent, rating_diff
+			FROM games WHERE id = ?`, id).Scan(&created, &updated, &storedColor, &storedMaia, &storedUser, &storedModel, &stored, &storedTemperature, &storedResult, &storedOwner, &storedSource, &storedOpponent, &storedRatingDiff)
 		isNew := false
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
@@ -242,21 +254,25 @@ func (s *GameStore) Save(payload GamePayload) (GameRow, bool, error) {
 			// must not churn either, and a conflicting source never rewrites.
 			if storedColor == payload.UserColor && storedMaia == *payload.EloMaia && storedUser == *payload.EloUser &&
 				storedModel == payload.Model && stored == moves && storedTemperature == payload.Temperature && storedResult == payload.Result &&
-				storedSource == payload.Source && storedOpponent == payload.Opponent {
+				storedSource == payload.Source && storedOpponent == payload.Opponent && ratingDiffEqual(storedRatingDiff, payload.RatingDiff) {
 				if payload.Current {
 					if err := setCurrentTx(tx, payload.OwnerID, id); err != nil {
 						return saveResult{}, err
 					}
 				}
 				return saveResult{game: GameRow{ID: id, CreatedAt: created, UpdatedAt: updated, UserColor: payload.UserColor,
-					EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result, OwnerID: payload.OwnerID, Source: payload.Source, Opponent: payload.Opponent}}, nil
+					EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result, OwnerID: payload.OwnerID, Source: payload.Source, Opponent: payload.Opponent, RatingDiff: payload.RatingDiff}}, nil
 			}
 		}
-		_, err = tx.Exec(`INSERT INTO games (id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		var ratingDiff any
+		if payload.RatingDiff != nil {
+			ratingDiff = *payload.RatingDiff
+		}
+		_, err = tx.Exec(`INSERT INTO games (id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent, rating_diff)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (id) DO UPDATE SET updated_at = excluded.updated_at, user_color = excluded.user_color,
-				elo_maia = excluded.elo_maia, elo_user = excluded.elo_user, model = excluded.model, moves = excluded.moves, temperature = excluded.temperature, result = excluded.result, owner_id = excluded.owner_id, source = excluded.source, opponent = excluded.opponent`,
-			id, created, now, payload.UserColor, *payload.EloMaia, *payload.EloUser, payload.Model, moves, payload.Temperature, payload.Result, payload.OwnerID, payload.Source, payload.Opponent)
+				elo_maia = excluded.elo_maia, elo_user = excluded.elo_user, model = excluded.model, moves = excluded.moves, temperature = excluded.temperature, result = excluded.result, owner_id = excluded.owner_id, source = excluded.source, opponent = excluded.opponent, rating_diff = excluded.rating_diff`,
+			id, created, now, payload.UserColor, *payload.EloMaia, *payload.EloUser, payload.Model, moves, payload.Temperature, payload.Result, payload.OwnerID, payload.Source, payload.Opponent, ratingDiff)
 		if err != nil {
 			return saveResult{}, err
 		}
@@ -266,7 +282,7 @@ func (s *GameStore) Save(payload GamePayload) (GameRow, bool, error) {
 			}
 		}
 		return saveResult{game: GameRow{ID: id, CreatedAt: created, UpdatedAt: now, UserColor: payload.UserColor,
-			EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result, OwnerID: payload.OwnerID, Source: payload.Source, Opponent: payload.Opponent}, isNew: isNew}, nil
+			EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result, OwnerID: payload.OwnerID, Source: payload.Source, Opponent: payload.Opponent, RatingDiff: payload.RatingDiff}, isNew: isNew}, nil
 	})
 	if err != nil {
 		return GameRow{}, false, err
@@ -289,12 +305,24 @@ type gameScanner interface {
 	Scan(...any) error
 }
 
+func ratingDiffEqual(stored sql.NullInt64, payload *int) bool {
+	if payload == nil {
+		return !stored.Valid
+	}
+	return stored.Valid && stored.Int64 == int64(*payload)
+}
+
 func scanGame(scanner gameScanner) (GameRow, error) {
 	var game GameRow
 	var moves string
+	var ratingDiff sql.NullInt64
 	if err := scanner.Scan(&game.ID, &game.CreatedAt, &game.UpdatedAt, &game.UserColor,
-		&game.EloMaia, &game.EloUser, &game.Model, &moves, &game.Temperature, &game.Result, &game.OwnerID, &game.Source, &game.Opponent); err != nil {
+		&game.EloMaia, &game.EloUser, &game.Model, &moves, &game.Temperature, &game.Result, &game.OwnerID, &game.Source, &game.Opponent, &ratingDiff); err != nil {
 		return GameRow{}, err
+	}
+	if ratingDiff.Valid {
+		value := int(ratingDiff.Int64)
+		game.RatingDiff = &value
 	}
 	decoded, err := decodeMovesColumn(moves)
 	if err != nil {
@@ -309,7 +337,7 @@ func scanGame(scanner gameScanner) (GameRow, error) {
 var ErrOwnerMismatch = errors.New("game owned by another user")
 
 func (s *GameStore) Get(id string) (GameRow, error) {
-	game, err := scanGame(s.db.QueryRow(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent
+	game, err := scanGame(s.db.QueryRow(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent, rating_diff
 		FROM games WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return GameRow{}, sql.ErrNoRows
@@ -350,14 +378,14 @@ func (s *GameStore) ListForUser(limit int, ownerID string, offsets ...int) ([]Ga
 		if err != nil {
 			return nil, 0, err
 		}
-		rows, err = s.db.Query(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent
+		rows, err = s.db.Query(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent, rating_diff
 			FROM games ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`, limit, offset)
 	} else {
 		total, err = countRows(s.db, `SELECT COUNT(*) FROM games WHERE owner_id = ?`, ownerID)
 		if err != nil {
 			return nil, 0, err
 		}
-		rows, err = s.db.Query(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent
+		rows, err = s.db.Query(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent, rating_diff
 			FROM games WHERE owner_id = ? ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`, ownerID, limit, offset)
 	}
 	if err != nil {

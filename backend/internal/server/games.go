@@ -143,6 +143,7 @@ func (s *Server) handleGamesCreate(ctx context.Context, input *GamesCreateInput)
 	// stamped from the bot Elo, never taken from the client.
 	payload.Opponent = "Maia " + strconv.Itoa(*payload.EloMaia)
 	payload.Source = ""
+	payload.RatingDiff = nil
 	game, isNew, err := s.store.Save(payload)
 	if err != nil {
 		if errors.Is(err, store.ErrOwnerMismatch) {

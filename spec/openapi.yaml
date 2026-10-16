@@ -290,6 +290,9 @@ components:
           type: string
         owner_id:
           type: string
+        rating_diff:
+          format: int64
+          type: integer
         result:
           type: string
         source:
@@ -338,6 +341,9 @@ components:
           type: string
         owner_id:
           type: string
+        rating_diff:
+          format: int64
+          type: integer
         result:
           type: string
         source:

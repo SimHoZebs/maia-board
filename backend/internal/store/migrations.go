@@ -6,7 +6,10 @@ func migrateGameSchema(db *sql.DB) error {
 	if err := ensureGameColumn(db, "temperature", "ALTER TABLE games ADD COLUMN temperature REAL NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	return ensureGameColumn(db, "result", "ALTER TABLE games ADD COLUMN result TEXT NOT NULL DEFAULT ''")
+	if err := ensureGameColumn(db, "result", "ALTER TABLE games ADD COLUMN result TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	return ensureGameColumn(db, "rating_diff", "ALTER TABLE games ADD COLUMN rating_diff INTEGER")
 }
 
 func ensureGameColumn(db *sql.DB, column, alter string) error {
