@@ -71,7 +71,7 @@ it('display layer accepts the fast 250ms row provisionally until the full 750ms 
   store.store('sf', reviewKey('sf', node, fullSettings), sfFixture(node.fen, defaultStockfishSettings));
   expect(store.provisionalSfResult(node, fullSettings)?.lines).toHaveLength(1);
 });
-it('grades negatives from the 2400 lane and holds the spinner while it is pending', () => {
+it('grades badges from Stockfish with 2400 footnotes and holds the spinner while pending', () => {
   const timeline = buildTimeline(START_FEN, ['e2e4', 'e7e5']);
   const nodes = reviewNodes(timeline);
   const flat = (fen: string, best: string) => ({ ...sfFixture(fen),
@@ -81,7 +81,8 @@ it('grades negatives from the 2400 lane and holds the spinner while it is pendin
   const evaluations = [flat(nodes[0].fen, 'd2d4'), flat(nodes[1].fen, 'e7e5'), flat(nodes[2].fen, 'e7e5')];
   const grade = (top: string, wdl: [number, number, number]): MoveResponse =>
     ({ move: top, top_moves: [{ move: top, prob: 0.4, wdl: [0.2, 0.3, 0.5] }], wdl, model_used: '79m', degraded: false });
-  // Move 1: 2400s play d2d4 (exp 80), e4 leaves White at 60 -> Blunder by loss 20.
+  // Move 1: flat Stockfish pair (no engine loss) with a 2400 drop 80 -> 60
+  // mover-relative: engine hold with a 2400 footnote.
   // Move 2: 2400 top is the played e7e5 -> SF Top (best), never negative.
   const gradingBot = [grade('d2d4', [0.1, 0.2, 0.7]), grade('e7e5', [0.5, 0.2, 0.3]), grade('e7e5', [0.5, 0.3, 0.2])];
   const laneFor = (rows: (MoveResponse | undefined)[], pending: Set<string>): ObjectiveLane => ({
@@ -94,7 +95,8 @@ it('grades negatives from the 2400 lane and holds the spinner while it is pendin
     objective: laneFor(rows, pending),
   });
   const settled = run(gradingBot, new Set());
-  expect(settled.qualities[0]?.label).toBe('Blunder');
+  expect(settled.qualities[0]?.label).toBe('Holds');
+  expect(settled.qualities[0]?.maiaLoss).toBeCloseTo(20, 9);
   expect(settled.qualities[1]?.label).toBe('Top');
   // Memo reuses the settled verdicts when nothing changes.
   const reused = computeReviewQualities({ line: timeline, nodes, evaluations, settingsForNode: () => settings,

@@ -129,11 +129,12 @@ describe('timeline-backed move feedback', () => {
     // Bot expects it: Best.
     expect(computePlayQualities({ ...base, botLookup: () => expected }).qualities[0]?.label).toBe('Best');
   });
-  it('grades play negatives from the objective lane, holding the spinner while pending', () => {
+  it('grades play badges from Stockfish with 2400 footnotes, holding the spinner while pending', () => {
     const line = buildTimeline(START_FEN, ['e2e4']);
     const [beforeNode, afterNode] = reviewNodes(line);
-    // Stockfish names another move best so its veto stays out of the way;
-    // the flat pair isolates the objective axis.
+    // Stockfish names another move best and the pair is flat (no engine
+    // loss); the 2400 lane drops 80 -> 40. The badge reads the engine hold
+    // and the 2400 drop rides along.
     const flat = { ...sfFixture(beforeNode.fen), best_move: 'd2d4', score: { type: 'cp' as const, value: 20 },
       lines: [{ move: 'd2d4', score: { type: 'cp' as const, value: 20 }, depth: 12 }] };
     const flatAfter = { ...sfFixture(afterNode.fen), score: { type: 'cp' as const, value: 20 } };
@@ -148,10 +149,12 @@ describe('timeline-backed move feedback', () => {
       pending,
       keyFor: (node: ReviewNode) => laneKey(node, () => settings),
     });
-    // 2400s top d2d4 (exp 80); e4 leaves White at 60: Blunder by the lane.
-    const blunder = computePlayQualities({ ...base,
+    // 2400s top d2d4 (exp 80); e4 leaves White at 60 mover-relative: engine
+    // hold, 2400 footnote.
+    const held = computePlayQualities({ ...base,
       objective: laneFor([grade('d2d4', [0.1, 0.2, 0.7]), grade('e7e5', [0.5, 0.2, 0.3])], new Set<string>()) });
-    expect(blunder.qualities[0]?.label).toBe('Blunder');
+    expect(held.qualities[0]?.label).toBe('Good');
+    expect(held.qualities[0]?.maiaLoss).toBeCloseTo(20, 9);
     // Objective lane pending: spinner, not the settled grade.
     const waiting = computePlayQualities({ ...base,
       objective: laneFor([undefined, grade('e7e5', [0.5, 0.2, 0.3])], new Set([laneKey(beforeNode, () => settings)])) });

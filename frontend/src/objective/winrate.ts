@@ -16,8 +16,8 @@ export function botPoint(response: Pick<MoveResponse, 'top_moves' | 'wdl' | 'deg
 }
 
 // Expected score from a mover-relative WDL triple [loss, draw, win]. WDL
-// compresses extremes relative to engine win%, so identical cutoffs flag
-// fewer moves — that leniency is the point, not a bug.
+// compresses extremes relative to engine win%. It feeds the 2400 context
+// (footnotes, candidate columns), never the badge cutoffs.
 export function botExpected(wdl: MoveResponse['wdl']): number {
   const [loss, draw, win] = wdl;
   return 100 * (win + 0.5 * draw);

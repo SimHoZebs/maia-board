@@ -11,10 +11,12 @@ export const REVIEW_METHOD = 'maia-board-review-v1';
 export type Score = { type: 'cp' | 'mate'; value: number; winning_side?: 'white' | 'black' };
 export type Evaluation = { engine: 'Stockfish 19'; search_policy: string; depth: number; terminal: null | 'white_win' | 'black_win' | 'draw'; best_move: string | null; score: Score; lines: { move: string; score: Score; depth: number; pv?: string[] }[] };
 export type Quality = { label: 'Forced' | 'Allowed mate' | 'Blunder' | 'Mistake' | 'Inaccuracy' | 'Excellent' | 'Great' | 'Best' | 'Good' | 'Alien' | 'Unreviewed'; accuracy: number | null; loss: number | null;
-  // The objective-lane drop a Stockfish-best veto overruled (>= 5), so the
-  // verdict can state the 2400 cost under a Best head. Absent when no veto
-  // fired. Rides the grade through effectiveQuality untouched.
-  vetoedLoss?: number | null };
+  // The settled 2400-lane drop attached when the Stockfish-owned badge
+  // disagrees with it (>= 5 under a praise head, < 5 under a negative head),
+  // so the verdict can state the disagreement. Absent on agreement and
+  // whenever the lane never settled. Rides the grade through
+  // effectiveQuality untouched.
+  maiaLoss?: number | null };
 // Engine facts (Stockfish only — no praise, no difficulty). reviewMove speaks
 // this vocabulary; the display layer translates it once via
 // effectiveQuality, so an engine-Critical is never mistaken for a displayed
@@ -23,10 +25,11 @@ export type Quality = { label: 'Forced' | 'Allowed mate' | 'Blunder' | 'Mistake'
 // - Top: played the engine's top move, but not critically.
 // - Holds: not the top move, yet nothing meaningful lost.
 export type EngineGrade = { label: 'Forced' | 'Allowed mate' | 'Blunder' | 'Mistake' | 'Inaccuracy' | 'Critical' | 'Top' | 'Holds' | 'Unreviewed'; accuracy: number | null; loss: number | null;
-  // Set only by the Stockfish-best veto in gradedReviewMove: the objective
-  // expected-score drop (>= 5) the veto overruled. Lets the verdict state
-  // the 2400 cost while the badge reads Best.
-  vetoedLoss?: number | null };
+  // Set only by gradedReviewMove: the settled 2400 expected-score drop kept
+  // for the verdict when the Stockfish-owned badge disagrees with it. Lets
+  // the verdict state the 2400 cost under praise and the 2400 hold under a
+  // negative. Agreement carries no annotation.
+  maiaLoss?: number | null };
 // Additive bot difficulty axis, measured against the top move rather than
 // 100%: r = prob(played) / prob(top). A 13% move under a 15% top (r = 0.87)
 // is the same band as the top itself, while a 12% rank-1 in a wide opening
@@ -133,11 +136,16 @@ function allowedMateVerdict(rarity: Rarity): string {
     default: return `A rare move that allows mate.`;
   }
 }
-// The 2400 cost stated under a Best head: qualitative band only, never a
+// The 2400 cost stated under a praise head: qualitative band only, never a
 // number (probabilities live in the candidate lists, never the verdict).
-function vetoedConcern(loss: number): string {
+function maiaConcern(loss: number): string {
   const noun = (classifyLoss(loss) ?? 'Inaccuracy').toLowerCase();
   return `At 2400 pace, ${noun === 'inaccuracy' ? 'an' : 'a'} ${noun}.`;
+}
+// The reverse footnote under a negative head: the engine convicts but 2400s
+// hold the position. Same band silence as the grades (a < 5 drop is a hold).
+function maiaHold(): string {
+  return `At 2400 pace, this holds.`;
 }
 function rarityVerdict(quality: Quality, rarity: Rarity | undefined, bestRarity?: Rarity | null): string | null {
   if (!rarity || rarity.label === 'Unknown') return null;
@@ -300,6 +308,13 @@ const NOTE_RULES: NoteRule[] = [
     render: facts => facts.materialNote! },
   { name: 'pawn', match: facts => !!facts.pawnNote && (facts.quality?.label === 'Blunder' || facts.quality?.label === 'Mistake' || facts.quality?.label === 'Inaccuracy'),
     render: facts => facts.pawnNote! },
+  // Reverse 2400 footnote: the engine convicts but the settled 2400 lane
+  // holds (< 5). Sits below the consequence notes above (what happened
+  // outranks what 2400 thinks) and above pool sociology (the other engine's
+  // read outranks who plays it). Agreement stays silent — no annotation.
+  { name: 'maia-hold', match: facts => (facts.quality?.label === 'Blunder' || facts.quality?.label === 'Mistake' || facts.quality?.label === 'Inaccuracy')
+      && facts.quality?.maiaLoss != null && Number.isFinite(facts.quality.maiaLoss) && classifyLoss(facts.quality.maiaLoss) == null,
+    render: () => maiaHold() },
   // Second-pool sociology for the inaccuracy family: the consequence notes
   // above stay first (what happened outranks who plays it). Fires only on
   // contradiction/extension — agreement stays silent per secondPoolClause.
@@ -320,13 +335,13 @@ const NOTE_RULES: NoteRule[] = [
   { name: 'bright-spot', match: facts => (facts.quality?.label === 'Excellent' || facts.quality?.label === 'Great' || facts.quality?.label === 'Best')
       && !!facts.rarity && facts.rarity.label !== 'Expected' && facts.rarity2400?.label === 'Expected',
     render: () => UPSTAIRS_REGULAR },
-  // Overruled 2400 drop: the badge reads Best (Stockfish top) but the
-  // grading lane measured a real cost, so the verdict states it. Sits below
+  // Overruled 2400 drop: the badge is Stockfish-owned (praise) but the
+  // settled 2400 lane measured a real cost, so the verdict states it. Sits below
   // the tier notes (a 2400-shunned rare find already names the disagreement
   // as blind-spot/validated) and above the generic positive why (the cost
   // outranks the motif). No numbers, same bands as the grades.
-  { name: 'vetoed-concern', match: facts => isPraiseLabel(facts.quality?.label) && (facts.quality?.vetoedLoss ?? 0) >= 5,
-    render: facts => vetoedConcern(facts.quality!.vetoedLoss!) },
+  { name: 'vetoed-concern', match: facts => isPraiseLabel(facts.quality?.label) && (facts.quality?.maiaLoss ?? 0) >= 5,
+    render: facts => maiaConcern(facts.quality!.maiaLoss!) },
   { name: 'positive', match: facts => !!facts.positiveNote && isPraiseLabel(facts.quality?.label),
     render: facts => facts.positiveNote! },
 ];
@@ -443,16 +458,17 @@ export function reviewMove(before: Evaluation | undefined, after: Evaluation | u
   const opp = mover === 'white' ? 'black' : 'white';
   if (!best && isMateFor(after.score, opp) && !isMateFor(before.score, opp)) return { label: 'Allowed mate', accuracy: 0, loss };
   const critical = best && loss <= 1 && legal >= 2 && before.score.type === 'cp' && after.score.type === 'cp' && first?.move === played && second?.move !== played && first.score.type === 'cp' && second?.score.type === 'cp' && pov(first.score) - pov(second.score) >= 10;
-  if (objective !== undefined) return gradedReviewMove(objective, played, { best, critical, loss });
+  if (objective !== undefined) return gradedReviewMove(objective, { best, critical, loss });
   return sfGrade({ best, critical, loss, capNegatives: false });
 }
-// Stockfish-only grade path: mate/forced already returned above. The
-// engine's own best is never negative: best_move and the before/after pair
-// come from the same search, so a measured drop on the top move is search
-// noise, and the badge must agree with the key-moves list naming it best.
-// capNegatives (objective lane decided) restricts the rest to the
-// praise/holds vocabulary so an engine dislike can never surface as a badge
-// once the objective axis owns negatives.
+// Stockfish grade path: mate/forced already returned above. The engine's
+// own best is never negative: best_move and the before/after pair come from
+// the same search, so a measured drop on the top move is search noise, and
+// the badge must agree with the key-moves list naming it best.
+// capNegatives restricts the rest to the praise/holds vocabulary for
+// callers whose badge is already Stockfish-decided (the objective path
+// below); the lane-missing fallback passes false so engine negatives still
+// surface without 2400 context.
 function sfGrade(args: { best: boolean; critical: boolean; loss: number; capNegatives: boolean }): EngineGrade {
   const { best, critical, loss, capNegatives } = args;
   if (critical) return { label: 'Critical', accuracy: moveAccuracy(loss), loss };
@@ -463,34 +479,36 @@ function sfGrade(args: { best: boolean; critical: boolean; loss: number; capNega
   }
   return { label: 'Holds', accuracy: moveAccuracy(loss), loss };
 }
-// Objective path. Precedence after mate/forced: a pending objective lane
-// holds the spinner (never flash a stale grade the lane then replaces); a
-// missing-but-settled lane falls back to pure SF so an objective failure
-// degrades to engine behavior instead of blanking badges. Either top is
-// never negative: the objectively best move cannot be an objective mistake,
-// and the Stockfish top move cannot be one either, so the badge never
-// contradicts the key-moves list naming it best. Other moves classify on
-// objective expected-score loss.
-// Whatever remains reads the SF vocabulary with negatives capped,
-// preserving Critical/Top/Holds for praise gating and material notes.
-function gradedReviewMove(grading: ObjectiveGrade, played: string, sf: { best: boolean; critical: boolean; loss: number }): EngineGrade {
+// Objective path. Precedence after mate/forced: Stockfish owns the badge;
+// the settled 2400 lane rides along as context for the verdict footnote. A
+// pending objective lane holds the spinner (never flash a settled badge the
+// lane then annotates); a missing-but-settled lane falls back to pure SF so
+// an objective failure degrades to engine behavior instead of blanking
+// badges. The Stockfish top move is never negative (see sfGrade), so the
+// badge never contradicts the key-moves list naming it best. The 2400 top
+// feeds the footnote baseline and the rarity axis, never the badge.
+function gradedReviewMove(grading: ObjectiveGrade, sf: { best: boolean; critical: boolean; loss: number }): EngineGrade {
   const settled = grading.top !== null && grading.expected !== null && grading.afterExpected !== null;
   if (!settled) {
     if (grading.beforePending || grading.afterPending) return { label: 'Unreviewed', accuracy: null, loss: null };
     return sfGrade({ ...sf, capNegatives: false });
   }
-  if (played !== grading.top && !sf.best) {
-    const loss = Math.max(0, grading.expected! - grading.afterExpected!);
-    const negative = classifyLoss(loss);
-    if (negative) return { label: negative, accuracy: moveAccuracy(loss), loss };
+  const maiaLoss = Math.max(0, grading.expected! - grading.afterExpected!);
+  if (!sf.best) {
+    const negative = classifyLoss(sf.loss);
+    if (negative) {
+      // Engine convicts: the badge reads the Stockfish loss. A 2400 hold
+      // rides along so the verdict can note the disagreement; agreement
+      // stays silent (no annotation).
+      const grade: EngineGrade = { label: negative, accuracy: moveAccuracy(sf.loss), loss: sf.loss };
+      return classifyLoss(maiaLoss) ? grade : { ...grade, maiaLoss };
+    }
   }
-  if (played !== grading.top && sf.best) {
-    // Stockfish-best veto: the badge reads Top, but the overruled 2400 drop
-    // rides along so the verdict can state it.
-    const loss = Math.max(0, grading.expected! - grading.afterExpected!);
-    if (classifyLoss(loss)) return { ...sfGrade({ ...sf, capNegatives: true }), vetoedLoss: loss };
-  }
-  return sfGrade({ ...sf, capNegatives: true });
+  // Praise path (Stockfish best, or engine hold): the badge reads
+  // Top/Critical/Holds, but an overruled 2400 drop rides along so the
+  // verdict can state it. Agreement stays silent.
+  const grade = sfGrade({ ...sf, capNegatives: true });
+  return classifyLoss(maiaLoss) ? { ...grade, maiaLoss } : grade;
 }
 // Single terminal source of truth. Winner resolution mirrors whiteWin:
 // explicit winning_side, else mate-value sign. domain.ts outcome() and both

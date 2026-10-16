@@ -106,28 +106,34 @@ it('reads terminal outcomes and White-relative views provider-neutrally', () => 
   expect(whiteExpected('white', 65)).toBe(65);
   expect(whiteExpected('black', 65)).toBe(35);
 });
-it('grades objective top play as Top even when Stockfish disagrees', () => {
-  // SF sees a self-destruction (600 -> -1000); the objective top plays it and hold.
-  const before = evaluation(600); before.best_move = 'e2e4';
+it('lets Stockfish convict Maia-top play and notes the 2400 hold', () => {
+  // SF sees a self-destruction (600 -> -1000) on Maia's own top: the badge
+  // reads the engine loss and the 2400 hold (80 -> 80) rides along.
+  const before = evaluation(600); before.best_move = 'g1f3';
   const grade = reviewMove(before, evaluation(-1000), new Chess(), 'e2e4', grading('e2e4', [0.1, 0.2, 0.7], 80));
-  expect(grade.label).toBe('Top');
+  expect(grade.label).toBe('Blunder');
+  expect(grade.maiaLoss).toBeCloseTo(0, 9);
 });
-it('flags objective expected-score drops with shared cutoffs', () => {
+it('holds Stockfish-quiet moves and footnotes the 2400 drop', () => {
   // Flat SF pair (no engine loss) isolates the bot axis: 80 -> 50.
   const grade = reviewMove(evaluation(0), evaluation(0), new Chess(), 'd2d4', grading('e2e4', [0.1, 0.2, 0.7], 50));
-  expect(grade.label).toBe('Blunder');
-  expect(grade.loss).toBeCloseTo(30, 9);
-  expect(grade.accuracy).toBe(moveAccuracy(30));
+  expect(grade.label).toBe('Holds');
+  expect(grade.maiaLoss).toBeCloseTo(30, 9);
+  expect(grade.accuracy).toBe(moveAccuracy(0));
   const mistake = reviewMove(evaluation(0), evaluation(0), new Chess(), 'd2d4', grading('e2e4', [0.1, 0.2, 0.7], 68));
-  expect(mistake.label).toBe('Mistake');
+  expect(mistake.label).toBe('Holds');
+  expect(mistake.maiaLoss).toBeCloseTo(12, 9);
   const holds = reviewMove(evaluation(0), evaluation(0), new Chess(), 'd2d4', grading('e2e4', [0.1, 0.2, 0.7], 78));
   expect(holds.label).toBe('Holds');
+  expect(holds.maiaLoss).toBeUndefined();
 });
-it('caps Stockfish negatives once the objective lane settles without finding loss', () => {
-  // SF alone reads Mistake (60 -> -60); objective holds (loss 2) with another top.
+it('surfaces Stockfish negatives under a settled 2400 hold', () => {
+  // SF alone reads Mistake (60 -> -60); the 2400 lane holds (loss 2), so the
+  // badge convicts and notes the disagreement.
   const before = evaluation(60); before.best_move = 'g1f3';
   const grade = reviewMove(before, evaluation(-60), new Chess(), 'e2e4', grading('g1f3', [0.1, 0.2, 0.7], 78));
-  expect(grade.label).toBe('Holds');
+  expect(grade.label).toBe('Mistake');
+  expect(grade.maiaLoss).toBeCloseTo(2, 9);
 });
 it('never calls the Stockfish top move a mistake', () => {
   // c6-style case: the played move is the engine top. The badge must agree
@@ -135,23 +141,23 @@ it('never calls the Stockfish top move a mistake', () => {
   const sfBest = evaluation(100); sfBest.best_move = 'e2e4';
   expect(reviewMove(sfBest, evaluation(0), new Chess(), 'e2e4').label).toBe('Top');
   expect(reviewMove(sfBest, evaluation(-1000), new Chess(), 'e2e4').label).toBe('Top');
-  // Same veto on the objective axis: SF-best holds even when the 2400 lane
+  // Same footnote on the objective axis: SF-best holds even when the 2400 lane
   // measures a real drop — and the overruled drop rides along for the verdict.
   const flat = evaluation(0); flat.best_move = 'e2e4';
   const vetoed = reviewMove(flat, evaluation(0), new Chess(), 'e2e4', grading('d2d4', [0.1, 0.2, 0.7], 50));
   expect(vetoed.label).toBe('Top');
-  expect(vetoed.vetoedLoss).toBeCloseTo(30, 9);
-  // No veto without disagreement: objective-top play carries no footnote.
+  expect(vetoed.maiaLoss).toBeCloseTo(30, 9);
+  // No footnote without disagreement: agreement on the hold stays silent.
   const agreed = reviewMove(flat, evaluation(0), new Chess(), 'e2e4', grading('e2e4', [0.1, 0.2, 0.7], 80));
   expect(agreed.label).toBe('Top');
-  expect(agreed.vetoedLoss).toBeUndefined();
-  // Non-best objective mistakes are untouched and carry no footnote.
-  const mistake = reviewMove(flat, evaluation(0), new Chess(), 'd2d4', grading('e2e4', [0.1, 0.2, 0.7], 68));
-  expect(mistake.label).toBe('Mistake');
-  expect(mistake.vetoedLoss).toBeUndefined();
+  expect(agreed.maiaLoss).toBeUndefined();
+  // Engine hold with a 2400 complaint: badge Holds, drop rides along.
+  const held = reviewMove(flat, evaluation(0), new Chess(), 'd2d4', grading('e2e4', [0.1, 0.2, 0.7], 68));
+  expect(held.label).toBe('Holds');
+  expect(held.maiaLoss).toBeCloseTo(12, 9);
 });
-it('states the overruled 2400 drop under a Best head', () => {
-  const quality = (label: Quality['label'], vetoedLoss?: number | null): Quality => ({ label, accuracy: 100, loss: 0, vetoedLoss });
+it('states the overruled 2400 drop under a praise head', () => {
+  const quality = (label: Quality['label'], maiaLoss?: number | null): Quality => ({ label, accuracy: 100, loss: 0, maiaLoss });
   const expected: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
   expect(describeMove({ san: 'c6', quality: quality('Best', 25), rarity: expected }))
     .toBe('A natural choice. At 2400 pace, a blunder.');
@@ -159,7 +165,10 @@ it('states the overruled 2400 drop under a Best head', () => {
     .toBe('A natural choice. At 2400 pace, a mistake.');
   expect(describeMove({ san: 'c6', quality: quality('Best', 7), rarity: expected }))
     .toBe('A natural choice. At 2400 pace, an inaccuracy.');
-  // No footnote without a vetoed drop; the positive why renders as before.
+  // Same footnote under a Good head (engine hold, 2400 complaint).
+  expect(describeMove({ san: 'c6', quality: quality('Good', 12), rarity: expected }))
+    .toBe('A natural choice. At 2400 pace, a mistake.');
+  // No footnote without a 2400 drop; the positive why renders as before.
   expect(describeMove({ san: 'c6', quality: quality('Best'), rarity: expected, positiveNote: 'Gets out of check.' }))
     .toBe('A natural choice. Gets out of check.');
   // The footnote outranks the generic positive why.
@@ -170,6 +179,31 @@ it('states the overruled 2400 drop under a Best head', () => {
   const tiny: Rarity = { label: 'Rare', r: 0.1, prob: 0.03, topProb: 0.3 };
   expect(describeMove({ san: 'c6', quality: quality('Best', 12), rarity: tiny, rarity2400: tiny, isTop: true }))
     .toBe('A rare find. Stockfish agrees it is best.');
+});
+it('notes the 2400 hold under a negative head, silent on agreement', () => {
+  const quality = (label: Quality['label'], maiaLoss?: number | null): Quality => ({ label, accuracy: 20, loss: 30, maiaLoss });
+  const expected: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
+  // Engine convicts, 2400 holds (< 5): the disagreement gets one sentence.
+  expect(describeMove({ san: 'Bb2', quality: quality('Blunder', 0.85), rarity: expected }))
+    .toBe('A common blunder. At 2400 pace, this holds.');
+  // Agreement (both call it a blunder) stays silent.
+  expect(describeMove({ san: 'Bb2', quality: quality('Blunder', 30), rarity: expected }))
+    .toBe('A common blunder.');
+  // Consequence notes outrank the 2400 sociology.
+  expect(describeMove({ san: 'Bb2', quality: quality('Blunder', 0.85), rarity: expected, materialNote: 'This line wins a pawn for Black.' }))
+    .toBe('A common blunder. This line wins a pawn for Black.');
+});
+it('convicts the Bb2 shape: engine blunder, 2400 hold', () => {
+  // Live numbers from the report: SF review policy +3.02 -> +0.23
+  // (white-relative), Maia 2400 59.6 -> 58.75. The badge reads the engine
+  // loss; the 2400 hold rides along for the verdict.
+  const before: Evaluation = { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 10,
+    terminal: null, best_move: 'e2a6', score: { type: 'cp', value: 302 }, lines: [] };
+  const after: Evaluation = { engine: 'Stockfish 19', search_policy: SEARCH_POLICY, depth: 9,
+    terminal: null, best_move: 'c3c2', score: { type: 'cp', value: 23 }, lines: [] };
+  const grade = reviewMove(before, after, new Chess(), 'c1b2', grading('d2b1', [0.376, 0.056, 0.568], 58.75));
+  expect(grade.label).toBe('Blunder');
+  expect(grade.maiaLoss).toBeCloseTo(0.85, 9);
 });
 it('holds the spinner while the objective lane is pending, falls back when it fails', () => {
   const blunderSf = reviewMove(evaluation(600), evaluation(-1000), new Chess(), 'd2d4');

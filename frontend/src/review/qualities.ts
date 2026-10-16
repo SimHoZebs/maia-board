@@ -16,9 +16,10 @@ export type UnifiedMemo = { scope: string; verdicts: (QualityMemoEntry | undefin
 
 // Objective lane: node-indexed provider points for the active source, plus
 // the pending set and key builder for its fetches. The loop never names a
-// model: loss math reads points, and the after-position handling below is
-// provider-neutral (an opponent-relative expectation inverts the same way
-// for every source; terminal outcomes synthesize from game facts).
+// model: the 2400 points feed the verdict footnote baseline and the rarity
+// axis, while the badge loss reads Stockfish. The after-position handling
+// below is provider-neutral (an opponent-relative expectation inverts the
+// same way for every source; terminal outcomes synthesize from game facts).
 export type ObjectiveLane = {
   points: (ObjectivePoint | undefined)[];
   pending: Set<string>;

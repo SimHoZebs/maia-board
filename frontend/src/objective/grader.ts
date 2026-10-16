@@ -10,10 +10,12 @@ import type { ReviewCoordinator, SettingsInput } from '../review/reviewCoordinat
 import { type Evaluation, type ObjectiveCandidates, type ObjectivePoint } from '../review/reviewMetrics';
 import { botExpected, botPoint, botWhiteWdl } from './winrate';
 
-// Grader role: objective grading (best + expected per position), currently
-// implemented by bot-2400 human-like expectations. Callers import the role
-// through ./index and never name the model. Row type is MoveResponse; shared
-// shapes live in reviewMetrics/qualities. WDL math lives in ./winrate.
+// Grader role: 2400 context (human top + expected per position) plus rarity,
+// currently implemented by bot-2400 human-like expectations. Callers import
+// the role through ./index and never name the model. Row type is
+// MoveResponse; shared shapes live in reviewMetrics/qualities. WDL math
+// lives in ./winrate. The badge itself is Stockfish-owned (see
+// reviewMetrics gradedReviewMove); this lane feeds footnotes and sociology.
 
 // Raw provider rows, node-aligned. The fixed 2400 identity lives inside
 // this module; callers never name it.

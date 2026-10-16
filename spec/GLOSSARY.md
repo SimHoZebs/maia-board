@@ -76,15 +76,20 @@ One pipeline, named by stage:
 
 - `expected` — mover-relative expected score 0–100. The only number grading
   cutoffs (`classifyLoss 20/10/5`) read. Bot: `100*(win+0.5*draw)`. SF:
-  `whiteWin(cp)` then pov-invert for Black.
+  `whiteWin(cp)` then pov-invert for Black. The badge classifies the
+  Stockfish loss; the settled 2400 loss rides along as `maiaLoss` context
+  for the verdict footnote only.
 - `whiteExpected(turn, expected)` — White-relative view for bars/graphs.
   Converter table (same value, different boundaries — do not add variants):
   `whiteWin(Score→mover)`, `botExpected(WDL→mover)`,
   `whiteExpected(mover→white)`, `botWhiteWdl(mover WDL→white %)`,
   `outcomeExpected(terminal→mover)`.
-- `top` — objective best move (`top_moves[0].move` / `best_move`), null when
-  degraded/missing/terminal. Backend asymmetry: SF `BestMove *string` nil for
-  terminal vs Bot `Move string + Degraded bool` — document, do not merge.
+- `top` — best move per provider (`top_moves[0].move` for the bot,
+  `best_move` for Stockfish), null when degraded/missing/terminal. The badge
+  reads the Stockfish best (never negative); the bot top feeds the `maiaLoss`
+  baseline and the rarity axis, never the badge. Backend asymmetry: SF
+  `BestMove *string` nil for terminal vs Bot `Move string + Degraded bool` —
+  document, do not merge.
 - `score` — SF White-perspective `{cp|mate}`. `WDL` — bot choosing-side
   `[loss, draw, win]`. Same position value, different projection.
 - `delta / baseline` — read-time derivation
@@ -93,9 +98,10 @@ One pipeline, named by stage:
   exact (`selectDeltaParts` vs `botDisplayParts`).
 - `objective = {top, expected}` — request-time composition pattern over
   per-model caches, never a stored combined row (no backend route; frontend
-  composes). The seam is role-keyed (`objective/grader`: grading;
-  `objective/winrate`: candidate-display math), not model-keyed — swapping
-  the grader implementation changes fetches, never grading math. Backend
+  composes). The seam is role-keyed (`objective/grader`: 2400 context +
+  rarity; `objective/winrate`: candidate-display math), not model-keyed —
+  the badge math lives in `review/reviewMetrics` (`gradedReviewMove`:
+  Stockfish owns the badge, 2400 rides along as `maiaLoss`). Backend
   `wdlExpected` is the sole backend `expected` spelling; `whiteExpected` is
   frontend view only.
 
