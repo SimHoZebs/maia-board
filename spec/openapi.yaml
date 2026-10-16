@@ -286,6 +286,8 @@ components:
           type:
             - array
             - "null"
+        opponent:
+          type: string
         owner_id:
           type: string
         result:
@@ -332,6 +334,8 @@ components:
           type:
             - array
             - "null"
+        opponent:
+          type: string
         owner_id:
           type: string
         result:

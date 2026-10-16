@@ -39,7 +39,12 @@ it('includes forced moves at 100 despite engine noise and ignores preserved mate
   const before = { ...evaluation(0), score: { type: 'mate' as const, value: 3 } };
   const after = { ...evaluation(0), score: { type: 'mate' as const, value: 8 } };
   expect(reviewMove(before, after, new Chess(), 'e2e4').accuracy).toBe(100);
-  expect(reviewMove(before, { ...after, score: { type: 'mate', value: -1 } }, new Chess(), 'e2e4').label).toBe('Blunder');
+  // Thrown mate-reading reads Blunder when the played move is not the
+  // engine top; the top move itself is never negative (see the veto test
+  // below). A mate-score after-position would read Allowed mate instead,
+  // so the swing below uses a lost cp score.
+  const thrown = { ...before, best_move: 'g1f3' };
+  expect(reviewMove(thrown, evaluation(-1000), new Chess(), 'e2e4').label).toBe('Blunder');
 });
 it('flags avoidable mate as Allowed mate with zero accuracy but preserved loss', () => {
   // fxg3-type case: dead lost on cp (~2.5%) but not mated; the played move
@@ -123,6 +128,48 @@ it('caps Stockfish negatives once the objective lane settles without finding los
   const before = evaluation(60); before.best_move = 'g1f3';
   const grade = reviewMove(before, evaluation(-60), new Chess(), 'e2e4', grading('g1f3', [0.1, 0.2, 0.7], 78));
   expect(grade.label).toBe('Holds');
+});
+it('never calls the Stockfish top move a mistake', () => {
+  // c6-style case: the played move is the engine top. The badge must agree
+  // with the key-moves list naming it best, on either grading path.
+  const sfBest = evaluation(100); sfBest.best_move = 'e2e4';
+  expect(reviewMove(sfBest, evaluation(0), new Chess(), 'e2e4').label).toBe('Top');
+  expect(reviewMove(sfBest, evaluation(-1000), new Chess(), 'e2e4').label).toBe('Top');
+  // Same veto on the objective axis: SF-best holds even when the 2400 lane
+  // measures a real drop — and the overruled drop rides along for the verdict.
+  const flat = evaluation(0); flat.best_move = 'e2e4';
+  const vetoed = reviewMove(flat, evaluation(0), new Chess(), 'e2e4', grading('d2d4', [0.1, 0.2, 0.7], 50));
+  expect(vetoed.label).toBe('Top');
+  expect(vetoed.vetoedLoss).toBeCloseTo(30, 9);
+  // No veto without disagreement: objective-top play carries no footnote.
+  const agreed = reviewMove(flat, evaluation(0), new Chess(), 'e2e4', grading('e2e4', [0.1, 0.2, 0.7], 80));
+  expect(agreed.label).toBe('Top');
+  expect(agreed.vetoedLoss).toBeUndefined();
+  // Non-best objective mistakes are untouched and carry no footnote.
+  const mistake = reviewMove(flat, evaluation(0), new Chess(), 'd2d4', grading('e2e4', [0.1, 0.2, 0.7], 68));
+  expect(mistake.label).toBe('Mistake');
+  expect(mistake.vetoedLoss).toBeUndefined();
+});
+it('states the overruled 2400 drop under a Best head', () => {
+  const quality = (label: Quality['label'], vetoedLoss?: number | null): Quality => ({ label, accuracy: 100, loss: 0, vetoedLoss });
+  const expected: Rarity = { label: 'Expected', r: 1, prob: 0.4, topProb: 0.4 };
+  expect(describeMove({ san: 'c6', quality: quality('Best', 25), rarity: expected }))
+    .toBe('A natural choice. At 2400 pace, a blunder.');
+  expect(describeMove({ san: 'c6', quality: quality('Best', 12), rarity: expected }))
+    .toBe('A natural choice. At 2400 pace, a mistake.');
+  expect(describeMove({ san: 'c6', quality: quality('Best', 7), rarity: expected }))
+    .toBe('A natural choice. At 2400 pace, an inaccuracy.');
+  // No footnote without a vetoed drop; the positive why renders as before.
+  expect(describeMove({ san: 'c6', quality: quality('Best'), rarity: expected, positiveNote: 'Gets out of check.' }))
+    .toBe('A natural choice. Gets out of check.');
+  // The footnote outranks the generic positive why.
+  expect(describeMove({ san: 'c6', quality: quality('Best', 12), rarity: expected, positiveNote: 'Gets out of check.' }))
+    .toBe('A natural choice. At 2400 pace, a mistake.');
+  // Tier notes outrank it: a 2400-shunned rare find already names the
+  // disagreement as a blind spot.
+  const tiny: Rarity = { label: 'Rare', r: 0.1, prob: 0.03, topProb: 0.3 };
+  expect(describeMove({ san: 'c6', quality: quality('Best', 12), rarity: tiny, rarity2400: tiny, isTop: true }))
+    .toBe('A rare find. Stockfish agrees it is best.');
 });
 it('holds the spinner while the objective lane is pending, falls back when it fails', () => {
   const blunderSf = reviewMove(evaluation(600), evaluation(-1000), new Chess(), 'd2d4');

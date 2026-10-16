@@ -42,7 +42,7 @@ from code alone. Query the live logs and traffic first.
 | Queue pressure (batch caps) | `review-batch busy` | `unfinished, sf_queue, large_queue, small_queue` (emitted on 429 only) |
 | Openings | `openings` | `status, plies, duration_ms` |
 | Auth login / logout / Lichess | `auth` | `status, action=local-login\|logout\|lichess-start\|lichess-callback, user, lichess` |
-| Bulk history import | `import-save` | `status, user, saved, failed, new, adopted, duration_ms` |
+| Bulk history import | `import-save` | `status, user, saved, failed, skipped, new, adopted, duration_ms` |
 
 `wait_ms` is the admission queue wait inside `exec_ms`
 (`-1` when admission was never reached: validation error or cache hit).

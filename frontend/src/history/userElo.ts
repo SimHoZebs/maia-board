@@ -82,7 +82,14 @@ export function opponentElo(game: Pick<StoredGame, 'settings'>): number {
   return clampBotElo(game.settings.botElo);
 }
 
-export function computeUserElo(anchor: UserEloAnchor, games: Pick<StoredGame, 'id' | 'createdAt' | 'moves' | 'settings' | 'result'>[]): UserEloSummary {
+// Lichess imports carry their rating inside the synced baseline (see
+// lichessSync.ts): replaying them here as vs-bot games would double-count.
+// Local games have no source; only `lichess:<gameId>` rows are skipped.
+export function isLichessGame(game: { source?: unknown }): boolean {
+  return typeof game.source === 'string' && game.source.startsWith('lichess:');
+}
+
+export function computeUserElo(anchor: UserEloAnchor, games: (Pick<StoredGame, 'id' | 'createdAt' | 'moves' | 'settings' | 'result'> & { source?: unknown })[]): UserEloSummary {
   const since = Date.parse(anchor.updatedAt);
   const ordered = [...games].sort((a, b) =>
     a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : 1);
@@ -94,6 +101,7 @@ export function computeUserElo(anchor: UserEloAnchor, games: Pick<StoredGame, 'i
   for (const game of ordered) {
     if (Number.isNaN(Date.parse(game.createdAt))) continue;
     if (Date.parse(game.createdAt) < since) continue;
+    if (isLichessGame(game)) continue;
     const score = scoreForGame(game);
     if (score === null) continue;
     rating = updateUserElo(rating, opponentElo(game), score);
@@ -105,6 +113,6 @@ export function computeUserElo(anchor: UserEloAnchor, games: Pick<StoredGame, 'i
   return { rating, counted, wins, draws, losses, anchor };
 }
 
-export function currentUserElo(games: Pick<StoredGame, 'id' | 'createdAt' | 'moves' | 'settings' | 'result'>[], anchor?: UserEloAnchor): number {
+export function currentUserElo(games: (Pick<StoredGame, 'id' | 'createdAt' | 'moves' | 'settings' | 'result'> & { source?: unknown })[], anchor?: UserEloAnchor): number {
   return computeUserElo(anchor ?? loadUserEloAnchor(), games).rating;
 }

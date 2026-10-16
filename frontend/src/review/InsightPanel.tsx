@@ -1,5 +1,6 @@
 import { type Dispatch, type ReactNode } from "react";
 import type { Action, State } from "../state/index";
+import { useAccountName } from "../history/session";
 import { Rating } from "../board/BoardTools";
 import { Button, EngineSection, KeyMovesList } from "../components";
 import { Chess } from "chess.js";
@@ -81,6 +82,7 @@ export function MoveAnalysis({
   // "(played)". At the root, candidates describe the current position.
   const focus = ply - 1;
   const hasMove = focus >= 0;
+  const you = useAccountName() ?? "You";
   // Two candidate lists: the display Elo's human-population list on the
   // left, the objective source on the right. Each list judges the displayed
   // move with "(played)" marking from its before-position; at the root the
@@ -257,7 +259,7 @@ export function MoveAnalysis({
         titleId="insight-title"
         title={
           <>
-            You:{" "}
+            {you}:{" "}
             <Rating
               inline
               id="analysis-rating"

@@ -254,7 +254,9 @@ Bulk history append into the caller's owned store (at most 100 entries,
 - Entries validate exactly like `POST /games`; ownership is forced from
   the session. `source` accepts `lichess:<gameId>` only
   (`400 invalid_source` otherwise); entries whose source the owner already
-  has are skipped, never duplicated. An all-skipped run is `200`
+  has are skipped, never duplicated. `opponent` accepts 1–64 printable
+  characters (`400 invalid_opponent` otherwise) and backfills rows saved
+  before names existed. An all-skipped run is `200`
   ("already up to date"). Errors: `400 invalid_request` (empty or >100
   entries, unknown provider), `401 unauthenticated`, per-index codes in
   `errors`.

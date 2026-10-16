@@ -28,6 +28,10 @@ describe('server mapping', () => {
     expect(toStoredGame({ ...row('u', ['e2e4']), result: 'unknown-future' })).toMatchObject({ id: 'u' });
     expect(toStoredGame({ ...row('u', ['e2e4']), result: 'unknown-future' })?.result).toBeUndefined();
   });
+  it('preserves lichess sources so the Elo replay can skip imports', () => {
+    expect(toStoredGame({ ...row('l', ['e2e4']), source: 'lichess:abcd1234' })).toMatchObject({ id: 'l', source: 'lichess:abcd1234' });
+    expect(toStoredGame(row('n', ['e2e4']))?.source).toBeUndefined();
+  });
   it('fetches lists, saves, and deletes with server errors preserved', async () => {
     const list = { games: [row('a')], current_id: 'a', current_game: row('a'), total: 1, next_offset: null };
     const fetchImpl = vi.fn()

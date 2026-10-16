@@ -87,3 +87,12 @@ export function useSessionSnapshot(store: SessionStore): SessionSnapshot {
   useSyncExternalStore(store.subscribe, store.snapshot);
   return store.snapshot();
 }
+
+// Display name for identity labels (player strips, history rows, review
+// headers). Null outside a session provider (unit tests) or before login —
+// callers fall back to 'You' so logged-out and test renders keep working.
+export function useAccountName(): string | null {
+  const store = useContext(SessionContext);
+  const name = store?.snapshot().account?.display_name?.trim();
+  return name ? name : null;
+}

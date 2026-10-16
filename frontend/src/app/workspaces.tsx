@@ -14,6 +14,7 @@ import type { BoardPosition, BoardTransition } from '../board/ChessBoard';
 import { toGroundColor } from '../board/board-colors';
 import { currentPosition } from '../state/index';
 import { usePlayFeedback } from '../play/usePlayFeedback';
+import { useAccountName } from '../history/session';
 import { useReview } from '../review/useReview';
 import { reviewBrushes, reviewShapes, type SquareBadge } from '../review/reviewArrows';
 import { buildReviewBrushes } from '../settings/arrowSettings';
@@ -174,6 +175,9 @@ export function PlayWorkspace({ state, dispatch }: Props) {
   const settings = state.play.settings;
   // Play-only engine: the analysis coordinator does not exist on this page.
   const moveFeedback = usePlayFeedback(state);
+  // Identity for the player strips: the signed-in display name, falling back
+  // to 'You' before login and in unit tests (no session provider there).
+  const you = useAccountName() ?? 'You';
   const ply = state.viewedPly ?? state.play.moves.length;
   const position = currentPosition(state);
   const game = new Chess(position.fen);
@@ -211,7 +215,7 @@ export function PlayWorkspace({ state, dispatch }: Props) {
     const shownGame = historic ? game : live;
     const shownOver = (historic ? (position.terminal ?? null) : (playLine?.terminal ?? null)) !== null;
     const active = !resigned && toGroundColor(shownGame.turn()) === color && !shownOver;
-    return <div className={`player-strip${active && ready ? ' active' : ''}`}><span className={`side-dot ${color}`} /><strong>{color === settings.userColor ? 'You' : `Bot · ${settings.botElo}`}</strong><MaterialSummary by={color} captures={playCaptures[color]} lead={materialLeadFor(playDiff, color)} />{color !== settings.userColor && replyIdentity?.degraded && <span role="status">Fallback bot reply</span>}<span className="player-side">{sideName(color)}</span>{active && ready && <span className="turn-indicator" role="status">{historic ? 'At this position' : request ? 'Thinking…' : 'To move'}</span>}</div>;
+    return <div className={`player-strip${active && ready ? ' active' : ''}`}><span className={`side-dot ${color}`} /><strong>{color === settings.userColor ? you : `Maia · ${settings.botElo}`}</strong><MaterialSummary by={color} captures={playCaptures[color]} lead={materialLeadFor(playDiff, color)} />{color !== settings.userColor && replyIdentity?.degraded && <span role="status">Fallback model reply</span>}<span className="player-side">{sideName(color)}</span>{active && ready && <span className="turn-indicator" role="status">{historic ? 'At this position' : request ? 'Thinking…' : 'To move'}</span>}</div>;
   };
   const over = boardOver || resigned;
   // Render-phase dismissal (no effect): a finished game cannot keep the

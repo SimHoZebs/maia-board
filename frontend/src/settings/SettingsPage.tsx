@@ -6,9 +6,12 @@ import { DisplayBoardPreview } from '../board/DisplayPreviewBoard';
 import { QualityBadge, type BadgeLoading } from '../review/ReviewCharts';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import './settings.css';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { computeUserElo, loadUserEloAnchor, normalizeUserElo, saveUserEloAnchor } from '../history/userElo';
+import { subscribeLichessElo } from '../history/lichessSync';
+import { useSessionSnapshot, useSessionStore } from '../history/session';
 import { AccountPanel } from './AccountPanel';
+import { LichessSyncControl } from './LichessSyncControl';
 
 function NumberSetting({ id, value, min, max, step, onChange, disabled, label }: { id: string; value: number; min: number; max: number; step: number; onChange: (value: number) => void; disabled?: boolean; label: string }) {
   // Uncommitted text lives in draft; null means "show the committed value".
@@ -30,6 +33,11 @@ export function SettingsPage({ state, dispatch }: Props) {
   const settings = state.stockfish;
   const update = (patch: Partial<typeof settings>) => dispatch({ type: 'stockfish-settings', settings: patch });
   const [anchor, setAnchor] = useState(loadUserEloAnchor);
+  // A background Lichess sync rewrites the anchor outside this component;
+  // resubscribe so the field shows the fresh baseline instead of a stale edit.
+  useEffect(() => subscribeLichessElo(() => setAnchor(loadUserEloAnchor())), []);
+  const session = useSessionSnapshot(useSessionStore());
+  const linked = session.account?.lichess_username ?? '';
   const elo = computeUserElo(anchor, state.saved);
   // The field shows the current rating until edited; Save activates only
   // on a real change and stamps today as the new baseline date.
@@ -65,6 +73,16 @@ export function SettingsPage({ state, dispatch }: Props) {
   ];
   return <section className="engine-settings panel" aria-labelledby="settings-title">
     <AccountPanel />
+    <h2 className="settings-subhead">User Elo</h2>
+    {linked
+      ? <LichessSyncControl username={linked} rating={elo.rating} />
+      : <div className="settings-control">
+        <div className="field field--row">
+          <NumberSetting id="user-elo" label="Your Elo" min={0} max={5000} step={1} value={draft ?? elo.rating} onChange={setDraft} />
+          <span>since {new Date(anchor.updatedAt).toLocaleDateString()}</span>
+          <Button onClick={saveElo} disabled={draft === null || draft === elo.rating}>Save</Button>
+        </div>
+      </div>}
     <p className="settings-eyebrow">BOARD</p>
     <h2 className="settings-subhead">Display</h2>
     <DisplayBoardPreview orientation={state.boardOrientation} coordinatesOnSquares={state.coordinatesOnSquares} basis={state.arrowBasis} arrows={state.arrows} />
@@ -133,15 +151,6 @@ export function SettingsPage({ state, dispatch }: Props) {
           </div>
         </div>;
       })}
-    </div>
-    <p className="settings-eyebrow">YOUR RATING</p>
-    <h2 className="settings-subhead">User Elo</h2>
-    <div className="settings-control">
-      <div className="field field--row">
-        <NumberSetting id="user-elo" label="Your Elo" min={0} max={5000} step={1} value={draft ?? elo.rating} onChange={setDraft} />
-        <span>since {new Date(anchor.updatedAt).toLocaleDateString()}</span>
-        <Button onClick={saveElo} disabled={draft === null || draft === elo.rating}>Save</Button>
-      </div>
     </div>
     <p className="settings-eyebrow">ANALYSIS ENGINE</p>
     <h1 id="settings-title">Stockfish</h1>

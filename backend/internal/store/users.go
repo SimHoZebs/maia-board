@@ -82,6 +82,9 @@ func ensureGameOwnerColumn(db *sql.DB) error {
 	if err := ensureGameColumn(db, "source", "ALTER TABLE games ADD COLUMN source TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := ensureGameColumn(db, "opponent", "ALTER TABLE games ADD COLUMN opponent TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	// External imports dedupe per owner: re-running the same Lichess import
 	// skips rows instead of duplicating them. Legacy and local games carry
 	// source '' and never collide.
@@ -248,6 +251,25 @@ func (s *GameStore) ConsumeOAuthState(state string) (OAuthState, error) {
 // CountUnowned reports how many pre-user rows await adoption.
 func (s *GameStore) CountUnowned() (int, error) {
 	return countRows(s.db, `SELECT COUNT(*) FROM games WHERE owner_id = ''`)
+}
+
+// UpdateOpponentIfEmpty backfills a missing opponent name on an imported row
+// (re-imports refresh names for rows saved before names were stamped).
+// Never touches updated_at: a name refresh must not churn recency order.
+func (s *GameStore) UpdateOpponentIfEmpty(ownerID, source, opponent string) (bool, error) {
+	if ownerID == "" || source == "" || opponent == "" {
+		return false, nil
+	}
+	result, err := s.db.Exec(`UPDATE games SET opponent = ? WHERE owner_id = ? AND source = ? AND (opponent IS NULL OR opponent = '')`,
+		opponent, ownerID, source)
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // AdoptLegacyGames claims every unowned (pre-user) game row for ownerID and

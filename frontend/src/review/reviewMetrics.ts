@@ -10,7 +10,11 @@ export const SEARCH_POLICY = 'sf19-n100k-ms750-mpv2-t4-h128-v3';
 export const REVIEW_METHOD = 'maia-board-review-v1';
 export type Score = { type: 'cp' | 'mate'; value: number; winning_side?: 'white' | 'black' };
 export type Evaluation = { engine: 'Stockfish 19'; search_policy: string; depth: number; terminal: null | 'white_win' | 'black_win' | 'draw'; best_move: string | null; score: Score; lines: { move: string; score: Score; depth: number; pv?: string[] }[] };
-export type Quality = { label: 'Forced' | 'Allowed mate' | 'Blunder' | 'Mistake' | 'Inaccuracy' | 'Excellent' | 'Great' | 'Best' | 'Good' | 'Alien' | 'Unreviewed'; accuracy: number | null; loss: number | null };
+export type Quality = { label: 'Forced' | 'Allowed mate' | 'Blunder' | 'Mistake' | 'Inaccuracy' | 'Excellent' | 'Great' | 'Best' | 'Good' | 'Alien' | 'Unreviewed'; accuracy: number | null; loss: number | null;
+  // The objective-lane drop a Stockfish-best veto overruled (>= 5), so the
+  // verdict can state the 2400 cost under a Best head. Absent when no veto
+  // fired. Rides the grade through effectiveQuality untouched.
+  vetoedLoss?: number | null };
 // Engine facts (Stockfish only — no praise, no difficulty). reviewMove speaks
 // this vocabulary; the display layer translates it once via
 // effectiveQuality, so an engine-Critical is never mistaken for a displayed
@@ -18,7 +22,11 @@ export type Quality = { label: 'Forced' | 'Allowed mate' | 'Blunder' | 'Mistake'
 // - Critical: the engine's only good move (best, clean, wide gap).
 // - Top: played the engine's top move, but not critically.
 // - Holds: not the top move, yet nothing meaningful lost.
-export type EngineGrade = { label: 'Forced' | 'Allowed mate' | 'Blunder' | 'Mistake' | 'Inaccuracy' | 'Critical' | 'Top' | 'Holds' | 'Unreviewed'; accuracy: number | null; loss: number | null };
+export type EngineGrade = { label: 'Forced' | 'Allowed mate' | 'Blunder' | 'Mistake' | 'Inaccuracy' | 'Critical' | 'Top' | 'Holds' | 'Unreviewed'; accuracy: number | null; loss: number | null;
+  // Set only by the Stockfish-best veto in gradedReviewMove: the objective
+  // expected-score drop (>= 5) the veto overruled. Lets the verdict state
+  // the 2400 cost while the badge reads Best.
+  vetoedLoss?: number | null };
 // Additive bot difficulty axis, measured against the top move rather than
 // 100%: r = prob(played) / prob(top). A 13% move under a 15% top (r = 0.87)
 // is the same band as the top itself, while a 12% rank-1 in a wide opening
@@ -124,6 +132,12 @@ function allowedMateVerdict(rarity: Rarity): string {
     case 'Uncommon': return `An uncommon move that allows mate.`;
     default: return `A rare move that allows mate.`;
   }
+}
+// The 2400 cost stated under a Best head: qualitative band only, never a
+// number (probabilities live in the candidate lists, never the verdict).
+function vetoedConcern(loss: number): string {
+  const noun = (classifyLoss(loss) ?? 'Inaccuracy').toLowerCase();
+  return `At 2400 pace, ${noun === 'inaccuracy' ? 'an' : 'a'} ${noun}.`;
 }
 function rarityVerdict(quality: Quality, rarity: Rarity | undefined, bestRarity?: Rarity | null): string | null {
   if (!rarity || rarity.label === 'Unknown') return null;
@@ -306,6 +320,13 @@ const NOTE_RULES: NoteRule[] = [
   { name: 'bright-spot', match: facts => (facts.quality?.label === 'Excellent' || facts.quality?.label === 'Great' || facts.quality?.label === 'Best')
       && !!facts.rarity && facts.rarity.label !== 'Expected' && facts.rarity2400?.label === 'Expected',
     render: () => UPSTAIRS_REGULAR },
+  // Overruled 2400 drop: the badge reads Best (Stockfish top) but the
+  // grading lane measured a real cost, so the verdict states it. Sits below
+  // the tier notes (a 2400-shunned rare find already names the disagreement
+  // as blind-spot/validated) and above the generic positive why (the cost
+  // outranks the motif). No numbers, same bands as the grades.
+  { name: 'vetoed-concern', match: facts => isPraiseLabel(facts.quality?.label) && (facts.quality?.vetoedLoss ?? 0) >= 5,
+    render: facts => vetoedConcern(facts.quality!.vetoedLoss!) },
   { name: 'positive', match: facts => !!facts.positiveNote && isPraiseLabel(facts.quality?.label),
     render: facts => facts.positiveNote! },
 ];
@@ -425,24 +446,31 @@ export function reviewMove(before: Evaluation | undefined, after: Evaluation | u
   if (objective !== undefined) return gradedReviewMove(objective, played, { best, critical, loss });
   return sfGrade({ best, critical, loss, capNegatives: false });
 }
-// Stockfish-only grade path: mate/forced already returned above. Negative
-// labels fire on SF loss; capNegatives (objective lane decided) restricts
-// this to the praise/holds vocabulary so an engine dislike can never surface
-// as a badge once the objective axis owns negatives.
+// Stockfish-only grade path: mate/forced already returned above. The
+// engine's own best is never negative: best_move and the before/after pair
+// come from the same search, so a measured drop on the top move is search
+// noise, and the badge must agree with the key-moves list naming it best.
+// capNegatives (objective lane decided) restricts the rest to the
+// praise/holds vocabulary so an engine dislike can never surface as a badge
+// once the objective axis owns negatives.
 function sfGrade(args: { best: boolean; critical: boolean; loss: number; capNegatives: boolean }): EngineGrade {
   const { best, critical, loss, capNegatives } = args;
+  if (critical) return { label: 'Critical', accuracy: moveAccuracy(loss), loss };
+  if (best) return { label: 'Top', accuracy: moveAccuracy(loss), loss };
   if (!capNegatives) {
     const negative = classifyLoss(loss);
     if (negative) return { label: negative, accuracy: moveAccuracy(loss), loss };
   }
-  return { label: critical ? 'Critical' : best ? 'Top' : 'Holds', accuracy: moveAccuracy(loss), loss };
+  return { label: 'Holds', accuracy: moveAccuracy(loss), loss };
 }
 // Objective path. Precedence after mate/forced: a pending objective lane
 // holds the spinner (never flash a stale grade the lane then replaces); a
 // missing-but-settled lane falls back to pure SF so an objective failure
-// degrades to engine behavior instead of blanking badges. Played-top is
-// never negative (the objectively best move cannot be an objective
-// mistake); other moves classify on objective expected-score loss.
+// degrades to engine behavior instead of blanking badges. Either top is
+// never negative: the objectively best move cannot be an objective mistake,
+// and the Stockfish top move cannot be one either, so the badge never
+// contradicts the key-moves list naming it best. Other moves classify on
+// objective expected-score loss.
 // Whatever remains reads the SF vocabulary with negatives capped,
 // preserving Critical/Top/Holds for praise gating and material notes.
 function gradedReviewMove(grading: ObjectiveGrade, played: string, sf: { best: boolean; critical: boolean; loss: number }): EngineGrade {
@@ -451,10 +479,16 @@ function gradedReviewMove(grading: ObjectiveGrade, played: string, sf: { best: b
     if (grading.beforePending || grading.afterPending) return { label: 'Unreviewed', accuracy: null, loss: null };
     return sfGrade({ ...sf, capNegatives: false });
   }
-  if (played !== grading.top) {
+  if (played !== grading.top && !sf.best) {
     const loss = Math.max(0, grading.expected! - grading.afterExpected!);
     const negative = classifyLoss(loss);
     if (negative) return { label: negative, accuracy: moveAccuracy(loss), loss };
+  }
+  if (played !== grading.top && sf.best) {
+    // Stockfish-best veto: the badge reads Top, but the overruled 2400 drop
+    // rides along so the verdict can state it.
+    const loss = Math.max(0, grading.expected! - grading.afterExpected!);
+    if (classifyLoss(loss)) return { ...sfGrade({ ...sf, capNegatives: true }), vetoedLoss: loss };
   }
   return sfGrade({ ...sf, capNegatives: true });
 }

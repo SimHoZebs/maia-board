@@ -9,6 +9,8 @@ import { SavedGames } from './ReadPanels';
 import { ErrorBoundary, PanelError } from './ErrorBoundary';
 import { Rating, copyText } from '../board/BoardTools';
 import { computeUserElo, loadUserEloAnchor } from '../history/userElo';
+import { matchingLichessCache, useLichessEloCache } from '../history/lichessSync';
+import { useSessionSnapshot, useSessionStore } from '../history/session';
 import { useFlash } from './useFlash';
 
 export type Props = { state: State; dispatch: Dispatch<Action> };
@@ -30,9 +32,17 @@ function temperatureLabel(temperature: number): string {
 }
 
 export function PlayControls({ state, dispatch }: Props) {
+  // Subscribes to Lichess sync so an hourly/background sync re-renders with
+  // the fresh anchor; the rating itself still comes from the anchor replay.
+  // Hooks stay above the setup gate: this component returns null in analysis
+  // and history modes, which must not change the hook count.
+  const lichessCache = useLichessEloCache();
+  const sessionStore = useSessionStore();
+  const session = useSessionSnapshot(sessionStore);
   if (!state.setup || state.mode !== 'play') return null;
   const setup = state.setup;
   const temperature = setup.temperature ?? 0;
+  const synced = matchingLichessCache(lichessCache, session.account?.lichess_username);
   const userElo = computeUserElo(loadUserEloAnchor(), state.saved);
   const content = <section id="play-controls" className="setup panel play-setup" aria-label="Game setup">
     {state.started && <h1>Start a new game?</h1>}
@@ -62,7 +72,7 @@ export function PlayControls({ state, dispatch }: Props) {
       <label className="toggle-card" htmlFor="verdict-enabled"><input id="verdict-enabled" type="checkbox" checked={state.playVerdict} onChange={event => dispatch({ type: 'play-verdict', enabled: event.target.checked })} /><span><strong>Show move verdict</strong><em>One-line verdict under the move list once graded. Needs evaluation above.</em></span></label>
     </section>
     <div className="actions setup-actions"><Button id="start-game" variant="primary" onClick={() => dispatch({ type: 'new', id: newId(), createdAt: new Date().toISOString(), resolvedColor: resolveSide(setup.userColor), userElo: userElo.rating })}>{state.started ? 'Start new game' : 'Start game'}</Button>{state.started && <Button onClick={() => dispatch({ type: 'cancel-setup' })}>Cancel</Button>}</div>
-    <p className="hint">Your rating: {userElo.rating}{userElo.counted ? ` · ${userElo.counted} rated game${userElo.counted === 1 ? '' : 's'} since baseline` : ' · unrated baseline'}.</p>
+    <p className="hint">Your rating: {userElo.rating}{userElo.counted ? ` · ${userElo.counted} rated game${userElo.counted === 1 ? '' : 's'} since baseline` : ' · unrated baseline'}{synced ? ` · ${synced.perf}` : ''}.</p>
   </section>;
   return state.started ? <Dialog title="Start a new game?" onCancel={() => dispatch({ type: 'cancel-setup' })}>{content}</Dialog> : content;
 }

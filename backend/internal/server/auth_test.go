@@ -174,7 +174,10 @@ func TestImportDedupeAndStatus(t *testing.T) {
 	entry := func(source string) string {
 		return `{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"` + source + `"}`
 	}
-	body := `{"provider":"lichess","username":"bob","games":[` + entry("lichess:aaa11111") + `,` + entry("lichess:bbb22222") + `]}`
+	entryNamed := func(source, opponent string) string {
+		return `{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"` + source + `","opponent":"` + opponent + `"}`
+	}
+	body := `{"provider":"lichess","username":"bob","games":[` + entryNamed("lichess:aaa11111", "foe-one") + `,` + entry("lichess:bbb22222") + `]}`
 	w := authed(t, s, http.MethodPost, "/imports/games", body, token)
 	if w.Code != http.StatusOK {
 		t.Fatalf("import: %d %s", w.Code, w.Body)
@@ -185,6 +188,18 @@ func TestImportDedupeAndStatus(t *testing.T) {
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &first); err != nil || len(first.Saved) != 2 || first.Skipped != 0 {
 		t.Fatalf("first import: %s err=%v", w.Body, err)
+	}
+	if first.Saved[0].Opponent != "foe-one" || first.Saved[0].Source != "lichess:aaa11111" {
+		t.Fatalf("opponent not stamped: %+v", first.Saved[0])
+	}
+	// Re-import backfills the name on the row saved before names existed.
+	w = authed(t, s, http.MethodPost, "/imports/games", `{"provider":"lichess","username":"bob","games":[`+entryNamed("lichess:bbb22222", "foe-two")+`]}`, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("backfill import: %d %s", w.Code, w.Body)
+	}
+	got, err := s.store.Get(first.Saved[1].ID)
+	if err != nil || got.Opponent != "foe-two" {
+		t.Fatalf("backfilled row: %+v %v", got, err)
 	}
 	w = authed(t, s, http.MethodPost, "/imports/games", body, token)
 	var second struct {
@@ -205,6 +220,18 @@ func TestImportDedupeAndStatus(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("bad provider: %d %s", w.Code, w.Body)
 	}
+	w = authed(t, s, http.MethodPost, "/imports/games", `{"provider":"lichess","games":[`+entryNamed("lichess:ddd44444", "012345678901234567890123456789012345678901234567890123456789012345")+`]}`, token)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("bad opponent: %d %s", w.Code, w.Body)
+	}
+	w = authed(t, s, http.MethodPost, "/games", `{"user_color":"white","elo_maia":1600,"elo_user":1400,"model":"79m","moves":["e2e4"],"opponent":"spoofed"}`, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("single save: %d %s", w.Code, w.Body)
+	}
+	var single store.GameRow
+	if err := json.Unmarshal(w.Body.Bytes(), &single); err != nil || single.Opponent != "Maia 1600" || single.Source != "" {
+		t.Fatalf("single save stamp: %s err=%v", w.Body, err)
+	}
 	w = authed(t, s, http.MethodGet, "/imports/status", "", token)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status: %d %s", w.Code, w.Body)
@@ -213,7 +240,7 @@ func TestImportDedupeAndStatus(t *testing.T) {
 		Last  *store.ImportRun `json:"last"`
 		Total int              `json:"total"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil || status.Last == nil || status.Last.Skipped != 2 || status.Total != 2 {
+	if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil || status.Last == nil || status.Last.Skipped != 2 || status.Total != 3 {
 		t.Fatalf("status body: %s err=%v", w.Body, err)
 	}
 	if w := authed(t, s, http.MethodGet, "/imports/status", "", ""); w.Code != http.StatusUnauthorized {

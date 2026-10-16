@@ -139,6 +139,10 @@ func (s *Server) handleGamesCreate(ctx context.Context, input *GamesCreateInput)
 		status = http.StatusBadRequest
 		return nil, apiError(status, err.Code, err.Message)
 	}
+	// Play is always against the engine: the opponent name is server-owned,
+	// stamped from the bot Elo, never taken from the client.
+	payload.Opponent = "Maia " + strconv.Itoa(*payload.EloMaia)
+	payload.Source = ""
 	game, isNew, err := s.store.Save(payload)
 	if err != nil {
 		if errors.Is(err, store.ErrOwnerMismatch) {

@@ -28,6 +28,10 @@ const maxImportGames = 100
 // only. Anything else is a client bug, rejected before it reaches the store.
 var importSourcePattern = regexp.MustCompile(`^lichess:[A-Za-z0-9]{4,16}$`)
 
+// importOpponentPattern gates opponent display names: printable text, no
+// control characters, bounded so rows stay list-shaped.
+var importOpponentPattern = regexp.MustCompile(`^[^\x00-\x1f]{1,64}$`)
+
 func (s *Server) serveBulkImport(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	if r.Method != http.MethodPost {
@@ -74,6 +78,10 @@ func (s *Server) serveBulkImport(w http.ResponseWriter, r *http.Request) {
 			writeHumaError(w, http.StatusBadRequest, "invalid_source", "game source must be lichess:<gameId>")
 			return
 		}
+		if opponent := body.Games[index].Opponent; opponent != "" && !importOpponentPattern.MatchString(opponent) {
+			writeHumaError(w, http.StatusBadRequest, "invalid_opponent", "game opponent must be 1-64 printable characters")
+			return
+		}
 		sources = append(sources, source)
 	}
 	known, err := s.store.ExistingSources(ownerID, sources)
@@ -87,6 +95,10 @@ func (s *Server) serveBulkImport(w http.ResponseWriter, r *http.Request) {
 	for index := range body.Games {
 		entry := body.Games[index]
 		if entry.Source != "" && known[entry.Source] {
+			// Re-imports refresh names on rows saved before names existed.
+			if entry.Opponent != "" {
+				_, _ = s.store.UpdateOpponentIfEmpty(ownerID, entry.Source, entry.Opponent)
+			}
 			skipped++
 			continue
 		}

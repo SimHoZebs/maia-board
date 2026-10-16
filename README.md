@@ -16,15 +16,6 @@ the web interface and Go API and runs both engines locally.
 - **History** stores games on the server for resuming, analysis, export, and deletion.
   Browser storage holds preferences, local game records, and pending writes for retry.
 
-A **ply** is one player's move. **UCI** (Universal Chess Interface) coordinate
-notation encodes a move as `e2e4` or `a7a8q` for promotion. **FEN**
-(Forsyth–Edwards Notation) describes one position, including the turn, castling
-rights, and move counters. **PGN** (Portable Game Notation) describes a game with
-its move sequence and metadata. A FEN alone cannot establish threefold repetition;
-analysis needs the move history from its starting position. Canonical terms for
-position/line/posId/reviewKey, eval stages, restore, lanes, and limits live in
-[spec/GLOSSARY.md](spec/GLOSSARY.md).
-
 ### Reading analysis
 
 Current-position candidates answer "what could be played from this board?"
@@ -142,41 +133,9 @@ commented build arg away; see the comments in `compose.yaml`. Stockfish always
 runs on CPU. Builds assume x86-64 Linux; ARM hosts are not covered. No ROCm
 build is provided.
 
-## Source ownership
-
-| Location | Responsibility |
-| --- | --- |
-| `frontend/src/` | Routing, Play/Analyze/History state, chess rules and board rendering, evaluation scheduling, browser persistence |
-| `backend/cmd/server/` | HTTP wiring: env config, route registration, process entrypoint |
-| `backend/internal/server/` | HTTP validation, batch orchestration, SQLite-backed handlers |
-| `backend/internal/store/` | SQLite games and evaluation-cache persistence |
-| `backend/internal/engine/` | Engine admission, Maia/Stockfish process lifecycle, value validation |
-| `backend/internal/sched/` | Priority-lane admission scheduler |
-| `backend/internal/evalcache/` | Cache identities, strict document decoding, shape gates |
-| `backend/internal/openings/` | ECO opening-book process boundary |
-| `backend/internal/chess/` | FEN/UCI/Elo/temperature validation |
-| `backend/internal/ipc/` | JSON-lines pipe bounds and worker diagnostics |
-| `backend/internal/apierror/` | Shared request-error type |
-| `backend/workers/maia3_worker.py` | Adapter to the pinned upstream Maia3 model API |
-| `backend/workers/stockfish_worker.py` | History-aware position validation and native Stockfish search |
-| `backend/workers/openings_lookup.py` | One-shot ECO opening-book lookup |
-| `backend/Dockerfile` | Combined build, pinned engine inputs and runtime dependencies |
-
-The [frontend architecture](frontend/README.md#state-boundaries) describes timeline,
-session, evaluation, and persistence ownership. The [backend README](backend/README.md)
-defines the HTTP and worker boundaries.
-
 Upstream dependencies: [Maia3](https://github.com/CSSLab/maia3/tree/1e13597c42d4858b7cfd7cfdae01e297263364b2),
 [Stockfish](https://github.com/official-stockfish/Stockfish/tree/sf_19),
 [chess.js](https://github.com/jhlywa/chess.js), and
 [Chessground](https://github.com/lichess-org/chessground). Stockfish redistribution
 inputs and license locations are documented in [`backend/STOCKFISH.md`](backend/STOCKFISH.md).
 HTTP route reference lives in [`backend/API.md`](backend/API.md).
-
-## License
-
-This project is licensed under AGPL-3.0-only (see `LICENSE`). If you run a
-modified version on a server, you must offer all users interacting with it over
-the network the Corresponding Source of your version, including the pinned
-Maia3 adapter input, Stockfish source archive, and build recipe documented in
-`backend/STOCKFISH.md`.

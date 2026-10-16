@@ -74,6 +74,13 @@
    Every button group wraps in .account-actions — never bare adjacent buttons.
    Rows pair text left with actions right (wrapping on narrow screens). */
 .account-row { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
+/* Sync control: value, selector, and action share one row, vertically
+   centered — no caption line splitting them apart. The icon matches the
+   select's 44px height so the trio reads as one control. */
+.account-row--sync { justify-content: flex-start; align-items: center; }
+.account-row--sync .sync-button { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: center; }
+.account-row--sync select { width: auto; }
+.account-row--sync .rating-value { font-variant-numeric: tabular-nums; }
 .account-row > .account-identity { flex: 1 1 auto; min-width: 0; }
 .account-identity { display: flex; align-items: center; gap: 12px; }
 .account-avatar { flex: none; width: 40px; height: 40px; border-radius: 50%; background: var(--accent); color: #202619;

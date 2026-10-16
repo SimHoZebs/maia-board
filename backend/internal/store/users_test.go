@@ -62,6 +62,32 @@ func TestImportRunsAndSources(t *testing.T) {
 	if err != nil || got.Source != "lichess:zzz99999" {
 		t.Fatalf("source roundtrip: %+v %v", got, err)
 	}
+	payload.Opponent = "carol-foe"
+	if _, _, err := store.Save(payload); err != nil {
+		t.Fatal(err)
+	}
+	got, err = store.Get("src")
+	if err != nil || got.Opponent != "carol-foe" {
+		t.Fatalf("opponent roundtrip: %+v %v", got, err)
+	}
+	updated, err := store.UpdateOpponentIfEmpty(user.ID, "lichess:zzz99999", "other")
+	if err != nil || updated {
+		t.Fatalf("overwrite protection: updated=%t err=%v", updated, err)
+	}
+	nameless := gameFixture("noname", "e2e4")
+	nameless.OwnerID = user.ID
+	nameless.Source = "lichess:noname1"
+	if _, _, err := store.Save(nameless); err != nil {
+		t.Fatal(err)
+	}
+	updated, err = store.UpdateOpponentIfEmpty(user.ID, "lichess:noname1", "found-foe")
+	if err != nil || !updated {
+		t.Fatalf("backfill: updated=%t err=%v", updated, err)
+	}
+	got, err = store.Get("noname")
+	if err != nil || got.Opponent != "found-foe" {
+		t.Fatalf("backfilled opponent: %+v %v", got, err)
+	}
 	known, err := store.ExistingSources(user.ID, []string{"lichess:zzz99999", "lichess:missing"})
 	if err != nil || !known["lichess:zzz99999"] || known["lichess:missing"] {
 		t.Fatalf("existing sources: %+v %v", known, err)

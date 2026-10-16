@@ -1,5 +1,6 @@
 import { ArrowUpRight, BookOpen } from "lucide-react";
 import { sideName } from "../shared/domain";
+import { useAccountName } from "../history/session";
 import { countLabels, summarizeReview, type ReviewSide } from "./reviewSummary";
 import type { Review } from "./useReview";
 import "./review-overview.css";
@@ -21,11 +22,12 @@ export function ReviewSummary({
 }) {
   const summary = summarizeReview(review.nodes, review.qualities, userSide);
   const complete = summary.reviewed === summary.total;
+  const you = useAccountName() ?? "You";
   // Opening identity of the viewed position: deepest named ancestor, so the
   // family persists after the line leaves book.
   const { opening } = useLineOpenings(review.timeline.moves, review.timeline.initialFen, ply);
   const sideLabel = (color: ReviewSide) =>
-    `${sideName(color)} move quality${userSide === color ? " · You" : ""}`;
+    `${sideName(color)} move quality${userSide === color ? ` · ${you}` : ""}`;
   return (
     <section
       className="review-overview"
@@ -111,8 +113,9 @@ export function ReviewIssues({
 }) {
   const summary = summarizeReview(review.nodes, review.qualities, userSide);
   const complete = summary.reviewed === summary.total;
+  const you = useAccountName() ?? "You";
   const sideLabel = (color: ReviewSide) =>
-    `${sideName(color)}${userSide === color ? " · You" : ""}`;
+    `${sideName(color)}${userSide === color ? ` · ${you}` : ""}`;
   return (
     <section
       className="review-overview"

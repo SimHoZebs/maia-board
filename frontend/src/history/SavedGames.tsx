@@ -5,7 +5,6 @@ import {
   lineRecord,
   oppositeColor,
   resultTextForTip,
-  sideName,
   storedGameResult,
   type StoredGame,
 } from "../shared/domain";
@@ -16,6 +15,7 @@ import { Dialog } from "../app/Dialog";
 import { ArrowUpDown, Check, ChevronDown, ChessPawn, Copy, Play, Trash2, Trophy, type LucideIcon } from "lucide-react";
 import { BoardThumbnail } from "../board/BoardThumbnail";
 import { useSyncSnapshot, useSyncStore } from "./syncStore";
+import { useAccountName } from "./session";
 import { useFlash } from "../app/useFlash";
 
 // Result from the player's perspective: a resignation is always the player's
@@ -141,6 +141,12 @@ export function SavedGames({
   // "Syncing…" indicator never re-renders the board through game state.
   const sync = useSyncStore();
   useSyncSnapshot(sync);
+  // Row identity: the signed-in name for your side, Maia + Elo for engine
+  // games, Lichess for imports. Falls back to the old color-first labels
+  // before login and in unit tests.
+  const you = useAccountName() ?? 'You';
+  const opponentOf = (game: StoredGame) =>
+    game.opponent || (game.source?.startsWith('lichess:') ? 'Lichess' : `Maia ${game.settings.botElo}`);
   const syncPending = sync.pending;
   const historyTotal = sync.total;
   const visibleGames = useMemo(() => state.saved.map(game => {
@@ -245,8 +251,7 @@ export function SavedGames({
                     })}
                   </time>
                   <h2>
-                    {sideName(game.settings.userColor)} · Bot{" "}
-                    {game.settings.botElo}
+                    {you} vs {opponentOf(game)}
                   </h2>
                   <p>
                     {result}

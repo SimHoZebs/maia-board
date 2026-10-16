@@ -132,8 +132,10 @@ describe('timeline-backed move feedback', () => {
   it('grades play negatives from the objective lane, holding the spinner while pending', () => {
     const line = buildTimeline(START_FEN, ['e2e4']);
     const [beforeNode, afterNode] = reviewNodes(line);
-    const flat = { ...sfFixture(beforeNode.fen), best_move: 'e2e4', score: { type: 'cp' as const, value: 20 },
-      lines: [{ move: 'e2e4', score: { type: 'cp' as const, value: 20 }, depth: 12 }] };
+    // Stockfish names another move best so its veto stays out of the way;
+    // the flat pair isolates the objective axis.
+    const flat = { ...sfFixture(beforeNode.fen), best_move: 'd2d4', score: { type: 'cp' as const, value: 20 },
+      lines: [{ move: 'd2d4', score: { type: 'cp' as const, value: 20 }, depth: 12 }] };
     const flatAfter = { ...sfFixture(afterNode.fen), score: { type: 'cp' as const, value: 20 } };
     const sfLookup = (node: ReviewNode) => node.ply === 0 ? flat : flatAfter;
     const grade = (top: string, wdl: [number, number, number]) =>
@@ -146,11 +148,11 @@ describe('timeline-backed move feedback', () => {
       pending,
       keyFor: (node: ReviewNode) => laneKey(node, () => settings),
     });
-    // 2400s top d2d4 (exp 80); e4 leaves White at 60: Blunder despite flat SF.
+    // 2400s top d2d4 (exp 80); e4 leaves White at 60: Blunder by the lane.
     const blunder = computePlayQualities({ ...base,
       objective: laneFor([grade('d2d4', [0.1, 0.2, 0.7]), grade('e7e5', [0.5, 0.2, 0.3])], new Set<string>()) });
     expect(blunder.qualities[0]?.label).toBe('Blunder');
-    // Objective lane pending: spinner, not the SF Top.
+    // Objective lane pending: spinner, not the settled grade.
     const waiting = computePlayQualities({ ...base,
       objective: laneFor([undefined, grade('e7e5', [0.5, 0.2, 0.3])], new Set([laneKey(beforeNode, () => settings)])) });
     expect(waiting.qualities[0]?.label).toBe('Unreviewed');
