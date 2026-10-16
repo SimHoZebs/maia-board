@@ -582,8 +582,13 @@ describe('identity and provenance', () => {
     ).toThrow('incompatible search settings');
     expect(() => parseEvaluation({ ...raw, lines: [] })).toThrow('incompatible search settings');
     expect(() =>
-      parseEvaluation({ ...twoLine, lines: [twoLine.lines[0], twoLine.lines[0]] }),
-    ).toThrow('incompatible search settings');
+      parseEvaluation(
+        { ...twoLine, lines: [twoLine.lines[0], twoLine.lines[0]] },
+        { ...defaultStockfishSettings, lines: 2 },
+        undefined,
+        START_FEN,
+      ),
+    ).toThrow('incomplete evaluation');
     expect(() =>
       parseEvaluation(
         {

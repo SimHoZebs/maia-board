@@ -171,10 +171,14 @@ describe('native bot response validation', () => {
     ).toThrow('invalid candidate moves');
     expect(() =>
       parseMoveResponse(
-        { ...valid, top_moves: [{ move: 'a1a8', prob: 0.2, wdl: [0.2, 0.3, 0.5] }] },
+        {
+          ...valid,
+          move: 'a1a8',
+          top_moves: [{ move: 'a1a8', prob: 0.2, wdl: [0.2, 0.3, 0.5] }],
+        },
         payload,
       ),
-    ).toThrow('inconsistent selected move');
+    ).toThrow('illegal candidate move');
     expect(() =>
       parseMoveResponse({ ...valid, top_moves: [{ ...valid.top_moves[0], wdl: [0.2, 0.3] }] }),
     ).toThrow('incomplete response');
@@ -191,8 +195,8 @@ describe('native bot response validation', () => {
       model_used: '5m',
       degraded: true,
     });
-    expect(() => parseMoveResponse({ ...fallback, degraded: false }, payload)).toThrow(
-      'different model',
+    expect(() => parseMoveResponse({ ...valid, degraded: true }, payload)).toThrow(
+      'inconsistent fallback identity',
     );
     expect(() => parseMoveResponse(valid, { ...payload, model: '5m' })).toThrow('different model');
   });
