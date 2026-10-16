@@ -1,13 +1,17 @@
 {
   "name": "maia-board-frontend",
-  "private": true,
   "version": "0.1.0",
+  "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
     "openapi": "(cd ../backend && OPENAPI_DUMP=../spec/openapi.yaml go run ./cmd/server)",
     "api:gen": "npm run openapi && npx orval",
     "build:bundle": "vite build",
@@ -40,6 +44,8 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "orval": "^8.40.0",
+    "oxfmt": "0.73.0",
+    "oxlint": "1.88.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.0",
     "vitest": "^5.0.0"

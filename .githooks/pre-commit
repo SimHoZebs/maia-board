@@ -7,9 +7,23 @@ STAGED="$(git diff --cached --name-only --diff-filter=ACM)"
 [ -z "$STAGED" ] && exit 0
 
 FE_FILES="$(printf '%s\n' "$STAGED" | grep '^frontend/' || true)"
+FE_FMT="$(printf '%s\n' "$STAGED" | grep -E '^frontend/.*\.(js|mjs|cjs|ts|tsx|jsx|json|css)$' || true)"
 BE_ANY="$(printf '%s\n' "$STAGED" | grep '^backend/' || true)"
 BE_GO="$(printf '%s\n' "$STAGED" | grep '^backend/.*\.go$' || true)"
 SH_FILES="$(printf '%s\n' "$STAGED" | grep '\.sh$' || true)"
+
+if [ -n "$FE_FMT" ]; then
+  echo "pre-commit: oxfmt check"
+  (cd "$ROOT/frontend" && npx oxfmt --check .) || {
+    echo "pre-commit: run (cd frontend && npm run format) and re-stage" >&2
+    exit 1
+  }
+  echo "pre-commit: oxlint"
+  (cd "$ROOT/frontend" && npx oxlint) || {
+    echo "pre-commit: fix lint findings and re-stage" >&2
+    exit 1
+  }
+fi
 
 if [ -n "$FE_FILES" ]; then
   echo "pre-commit: frontend typecheck"

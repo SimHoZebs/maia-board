@@ -18,6 +18,10 @@ FE_FAIL=0; BE_FAIL=0; SYNC_FAIL=0
 if [ "$FE" -eq 1 ]; then
   echo "### frontend: typecheck"
   (cd "$ROOT/frontend" && npm run typecheck) || FE_FAIL=1
+  echo "### frontend: oxfmt"
+  (cd "$ROOT/frontend" && npx oxfmt --check .) || FE_FAIL=1
+  echo "### frontend: oxlint"
+  (cd "$ROOT/frontend" && npx oxlint) || FE_FAIL=1
   echo "### frontend: vitest ($FILE)"
   (cd "$ROOT/frontend" && npx vitest run "$FILE") || FE_FAIL=1
 fi

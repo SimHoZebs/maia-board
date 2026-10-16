@@ -5,10 +5,11 @@
 Run before finishing any code task:
 
 ```sh
-scripts/verify.sh               # typecheck + vitest + go vet/test
+scripts/verify.sh               # typecheck + oxfmt + oxlint + vitest + go vet/test
 scripts/verify.sh --backend-only
 scripts/verify.sh --frontend-only
 ```
+Frontend auto-fix: `(cd frontend && npm run format && npm run lint:fix)`.
 
 Pre-commit runs staged typecheck/vet/gofmt. Pre-push runs full verify.
 Node 22, Go per `backend/go.mod`, Python 3.12 for worker tests.

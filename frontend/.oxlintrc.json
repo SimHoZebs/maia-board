@@ -1,0 +1,46 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["eslint", "typescript", "unicorn", "oxc", "react", "import", "jsx-a11y", "vitest"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "env": {
+    "browser": true
+  },
+  "settings": {
+    "react": {
+      "version": "19.0.0"
+    }
+  },
+  "rules": {
+    // react-jsx runtime: no React import needed for JSX.
+    "react/react-in-jsx-scope": "off",
+    // Latest-ref sync (ref.current = value during render) is the deliberate
+    // convention for inline literals; see hook comments.
+    "react/refs": "off",
+    // Mutable external stores (syncStore, repository) are the architecture.
+    "react/immutability": "off",
+    // Both duplicate react-hooks/exhaustive-deps; keep one source of truth.
+    "react/memo-dependencies": "off",
+    "react/exhaustive-effect-dependencies": "off",
+    // role=status/alert are deliberate live regions (<output> is not
+    // an equivalent live region).
+    "jsx-a11y/prefer-tag-over-role": "off",
+    // Colocated pure helpers read better than hoisted ones.
+    "unicorn/consistent-function-scoping": "off",
+    // Shadowing (catch params, map callbacks) is pervasive and deliberate.
+    "eslint/no-shadow": "off",
+    // Mock typing churn; vitest infers from the implementation.
+    "vitest/require-mock-type-parameters": "off",
+    // Vite requires side-effect CSS imports.
+    "import/no-unassigned-import": ["error", { "allow": ["**/*.css"] }],
+    // Rich labels nest text at depth 3 (label > span > strong/em > text).
+    "jsx-a11y/label-has-associated-control": ["error", { "depth": 4 }],
+    // __perf* window globals are the perf-harness convention.
+    "eslint/no-underscore-dangle": [
+      "warn",
+      { "allow": ["__perfCommits", "__perfLongtasks", "__perfShifts"] }
+    ]
+  }
+}
