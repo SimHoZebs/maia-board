@@ -1,5 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { ReviewCoordinator, type Engine, type ReviewNode, type SettingsInput } from './reviewCoordinator';
+import {
+  ReviewCoordinator,
+  type Engine,
+  type ReviewNode,
+  type SettingsInput,
+} from './reviewCoordinator';
 
 // Upper bound on overlapping restores. Steady state holds 0-1; a newer line
 // starts its own lookup while the previous is still landing. Past the cap
@@ -73,6 +78,8 @@ export function useLookupRestore(args: {
   // reactivation starts its own lookup below.
   useEffect(() => {
     if (active) return;
+    // Snapshot iteration: aborted flights delete their entries.
+    // oxlint-disable-next-line no-useless-spread
     for (const [key, controller] of [...restoreFlights.current]) {
       restoreFlights.current.delete(key);
       controller.abort();
@@ -80,10 +87,13 @@ export function useLookupRestore(args: {
   }, [active]);
   // Unmount-only teardown. The per-key effect below deliberately aborts
   // nothing in its cleanup, so cancellation on teardown lives here alone.
-  useEffect(() => () => {
-    for (const controller of restoreFlights.current.values()) controller.abort();
-    restoreFlights.current.clear();
-  }, []);
+  useEffect(
+    () => () => {
+      for (const controller of restoreFlights.current.values()) controller.abort();
+      restoreFlights.current.clear();
+    },
+    [],
+  );
   useEffect(() => {
     if (!active) return;
     if (restoreFlights.current.has(loadKey)) return;
@@ -94,11 +104,19 @@ export function useLookupRestore(args: {
     }
     const controller = new AbortController();
     restoreFlights.current.set(loadKey, controller);
-    const forget = () => { restoreFlights.current.delete(loadKey); };
-    const task = restoreLookup(coordinator, nodesRef.current, settingsRef.current, controller.signal, {
-      ...(enginesRef.current ? { engines: enginesRef.current } : {}),
-      ...(priorityRef.current?.length ? { priorityPlies: priorityRef.current } : {}),
-    });
+    const forget = () => {
+      restoreFlights.current.delete(loadKey);
+    };
+    const task = restoreLookup(
+      coordinator,
+      nodesRef.current,
+      settingsRef.current,
+      controller.signal,
+      {
+        ...(enginesRef.current ? { engines: enginesRef.current } : {}),
+        ...(priorityRef.current?.length ? { priorityPlies: priorityRef.current } : {}),
+      },
+    );
     void Promise.resolve(task).then(
       () => {
         forget();
@@ -106,11 +124,13 @@ export function useLookupRestore(args: {
         // out; only the current line's outcome drives retry callers.
         if (loadKeyRef.current === loadKey) settledRef.current?.(undefined);
       },
-      (error) => {
+      error => {
         forget();
         if (controller.signal.aborted) return;
         if (loadKeyRef.current === loadKey) {
-          settledRef.current?.(error instanceof Error ? error.message : 'Evaluation lookup failed.');
+          settledRef.current?.(
+            error instanceof Error ? error.message : 'Evaluation lookup failed.',
+          );
         }
       },
     );

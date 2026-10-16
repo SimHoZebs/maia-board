@@ -20,14 +20,23 @@ export function isNonNegativeInt(value: unknown): value is number {
 }
 
 export function isStringMap(value: unknown): value is Record<string, string> {
-  return isRecord(value) && !Array.isArray(value) && Object.values(value).every(item => typeof item === 'string');
+  return (
+    isRecord(value) &&
+    !Array.isArray(value) &&
+    Object.values(value).every(item => typeof item === 'string')
+  );
 }
 
 // Stockfish search provenance: integer fields only. Range/equality against
 // the request stays in actualPolicy so present-but-wrong settings still throw
 // 'incompatible' exactly as before instead of silently falling back.
 export function isStockfishSettings(value: unknown): value is StockfishSettings {
-  return isRecord(value) && Number.isInteger(value.time_ms) && Number.isInteger(value.lines) && Number.isInteger(value.depth);
+  return (
+    isRecord(value) &&
+    Number.isInteger(value.time_ms) &&
+    Number.isInteger(value.lines) &&
+    Number.isInteger(value.depth)
+  );
 }
 
 // Single quarantined Object.keys assertion: lib types return string[], but a

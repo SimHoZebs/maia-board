@@ -9,8 +9,16 @@ function verdictFor(id: string) {
 describe('verdict lab presets', () => {
   it('covers the eleven planned presets', () => {
     expect(PRESETS.map(preset => preset.id)).toEqual([
-      'common-mistake', 'rare-find', 'alien', 'allowed-mate-pin', 'book-hit',
-      'novelty-bright-spot', 'scholars-mate', 'hard-to-avoid', 'underpromotion', 'dead-draw',
+      'common-mistake',
+      'rare-find',
+      'alien',
+      'allowed-mate-pin',
+      'book-hit',
+      'novelty-bright-spot',
+      'scholars-mate',
+      'hard-to-avoid',
+      'underpromotion',
+      'dead-draw',
       'forced-move',
     ]);
   });
@@ -42,7 +50,9 @@ describe('verdict lab presets', () => {
   it('fuses the pin with mate behind a hard-to-avoid head', () => {
     const { verdict, rules, trace } = verdictFor('allowed-mate-pin');
     expect(trace.engineGrade.label).toBe('Allowed mate');
-    expect(verdict).toBe('Hard to avoid at your level. Pins the queen to the king, but allows mate.');
+    expect(verdict).toBe(
+      'Hard to avoid at your level. Pins the queen to the king, but allows mate.',
+    );
     expect(rules).toEqual({ standalone: 'pin-allowed-mate', note: null });
   });
 
@@ -56,11 +66,13 @@ describe('verdict lab presets', () => {
     const { verdict, rules, facts, trace } = verdictFor('novelty-bright-spot');
     expect(trace.rarity.label).toBe('Uncommon');
     expect(facts.novelty).toEqual({ priorName: 'French Defense', priorEco: 'C00' });
-    expect(verdict).toBe('Leaves French Defense book. A sharp find. Stronger players play this regularly.');
+    expect(verdict).toBe(
+      'Leaves French Defense book. A sharp find. Stronger players play this regularly.',
+    );
     expect(rules).toEqual({ standalone: null, note: 'bright-spot' });
   });
 
-  it('names Scholar\'s mate with terminal priority', () => {
+  it("names Scholar's mate with terminal priority", () => {
     const { verdict, rules, facts } = verdictFor('scholars-mate');
     expect(facts.terminal).toBe('checkmate');
     expect(facts.matePatternName).toBe("Scholar's mate");

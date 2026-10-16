@@ -28,7 +28,9 @@ describe('classifyTip', () => {
   });
 
   it('classifies a capturing checkmate as checkmate', () => {
-    expect(classifyPlayTip(['e2e4', 'e7e5', 'd1h5', 'b8c6', 'f1c4', 'g8f6', 'h5f7'])).toBe('checkmate');
+    expect(classifyPlayTip(['e2e4', 'e7e5', 'd1h5', 'b8c6', 'f1c4', 'g8f6', 'h5f7'])).toBe(
+      'checkmate',
+    );
   });
 
   it('classifies stalemate as a game end', () => {

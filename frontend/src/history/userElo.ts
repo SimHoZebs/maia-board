@@ -19,7 +19,11 @@ export const USER_ELO_MAX = 5000;
 export type UserEloAnchor = { value: number; updatedAt: string };
 export type UserEloScore = 1 | 0.5 | 0;
 export type UserEloSummary = {
-  rating: number; counted: number; wins: number; draws: number; losses: number;
+  rating: number;
+  counted: number;
+  wins: number;
+  draws: number;
+  losses: number;
   anchor: UserEloAnchor;
 };
 
@@ -62,7 +66,9 @@ export function updateUserElo(user: number, opp: number, score: UserEloScore): n
 // material) is a draw. Unfinished lines return null and never move Elo.
 // Resignation always means the user resigned (the app has no bot-resign),
 // so it scores 0 for the user.
-export function scoreForGame(game: Pick<StoredGame, 'moves' | 'settings' | 'result'>): UserEloScore | null {
+export function scoreForGame(
+  game: Pick<StoredGame, 'moves' | 'settings' | 'result'>,
+): UserEloScore | null {
   if (game.result === 'resigned') return 0;
   let board: Chess;
   try {
@@ -89,10 +95,16 @@ export function isLichessGame(game: { source?: unknown }): boolean {
   return typeof game.source === 'string' && game.source.startsWith('lichess:');
 }
 
-export function computeUserElo(anchor: UserEloAnchor, games: (Pick<StoredGame, 'id' | 'createdAt' | 'moves' | 'settings' | 'result'> & { source?: unknown })[]): UserEloSummary {
+export function computeUserElo(
+  anchor: UserEloAnchor,
+  games: (Pick<StoredGame, 'id' | 'createdAt' | 'moves' | 'settings' | 'result'> & {
+    source?: unknown;
+  })[],
+): UserEloSummary {
   const since = Date.parse(anchor.updatedAt);
-  const ordered = [...games].sort((a, b) =>
-    a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : 1);
+  const ordered = [...games].toSorted((a, b) =>
+    a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : 1,
+  );
   let rating = normalizeUserElo(anchor.value);
   let counted = 0;
   let wins = 0;
@@ -113,6 +125,11 @@ export function computeUserElo(anchor: UserEloAnchor, games: (Pick<StoredGame, '
   return { rating, counted, wins, draws, losses, anchor };
 }
 
-export function currentUserElo(games: (Pick<StoredGame, 'id' | 'createdAt' | 'moves' | 'settings' | 'result'> & { source?: unknown })[], anchor?: UserEloAnchor): number {
+export function currentUserElo(
+  games: (Pick<StoredGame, 'id' | 'createdAt' | 'moves' | 'settings' | 'result'> & {
+    source?: unknown;
+  })[],
+  anchor?: UserEloAnchor,
+): number {
   return computeUserElo(anchor ?? loadUserEloAnchor(), games).rating;
 }

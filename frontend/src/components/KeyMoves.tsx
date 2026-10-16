@@ -1,7 +1,7 @@
-import { Bot, Fish, TrendingDown, Users } from "lucide-react";
-import { candidateSan } from "../shared/domain";
-import { formatKeyDelta, formatProb, type KeyMove } from "../review/keyMoves";
-import { CandidateList } from "./CandidateList";
+import { Bot, Fish, TrendingDown, Users } from 'lucide-react';
+import { candidateSan } from '../shared/domain';
+import { formatKeyDelta, formatProb, type KeyMove } from '../review/keyMoves';
+import { CandidateList } from './CandidateList';
 
 // The Stockfish marker: best/likely at 2400 already read off the 2400 and
 // delta columns, and the green row already says played. The fish takes the
@@ -10,7 +10,11 @@ function KeyMark({ move, stockfishColor }: { move: KeyMove; stockfishColor: stri
   if (!move.roles.includes('sf-best')) return null;
   return (
     <span className="key-roles">
-      <span className="key-role key-role--sf-best" title="Stockfish best move" style={{ color: stockfishColor }}>
+      <span
+        className="key-role key-role--sf-best"
+        title="Stockfish best move"
+        style={{ color: stockfishColor }}
+      >
         <Fish size={12} aria-hidden="true" />
         <span className="visually-hidden">Stockfish best</span>
       </span>
@@ -28,7 +32,18 @@ function KeyMark({ move, stockfishColor }: { move: KeyMove; stockfishColor: stri
 // objective arrow, Users to the bot arrow) and the Stockfish fish takes the
 // Stockfish arrow color, so each marker links to the board even after the
 // user recolors the arrows. The numeric columns keep their default colors.
-export function KeyMovesList({ fen, played, hasMove, moves, deltaTitle, mineTitle, objectiveColor, botColor, stockfishColor, onSelect }: {
+export function KeyMovesList({
+  fen,
+  played,
+  hasMove,
+  moves,
+  deltaTitle,
+  mineTitle,
+  objectiveColor,
+  botColor,
+  stockfishColor,
+  onSelect,
+}: {
   fen: string;
   played?: string;
   hasMove: boolean;
@@ -47,16 +62,22 @@ export function KeyMovesList({ fen, played, hasMove, moves, deltaTitle, mineTitl
           <strong aria-hidden="true" />
           <span className="visually-hidden">{`Share of 2400 play, your share, and ${deltaTitle.charAt(0).toLowerCase()}${deltaTitle.slice(1)}`}</span>
           <span className="metrics key-metrics" aria-hidden="true">
-            <span className="metric" title="Share of 2400 play" style={{ color: objectiveColor }}><Bot size={13} aria-hidden="true" /></span>
-            <span className="metric metric--mine" title={mineTitle} style={{ color: botColor }}><Users size={13} aria-hidden="true" /></span>
-            <span className="delta" title={deltaTitle}><TrendingDown size={13} aria-hidden="true" /></span>
+            <span className="metric" title="Share of 2400 play" style={{ color: objectiveColor }}>
+              <Bot size={13} aria-hidden="true" />
+            </span>
+            <span className="metric metric--mine" title={mineTitle} style={{ color: botColor }}>
+              <Users size={13} aria-hidden="true" />
+            </span>
+            <span className="delta" title={deltaTitle}>
+              <TrendingDown size={13} aria-hidden="true" />
+            </span>
           </span>
         </span>
       </li>
       {moves.map((move, index) => {
         const san = candidateSan(fen, move.uci);
         const isPlayed = move.uci === played;
-        const label = `Explore ${san}${isPlayed ? " (played)" : ""}${hasMove ? " from before this move" : ""}`;
+        const label = `Explore ${san}${isPlayed ? ' (played)' : ''}${hasMove ? ' from before this move' : ''}`;
         return (
           <li key={`${move.uci}:${index}`} className={isPlayed ? 'played' : undefined}>
             <button
@@ -71,9 +92,18 @@ export function KeyMovesList({ fen, played, hasMove, moves, deltaTitle, mineTitl
                 <KeyMark move={move} stockfishColor={stockfishColor} />
               </span>
               <span className="metrics key-metrics">
-                <span className="metric" title={move.prob2400 == null ? "Unlisted at 2400" : "Share of 2400 play"}>{formatProb(move.prob2400)}</span>
-                <span className="metric metric--mine" title={mineTitle}>{formatProb(move.probMine)}</span>
-                <span className="delta" title={deltaTitle}>{formatKeyDelta(move)}</span>
+                <span
+                  className="metric"
+                  title={move.prob2400 == null ? 'Unlisted at 2400' : 'Share of 2400 play'}
+                >
+                  {formatProb(move.prob2400)}
+                </span>
+                <span className="metric metric--mine" title={mineTitle}>
+                  {formatProb(move.probMine)}
+                </span>
+                <span className="delta" title={deltaTitle}>
+                  {formatKeyDelta(move)}
+                </span>
               </span>
             </button>
           </li>

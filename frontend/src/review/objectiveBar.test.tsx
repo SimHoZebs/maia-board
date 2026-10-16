@@ -20,16 +20,20 @@ it('reads the bar from objective White winning chances, never centipawns', () =>
 it('pins forced mates and terminal outcomes over the expectation', () => {
   const mate = renderToStaticMarkup(
     createElement(ObjectiveBar, {
-      turn: 'white', expected: 65,
-      mate: { type: 'mate', value: 5, winning_side: 'white' }, orientation: 'white',
+      turn: 'white',
+      expected: 65,
+      mate: { type: 'mate', value: 5, winning_side: 'white' },
+      orientation: 'white',
     }),
   );
   expect(mate).toContain('+M5');
   expect(mate).toContain('estimated White winning chance 100%');
   const mated = renderToStaticMarkup(
     createElement(ObjectiveBar, {
-      turn: 'white', expected: 65,
-      outcome: { kind: 'checkmate', winner: 'black' }, orientation: 'white',
+      turn: 'white',
+      expected: 65,
+      outcome: { kind: 'checkmate', winner: 'black' },
+      orientation: 'white',
     }),
   );
   expect(mated).toContain('Black wins');
@@ -38,7 +42,10 @@ it('pins forced mates and terminal outcomes over the expectation', () => {
 it('pins one tag per side with the draw centered on its segment', () => {
   const html = renderToStaticMarkup(
     createElement(ObjectiveBar, {
-      turn: 'white', expected: 60, wdl: { white: 45, draw: 30, black: 25 }, orientation: 'white',
+      turn: 'white',
+      expected: 60,
+      wdl: { white: 45, draw: 30, black: 25 },
+      orientation: 'white',
     }),
   );
   expect(html).toContain('balance-white-tag');
@@ -75,8 +82,10 @@ it('shows both sides without a draw segment when no WDL is available', () => {
 it('keeps mate distance on the winning side and hides the zero side', () => {
   const html = renderToStaticMarkup(
     createElement(ObjectiveBar, {
-      turn: 'white', expected: 65,
-      mate: { type: 'mate', value: 5, winning_side: 'white' }, orientation: 'white',
+      turn: 'white',
+      expected: 65,
+      mate: { type: 'mate', value: 5, winning_side: 'white' },
+      orientation: 'white',
     }),
   );
   expect(html).toContain('balance-white-tag');

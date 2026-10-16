@@ -8,14 +8,47 @@ export function clampBotElo(elo: number): number {
   return Math.min(BOT_ELO_MAX, Math.max(BOT_ELO_MIN, Math.round(elo)));
 }
 export function eloOptions(value: number): number[] {
-  return [...new Set([...ELO_OPTIONS, value])].sort((a, b) => a - b);
+  return [...new Set([...ELO_OPTIONS, value])].toSorted((a, b) => a - b);
 }
-export function Rating({ value, onChange, id = 'bot-elo', label = 'Bot rating', disabled = false, inline = false }: { value: number; onChange: (value: number) => void; id?: string; label?: string; disabled?: boolean; inline?: boolean }) {
-  const select = <select id={id} aria-label={label} value={value} disabled={disabled} onChange={event => onChange(Number(event.target.value))}>
-    {eloOptions(value).map(elo => <option key={elo} value={elo}>{elo}</option>)}
-  </select>;
+export function Rating({
+  value,
+  onChange,
+  id = 'bot-elo',
+  label = 'Bot rating',
+  disabled = false,
+  inline = false,
+}: {
+  value: number;
+  onChange: (value: number) => void;
+  id?: string;
+  label?: string;
+  disabled?: boolean;
+  inline?: boolean;
+}) {
+  const select = (
+    <select
+      id={id}
+      aria-label={label}
+      value={value}
+      disabled={disabled}
+      onChange={event => onChange(Number(event.target.value))}
+    >
+      {eloOptions(value).map(elo => (
+        <option key={elo} value={elo}>
+          {elo}
+        </option>
+      ))}
+    </select>
+  );
   if (inline) return select;
-  return <label className="field"><span>{label}</span>{select}</label>;
+  // Nested native select: associated by containment (rule only sees input).
+  // oxlint-disable-next-line no-label-without-control
+  return (
+    <label className="field">
+      <span>{label}</span>
+      {select}
+    </label>
+  );
 }
 export async function copyText(text: string): Promise<boolean> {
   try {

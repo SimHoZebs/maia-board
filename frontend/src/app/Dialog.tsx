@@ -1,6 +1,14 @@
 import { useLayoutEffect, useRef, type MouseEvent, type ReactNode } from 'react';
 
-export function Dialog({ title, onCancel, children }: { title: string; onCancel: () => void; children: ReactNode }) {
+export function Dialog({
+  title,
+  onCancel,
+  children,
+}: {
+  title: string;
+  onCancel: () => void;
+  children: ReactNode;
+}) {
   const ref = useRef<HTMLDialogElement>(null);
   useLayoutEffect(() => {
     const dialog = ref.current!;
@@ -20,8 +28,25 @@ export function Dialog({ title, onCancel, children }: { title: string; onCancel:
     // so an exact-target check closes only outside the card.
     if (event.target === ref.current) onCancel();
   };
-  return <dialog ref={ref} className="dialog" aria-label={title} onClick={onBackdropClick} onCancel={event => { event.preventDefault(); onCancel(); }}>
-    <button type="button" className="dialog-close" aria-label="Close dialog" onClick={onCancel}>✕</button>
-    {children}
-  </dialog>;
+  return (
+    // Backdrop dismiss: exact-target check limits to outside the card.
+    // Keyboard path is the native cancel event + close button below.
+    /* oxlint-disable click-events-have-key-events, no-noninteractive-element-interactions */
+    <dialog
+      ref={ref}
+      className="dialog"
+      aria-label={title}
+      onClick={onBackdropClick}
+      onCancel={event => {
+        event.preventDefault();
+        onCancel();
+      }}
+    >
+      <button type="button" className="dialog-close" aria-label="Close dialog" onClick={onCancel}>
+        ✕
+      </button>
+      {children}
+    </dialog>
+    /* oxlint-enable click-events-have-key-events, no-noninteractive-element-interactions */
+  );
 }

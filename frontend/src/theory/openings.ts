@@ -15,7 +15,9 @@ const lineCache = new Map<string, LineOpenings | Promise<LineOpenings>>();
 
 function isMatch(value: unknown): value is OpeningMatch {
   if (!isRecord(value)) return false;
-  return Number.isInteger(value.ply) && typeof value.eco === 'string' && typeof value.name === 'string';
+  return (
+    Number.isInteger(value.ply) && typeof value.eco === 'string' && typeof value.name === 'string'
+  );
 }
 
 export async function fetchLineOpenings(
@@ -36,17 +38,20 @@ export async function fetchLineOpenings(
   const body: unknown = await response.json();
   // Shape gate is spec-driven (Orval zod from Huma). Match/flag coherence
   // stays below: filtered length equality and the book-length invariant.
-  if (!OpeningsResponseSchema.safeParse(body).success) throw new Error('Opening lookup returned an unexpected response.');
+  if (!OpeningsResponseSchema.safeParse(body).success)
+    throw new Error('Opening lookup returned an unexpected response.');
   if (!isRecord(body)) throw new Error('Opening lookup returned an unexpected response.');
   const { matches, book_flags } = body;
   if (!Array.isArray(matches)) throw new Error('Opening lookup returned an unexpected response.');
   const validatedMatches = matches.filter(isMatch);
-  if (validatedMatches.length !== matches.length) throw new Error('Opening lookup returned an unexpected response.');
+  if (validatedMatches.length !== matches.length)
+    throw new Error('Opening lookup returned an unexpected response.');
   if (!Array.isArray(book_flags) || book_flags.length !== moves.length) {
     throw new Error('Opening lookup returned an unexpected response.');
   }
   const validatedFlags = book_flags.filter((flag): flag is boolean => typeof flag === 'boolean');
-  if (validatedFlags.length !== book_flags.length) throw new Error('Opening lookup returned an unexpected response.');
+  if (validatedFlags.length !== book_flags.length)
+    throw new Error('Opening lookup returned an unexpected response.');
   return { matches: validatedMatches, bookFlags: validatedFlags };
 }
 
@@ -56,7 +61,12 @@ export function openingAt(matches: OpeningMatch[], atPly: number): Opening | nul
   let deepest: OpeningMatch | null = null;
   for (const match of matches) if (match.ply <= atPly && match.ply > 0) deepest = match;
   return deepest
-    ? { eco: deepest.eco, name: deepest.name, matchedPly: deepest.ply, isExact: deepest.ply === atPly }
+    ? {
+        eco: deepest.eco,
+        name: deepest.name,
+        matchedPly: deepest.ply,
+        isExact: deepest.ply === atPly,
+      }
     : null;
 }
 
@@ -70,20 +80,25 @@ export function useLineOpenings(
     const entry = lineCache.get(lineKey);
     return entry && !(entry instanceof Promise) ? entry : null;
   });
+  // lineKey covers moves+initialFen with stable string identity.
+  /* oxlint-disable exhaustive-deps */
   useEffect(() => {
     // A line change or unmount abandons this fetch: the lineKey guard drops
     // late arrivals so a new line never inherits another line's book.
     let cancelled = false;
     const entry = lineCache.get(lineKey);
     if (entry && !(entry instanceof Promise)) {
+      // Cache-hit sync: same value bails out, no loop.
+      // oxlint-disable-next-line set-state-in-effect
       setLine(entry);
       return;
     }
     const controller = new AbortController();
-    const pending = entry instanceof Promise ? entry : fetchLineOpenings(moves, initialFen, controller.signal);
+    const pending =
+      entry instanceof Promise ? entry : fetchLineOpenings(moves, initialFen, controller.signal);
     lineCache.set(lineKey, pending);
     void pending.then(
-      (result) => {
+      result => {
         if (lineCache.get(lineKey) === pending) lineCache.set(lineKey, result);
         if (!cancelled) setLine(result);
       },
@@ -97,8 +112,14 @@ export function useLineOpenings(
       controller.abort();
     };
   }, [lineKey]);
+  /* oxlint-enable exhaustive-deps */
   return useMemo(() => {
-    if (!line) return { opening: null, bookFlags: moves.map(() => false), matches: [] as OpeningMatch[] };
-    return { opening: openingAt(line.matches, atPly), bookFlags: line.bookFlags, matches: line.matches };
+    if (!line)
+      return { opening: null, bookFlags: moves.map(() => false), matches: [] as OpeningMatch[] };
+    return {
+      opening: openingAt(line.matches, atPly),
+      bookFlags: line.bookFlags,
+      matches: line.matches,
+    };
   }, [line, moves, atPly]);
 }

@@ -1,7 +1,7 @@
-import type { ReactNode } from "react";
-import { candidateSan } from "../shared/domain";
-import { CandidateList } from "./CandidateList";
-import { CandidateRow } from "./CandidateRow";
+import type { ReactNode } from 'react';
+import { candidateSan } from '../shared/domain';
+import { CandidateList } from './CandidateList';
+import { CandidateRow } from './CandidateRow';
 
 // Shared engine candidate list: both eval columns render the same
 // CandidateList + CandidateRow shape. Callers map their own response type
@@ -14,7 +14,14 @@ import { CandidateRow } from "./CandidateRow";
 export type EngineCandidateItem = { uci: string; metric: string; delta?: string };
 export type EngineCandidateHeaders = { metric: ReactNode; delta?: ReactNode; label: string };
 
-export function EngineCandidateList({ fen, played, hasMove, items, headers, onSelect }: {
+export function EngineCandidateList({
+  fen,
+  played,
+  hasMove,
+  items,
+  headers,
+  onSelect,
+}: {
   fen: string;
   played?: string;
   hasMove: boolean;
@@ -49,7 +56,7 @@ export function EngineCandidateList({ fen, played, hasMove, items, headers, onSe
             delta={candidate.delta}
             isPlayed={isPlayed}
             action={{
-              label: `Explore ${san}${isPlayed ? " (played)" : ""}${hasMove ? " from before this move" : ""}`,
+              label: `Explore ${san}${isPlayed ? ' (played)' : ''}${hasMove ? ' from before this move' : ''}`,
               onSelect: () => onSelect(candidate.uci),
             }}
           />

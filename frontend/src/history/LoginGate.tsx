@@ -7,7 +7,10 @@ import type { SessionSnapshot } from '../history/session';
 // logged-out visitor gets this screen instead of a board full of failing
 // requests. Lichess is the verified login; a display name mints a lightweight
 // local account on the same session primitive.
-export function LoginGate({ session, onLogin }: {
+export function LoginGate({
+  session,
+  onLogin,
+}: {
   session: SessionSnapshot;
   onLogin: (displayName: string) => Promise<void>;
 }) {
@@ -35,17 +38,34 @@ export function LoginGate({ session, onLogin }: {
       setBusy(false);
     }
   };
-  return <main className="login-gate" aria-label="Log in">
-    <h1>maia board</h1>
-    <p>Play, analyze, and keep your games on your own server. Log in first — your history belongs to your account.</p>
-    {session.error && <p role="alert">{session.error}</p>}
-    {error && <p role="alert">{error}</p>}
-    <div className="account-actions">
-      <Button variant="primary" onClick={startLichess} disabled={busy}>{busy ? 'Contacting Lichess…' : 'Log in with Lichess'}</Button>
-    </div>
-    <div className="login-local">
-      <label className="field">Display name<input value={name} maxLength={40} onChange={event => setName(event.target.value)} placeholder="Player" /></label>
-      <Button onClick={submit} disabled={busy}>{busy ? 'Logging in…' : 'Continue with a local name'}</Button>
-    </div>
-  </main>;
+  return (
+    <main className="login-gate" aria-label="Log in">
+      <h1>maia board</h1>
+      <p>
+        Play, analyze, and keep your games on your own server. Log in first — your history belongs
+        to your account.
+      </p>
+      {session.error && <p role="alert">{session.error}</p>}
+      {error && <p role="alert">{error}</p>}
+      <div className="account-actions">
+        <Button variant="primary" onClick={startLichess} disabled={busy}>
+          {busy ? 'Contacting Lichess…' : 'Log in with Lichess'}
+        </Button>
+      </div>
+      <div className="login-local">
+        <label className="field">
+          Display name
+          <input
+            value={name}
+            maxLength={40}
+            onChange={event => setName(event.target.value)}
+            placeholder="Player"
+          />
+        </label>
+        <Button onClick={submit} disabled={busy}>
+          {busy ? 'Logging in…' : 'Continue with a local name'}
+        </Button>
+      </div>
+    </main>
+  );
 }

@@ -1,18 +1,18 @@
-import { type Dispatch, type ReactNode } from "react";
-import type { Action, State } from "../state/index";
-import { useAccountName } from "../history/session";
-import { Rating } from "../board/BoardTools";
-import { Button, EngineSection, KeyMovesList } from "../components";
-import { Chess } from "chess.js";
-import type { Review } from "./useReview";
-import { describeMove } from "./reviewMetrics";
-import { deltaBaseline, deltaColumnTitle } from "../objective/winrate";
-import { buildKeyMoves } from "./keyMoves";
-import { bestLinePreview, playedCapture } from "../theory/material";
-import { verdictInputsForPly } from "../theory/theory";
-import { useLineOpenings } from "../theory/openings";
-import { ReviewIssues, ReviewSummary } from "./ReviewOverview";
-import { SkeletonList, SkeletonText } from "./ObjectiveBar";
+import { type Dispatch, type ReactNode } from 'react';
+import type { Action, State } from '../state/index';
+import { useAccountName } from '../history/session';
+import { Rating } from '../board/BoardTools';
+import { Button, EngineSection, KeyMovesList } from '../components';
+import { Chess } from 'chess.js';
+import type { Review } from './useReview';
+import { describeMove } from './reviewMetrics';
+import { deltaBaseline, deltaColumnTitle } from '../objective/winrate';
+import { buildKeyMoves } from './keyMoves';
+import { bestLinePreview, playedCapture } from '../theory/material';
+import { verdictInputsForPly } from '../theory/theory';
+import { useLineOpenings } from '../theory/openings';
+import { ReviewIssues, ReviewSummary } from './ReviewOverview';
+import { SkeletonList, SkeletonText } from './ObjectiveBar';
 
 // Footer action: the Analyze / Analyzed button owns the right
 // end of the bottom button row. While running it is replaced in place by the progress
@@ -82,25 +82,31 @@ export function MoveAnalysis({
   // "(played)". At the root, candidates describe the current position.
   const focus = ply - 1;
   const hasMove = focus >= 0;
-  const you = useAccountName() ?? "You";
+  const you = useAccountName() ?? 'You';
   // Two candidate lists: the display Elo's human-population list on the
   // left, the objective source on the right. Each list judges the displayed
   // move with "(played)" marking from its before-position; at the root the
   // current position's lists describe the position.
   const response = hasMove ? review.bot : review.botCurrent;
   const node = review.nodes[hasMove ? focus : ply];
-  const candidates = hasMove ? review.objectiveCandidates.focus : review.objectiveCandidates.current;
+  const candidates = hasMove
+    ? review.objectiveCandidates.focus
+    : review.objectiveCandidates.current;
   const insight = { fen: node.fen };
-  const played = hasMove
-    ? review.nodes[ply]?.uci ?? undefined
-    : undefined;
+  const played = hasMove ? (review.nodes[ply]?.uci ?? undefined) : undefined;
   const evaluation = hasMove ? review.focus : review.current;
   const afterEvaluation = hasMove ? review.evaluations[ply] : undefined;
   // Named book lines outrank engine grades in the verdict: theory is calmer
   // than low-depth scores in the opening, and the name needs no inference.
   // Terminal facts (mate, stalemate, repetition) outrank even the book name.
-  const { opening: lineOpening, bookFlags: lineBookFlags, matches: lineMatches } = useLineOpenings(review.timeline.moves, state.analysis.initialFen, ply);
-  const exactOpening = lineOpening?.isExact ? { eco: lineOpening.eco, name: lineOpening.name } : null;
+  const {
+    opening: lineOpening,
+    bookFlags: lineBookFlags,
+    matches: lineMatches,
+  } = useLineOpenings(review.timeline.moves, state.analysis.initialFen, ply);
+  const exactOpening = lineOpening?.isExact
+    ? { eco: lineOpening.eco, name: lineOpening.name }
+    : null;
   // Material consequence: the grading-lane walk rooted at the after-FEN
   // (bot-2400 tops, Stockfish-vetoed — never the Stockfish rank-1 PV, whose
   // first move the badge can grade as a mistake). Only cp-vs-cp
@@ -110,17 +116,23 @@ export function MoveAnalysis({
   // always has an exact referent; the button below spawns the same UCIs as a
   // branch rooted at the current ply.
   const quality = hasMove ? review.qualities[focus] : undefined;
-  const bestLine = hasMove && played && !exactOpening
-    && (quality?.label === 'Mistake' || quality?.label === 'Blunder')
-    && evaluation?.score.type === 'cp' && afterEvaluation?.score.type === 'cp'
-    && !evaluation.terminal && !afterEvaluation.terminal
-    ? bestLinePreview(
-      review.nodes[ply].fen,
-      review.objectiveBestLine.length ? review.objectiveBestLine : undefined,
-      review.nodes[focus].turn === 'white' ? 'white' : 'black',
-      state.bestLineWindow,
-      playedCapture(review.nodes[focus].fen, played),
-    ) : null;
+  const bestLine =
+    hasMove &&
+    played &&
+    !exactOpening &&
+    (quality?.label === 'Mistake' || quality?.label === 'Blunder') &&
+    evaluation?.score.type === 'cp' &&
+    afterEvaluation?.score.type === 'cp' &&
+    !evaluation.terminal &&
+    !afterEvaluation.terminal
+      ? bestLinePreview(
+          review.nodes[ply].fen,
+          review.objectiveBestLine.length ? review.objectiveBestLine : undefined,
+          review.nodes[focus].turn === 'white' ? 'white' : 'black',
+          state.bestLineWindow,
+          playedCapture(review.nodes[focus].fen, played),
+        )
+      : null;
   const materialNote = bestLine?.note ?? null;
   // Best move for pawn-note suppression: the highest-winrate objective
   // candidate when listed (max expected), else the grading best (objective
@@ -137,45 +149,46 @@ export function MoveAnalysis({
   // describeMove's rule tables own priority and wording. Mate-force reads the
   // before/after score pair; the only-move fact reads the raw engine grade
   // (Critical), which the translated display quality cannot recover.
-  const verdictFacts = hasMove && played
-    ? verdictInputsForPly({
-      beforeFen: review.nodes[focus].fen,
-      afterFen: review.nodes[ply].fen,
-      afterOutcome: review.nodes[ply].outcome,
-      san: review.nodes[ply].san ?? played,
-      playedUci: played,
-      ply,
-      quality,
-      rarity: review.rarities?.[focus],
-      opening: exactOpening,
-      openingMatches: lineMatches,
-      bookFlags: lineBookFlags,
-      initialFen: state.analysis.initialFen,
-      mover: review.nodes[focus].turn === 'white' ? 'white' : 'black',
-      bestRarity: review.bestRarities?.[focus],
-      rarity2400: review.rarity2400?.[focus],
-      materialNote,
-      bestUci,
-      beforeScore: evaluation?.score ?? null,
-      afterScore: afterEvaluation?.score ?? null,
-      isCritical: review.engineGrades?.[focus]?.label === 'Critical',
-      isTop: review.engineGrades?.[focus]?.label === 'Top',
-      // Previous ply for recapture-as-exchange framing: the UCI arriving at
-      // the before-position plus the FEN before it. Null at the game start.
-      prevUci: focus >= 1 ? (review.nodes[focus]?.uci || null) : null,
-      prevBeforeFen: focus >= 1 ? (review.nodes[focus - 1]?.fen ?? null) : null,
-    })
-    : null;
+  const verdictFacts =
+    hasMove && played
+      ? verdictInputsForPly({
+          beforeFen: review.nodes[focus].fen,
+          afterFen: review.nodes[ply].fen,
+          afterOutcome: review.nodes[ply].outcome,
+          san: review.nodes[ply].san ?? played,
+          playedUci: played,
+          ply,
+          quality,
+          rarity: review.rarities?.[focus],
+          opening: exactOpening,
+          openingMatches: lineMatches,
+          bookFlags: lineBookFlags,
+          initialFen: state.analysis.initialFen,
+          mover: review.nodes[focus].turn === 'white' ? 'white' : 'black',
+          bestRarity: review.bestRarities?.[focus],
+          rarity2400: review.rarity2400?.[focus],
+          materialNote,
+          bestUci,
+          beforeScore: evaluation?.score ?? null,
+          afterScore: afterEvaluation?.score ?? null,
+          isCritical: review.engineGrades?.[focus]?.label === 'Critical',
+          isTop: review.engineGrades?.[focus]?.label === 'Top',
+          // Previous ply for recapture-as-exchange framing: the UCI arriving at
+          // the before-position plus the FEN before it. Null at the game start.
+          prevUci: focus >= 1 ? review.nodes[focus]?.uci || null : null,
+          prevBeforeFen: focus >= 1 ? (review.nodes[focus - 1]?.fen ?? null) : null,
+        })
+      : null;
   const verdict = verdictFacts ? describeMove(verdictFacts) : null;
   const exploreBestLine = () => {
     if (!bestLine) return;
-    dispatch({ type: "explore-line", ucis: bestLine.ucis });
+    dispatch({ type: 'explore-line', ucis: bestLine.ucis });
   };
   // Exploring a candidate means playing it instead of x, so step back to
   // x's before-position first: the reducer branches from the viewed position.
   const exploreFromFocus = (uci: string) => {
-    if (hasMove) dispatch({ type: "view", ply: focus });
-    dispatch({ type: "explore", uci });
+    if (hasMove) dispatch({ type: 'view', ply: focus });
+    dispatch({ type: 'explore', uci });
   };
   // Loading signals: a missing result with no recorded error is in-flight
   // (foreground fetch, restore, or batch) rather than genuinely absent. The
@@ -195,7 +208,8 @@ export function MoveAnalysis({
     }
   }
   const displayLoading = !response && !hasError && !terminalPosition && !tooLong;
-  const objectiveLoading = !candidates && !node.outcome && !hasError && !terminalPosition && !tooLong;
+  const objectiveLoading =
+    !candidates && !node.outcome && !hasError && !terminalPosition && !tooLong;
   // The verdict needs both sides of the move; the foreground lane fetches
   // both, restore/batch fill the rest. Render as soon as the pair is
   // present regardless of batch progress (progress surfaces separately via
@@ -212,9 +226,10 @@ export function MoveAnalysis({
   const beforeExpected = review.objective[beforePly]?.expected ?? null;
   const displayListed = response?.top_moves.slice(0, 5) ?? [];
   const objectiveEntries = candidates?.entries ?? [];
-  const bestListed = objectiveEntries.length > 0
-    ? Math.max(...objectiveEntries.map(candidate => candidate.expected))
-    : null;
+  const bestListed =
+    objectiveEntries.length > 0
+      ? Math.max(...objectiveEntries.map(candidate => candidate.expected))
+      : null;
   const { kind } = deltaBaseline(beforeExpected, bestListed);
   const keyMoves = buildKeyMoves({
     sfBest: evaluation?.best_move ?? null,
@@ -233,7 +248,11 @@ export function MoveAnalysis({
   const canRender = (!!response || !!candidates) && keyMoves.length > 0;
   return (
     <>
-      {!hasMove && <p className="move-verdict" role="status">Current position — explore a candidate or step forward to review a move.</p>}
+      {!hasMove && (
+        <p className="move-verdict" role="status">
+          Current position — explore a candidate or step forward to review a move.
+        </p>
+      )}
       {verdict ? (
         <p className="move-verdict" role="status">
           {verdict}
@@ -259,16 +278,14 @@ export function MoveAnalysis({
         titleId="insight-title"
         title={
           <>
-            {you}:{" "}
+            {you}:{' '}
             <Rating
               inline
               id="analysis-rating"
-              label={review.botLocked ? "Bot rating (game Elo)" : "Bot rating"}
+              label={review.botLocked ? 'Bot rating (game Elo)' : 'Bot rating'}
               value={review.botLocked ? review.botElo : state.analysisSettings.botElo}
               disabled={review.botLocked || review.progress?.running}
-              onChange={(botElo) =>
-                dispatch({ type: "analysis-settings", settings: { botElo } })
-              }
+              onChange={botElo => dispatch({ type: 'analysis-settings', settings: { botElo } })}
             />
           </>
         }
@@ -325,34 +342,29 @@ export function InsightPanel({
   const inspect = (beforePly: number) => {
     // Issues name the before-position; the verdict now renders after the
     // move, so land one ply forward.
-    dispatch({ type: "view", ply: beforePly + 1 });
-    document.getElementById("board")?.scrollIntoView({ block: "start" });
+    dispatch({ type: 'view', ply: beforePly + 1 });
+    document.getElementById('board')?.scrollIntoView({ block: 'start' });
   };
   // Graph points move the viewed position without leaving the analysis.
   const viewInPlace = (ply: number) => {
-    dispatch({ type: "view", ply });
+    dispatch({ type: 'view', ply });
   };
-  const showControls =
-    review.tooLong ||
-    !!review.error ||
-    !!review.progress?.failed;
+  const showControls = review.tooLong || !!review.error || !!review.progress?.failed;
   const userSide = state.analysis.ownGame ? state.analysis.perspective : undefined;
   const branch = state.analysis.branchFromPly !== null;
   const ply = state.analysis.index;
   return (
     <aside className="panel insight-panel" aria-label="Game analysis">
       {showControls && (
-      <div className="analysis-section analysis-controls-section">
-        {review.tooLong && (
-          <p role="status">Review supports up to 256 moves (plies).</p>
-        )}
-        {(review.error || !!review.progress?.failed) && (
-          <p role="alert">
-            {review.error || `${review.progress!.failed} analysis jobs failed.`}{" "}
-            <Button onClick={review.retry}>Retry failed</Button>
-          </p>
-        )}
-      </div>
+        <div className="analysis-section analysis-controls-section">
+          {review.tooLong && <p role="status">Review supports up to 256 moves (plies).</p>}
+          {(review.error || !!review.progress?.failed) && (
+            <p role="alert">
+              {review.error || `${review.progress!.failed} analysis jobs failed.`}{' '}
+              <Button onClick={review.retry}>Retry failed</Button>
+            </p>
+          )}
+        </div>
       )}
       <div className="analysis-section analysis-section--summary">
         <MoveAnalysis state={state} dispatch={dispatch} review={review} />
@@ -365,12 +377,7 @@ export function InsightPanel({
         />
       </div>
       <div className="analysis-section">
-        <ReviewIssues
-          review={review}
-          userSide={userSide}
-          branch={branch}
-          onInspect={inspect}
-        />
+        <ReviewIssues review={review} userSide={userSide} branch={branch} onInspect={inspect} />
       </div>
       <div className="analysis-section analysis-footer-section footer-row">
         <div className="footer-actions">{children}</div>

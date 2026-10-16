@@ -1,10 +1,24 @@
 import { Chess, type Square } from 'chess.js';
 import { applyUci, findKingSquare, uciFromMove, START_FEN } from '../shared/domain';
-import { exchangePlayedClaim, forkPlayedClaim, pinPlayedClaim, playedMoveGainNote, skewerPlayedClaim, type Side } from './material';
+import {
+  exchangePlayedClaim,
+  forkPlayedClaim,
+  pinPlayedClaim,
+  playedMoveGainNote,
+  skewerPlayedClaim,
+  type Side,
+} from './material';
 import { createMoveFacts, type MoveFacts } from './moveFacts';
 import { openingAt, type OpeningMatch } from './openings';
 import type { DomainOutcome } from '../shared/domain';
-import { isMateFor, isPraiseLabel, type OpeningRef, type Quality, type Rarity, type Score } from '../review/reviewMetrics';
+import {
+  isMateFor,
+  isPraiseLabel,
+  type OpeningRef,
+  type Quality,
+  type Rarity,
+  type Score,
+} from '../review/reviewMetrics';
 
 // Algorithmically detectable chess theory for the move verdict. Every helper
 // is pure and never throws: invalid FENs, illegal moves, and out-of-range
@@ -20,7 +34,10 @@ export type NoveltyRef = { priorName: string; priorEco: string };
 // FEN cannot supply). Draws classify by elimination over FEN-only
 // predicates; anything unrecognized stays a generic repetition draw rather
 // than claiming a specific rule.
-export function classifyTerminal(afterFen: string, afterOutcome: DomainOutcome | null): TerminalKind | null {
+export function classifyTerminal(
+  afterFen: string,
+  afterOutcome: DomainOutcome | null,
+): TerminalKind | null {
   if (!afterOutcome) return null;
   if (afterOutcome.kind === 'checkmate') return 'checkmate';
   let game: Chess;
@@ -83,11 +100,13 @@ export function matePattern(args: {
   const mover = before.turn();
   // Fool's mate: Black mates on h4 within the first five plies against an
   // unmoved White king.
-  if (mover === 'b' && san === 'Qh4#' && ply <= 5 && findKingSquare(after, 'w') === 'e1') return "Fool's mate";
+  if (mover === 'b' && san === 'Qh4#' && ply <= 5 && findKingSquare(after, 'w') === 'e1')
+    return "Fool's mate";
   // Scholar's mate family: early queen mate on f7/f2/h7/h2.
   if (
     ply <= 9 &&
-    ((mover === 'w' && (san === 'Qxf7#' || san === 'Qxh7#')) || (mover === 'b' && (san === 'Qxf2#' || san === 'Qxh2#')))
+    ((mover === 'w' && (san === 'Qxf7#' || san === 'Qxh7#')) ||
+      (mover === 'b' && (san === 'Qxf2#' || san === 'Qxh2#')))
   ) {
     return "Scholar's mate";
   }
@@ -183,7 +202,11 @@ export function noveltyRef(
 // underpromotion does not. The from/to rewrite covers capture
 // promotions (exd8=N) as well as pushes. Both gates live here so a
 // caller cannot assert avoidance while holding a stalemating position.
-export function underpromotionAvoidsStalemate(beforeFen: string, playedUci: string, afterFen: string): boolean {
+export function underpromotionAvoidsStalemate(
+  beforeFen: string,
+  playedUci: string,
+  afterFen: string,
+): boolean {
   const match = /^([a-h][1-8])([a-h][1-8])([qrbn])$/.exec(playedUci);
   if (!match || match[3] === 'q') return false;
   try {
@@ -357,11 +380,13 @@ type PositiveContext = Pick<
   'beforeFen' | 'afterFen' | 'playedUci' | 'mover' | 'beforeScore' | 'afterScore' | 'isCritical'
 > & { facts: MoveFacts | null };
 const POSITIVE_CANDIDATES: { name: string; note: (ctx: PositiveContext) => string | null }[] = [
-  { name: 'forces-mate',
+  {
+    name: 'forces-mate',
     note: ({ beforeScore, afterScore, mover }) => {
       const mateIn = forcesMateIn(beforeScore, afterScore, mover);
       return mateIn === null ? null : `Forces mate in ${mateIn}.`;
-    } },
+    },
+  },
   { name: 'only-move', note: ({ isCritical }) => (isCritical ? 'The only move to hold.' : null) },
   { name: 'promotion', note: ({ beforeFen, playedUci }) => promotionNote(beforeFen, playedUci) },
   { name: 'skewer', note: ({ facts, mover }) => (facts ? skewerPlayedClaim(facts, mover) : null) },
@@ -370,17 +395,31 @@ const POSITIVE_CANDIDATES: { name: string; note: (ctx: PositiveContext) => strin
   // geometry scans: every capturing move skips straight to the
   // exchange/gain story. Skewer keeps its scan — capturing checkers own the
   // skewer story, not the gain.
-  { name: 'fork', note: ({ facts, mover }) => (facts && !facts.captured && !facts.promotion ? forkPlayedClaim(facts, mover) : null) },
+  {
+    name: 'fork',
+    note: ({ facts, mover }) =>
+      facts && !facts.captured && !facts.promotion ? forkPlayedClaim(facts, mover) : null,
+  },
   { name: 'en-passant', note: ({ beforeFen, playedUci }) => enPassantNote(beforeFen, playedUci) },
-  { name: 'pin', note: ({ facts, mover }) => (facts && !facts.captured && !facts.promotion ? pinPlayedClaim(facts, mover) : null) },
-  { name: 'gain',
+  {
+    name: 'pin',
+    note: ({ facts, mover }) =>
+      facts && !facts.captured && !facts.promotion ? pinPlayedClaim(facts, mover) : null,
+  },
+  {
+    name: 'gain',
     note: ({ facts, beforeFen, afterFen, playedUci, mover }) =>
-      (facts ? exchangePlayedClaim(facts) : null) ?? playedMoveGainNote(beforeFen, afterFen, playedUci, mover) },
+      (facts ? exchangePlayedClaim(facts) : null) ??
+      playedMoveGainNote(beforeFen, afterFen, playedUci, mover),
+  },
   // Parry sits below the material and shape notes so dual-truth moves keep
   // their existing verdicts (a parrying capture stays a gain story), and
   // above escape as the more specific defensive claim.
-  { name: 'parries-mate',
-    note: ({ beforeFen, playedUci, afterScore, mover }) => parriesMateNote(beforeFen, playedUci, afterScore, mover) },
+  {
+    name: 'parries-mate',
+    note: ({ beforeFen, playedUci, afterScore, mover }) =>
+      parriesMateNote(beforeFen, playedUci, afterScore, mover),
+  },
   { name: 'escape', note: ({ beforeFen }) => escapeNote(beforeFen) },
 ];
 
@@ -408,7 +447,11 @@ function pawnFileCounts(fen: string, color: 'w' | 'b'): number[] | null {
 // mover's own pawns: newly doubled files and newly isolated pawns. Null on
 // bad FENs. Counts may be negative when a move removes damage; callers only
 // report positive values.
-function newPawnDamage(beforeFen: string, afterFen: string, mover: Side): { doubled: number; isolated: number } | null {
+function newPawnDamage(
+  beforeFen: string,
+  afterFen: string,
+  mover: Side,
+): { doubled: number; isolated: number } | null {
   const color = mover === 'white' ? 'w' : 'b';
   const before = pawnFileCounts(beforeFen, color);
   const after = pawnFileCounts(afterFen, color);
@@ -417,11 +460,15 @@ function newPawnDamage(beforeFen: string, afterFen: string, mover: Side): { doub
   const isolated = (counts: number[]): number => {
     let total = 0;
     counts.forEach((count, file) => {
-      if (count > 0 && (counts[file - 1] ?? 0) === 0 && (counts[file + 1] ?? 0) === 0) total += count;
+      if (count > 0 && (counts[file - 1] ?? 0) === 0 && (counts[file + 1] ?? 0) === 0)
+        total += count;
     });
     return total;
   };
-  return { doubled: doubled(after) - doubled(before), isolated: isolated(after) - isolated(before) };
+  return {
+    doubled: doubled(after) - doubled(before),
+    isolated: isolated(after) - isolated(before),
+  };
 }
 
 // New pawn-structure damage from this move, observed on the mover's own
@@ -432,7 +479,8 @@ export function pawnDamageNote(beforeFen: string, afterFen: string, mover: Side)
   if (!damage) return null;
   const parts: string[] = [];
   if (damage.doubled > 0) parts.push(damage.doubled === 1 ? 'Doubles a pawn.' : 'Doubles pawns.');
-  if (damage.isolated > 0) parts.push(damage.isolated === 1 ? 'Isolates a pawn.' : 'Isolates pawns.');
+  if (damage.isolated > 0)
+    parts.push(damage.isolated === 1 ? 'Isolates a pawn.' : 'Isolates pawns.');
   return parts.length ? parts.join(' ') : null;
 }
 
@@ -589,7 +637,8 @@ export function verdictInputsForPly(inputs: VerdictInputs): VerdictFacts {
     isCritical,
   } = inputs;
   const terminal = classifyTerminal(afterFen, afterOutcome);
-  const matePatternName = terminal === 'checkmate' ? matePattern({ beforeFen, playedUci, san, ply, afterFen }) : null;
+  const matePatternName =
+    terminal === 'checkmate' ? matePattern({ beforeFen, playedUci, san, ply, afterFen }) : null;
   const deadDraw = terminal === null && isKnownDeadDraw(afterFen);
   const underpromotionAvoids =
     terminal === null && !deadDraw && underpromotionAvoidsStalemate(beforeFen, playedUci, afterFen);
@@ -606,7 +655,9 @@ export function verdictInputsForPly(inputs: VerdictInputs): VerdictFacts {
     rarity.label === 'Unknown';
   const novelty = suppressNovelty ? null : noveltyRef(openingMatches, bookFlags, ply, initialFen);
   const pawnNote =
-    !terminal && !materialNote && (label === 'Blunder' || label === 'Mistake' || label === 'Inaccuracy')
+    !terminal &&
+    !materialNote &&
+    (label === 'Blunder' || label === 'Mistake' || label === 'Inaccuracy')
       ? pawnDamageNoteSkippingBest(beforeFen, afterFen, mover, playedUci, inputs.bestUci)
       : null;
   // Positive why: the first non-null POSITIVE_CANDIDATES entry wins (see
@@ -618,7 +669,16 @@ export function verdictInputsForPly(inputs: VerdictInputs): VerdictFacts {
   if (praise && terminal === null && !deadDraw && !underpromotionAvoids && !opening) {
     const { prevUci, prevBeforeFen } = inputs;
     const facts = createMoveFacts({ beforeFen, playedUci, mover, prevBeforeFen, prevUci });
-    const ctx: PositiveContext = { beforeFen, afterFen, playedUci, mover, beforeScore, afterScore, isCritical, facts };
+    const ctx: PositiveContext = {
+      beforeFen,
+      afterFen,
+      playedUci,
+      mover,
+      beforeScore,
+      afterScore,
+      isCritical,
+      facts,
+    };
     for (const candidate of POSITIVE_CANDIDATES) {
       positiveNote = candidate.note(ctx);
       if (positiveNote) break;
@@ -632,8 +692,11 @@ export function verdictInputsForPly(inputs: VerdictInputs): VerdictFacts {
   // Inaccuracy never carries a material note, so it never earns a pin.
   let pinClaim: string | null = null;
   const needsPin =
-    terminal === null && !deadDraw && !underpromotionAvoids && !opening &&
-    ((label === 'Blunder' || label === 'Mistake') && !!materialNote || label === 'Allowed mate');
+    terminal === null &&
+    !deadDraw &&
+    !underpromotionAvoids &&
+    !opening &&
+    (((label === 'Blunder' || label === 'Mistake') && !!materialNote) || label === 'Allowed mate');
   if (needsPin) {
     const { prevUci, prevBeforeFen } = inputs;
     const facts = createMoveFacts({ beforeFen, playedUci, mover, prevBeforeFen, prevUci });

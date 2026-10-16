@@ -17,7 +17,10 @@ describe('analysis URLs', () => {
   });
   it('round-trips custom starts including move-less positions', () => {
     const fen = '4k3/8/8/8/8/8/4P3/4K3 b - - 0 12';
-    expect(parseAnalysisSearch(analysisSearch({ initialFen: fen, moves: [] }))).toEqual({ initialFen: fen, moves: [] });
+    expect(parseAnalysisSearch(analysisSearch({ initialFen: fen, moves: [] }))).toEqual({
+      initialFen: fen,
+      moves: [],
+    });
     const line = { initialFen: fen, moves: ['e8d7', 'e2e4'] };
     const parsed = parseAnalysisSearch(analysisSearch(line));
     expect(parsed).toEqual(line);
@@ -29,8 +32,23 @@ describe('analysis URLs', () => {
     expect(parseAnalysisSearch('?moves=e2e5')).toBeUndefined();
   });
   it('compares lines by normalized content', () => {
-    expect(sameLine({ initialFen: START_FEN, moves: ['e2e4'] }, { initialFen: START_FEN, moves: ['e2e4'] })).toBe(true);
-    expect(sameLine({ initialFen: START_FEN, moves: ['e2e4'] }, { initialFen: START_FEN, moves: ['d2d4'] })).toBe(false);
-    expect(sameLine({ initialFen: START_FEN, moves: [] }, { initialFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', moves: [] })).toBe(true);
+    expect(
+      sameLine(
+        { initialFen: START_FEN, moves: ['e2e4'] },
+        { initialFen: START_FEN, moves: ['e2e4'] },
+      ),
+    ).toBe(true);
+    expect(
+      sameLine(
+        { initialFen: START_FEN, moves: ['e2e4'] },
+        { initialFen: START_FEN, moves: ['d2d4'] },
+      ),
+    ).toBe(false);
+    expect(
+      sameLine(
+        { initialFen: START_FEN, moves: [] },
+        { initialFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', moves: [] },
+      ),
+    ).toBe(true);
   });
 });

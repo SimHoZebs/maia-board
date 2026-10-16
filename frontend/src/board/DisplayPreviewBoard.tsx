@@ -22,17 +22,34 @@ export type DisplayPreview = {
 // draws nodes[ply+1].uci on nodes[ply].fen vs nodes[ply].uci on nodes[ply].fen.
 export const DEMO_BEFORE_FEN = '4k3/8/8/8/8/8/4P3/4K3 w - - 0 1';
 export const DEMO_AFTER_FEN = '4k3/8/8/8/4P3/8/8/4K3 b - - 0 1';
-const DEMO_LASTMOVE: Key[] = [parseKey('e2'), parseKey('e4')].filter((key): key is Key => key !== undefined);
+const DEMO_LASTMOVE: Key[] = [parseKey('e2'), parseKey('e4')].filter(
+  (key): key is Key => key !== undefined,
+);
 
-function PreviewBoard({ orientation, coordinatesOnSquares, arrows, fen, turnColor, lastMove }: {
-  orientation: Color; coordinatesOnSquares: boolean; arrows: ArrowSettings; fen: string; turnColor: Color; lastMove?: Key[];
+function PreviewBoard({
+  orientation,
+  coordinatesOnSquares,
+  arrows,
+  fen,
+  turnColor,
+  lastMove,
+}: {
+  orientation: Color;
+  coordinatesOnSquares: boolean;
+  arrows: ArrowSettings;
+  fen: string;
+  turnColor: Color;
+  lastMove?: Key[];
 }) {
   const container = useRef<HTMLDivElement>(null);
   // Mount-once per settings renderKey: the parent remounts via key, so the
   // constructor always sees fresh brushes/shapes (arrowheads are append-only
-  // defs that a live update would not repaint).
+  // defs that a live update would not repaint). Mount-once: updates flow
+  // through the imperative board API.
+  /* oxlint-disable exhaustive-deps */
   useLayoutEffect(() => {
-    const board = Chessground(container.current!, {
+    const element = container.current!;
+    const board = Chessground(element, {
       fen: fen,
       orientation,
       turnColor: turnColor,
@@ -57,9 +74,17 @@ function PreviewBoard({ orientation, coordinatesOnSquares, arrows, fen, turnColo
         ),
       },
     });
-    return () => { board.destroy(); container.current?.replaceChildren(); };
+    return () => {
+      board.destroy();
+      element.replaceChildren();
+    };
   }, []);
-  return <div className="display-preview-board"><div ref={container} /></div>;
+  /* oxlint-enable exhaustive-deps */
+  return (
+    <div className="display-preview-board">
+      <div ref={container} />
+    </div>
+  );
 }
 
 // Sliced view: Chessground always renders the full 8x8 (no crop option), so
@@ -67,23 +92,52 @@ function PreviewBoard({ orientation, coordinatesOnSquares, arrows, fen, turnColo
 // percentages of the window (one display square = 25%), never pixels, so they
 // survive square-size changes. The window tracks the demo action per
 // orientation: files d-g x ranks 1-4 White-side, files c-f x ranks 1-4 Black-side.
-function SlicedBoard({ orientation, coordinatesOnSquares, arrows, basis }: {
-  orientation: Color; coordinatesOnSquares: boolean; arrows: ArrowSettings; basis: ArrowBasis;
+function SlicedBoard({
+  orientation,
+  coordinatesOnSquares,
+  arrows,
+  basis,
+}: {
+  orientation: Color;
+  coordinatesOnSquares: boolean;
+  arrows: ArrowSettings;
+  basis: ArrowBasis;
 }) {
   const past = basis === 'past';
   const renderKey = JSON.stringify([orientation, coordinatesOnSquares, arrows, basis]);
-  return <div className="display-slice-window" aria-hidden="true">
-    <div className={`display-slice-inner slice-${orientation}`}>
-      <PreviewBoard key={renderKey} orientation={orientation} coordinatesOnSquares={coordinatesOnSquares} arrows={arrows}
-        fen={past ? DEMO_AFTER_FEN : DEMO_BEFORE_FEN} turnColor={past ? 'black' : 'white'} lastMove={past ? DEMO_LASTMOVE : undefined} />
+  return (
+    <div className="display-slice-window" aria-hidden="true">
+      <div className={`display-slice-inner slice-${orientation}`}>
+        <PreviewBoard
+          key={renderKey}
+          orientation={orientation}
+          coordinatesOnSquares={coordinatesOnSquares}
+          arrows={arrows}
+          fen={past ? DEMO_AFTER_FEN : DEMO_BEFORE_FEN}
+          turnColor={past ? 'black' : 'white'}
+          lastMove={past ? DEMO_LASTMOVE : undefined}
+        />
+      </div>
     </div>
-  </div>;
+  );
 }
 
-export function DisplayBoardPreview({ orientation, coordinatesOnSquares, basis, arrows }: DisplayPreview) {
+export function DisplayBoardPreview({
+  orientation,
+  coordinatesOnSquares,
+  basis,
+  arrows,
+}: DisplayPreview) {
   // Auto has no game to follow here, so the preview pins White-side.
   const boardOrientation: Color = orientation === 'black' ? 'black' : 'white';
-  return <div className="setting-preview display-preview" aria-hidden="true">
-    <SlicedBoard orientation={boardOrientation} coordinatesOnSquares={coordinatesOnSquares} arrows={arrows} basis={basis} />
-  </div>;
+  return (
+    <div className="setting-preview display-preview" aria-hidden="true">
+      <SlicedBoard
+        orientation={boardOrientation}
+        coordinatesOnSquares={coordinatesOnSquares}
+        arrows={arrows}
+        basis={basis}
+      />
+    </div>
+  );
 }

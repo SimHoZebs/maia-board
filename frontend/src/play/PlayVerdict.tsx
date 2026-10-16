@@ -11,7 +11,11 @@ import type { PlayFeedback } from '../review/useReviewPipeline';
 // verdict shows on the user's move and clears on the AI reply. Hidden from
 // assistive tech: there is no content to announce.
 function VerdictPlaceholder() {
-  return <p className="move-verdict play-verdict-empty" aria-hidden="true">{'\u00a0'}</p>;
+  return (
+    <p className="move-verdict play-verdict-empty" aria-hidden="true">
+      {'\u00a0'}
+    </p>
+  );
 }
 
 // In-play verdict line, rendered under the move list when the option is on.
@@ -21,7 +25,11 @@ function VerdictPlaceholder() {
 export function PlayVerdict({ state, feedback }: { state: State; feedback: PlayFeedback }) {
   const moves = state.play.moves;
   const ply = state.viewedPly ?? moves.length;
-  const { opening: lineOpening, bookFlags: lineBookFlags, matches: lineMatches } = useLineOpenings(moves, START_FEN, ply);
+  const {
+    opening: lineOpening,
+    bookFlags: lineBookFlags,
+    matches: lineMatches,
+  } = useLineOpenings(moves, START_FEN, ply);
   if (!state.playVerdict || !feedback.active) return null;
   const before = ply - 1;
   // Reserve the verdict line even before the first move or while the
@@ -45,17 +53,30 @@ export function PlayVerdict({ state, feedback }: { state: State; feedback: PlayF
   const evaluation = feedback.evaluations[before];
   const afterEvaluation = feedback.evaluations[ply];
   const mover = beforeNode.turn === 'white' ? 'white' : 'black';
-  const exactOpening = lineOpening?.isExact ? { eco: lineOpening.eco, name: lineOpening.name } : null;
+  const exactOpening = lineOpening?.isExact
+    ? { eco: lineOpening.eco, name: lineOpening.name }
+    : null;
   // Grading-lane walk (bot-2400 tops, Stockfish-vetoed) instead of the
   // Stockfish rank-1 PV, so the suggestion never starts with a move the
   // badge grades as a mistake. PlayVerdict renders the note only (no
   // explore button); the walk converges as frontier rows land.
-  const materialNote = quality && played && !exactOpening
-    && (quality.label === 'Mistake' || quality.label === 'Blunder')
-    && evaluation?.score.type === 'cp' && afterEvaluation?.score.type === 'cp'
-    && !evaluation.terminal && !afterEvaluation.terminal
-    ? bestLinePreview(afterNode.fen, feedback.objectiveBestLine.length ? feedback.objectiveBestLine : undefined, mover, state.bestLineWindow, playedCapture(beforeNode.fen, played))?.note ?? null
-    : null;
+  const materialNote =
+    quality &&
+    played &&
+    !exactOpening &&
+    (quality.label === 'Mistake' || quality.label === 'Blunder') &&
+    evaluation?.score.type === 'cp' &&
+    afterEvaluation?.score.type === 'cp' &&
+    !evaluation.terminal &&
+    !afterEvaluation.terminal
+      ? (bestLinePreview(
+          afterNode.fen,
+          feedback.objectiveBestLine.length ? feedback.objectiveBestLine : undefined,
+          mover,
+          state.bestLineWindow,
+          playedCapture(beforeNode.fen, played),
+        )?.note ?? null)
+      : null;
   const facts = verdictInputsForPly({
     beforeFen: beforeNode.fen,
     afterFen: afterNode.fen,
@@ -80,11 +101,16 @@ export function PlayVerdict({ state, feedback }: { state: State; feedback: PlayF
     beforeScore: evaluation?.score ?? null,
     afterScore: afterEvaluation?.score ?? null,
     isCritical: feedback.engineGrades[before]?.label === 'Critical',
-    prevUci: before >= 1 ? (nodes[before]?.uci || null) : null,
+    prevUci: before >= 1 ? nodes[before]?.uci || null : null,
     prevBeforeFen: before >= 1 ? (nodes[before - 1]?.fen ?? null) : null,
   });
   const verdict = describeMove(facts);
-  if (verdict) return <p className="move-verdict" role="status">{verdict}</p>;
+  if (verdict)
+    return (
+      <p className="move-verdict" role="status">
+        {verdict}
+      </p>
+    );
   const tooLong = timeline.moves.length > 256;
   const hasError = !!feedback.error;
   const isUserMove = mover === state.play.settings.userColor;

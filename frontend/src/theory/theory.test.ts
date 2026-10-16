@@ -63,7 +63,9 @@ describe('classifyTerminal', () => {
 });
 
 describe('matePattern', () => {
-  const after = (moves: string[]): { beforeFen: string; afterFen: string; san: string; ply: number } => {
+  const after = (
+    moves: string[],
+  ): { beforeFen: string; afterFen: string; san: string; ply: number } => {
     const game = new Chess();
     moves.slice(0, -1).forEach(move => game.move(move));
     const beforeFen = game.fen();
@@ -132,10 +134,19 @@ describe('matePattern', () => {
       }),
     ).toBeNull();
     // Non-mates never name patterns, and bad FENs stay silent.
-    expect(matePattern({ beforeFen: START_FEN, playedUci: 'e2e4', san: 'e4', ply: 1, afterFen: START_FEN })).toBeNull();
-    expect(matePattern({ beforeFen: 'bad', playedUci: 'e2e4', san: 'e4', ply: 1, afterFen: 'bad' })).toBeNull();
+    expect(
+      matePattern({
+        beforeFen: START_FEN,
+        playedUci: 'e2e4',
+        san: 'e4',
+        ply: 1,
+        afterFen: START_FEN,
+      }),
+    ).toBeNull();
+    expect(
+      matePattern({ beforeFen: 'bad', playedUci: 'e2e4', san: 'e4', ply: 1, afterFen: 'bad' }),
+    ).toBeNull();
   });
-
 });
 
 describe('isKnownDeadDraw', () => {
@@ -207,10 +218,18 @@ describe('pawnDamageNote', () => {
       ),
     ).toBe('Doubles a pawn.');
     expect(
-      pawnDamageNote('4k3/8/8/8/8/2p5/PP1PP3/4K3 w - - 0 1', '4k3/8/8/8/8/2P5/P2PP3/4K3 b - - 0 1', 'white'),
+      pawnDamageNote(
+        '4k3/8/8/8/8/2p5/PP1PP3/4K3 w - - 0 1',
+        '4k3/8/8/8/8/2P5/P2PP3/4K3 b - - 0 1',
+        'white',
+      ),
     ).toBe('Isolates a pawn.');
     expect(
-      pawnDamageNote('4k3/8/8/8/8/2p5/PPPP4/4K3 w - - 0 1', '4k3/8/8/8/8/2P5/P1PP4/4K3 b - - 0 1', 'white'),
+      pawnDamageNote(
+        '4k3/8/8/8/8/2p5/PPPP4/4K3 w - - 0 1',
+        '4k3/8/8/8/8/2P5/P1PP4/4K3 b - - 0 1',
+        'white',
+      ),
     ).toBe('Doubles a pawn. Isolates a pawn.');
   });
 
@@ -225,12 +244,16 @@ describe('pawnDamageNoteSkippingBest', () => {
   const doubledAfter = 'rnbqkbnr/pppp1ppp/8/3PP3/8/8/PPP1PPPP/RNBQKBNR b KQkq - 0 2';
 
   it('stays silent when the played move is the best move', () => {
-    expect(pawnDamageNoteSkippingBest(doubledBefore, doubledAfter, 'white', 'd4e5', 'd4e5')).toBeNull();
+    expect(
+      pawnDamageNoteSkippingBest(doubledBefore, doubledAfter, 'white', 'd4e5', 'd4e5'),
+    ).toBeNull();
   });
 
   it('keeps the note when the best is a quiet alternative', () => {
     // g1f3 is legal from the doubled position and touches no pawns.
-    expect(pawnDamageNoteSkippingBest(doubledBefore, doubledAfter, 'white', 'd4e5', 'g1f3')).toBe('Doubles a pawn.');
+    expect(pawnDamageNoteSkippingBest(doubledBefore, doubledAfter, 'white', 'd4e5', 'g1f3')).toBe(
+      'Doubles a pawn.',
+    );
   });
 
   it('stays silent when a different best move incurs the same doubling', () => {
@@ -238,7 +261,9 @@ describe('pawnDamageNoteSkippingBest', () => {
     const before = '4k3/8/8/2p1p3/3P4/8/2P1P3/4K3 w - - 0 1';
     const afterDxc5 = new Chess(before);
     afterDxc5.move({ from: 'd4', to: 'c5' });
-    expect(pawnDamageNote(before, afterDxc5.fen(), 'white')).toBe('Doubles a pawn. Isolates pawns.');
+    expect(pawnDamageNote(before, afterDxc5.fen(), 'white')).toBe(
+      'Doubles a pawn. Isolates pawns.',
+    );
     expect(pawnDamageNoteSkippingBest(before, afterDxc5.fen(), 'white', 'd4c5', 'd4e5')).toBeNull();
   });
 
@@ -256,8 +281,12 @@ describe('pawnDamageNoteSkippingBest', () => {
     const before = '4k3/8/8/8/8/2p5/PPPP4/4K3 w - - 0 1';
     const afterBxc3 = new Chess(before);
     afterBxc3.move({ from: 'b2', to: 'c3' });
-    expect(pawnDamageNote(before, afterBxc3.fen(), 'white')).toBe('Doubles a pawn. Isolates a pawn.');
-    expect(pawnDamageNoteSkippingBest(before, afterBxc3.fen(), 'white', 'b2c3', 'd2c3')).toBe('Isolates a pawn.');
+    expect(pawnDamageNote(before, afterBxc3.fen(), 'white')).toBe(
+      'Doubles a pawn. Isolates a pawn.',
+    );
+    expect(pawnDamageNoteSkippingBest(before, afterBxc3.fen(), 'white', 'b2c3', 'd2c3')).toBe(
+      'Isolates a pawn.',
+    );
     // The reverse: dxc3 doubles, bxc3 doubles too, so nothing distinctive.
     const afterDxc3 = new Chess(before);
     afterDxc3.move({ from: 'd2', to: 'c3' });
@@ -266,9 +295,15 @@ describe('pawnDamageNoteSkippingBest', () => {
   });
 
   it('keeps the note without best data, on illegal best moves, and on bad FENs', () => {
-    expect(pawnDamageNoteSkippingBest(doubledBefore, doubledAfter, 'white', 'd4e5', null)).toBe('Doubles a pawn.');
-    expect(pawnDamageNoteSkippingBest(doubledBefore, doubledAfter, 'white', 'd4e5', undefined)).toBe('Doubles a pawn.');
-    expect(pawnDamageNoteSkippingBest(doubledBefore, doubledAfter, 'white', 'd4e5', 'e2e9')).toBe('Doubles a pawn.');
+    expect(pawnDamageNoteSkippingBest(doubledBefore, doubledAfter, 'white', 'd4e5', null)).toBe(
+      'Doubles a pawn.',
+    );
+    expect(
+      pawnDamageNoteSkippingBest(doubledBefore, doubledAfter, 'white', 'd4e5', undefined),
+    ).toBe('Doubles a pawn.');
+    expect(pawnDamageNoteSkippingBest(doubledBefore, doubledAfter, 'white', 'd4e5', 'e2e9')).toBe(
+      'Doubles a pawn.',
+    );
     expect(pawnDamageNoteSkippingBest('bad', doubledAfter, 'white', 'd4e5', 'g1f3')).toBeNull();
     expect(pawnDamageNoteSkippingBest(START_FEN, START_FEN, 'white', 'e2e4', 'd2d4')).toBeNull();
   });
@@ -280,15 +315,19 @@ describe('positive shape notes', () => {
     expect(forcesMateIn(cp, { type: 'mate', value: 3, winning_side: 'white' }, 'white')).toBe(3);
     expect(forcesMateIn(cp, { type: 'mate', value: -2, winning_side: 'black' }, 'black')).toBe(2);
     // Already mating: acceleration, not a fresh force.
-    expect(forcesMateIn(
-      { type: 'mate', value: 5, winning_side: 'white' },
-      { type: 'mate', value: 1, winning_side: 'white' },
-      'white',
-    )).toBeNull();
+    expect(
+      forcesMateIn(
+        { type: 'mate', value: 5, winning_side: 'white' },
+        { type: 'mate', value: 1, winning_side: 'white' },
+        'white',
+      ),
+    ).toBeNull();
     // Mate for the wrong side, quiet pairs, and missing scores stay silent.
     expect(forcesMateIn(cp, { type: 'mate', value: 1, winning_side: 'black' }, 'white')).toBeNull();
     expect(forcesMateIn(cp, cp, 'white')).toBeNull();
-    expect(forcesMateIn(null, { type: 'mate', value: 1, winning_side: 'white' }, 'white')).toBeNull();
+    expect(
+      forcesMateIn(null, { type: 'mate', value: 1, winning_side: 'white' }, 'white'),
+    ).toBeNull();
     expect(forcesMateIn(cp, null, 'white')).toBeNull();
   });
 
@@ -401,18 +440,30 @@ describe('verdictInputsForPly', () => {
       bookFlags: [true, true, false],
       quality: quality('Mistake'),
     });
-    expect(verdictInputsForPly(novel).novelty).toEqual({ priorName: 'Caro-Kann Defense', priorEco: 'B12' });
+    expect(verdictInputsForPly(novel).novelty).toEqual({
+      priorName: 'Caro-Kann Defense',
+      priorEco: 'B12',
+    });
     expect(verdictInputsForPly({ ...novel, quality: quality('Forced') }).novelty).toBeNull();
     expect(verdictInputsForPly({ ...novel, quality: quality('Allowed mate') }).novelty).toBeNull();
     expect(verdictInputsForPly({ ...novel, quality: quality('Unreviewed') }).novelty).toBeNull();
-    expect(verdictInputsForPly({ ...novel, rarity: { label: 'Unknown', r: null, prob: null, topProb: null } }).novelty).toBeNull();
+    expect(
+      verdictInputsForPly({
+        ...novel,
+        rarity: { label: 'Unknown', r: null, prob: null, topProb: null },
+      }).novelty,
+    ).toBeNull();
     expect(verdictInputsForPly({ ...novel, openingMatches: [] }).novelty).toBeNull();
   });
 
   it('passes bestRarity and materialNote through for the synthesis branch', () => {
     const bestRarity: Rarity = { label: 'Absent', r: null, prob: null, topProb: 0.4 };
     const facts = verdictInputsForPly(
-      baseInputs({ quality: quality('Blunder'), bestRarity, materialNote: 'This line wins a pawn for Black.' }),
+      baseInputs({
+        quality: quality('Blunder'),
+        bestRarity,
+        materialNote: 'This line wins a pawn for Black.',
+      }),
     );
     expect(facts.bestRarity).toEqual(bestRarity);
     expect(facts.materialNote).toBe('This line wins a pawn for Black.');
@@ -426,9 +477,15 @@ describe('verdictInputsForPly', () => {
       playedUci: 'd4e5',
       san: 'dxe5',
     };
-    expect(verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Mistake') })).pawnNote).toBe('Doubles a pawn.');
-    expect(verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Inaccuracy') })).pawnNote).toBe('Doubles a pawn.');
-    expect(verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Good') })).pawnNote).toBeNull();
+    expect(
+      verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Mistake') })).pawnNote,
+    ).toBe('Doubles a pawn.');
+    expect(
+      verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Inaccuracy') })).pawnNote,
+    ).toBe('Doubles a pawn.');
+    expect(
+      verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Good') })).pawnNote,
+    ).toBeNull();
   });
 
   it('suppresses pawn notes when the played move is the best or the best shares the damage', () => {
@@ -440,11 +497,13 @@ describe('verdictInputsForPly', () => {
     };
     // Played IS the best: no blame note even on a damage grade.
     expect(
-      verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Mistake'), bestUci: 'd4e5' })).pawnNote,
+      verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Mistake'), bestUci: 'd4e5' }))
+        .pawnNote,
     ).toBeNull();
     // Quiet best alternative: the note stays.
     expect(
-      verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Mistake'), bestUci: 'g1f3' })).pawnNote,
+      verdictInputsForPly(baseInputs({ ...doubled, quality: quality('Mistake'), bestUci: 'g1f3' }))
+        .pawnNote,
     ).toBe('Doubles a pawn.');
     // Different best that doubles the same way: forced damage stays silent.
     const forcedBefore = '4k3/8/8/2p1p3/3P4/8/2P1P3/4K3 w - - 0 1';
@@ -457,7 +516,8 @@ describe('verdictInputsForPly', () => {
       afterFen: forcedGame.fen(),
     };
     expect(
-      verdictInputsForPly(baseInputs({ ...forced, quality: quality('Mistake'), bestUci: 'd4e5' })).pawnNote,
+      verdictInputsForPly(baseInputs({ ...forced, quality: quality('Mistake'), bestUci: 'd4e5' }))
+        .pawnNote,
     ).toBeNull();
   });
 
@@ -465,17 +525,21 @@ describe('verdictInputsForPly', () => {
     // 18... Bxd4 parries Qxg7# (28 witnesses) and wins a pawn: the
     // pre-existing gain note keeps its verdict.
     const cp = { type: 'cp' as const, value: -150 };
-    expect(verdictInputsForPly(baseInputs({
-      beforeFen: '4rrk1/ppqn1ppp/1bp4B/8/2pP2Q1/2P2N2/PP3PPP/4RRK1 b - - 3 17',
-      afterFen: '4rrk1/ppqn1ppp/2p4B/8/2pb2Q1/2P2N2/PP3PPP/4RRK1 w - - 0 18',
-      playedUci: 'b6d4',
-      san: 'Bxd4',
-      ply: 34,
-      quality: quality('Best'),
-      mover: 'black',
-      beforeScore: cp,
-      afterScore: cp,
-    })).positiveNote).toBe('Wins a pawn.');
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          beforeFen: '4rrk1/ppqn1ppp/1bp4B/8/2pP2Q1/2P2N2/PP3PPP/4RRK1 b - - 3 17',
+          afterFen: '4rrk1/ppqn1ppp/2p4B/8/2pb2Q1/2P2N2/PP3PPP/4RRK1 w - - 0 18',
+          playedUci: 'b6d4',
+          san: 'Bxd4',
+          ply: 34,
+          quality: quality('Best'),
+          mover: 'black',
+          beforeScore: cp,
+          afterScore: cp,
+        }),
+      ).positiveNote,
+    ).toBe('Wins a pawn.');
   });
 
   it('ranks the parry above the generic escape out of check', () => {
@@ -483,26 +547,37 @@ describe('verdictInputsForPly', () => {
     // fork (the queen pins itself to the file), so the specific defensive
     // claim wins over "Gets out of check.".
     const cp = { type: 'cp' as const, value: -150 };
-    expect(verdictInputsForPly(baseInputs({
-      beforeFen: '4rrk1/ppqn1p2/1bp4B/8/2pP4/2P2N2/PP3PQP/4RRK1 b - - 3 17',
-      afterFen: '4rrk1/pp1n1p2/1bp4B/8/2pP4/2P2Nq1/PP3PQP/4RRK1 w - - 4 18',
-      playedUci: 'c7g3',
-      san: 'Qg3',
-      ply: 34,
-      quality: quality('Best'),
-      mover: 'black',
-      beforeScore: cp,
-      afterScore: cp,
-    })).positiveNote).toBe('Parries Qg7#.');
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          beforeFen: '4rrk1/ppqn1p2/1bp4B/8/2pP4/2P2N2/PP3PQP/4RRK1 b - - 3 17',
+          afterFen: '4rrk1/pp1n1p2/1bp4B/8/2pP4/2P2Nq1/PP3PQP/4RRK1 w - - 4 18',
+          playedUci: 'c7g3',
+          san: 'Qg3',
+          ply: 34,
+          quality: quality('Best'),
+          mover: 'black',
+          beforeScore: cp,
+          afterScore: cp,
+        }),
+      ).positiveNote,
+    ).toBe('Parries Qg7#.');
   });
 
   it('explains praise grades with the single strongest why', () => {
     const cp = { type: 'cp' as const, value: 100 };
     const mate = { type: 'mate' as const, value: 3, winning_side: 'white' as const };
     // Fresh mate force outranks the only-move fact.
-    expect(verdictInputsForPly(baseInputs({
-      quality: quality('Best'), beforeScore: cp, afterScore: mate, isCritical: true,
-    })).positiveNote).toBe('Forces mate in 3.');
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          quality: quality('Best'),
+          beforeScore: cp,
+          afterScore: mate,
+          isCritical: true,
+        }),
+      ).positiveNote,
+    ).toBe('Forces mate in 3.');
     // The only move to hold outranks an immediate win on the same move.
     const capture = {
       beforeFen: 'rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
@@ -510,107 +585,162 @@ describe('verdictInputsForPly', () => {
       playedUci: 'e4d5',
       san: 'exd5',
     };
-    expect(verdictInputsForPly(baseInputs({
-      ...capture, quality: quality('Best'), isCritical: true,
-    })).positiveNote).toBe('The only move to hold.');
-    expect(verdictInputsForPly(baseInputs({
-      ...capture, quality: quality('Best'),
-    })).positiveNote).toBe('Wins a pawn.');
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          ...capture,
+          quality: quality('Best'),
+          isCritical: true,
+        }),
+      ).positiveNote,
+    ).toBe('The only move to hold.');
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          ...capture,
+          quality: quality('Best'),
+        }),
+      ).positiveNote,
+    ).toBe('Wins a pawn.');
     // En passant names the mechanism, not the generic pawn.
-    expect(verdictInputsForPly(baseInputs({
-      beforeFen: '4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1',
-      afterFen: '4k3/8/3P4/8/8/8/8/4K3 b - - 0 1',
-      playedUci: 'e5d6',
-      san: 'exd6',
-      quality: quality('Best'),
-    })).positiveNote).toBe('Takes en passant.');
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          beforeFen: '4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1',
+          afterFen: '4k3/8/3P4/8/8/8/8/4K3 b - - 0 1',
+          playedUci: 'e5d6',
+          san: 'exd6',
+          quality: quality('Best'),
+        }),
+      ).positiveNote,
+    ).toBe('Takes en passant.');
     // Shape notes: promotion, fork, escape.
-    expect(verdictInputsForPly(baseInputs({
-      beforeFen: '8/P7/7k/8/8/8/8/7K w - - 0 1',
-      afterFen: 'Q6k/8/8/8/8/8/8/7K b - - 0 1',
-      playedUci: 'a7a8q',
-      san: 'a8=Q+',
-      quality: quality('Best'),
-    })).positiveNote).toBe('Promotes to a queen.');
-    expect(verdictInputsForPly(baseInputs({
-      beforeFen: '4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1',
-      afterFen: '4k3/8/8/8/8/8/8/R4RK1 b - - 1 1',
-      playedUci: 'e1g1',
-      san: 'O-O',
-      quality: quality('Best'),
-    })).positiveNote).toBeNull();
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          beforeFen: '8/P7/7k/8/8/8/8/7K w - - 0 1',
+          afterFen: 'Q6k/8/8/8/8/8/8/7K b - - 0 1',
+          playedUci: 'a7a8q',
+          san: 'a8=Q+',
+          quality: quality('Best'),
+        }),
+      ).positiveNote,
+    ).toBe('Promotes to a queen.');
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          beforeFen: '4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1',
+          afterFen: '4k3/8/8/8/8/8/8/R4RK1 b - - 1 1',
+          playedUci: 'e1g1',
+          san: 'O-O',
+          quality: quality('Best'),
+        }),
+      ).positiveNote,
+    ).toBeNull();
     // A contested fork is no fork at all: Nd4 hits bishop and queen but the
     // detected outcome is only an even exchange, so the claim stays silent.
-    expect(verdictInputsForPly(baseInputs({
-      beforeFen: '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1',
-      afterFen: '4k3/8/8/8/3n4/1Q6/2B5/4K3 w - - 1 2',
-      playedUci: 'f5d4',
-      san: 'Nd4',
-      quality: quality('Best'),
-      mover: 'black',
-    })).positiveNote).toBeNull();
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          beforeFen: '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1',
+          afterFen: '4k3/8/8/8/3n4/1Q6/2B5/4K3 w - - 1 2',
+          playedUci: 'f5d4',
+          san: 'Nd4',
+          quality: quality('Best'),
+          mover: 'black',
+        }),
+      ).positiveNote,
+    ).toBeNull();
     // A capture with fork geometry tells the gain story, never the fork:
     // Nxd5 takes a bishop while eyeing queen and bishop, but the take owns
     // the note (fork/pin candidates never scan captures).
-    expect(verdictInputsForPly(baseInputs({
-      beforeFen: '4k3/8/8/3B4/5n2/2Q1B3/8/4K3 b - - 0 1',
-      afterFen: '4k3/8/8/3n4/8/2Q1B3/8/4K3 w - - 0 2',
-      playedUci: 'f4d5',
-      san: 'Nxd5',
-      quality: quality('Best'),
-      mover: 'black',
-    })).positiveNote).toBe('Wins a bishop.');
-    expect(verdictInputsForPly(baseInputs({
-      beforeFen: '8/2qk4/8/2B5/8/8/5K2/4R3 w - - 0 1',
-      afterFen: '8/2qkR3/8/2B5/8/8/5K2/8 b - - 1 1',
-      playedUci: 'e1e7',
-      san: 'Re7+',
-      quality: quality('Best'),
-    })).positiveNote).toBe("Re7+ skewers Black's king and queen.");
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          beforeFen: '4k3/8/8/3B4/5n2/2Q1B3/8/4K3 b - - 0 1',
+          afterFen: '4k3/8/8/3n4/8/2Q1B3/8/4K3 w - - 0 2',
+          playedUci: 'f4d5',
+          san: 'Nxd5',
+          quality: quality('Best'),
+          mover: 'black',
+        }),
+      ).positiveNote,
+    ).toBe('Wins a bishop.');
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          beforeFen: '8/2qk4/8/2B5/8/8/5K2/4R3 w - - 0 1',
+          afterFen: '8/2qkR3/8/2B5/8/8/5K2/8 b - - 1 1',
+          playedUci: 'e1e7',
+          san: 'Re7+',
+          quality: quality('Best'),
+        }),
+      ).positiveNote,
+    ).toBe("Re7+ skewers Black's king and queen.");
     // A capturing checker tells the skewer story, not the gain story.
-    expect(verdictInputsForPly(baseInputs({
-      beforeFen: '8/2qkp3/8/2B5/8/8/5K2/4R3 w - - 0 1',
-      afterFen: '8/2qkR3/8/2B5/8/8/5K2/8 b - - 0 1',
-      playedUci: 'e1e7',
-      san: 'Rxe7+',
-      quality: quality('Best'),
-    })).positiveNote).toBe("Rxe7+ skewers Black's king and queen.");
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          beforeFen: '8/2qkp3/8/2B5/8/8/5K2/4R3 w - - 0 1',
+          afterFen: '8/2qkR3/8/2B5/8/8/5K2/8 b - - 0 1',
+          playedUci: 'e1e7',
+          san: 'Rxe7+',
+          quality: quality('Best'),
+        }),
+      ).positiveNote,
+    ).toBe("Rxe7+ skewers Black's king and queen.");
     // Skewer-check outranks fork on the same move: the rook also hits the
     // e8 bishop, but the forced evacuation is the stronger story.
-    expect(verdictInputsForPly(baseInputs({
-      beforeFen: '4b3/2qk4/8/2B5/8/8/5K2/4R3 w - - 0 1',
-      afterFen: '4b3/2qkR3/8/2B5/8/8/5K2/8 b - - 1 1',
-      playedUci: 'e1e7',
-      san: 'Re7+',
-      quality: quality('Best'),
-    })).positiveNote).toBe("Re7+ skewers Black's king and queen.");
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          beforeFen: '4b3/2qk4/8/2B5/8/8/5K2/4R3 w - - 0 1',
+          afterFen: '4b3/2qkR3/8/2B5/8/8/5K2/8 b - - 1 1',
+          playedUci: 'e1e7',
+          san: 'Re7+',
+          quality: quality('Best'),
+        }),
+      ).positiveNote,
+    ).toBe("Re7+ skewers Black's king and queen.");
     // Same-square recapture: the take-back is an exchange, never a fresh win.
-    expect(verdictInputsForPly(baseInputs({
-      beforeFen: '4k3/8/8/8/8/2Q5/2n5/4K3 w - - 0 3',
-      afterFen: '4k3/8/8/8/8/8/2Q5/4K3 b - - 0 3',
-      playedUci: 'c3c2',
-      san: 'Qxc2',
-      quality: quality('Best'),
-      prevBeforeFen: '4k3/8/8/8/3n4/2Q5/2B5/4K3 b - - 2 2',
-      prevUci: 'd4c2',
-    })).positiveNote).toBe('Takes the knight back.');
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          beforeFen: '4k3/8/8/8/8/2Q5/2n5/4K3 w - - 0 3',
+          afterFen: '4k3/8/8/8/8/8/2Q5/4K3 b - - 0 3',
+          playedUci: 'c3c2',
+          san: 'Qxc2',
+          quality: quality('Best'),
+          prevBeforeFen: '4k3/8/8/8/3n4/2Q5/2B5/4K3 b - - 2 2',
+          prevUci: 'd4c2',
+        }),
+      ).positiveNote,
+    ).toBe('Takes the knight back.');
     // Winning recapture names the net instead.
-    expect(verdictInputsForPly(baseInputs({
-      beforeFen: '4k3/8/8/4n3/3P4/8/8/4K3 w - - 0 2',
-      afterFen: '4k3/8/8/4P3/8/8/8/4K3 b - - 0 2',
-      playedUci: 'd4e5',
-      san: 'dxe5',
-      quality: quality('Best'),
-      prevBeforeFen: '4k3/3n4/8/4P3/3P4/8/8/4K3 b - - 0 1',
-      prevUci: 'd7e5',
-    })).positiveNote).toBe('Wins a knight for a pawn.');
-    expect(verdictInputsForPly(baseInputs({
-      beforeFen: '4k3/8/8/8/1b6/8/8/4K3 w - - 0 1',
-      afterFen: '4k3/8/8/8/1b6/8/8/3K4 b - - 1 1',
-      playedUci: 'e1d1',
-      san: 'Kd1',
-      quality: quality('Good'),
-    })).positiveNote).toBe('Gets out of check.');
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          beforeFen: '4k3/8/8/4n3/3P4/8/8/4K3 w - - 0 2',
+          afterFen: '4k3/8/8/4P3/8/8/8/4K3 b - - 0 2',
+          playedUci: 'd4e5',
+          san: 'dxe5',
+          quality: quality('Best'),
+          prevBeforeFen: '4k3/3n4/8/4P3/3P4/8/8/4K3 b - - 0 1',
+          prevUci: 'd7e5',
+        }),
+      ).positiveNote,
+    ).toBe('Wins a knight for a pawn.');
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          beforeFen: '4k3/8/8/8/1b6/8/8/4K3 w - - 0 1',
+          afterFen: '4k3/8/8/8/1b6/8/8/3K4 b - - 1 1',
+          playedUci: 'e1d1',
+          san: 'Kd1',
+          quality: quality('Good'),
+        }),
+      ).positiveNote,
+    ).toBe('Gets out of check.');
   });
 
   it('keeps the positive why off negative grades, terminals, book, and draws', () => {
@@ -621,22 +751,40 @@ describe('verdictInputsForPly', () => {
       san: 'exd5',
     };
     // A capturing blunder stays a blunder story, never a win story.
-    expect(verdictInputsForPly(baseInputs({ ...capture, quality: quality('Blunder') })).positiveNote).toBeNull();
+    expect(
+      verdictInputsForPly(baseInputs({ ...capture, quality: quality('Blunder') })).positiveNote,
+    ).toBeNull();
     // Terminal facts, book hits, and dead draws outrank any why.
-    expect(verdictInputsForPly(baseInputs({
-      ...capture,
-      quality: quality('Best'),
-      afterOutcome: { kind: 'checkmate' as const, winner: 'white' as const },
-    })).positiveNote).toBeNull();
-    expect(verdictInputsForPly(baseInputs({
-      ...capture, quality: quality('Best'), opening: { eco: 'C50', name: 'Italian Game' },
-    })).positiveNote).toBeNull();
-    expect(verdictInputsForPly(baseInputs({
-      quality: quality('Best'),
-      afterFen: 'k7/8/nn6/8/8/8/8/K7 w - - 0 1',
-    })).positiveNote).toBeNull();
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          ...capture,
+          quality: quality('Best'),
+          afterOutcome: { kind: 'checkmate' as const, winner: 'white' as const },
+        }),
+      ).positiveNote,
+    ).toBeNull();
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          ...capture,
+          quality: quality('Best'),
+          opening: { eco: 'C50', name: 'Italian Game' },
+        }),
+      ).positiveNote,
+    ).toBeNull();
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          quality: quality('Best'),
+          afterFen: 'k7/8/nn6/8/8/8/8/K7 w - - 0 1',
+        }),
+      ).positiveNote,
+    ).toBeNull();
     // Quiet lines stay quiet: no praise, no why.
-    expect(verdictInputsForPly(baseInputs({ quality: quality('Unreviewed') })).positiveNote).toBeNull();
+    expect(
+      verdictInputsForPly(baseInputs({ quality: quality('Unreviewed') })).positiveNote,
+    ).toBeNull();
   });
 
   it('ranks pin pressure below en passant and above fresh gains', () => {
@@ -647,17 +795,22 @@ describe('verdictInputsForPly', () => {
       san: 'Bd6',
       mover: 'white' as const,
     };
-    expect(verdictInputsForPly(baseInputs({ ...pin, quality: quality('Best') })).positiveNote)
-      .toBe("Bd6 pins Black's knight to the rook.");
+    expect(verdictInputsForPly(baseInputs({ ...pin, quality: quality('Best') })).positiveNote).toBe(
+      "Bd6 pins Black's knight to the rook.",
+    );
     // Hanging pinners earn no story.
-    expect(verdictInputsForPly(baseInputs({
-      beforeFen: '4k3/8/p1n5/8/2B5/8/8/4K3 w - - 0 1',
-      afterFen: '4k3/8/p1n5/1B6/8/8/8/4K3 b - - 1 1',
-      playedUci: 'c4b5',
-      san: 'Bb5',
-      mover: 'white' as const,
-      quality: quality('Best'),
-    })).positiveNote).toBeNull();
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          beforeFen: '4k3/8/p1n5/8/2B5/8/8/4K3 w - - 0 1',
+          afterFen: '4k3/8/p1n5/1B6/8/8/8/4K3 b - - 1 1',
+          playedUci: 'c4b5',
+          san: 'Bb5',
+          mover: 'white' as const,
+          quality: quality('Best'),
+        }),
+      ).positiveNote,
+    ).toBeNull();
   });
 
   it('carries pin pressure only with a proven reply or mate, never alone', () => {
@@ -669,25 +822,48 @@ describe('verdictInputsForPly', () => {
       mover: 'white' as const,
     };
     const materialNote = 'This line wins a bishop for Black.';
-    expect(verdictInputsForPly(baseInputs({ ...pin, quality: quality('Blunder'), materialNote })).pinClaim)
-      .toBe("Bd6 pins Black's knight to the rook.");
-    expect(verdictInputsForPly(baseInputs({ ...pin, quality: quality('Mistake'), materialNote })).pinClaim)
-      .toBe("Bd6 pins Black's knight to the rook.");
+    expect(
+      verdictInputsForPly(baseInputs({ ...pin, quality: quality('Blunder'), materialNote }))
+        .pinClaim,
+    ).toBe("Bd6 pins Black's knight to the rook.");
+    expect(
+      verdictInputsForPly(baseInputs({ ...pin, quality: quality('Mistake'), materialNote }))
+        .pinClaim,
+    ).toBe("Bd6 pins Black's knight to the rook.");
     // Quiet negatives: no material window, no pin — pawn fallback owns blame.
-    expect(verdictInputsForPly(baseInputs({ ...pin, quality: quality('Blunder') })).pinClaim).toBeNull();
+    expect(
+      verdictInputsForPly(baseInputs({ ...pin, quality: quality('Blunder') })).pinClaim,
+    ).toBeNull();
     // Inaccuracy never carries a material window, so never a pin either.
-    expect(verdictInputsForPly(baseInputs({ ...pin, quality: quality('Inaccuracy'), materialNote })).pinClaim).toBeNull();
+    expect(
+      verdictInputsForPly(baseInputs({ ...pin, quality: quality('Inaccuracy'), materialNote }))
+        .pinClaim,
+    ).toBeNull();
     // Allowed mate carries the pin for the standalone fusion.
-    expect(verdictInputsForPly(baseInputs({ ...pin, quality: quality('Allowed mate') })).pinClaim)
-      .toBe("Bd6 pins Black's knight to the rook.");
+    expect(
+      verdictInputsForPly(baseInputs({ ...pin, quality: quality('Allowed mate') })).pinClaim,
+    ).toBe("Bd6 pins Black's knight to the rook.");
     // Standalone overrides outrank the pin.
-    expect(verdictInputsForPly(baseInputs({
-      ...pin, quality: quality('Blunder'), materialNote,
-      afterOutcome: { kind: 'checkmate' as const, winner: 'white' as const },
-    })).pinClaim).toBeNull();
-    expect(verdictInputsForPly(baseInputs({
-      ...pin, quality: quality('Blunder'), materialNote, opening: { eco: 'C50', name: 'Italian Game' },
-    })).pinClaim).toBeNull();
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          ...pin,
+          quality: quality('Blunder'),
+          materialNote,
+          afterOutcome: { kind: 'checkmate' as const, winner: 'white' as const },
+        }),
+      ).pinClaim,
+    ).toBeNull();
+    expect(
+      verdictInputsForPly(
+        baseInputs({
+          ...pin,
+          quality: quality('Blunder'),
+          materialNote,
+          opening: { eco: 'C50', name: 'Italian Game' },
+        }),
+      ).pinClaim,
+    ).toBeNull();
   });
 
   it('reads branch timelines without re-walking the base line', () => {

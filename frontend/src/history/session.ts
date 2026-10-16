@@ -12,17 +12,29 @@ export type SessionSnapshot = { status: SessionStatus; account: Account | null; 
 const unauthorizedListeners = new Set<() => void>();
 export function subscribeUnauthorized(listener: () => void): () => void {
   unauthorizedListeners.add(listener);
-  return () => { unauthorizedListeners.delete(listener); };
+  return () => {
+    unauthorizedListeners.delete(listener);
+  };
 }
 export function notifyUnauthorized(): void {
+  // Snapshot iteration: listeners unsubscribe during dispatch.
+  // oxlint-disable-next-line no-useless-spread
   for (const listener of [...unauthorizedListeners]) {
-    try { listener(); } catch { /* owner-side handling; never break senders */ }
+    try {
+      listener();
+    } catch {
+      /* owner-side handling; never break senders */
+    }
   }
 }
 
 export function isUnauthorized(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'status' in error
-    && (error as { status?: unknown }).status === 401;
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'status' in error &&
+    (error as { status?: unknown }).status === 401
+  );
 }
 
 export class SessionStore {
@@ -32,11 +44,25 @@ export class SessionStore {
   private lastCheck = 0;
   constructor(private fetcher: FetchLike = fetch) {}
   snapshot = () => this.value;
-  subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
-  private emit() { for (const listener of [...this.listeners]) listener(); }
+  subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+  private emit() {
+    // Snapshot iteration: listeners unsubscribe during dispatch.
+    // oxlint-disable-next-line no-useless-spread
+    for (const listener of [...this.listeners]) listener();
+  }
   private update(changes: Partial<SessionSnapshot>) {
     const next = { ...this.value, ...changes };
-    if (next.status === this.value.status && next.account === this.value.account && next.error === this.value.error) return;
+    if (
+      next.status === this.value.status &&
+      next.account === this.value.account &&
+      next.error === this.value.error
+    )
+      return;
     this.value = next;
     this.emit();
   }
@@ -44,14 +70,23 @@ export class SessionStore {
   // within 5s reuse the snapshot so a burst of 401s causes one /me call.
   refresh = (): Promise<void> => {
     if (this.inflight) return this.inflight;
-    if (this.value.status !== 'checking' && Date.now() - this.lastCheck < 5000) return Promise.resolve();
+    if (this.value.status !== 'checking' && Date.now() - this.lastCheck < 5000)
+      return Promise.resolve();
     this.inflight = (async () => {
       try {
         const account = await fetchMe(this.fetcher);
         this.lastCheck = Date.now();
-        this.update(account ? { status: 'signed-in', account, error: '' } : { status: 'signed-out', account: null, error: '' });
+        this.update(
+          account
+            ? { status: 'signed-in', account, error: '' }
+            : { status: 'signed-out', account: null, error: '' },
+        );
       } catch (error) {
-        this.update({ status: 'signed-out', account: null, error: error instanceof Error ? error.message : 'Login check failed.' });
+        this.update({
+          status: 'signed-out',
+          account: null,
+          error: error instanceof Error ? error.message : 'Login check failed.',
+        });
       } finally {
         this.inflight = undefined;
       }
@@ -72,7 +107,9 @@ export class SessionStore {
     this.update({ status: 'signed-in', account, error: '' });
   };
   // 401 observer entry: re-check, and only the refresh result moves state.
-  onUnauthorized = (): void => { void this.refresh(); };
+  onUnauthorized = (): void => {
+    void this.refresh();
+  };
 }
 
 export const SessionContext = createContext<SessionStore | null>(null);

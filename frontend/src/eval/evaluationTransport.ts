@@ -7,28 +7,52 @@ import { notifyUnauthorized } from '../history/session';
 // Shared engine deadline: play replies and analysis fetches share one stall
 // policy, with play passing tighter numbers at the call site when needed.
 export const ENGINE_DEADLINE_MS = 150_000;
-export async function withDeadline<T>(run: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal, timeout = ENGINE_DEADLINE_MS): Promise<T> {
+export async function withDeadline<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  signal?: AbortSignal,
+  timeout = ENGINE_DEADLINE_MS,
+): Promise<T> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let cancel: () => void = () => undefined;
   const stopped = new Promise<never>((_, reject) => {
-    cancel = () => { controller.abort(); reject(new DOMException('Aborted', 'AbortError')); };
-    if (signal?.aborted) { cancel(); return; }
+    cancel = () => {
+      controller.abort();
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    if (signal?.aborted) {
+      cancel();
+      return;
+    }
     signal?.addEventListener('abort', cancel, { once: true });
-    timer = setTimeout(() => { controller.abort(); reject(new DOMException('Evaluation timed out. Retry to continue.', 'TimeoutError')); }, timeout);
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new DOMException('Evaluation timed out. Retry to continue.', 'TimeoutError'));
+    }, timeout);
   });
   try {
     if (signal?.aborted) return await stopped;
     return await Promise.race([run(controller.signal), stopped]);
-  } finally { clearTimeout(timer); signal?.removeEventListener('abort', cancel); }
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', cancel);
+  }
 }
 
-export async function retryBusy(fetcher: typeof fetch, input: RequestInfo | URL, init: RequestInit, signal: AbortSignal): Promise<Response> {
+export async function retryBusy(
+  fetcher: typeof fetch,
+  input: RequestInfo | URL,
+  init: RequestInit,
+  signal: AbortSignal,
+): Promise<Response> {
   for (let attempt = 0; ; attempt++) {
     signal.throwIfAborted();
     const response = await fetcher(input, { ...init, signal });
     if (response.status !== 503 || attempt === 2) return response;
-    const body: unknown = await response.clone().json().catch(() => null);
+    const body: unknown = await response
+      .clone()
+      .json()
+      .catch(() => null);
     // Huma envelope: our engine_busy code rides in errors[0].message.
     // Anything else (including Huma's own 503s) is returned as-is.
     const errs = isRecord(body) && Array.isArray(body.errors) ? body.errors : [];
@@ -37,8 +61,17 @@ export async function retryBusy(fetcher: typeof fetch, input: RequestInfo | URL,
     const numeric = header ? Number(header) : 1;
     const ms = Number.isFinite(numeric) ? numeric * 1000 : Date.parse(header!) - Date.now();
     await new Promise<void>((resolve, reject) => {
-      const abort = () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); };
-      const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, Math.min(5000, Math.max(100, Number.isFinite(ms) ? ms : 1000)));
+      const abort = () => {
+        clearTimeout(timer);
+        reject(new DOMException('Aborted', 'AbortError'));
+      };
+      const timer = setTimeout(
+        () => {
+          signal.removeEventListener('abort', abort);
+          resolve();
+        },
+        Math.min(5000, Math.max(100, Number.isFinite(ms) ? ms : 1000)),
+      );
       signal.addEventListener('abort', abort, { once: true });
       if (signal.aborted) abort();
     });
@@ -49,8 +82,11 @@ export async function retryBusy(fetcher: typeof fetch, input: RequestInfo | URL,
 // body through its own per-endpoint domain error, but the read itself is one
 // shape (null on failure, never a throw).
 export async function readJsonBody(response: Response): Promise<unknown> {
-  try { return await response.json(); }
-  catch { return null; }
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
 }
 
 // Single JSON-POST shape for engine work: one headers/body/read path for the
@@ -59,10 +95,18 @@ export async function readJsonBody(response: Response): Promise<unknown> {
 // stays in submitBatch; per-endpoint error codes, parses, and cache-hit
 // flags stay with the callers.
 export async function postJson(
-  fetcher: typeof fetch, input: RequestInfo | URL, payload: unknown, signal?: AbortSignal,
+  fetcher: typeof fetch,
+  input: RequestInfo | URL,
+  payload: unknown,
+  signal?: AbortSignal,
 ): Promise<{ response: Response; body: unknown }> {
-  const response = await fetcher(input, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-    body: JSON.stringify(payload), ...(signal ? { signal } : {}) });
+  const response = await fetcher(input, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(payload),
+    ...(signal ? { signal } : {}),
+  });
   if (response.status === 401) notifyUnauthorized();
   return { response, body: await readJsonBody(response) };
 }
@@ -70,13 +114,21 @@ export async function postJson(
 // JSON read. Preserves superseded/503 codes for callers; only
 // engine_busy 503s retry here. Wire format unchanged.
 export async function fetchJsonWithBusyRetry(
-  fetcher: typeof fetch, input: RequestInfo | URL, init: RequestInit, signal?: AbortSignal, timeout = ENGINE_DEADLINE_MS,
+  fetcher: typeof fetch,
+  input: RequestInfo | URL,
+  init: RequestInit,
+  signal?: AbortSignal,
+  timeout = ENGINE_DEADLINE_MS,
 ): Promise<{ response: Response; body: unknown }> {
-  return withDeadline(async transportSignal => {
-    const initWithAuth: RequestInit = { credentials: 'include', ...init };
-    const response = await retryBusy(fetcher, input, initWithAuth, transportSignal);
-    if (response.status === 401) notifyUnauthorized();
-    // Callers map unreadable bodies to domain errors.
-    return { response, body: await readJsonBody(response) };
-  }, signal, timeout);
+  return withDeadline(
+    async transportSignal => {
+      const initWithAuth: RequestInit = { credentials: 'include', ...init };
+      const response = await retryBusy(fetcher, input, initWithAuth, transportSignal);
+      if (response.status === 401) notifyUnauthorized();
+      // Callers map unreadable bodies to domain errors.
+      return { response, body: await readJsonBody(response) };
+    },
+    signal,
+    timeout,
+  );
 }

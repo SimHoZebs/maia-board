@@ -9,13 +9,44 @@ import { clampBotElo } from '../board/BoardTools';
 // Terms: see spec/GLOSSARY.md (position/line/posId/lineKey).
 export const START_FEN = new Chess().fen();
 export type Mode = 'play' | 'analysis' | 'history' | 'settings';
-export type Settings = { userColor: SideColor; botElo: number; userElo: number; model: BotModel; temperature?: number };
+export type Settings = {
+  userColor: SideColor;
+  botElo: number;
+  userElo: number;
+  model: BotModel;
+  temperature?: number;
+};
 export type Position = { fen: string; moves: string[]; sanMoves: string[]; lastMove?: [Key, Key] };
-export type Analysis = { initialFen: string; moves: string[]; sanMoves: string[]; index: number; branchFromPly: number | null; branchMoves: string[]; perspective: SideColor; ownGame: boolean };
+export type Analysis = {
+  initialFen: string;
+  moves: string[];
+  sanMoves: string[];
+  index: number;
+  branchFromPly: number | null;
+  branchMoves: string[];
+  perspective: SideColor;
+  ownGame: boolean;
+};
 export type Insight = { response: MoveResponse; fen: string; mode: Mode };
-export type StoredGame = { id: string; createdAt: string; moves: string[]; settings: Settings; result?: 'resigned'; source?: string; opponent?: string; ratingDiff?: number };
-export const defaultSettings: Settings = { userColor: 'white', botElo: 1600, userElo: 400, model: '79m', temperature: 1 };
-export const oppositeColor = (color: SideColor): SideColor => color === 'white' ? 'black' : 'white';
+export type StoredGame = {
+  id: string;
+  createdAt: string;
+  moves: string[];
+  settings: Settings;
+  result?: 'resigned';
+  source?: string;
+  opponent?: string;
+  ratingDiff?: number;
+};
+export const defaultSettings: Settings = {
+  userColor: 'white',
+  botElo: 1600,
+  userElo: 400,
+  model: '79m',
+  temperature: 1,
+};
+export const oppositeColor = (color: SideColor): SideColor =>
+  color === 'white' ? 'black' : 'white';
 export type BoardOrientationSetting = 'auto' | SideColor;
 export function normalizeBoardOrientation(stored: unknown): BoardOrientationSetting {
   return stored === 'white' || stored === 'black' ? stored : 'auto';
@@ -23,19 +54,31 @@ export function normalizeBoardOrientation(stored: unknown): BoardOrientationSett
 // Base orientation comes from the setting; 'auto' means the player's own
 // color faces them (play userColor, analysis perspective). The manual flip
 // button inverts whatever the setting resolved to.
-export function resolveBoardOrientation(setting: BoardOrientationSetting, autoColor: SideColor, flipped: boolean): SideColor {
+export function resolveBoardOrientation(
+  setting: BoardOrientationSetting,
+  autoColor: SideColor,
+  flipped: boolean,
+): SideColor {
   const base = setting === 'auto' ? autoColor : setting;
   return flipped ? oppositeColor(base) : base;
 }
-export const sideName = (color: SideColor) => color === 'white' ? 'White' : 'Black';
-export const newId = () => typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+export const sideName = (color: SideColor) => (color === 'white' ? 'White' : 'Black');
+export const newId = () =>
+  typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 // Pre-rename stored keys. Read-only migration source: new keys win, legacy
 // fills only when absent. Never written — values persist under the new keys
 // on the next save.
 type LegacySettingsKeys = { eloMaia?: unknown; eloUser?: unknown };
-export function normalizeSettings(stored?: (Partial<Settings> & LegacySettingsKeys) | null): Settings {
-  const elo = (value: unknown, fallback: number) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 5000 ? value : fallback;
+export function normalizeSettings(
+  stored?: (Partial<Settings> & LegacySettingsKeys) | null,
+): Settings {
+  const elo = (value: unknown, fallback: number) =>
+    typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 5000
+      ? value
+      : fallback;
   // Opponent bot strength never leaves the trained range (a stored
   // 400 still conditions, displays, and caches as 800); the player's own
   // identity stays raw for the coming global-Elo pass.
@@ -44,9 +87,19 @@ export function normalizeSettings(stored?: (Partial<Settings> & LegacySettingsKe
   // The player's own rating defaults to the 400 anchor (see userElo.ts),
   // never to the bot strength: mirroring botElo guesses the user is a 1600
   // player. Legacy saves keep their stored userElo.
-  return { userColor: stored?.userColor === 'black' ? 'black' : 'white', model: stored?.model === '5m' ? '5m' : '79m',
-    botElo: botElo(storedBotElo, 1600), userElo: elo(stored?.userElo ?? stored?.eloUser, 400),
-    temperature: typeof stored?.temperature === 'number' && Number.isFinite(stored.temperature) && stored.temperature >= 0 && stored.temperature <= 2 ? stored.temperature : 0 };
+  return {
+    userColor: stored?.userColor === 'black' ? 'black' : 'white',
+    model: stored?.model === '5m' ? '5m' : '79m',
+    botElo: botElo(storedBotElo, 1600),
+    userElo: elo(stored?.userElo ?? stored?.eloUser, 400),
+    temperature:
+      typeof stored?.temperature === 'number' &&
+      Number.isFinite(stored.temperature) &&
+      stored.temperature >= 0 &&
+      stored.temperature <= 2
+        ? stored.temperature
+        : 0,
+  };
 }
 
 // One validated text→square boundary for every chess-square cast site
@@ -54,12 +107,16 @@ export function normalizeSettings(stored?: (Partial<Settings> & LegacySettingsKe
 // 64-square list, so a lookup table proves membership with no assertion;
 // callers handle undefined explicitly (throw or skip) and never misrender.
 // Chessground keys add the off-board rank-0 file (a0..h0) to the 64 squares.
-const SQUARE_LOOKUP: Record<string, Square | undefined> = Object.fromEntries(SQUARES.map(square => [square, square]));
+const SQUARE_LOOKUP: Record<string, Square | undefined> = Object.fromEntries(
+  SQUARES.map(square => [square, square]),
+);
 export function parseSquare(text: unknown): Square | undefined {
   return typeof text === 'string' ? SQUARE_LOOKUP[text] : undefined;
 }
-const KEY_LOOKUP: Record<string, Key | undefined> = Object.fromEntries([...SQUARES.map(square => [square, square]),
-  ...(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const).map(file => [`${file}0`, `${file}0`])]);
+const KEY_LOOKUP: Record<string, Key | undefined> = Object.fromEntries([
+  ...SQUARES.map(square => [square, square]),
+  ...(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const).map(file => [`${file}0`, `${file}0`]),
+]);
 export function parseKey(text: unknown): Key | undefined {
   return typeof text === 'string' ? KEY_LOOKUP[text] : undefined;
 }
@@ -88,7 +145,12 @@ export function replay(moves: string[], initialFen = START_FEN): Chess {
 export function positionOf(game: Chess): Position {
   const history = game.history({ verbose: true });
   const last = history.at(-1);
-  return { fen: game.fen(), moves: history.map(uciFromMove), sanMoves: game.history(), lastMove: last ? [last.from, last.to] : undefined };
+  return {
+    fen: game.fen(),
+    moves: history.map(uciFromMove),
+    sanMoves: game.history(),
+    lastMove: last ? [last.from, last.to] : undefined,
+  };
 }
 export function legalDests(game: Chess): Map<Key, Key[]> {
   const dests = new Map<Key, Key[]>();
@@ -106,34 +168,71 @@ export function parsePgnMoves(pgn: string, game: Chess): string[] {
   const moves: string[] = [];
   for (const raw of text.split(/\s+/)) {
     const token = raw.replace(/^\d+\.(\.\.)?/, '');
-    if (!token || token === '...' || /^\d+\.{1,3}$/.test(token) || /^(1-0|0-1|1\/2-1\/2|\*)$/.test(token) || /^\$\d+$/.test(token)) continue;
-    try { moves.push(uciFromMove(/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(token) ? applyUci(game, token) : game.move(token))); }
-    catch { throw new Error(`Could not read PGN move "${token}".`); }
+    if (
+      !token ||
+      token === '...' ||
+      /^\d+\.{1,3}$/.test(token) ||
+      /^(1-0|0-1|1\/2-1\/2|\*)$/.test(token) ||
+      /^\$\d+$/.test(token)
+    )
+      continue;
+    try {
+      moves.push(
+        uciFromMove(
+          /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(token) ? applyUci(game, token) : game.move(token),
+        ),
+      );
+    } catch {
+      throw new Error(`Could not read PGN move "${token}".`);
+    }
   }
   return moves;
 }
 export function loadLine(fen = '', pgn = ''): Analysis {
   // Explicit FEN wins; otherwise honor the starting position in an exported PGN.
-  const initialFen = new Chess(fen.trim() || pgn.match(/\[FEN\s+"([^"]+)"\]/i)?.[1] || START_FEN).fen();
+  const initialFen = new Chess(
+    fen.trim() || pgn.match(/\[FEN\s+"([^"]+)"\]/i)?.[1] || START_FEN,
+  ).fen();
   const moves = parsePgnMoves(pgn, new Chess(initialFen));
   const timeline = buildTimeline(initialFen, moves);
-  return { initialFen, moves, sanMoves: timeline.rows.slice(1).map(row => row.san), index: moves.length, branchFromPly: null, branchMoves: [],
-    perspective: timeline.rows[0].turn, ownGame: false };
+  return {
+    initialFen,
+    moves,
+    sanMoves: timeline.rows.slice(1).map(row => row.san),
+    index: moves.length,
+    branchFromPly: null,
+    branchMoves: [],
+    perspective: timeline.rows[0].turn,
+    ownGame: false,
+  };
 }
 export function exportLine(analysis: Analysis): string {
   const game = replay(analysis.moves, analysis.initialFen);
   game.setHeader('Event', 'Maia Board');
-  if (analysis.initialFen !== START_FEN) { game.setHeader('SetUp', '1'); game.setHeader('FEN', analysis.initialFen); }
+  if (analysis.initialFen !== START_FEN) {
+    game.setHeader('SetUp', '1');
+    game.setHeader('FEN', analysis.initialFen);
+  }
   return game.pgn();
 }
 export function candidateSan(fen: string, uci: string): string {
-  try { return applyUci(new Chess(fen), uci).san; } catch { return uci; }
+  try {
+    return applyUci(new Chess(fen), uci).san;
+  } catch {
+    return uci;
+  }
 }
 
 // One replay owns the displayed position and the API's history, including custom starts.
-export function analysisLine(analysis: Analysis, at = analysis.index): Position & { initialFen: string } {
+export function analysisLine(
+  analysis: Analysis,
+  at = analysis.index,
+): Position & { initialFen: string } {
   const initialFen = new Chess(analysis.initialFen).fen();
-  const moves = analysis.branchFromPly === null ? analysis.moves : [...analysis.moves.slice(0, analysis.branchFromPly), ...analysis.branchMoves];
+  const moves =
+    analysis.branchFromPly === null
+      ? analysis.moves
+      : [...analysis.moves.slice(0, analysis.branchFromPly), ...analysis.branchMoves];
   const timeline = buildTimeline(initialFen, moves);
   const clamped = Math.max(0, Math.min(at, moves.length));
   return {
@@ -145,13 +244,21 @@ export function analysisLine(analysis: Analysis, at = analysis.index): Position 
   };
 }
 export function analysisLength(analysis: Analysis): number {
-  return analysis.branchFromPly === null ? analysis.moves.length : analysis.branchFromPly + analysis.branchMoves.length;
+  return analysis.branchFromPly === null
+    ? analysis.moves.length
+    : analysis.branchFromPly + analysis.branchMoves.length;
 }
 export function exportExplored(analysis: Analysis): string {
   return exportLine({ ...analysis, moves: analysisLine(analysis, analysisLength(analysis)).moves });
 }
 export function gameResult(game: Chess): string {
-  return game.isCheckmate() ? (game.turn() === 'w' ? 'Black wins' : 'White wins') : game.isDraw() ? 'Draw' : 'Unfinished';
+  return game.isCheckmate()
+    ? game.turn() === 'w'
+      ? 'Black wins'
+      : 'White wins'
+    : game.isDraw()
+      ? 'Draw'
+      : 'Unfinished';
 }
 export function isResigned(game: Pick<StoredGame, 'result'>): boolean {
   return game.result === 'resigned';
@@ -159,7 +266,8 @@ export function isResigned(game: Pick<StoredGame, 'result'>): boolean {
 // History and game-over banners share one reading: a resignation outranks the
 // board, which stays replayable underneath.
 export function storedGameResult(game: StoredGame): string {
-  if (isResigned(game)) return `${sideName(oppositeColor(game.settings.userColor))} wins · resignation`;
+  if (isResigned(game))
+    return `${sideName(oppositeColor(game.settings.userColor))} wins · resignation`;
   return gameResult(replay(game.moves));
 }
 // Losing-king marker for game-over boards: scan the displayed FEN for the
@@ -175,8 +283,11 @@ export function findKingSquare(game: Chess, color: 'w' | 'b'): Square | null {
 }
 export function kingSquare(fen: string, color: SideColor): Key | undefined {
   let game: Chess;
-  try { game = new Chess(fen); }
-  catch { return undefined; }
+  try {
+    game = new Chess(fen);
+  } catch {
+    return undefined;
+  }
   const found = findKingSquare(game, color === 'white' ? 'w' : 'b');
   return found ? parseKey(found) : undefined;
 }
@@ -202,8 +313,10 @@ export type DomainOutcome = { kind: 'checkmate'; winner: SideColor } | { kind: '
 const timelineCache = new Map<string, Timeline>();
 const TIMELINE_CACHE_LIMIT = 64;
 function touchTimeline(key: string, timeline: Timeline) {
-  timelineCache.delete(key); timelineCache.set(key, timeline);
-  if (timelineCache.size > TIMELINE_CACHE_LIMIT) timelineCache.delete(timelineCache.keys().next().value!);
+  timelineCache.delete(key);
+  timelineCache.set(key, timeline);
+  if (timelineCache.size > TIMELINE_CACHE_LIMIT)
+    timelineCache.delete(timelineCache.keys().next().value!);
 }
 function outcome(game: Chess): DomainOutcome | null {
   return outcomeFromGame(game);
@@ -213,16 +326,28 @@ function outcome(game: Chess): DomainOutcome | null {
 // lineRecordMissesForTests. Lets the suite assert that render loops and
 // navigation read rows without rebuilding the timeline.
 let timelineBuilds = 0;
-export function timelineBuildsForTests(): number { return timelineBuilds; }
-export function resetTimelinesForTests(): void { timelineCache.clear(); timelineBuilds = 0; }
+export function timelineBuildsForTests(): number {
+  return timelineBuilds;
+}
+export function resetTimelinesForTests(): void {
+  timelineCache.clear();
+  timelineBuilds = 0;
+}
 
 export function buildTimeline(initialFen: string, moves: string[]): Timeline {
   const key = posId(initialFen, moves);
   const cached = timelineCache.get(key);
-  if (cached) { touchTimeline(key, cached); return cached; }
+  if (cached) {
+    touchTimeline(key, cached);
+    return cached;
+  }
   return deriveTimeline(initialFen, moves, key).timeline;
 }
-function deriveTimeline(initialFen: string, moves: string[], key: string): { timeline: Timeline; game: Chess } {
+function deriveTimeline(
+  initialFen: string,
+  moves: string[],
+  key: string,
+): { timeline: Timeline; game: Chess } {
   timelineBuilds++;
   const game = new Chess(initialFen);
   const normalized = game.fen();
@@ -235,18 +360,34 @@ function deriveTimeline(initialFen: string, moves: string[], key: string): { tim
   for (const candidate of timelineCache.values()) {
     if (candidate.initialFen !== normalized) continue;
     let ply = 0;
-    while (ply < moves.length && ply < candidate.moves.length && candidate.moves[ply] === moves[ply]) ply++;
-    if (ply > sharedPly) { shared = candidate; sharedPly = ply; }
+    while (
+      ply < moves.length &&
+      ply < candidate.moves.length &&
+      candidate.moves[ply] === moves[ply]
+    )
+      ply++;
+    if (ply > sharedPly) {
+      shared = candidate;
+      sharedPly = ply;
+    }
   }
-  const rows: TimelineRow[] = [shared?.rows[0] ?? {
-    ply: 0, uci: '', san: '', fen: game.fen(),
-    turn: game.turn() === 'w' ? 'white' : 'black',
-    outcome: outcome(game),
-    lastMove: undefined,
-  }];
+  const rows: TimelineRow[] = [
+    shared?.rows[0] ?? {
+      ply: 0,
+      uci: '',
+      san: '',
+      fen: game.fen(),
+      turn: game.turn() === 'w' ? 'white' : 'black',
+      outcome: outcome(game),
+      lastMove: undefined,
+    },
+  ];
   for (const uci of moves) {
     const applied = applyUci(game, uci);
-    if (shared && rows.length <= sharedPly) { rows.push(shared.rows[rows.length]); continue; }
+    if (shared && rows.length <= sharedPly) {
+      rows.push(shared.rows[rows.length]);
+      continue;
+    }
     rows.push({
       ply: rows.length,
       uci: uciFromMove(applied),
@@ -258,8 +399,14 @@ function deriveTimeline(initialFen: string, moves: string[], key: string): { tim
     });
   }
   const timeline = { initialFen: normalized, moves: [...moves], rows };
-  for (const row of rows) { if (row.lastMove) Object.freeze(row.lastMove); if (row.outcome) Object.freeze(row.outcome); Object.freeze(row); }
-  Object.freeze(timeline.moves); Object.freeze(rows); Object.freeze(timeline);
+  for (const row of rows) {
+    if (row.lastMove) Object.freeze(row.lastMove);
+    if (row.outcome) Object.freeze(row.outcome);
+    Object.freeze(row);
+  }
+  Object.freeze(timeline.moves);
+  Object.freeze(rows);
+  Object.freeze(timeline);
   touchTimeline(key, timeline);
   return { timeline, game };
 }
@@ -284,7 +431,10 @@ export function rowAt(timeline: Timeline, ply: number): TimelineRow {
 const tipMemo = new WeakMap<Timeline, TimelineRow>();
 export function tipRow(timeline: Timeline): TimelineRow {
   let cached = tipMemo.get(timeline);
-  if (!cached) { cached = timeline.rows[timeline.rows.length - 1]; tipMemo.set(timeline, cached); }
+  if (!cached) {
+    cached = timeline.rows[timeline.rows.length - 1];
+    tipMemo.set(timeline, cached);
+  }
   return cached;
 }
 
@@ -295,8 +445,11 @@ export function legalPrefixLength(initialFen: string, moves: string[]): number {
   const game = new Chess(initialFen);
   let length = 0;
   for (const uci of moves) {
-    try { applyUci(game, uci); }
-    catch { break; }
+    try {
+      applyUci(game, uci);
+    } catch {
+      break;
+    }
     length++;
   }
   return length;
@@ -306,29 +459,51 @@ export function legalPrefixLength(initialFen: string, moves: string[]): number {
 // canonical timeline: no rebuild beyond the shared once-per-line build, no
 // per-row walks. Only this boundary materializes SAN arrays.
 export type LineRecord = Position & { terminal: Evaluation | null };
-export function lineRecordMissesForTests(): number { return timelineBuilds; }
-export function resetLineRecordsForTests(): void { resetTimelinesForTests(); }
+export function lineRecordMissesForTests(): number {
+  return timelineBuilds;
+}
+export function resetLineRecordsForTests(): void {
+  resetTimelinesForTests();
+}
 export function lineRecord(moves: string[], initialFen = START_FEN): LineRecord {
   const timeline = buildTimeline(initialFen, moves);
   const end = tipRow(timeline);
-  return { fen: end.fen, moves, sanMoves: timeline.rows.slice(1).map(row => row.san),
-    lastMove: end.lastMove ? [...end.lastMove] : undefined, terminal: outcomeEvaluation(end.outcome) ?? null };
+  return {
+    fen: end.fen,
+    moves,
+    sanMoves: timeline.rows.slice(1).map(row => row.san),
+    lastMove: end.lastMove ? [...end.lastMove] : undefined,
+    terminal: outcomeEvaluation(end.outcome) ?? null,
+  };
 }
 
 // Commit step: legality probe on a single parse (throws on illegal moves like
 // game.move), canonical UCI from the applied move, and the full derivation
 // back from the shared memo — exactly one replay per genuinely new tip, zero
 // for the base or any re-derivation.
-export function extendLine(moves: string[], initialFen: string, from: Square, to: Square, promotion?: string): { moves: string[]; record: LineRecord } {
+export function extendLine(
+  moves: string[],
+  initialFen: string,
+  from: Square,
+  to: Square,
+  promotion?: string,
+): { moves: string[]; record: LineRecord } {
   const probe = new Chess(lineRecord(moves, initialFen).fen);
   const applied = probe.move({ from, to, ...(promotion ? { promotion } : {}) });
-  const nextMoves = [...moves, uciFromMove({ from: applied.from, to: applied.to, promotion: applied.promotion })];
+  const nextMoves = [
+    ...moves,
+    uciFromMove({ from: applied.from, to: applied.to, promotion: applied.promotion }),
+  ];
   return { moves: nextMoves, record: lineRecord(nextMoves, initialFen) };
 }
 
 // Takebacks address the tip-1/tip-2 prefixes, which retention keeps: normally a
 // hit, degrading to one replay after eviction or on a cold cache.
-export function retreatLine(moves: string[], initialFen: string, plies: number): { moves: string[]; record: LineRecord } {
+export function retreatLine(
+  moves: string[],
+  initialFen: string,
+  plies: number,
+): { moves: string[]; record: LineRecord } {
   const prefix = moves.slice(0, Math.max(0, moves.length - plies));
   return { moves: prefix, record: lineRecord(prefix, initialFen) };
 }

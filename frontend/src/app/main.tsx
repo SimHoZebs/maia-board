@@ -1,13 +1,13 @@
-import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
-import "@lichess-org/chessground/assets/chessground.base.css";
-import "@lichess-org/chessground/assets/chessground.brown.css";
-import "@lichess-org/chessground/assets/chessground.cburnett.css";
-import "../styles.css";
-import { BrowserRouter } from "react-router";
-import { BoardRouter } from "./BoardRouter";
-import { ErrorBoundary } from "./ErrorBoundary";
-import { CommitRecorder } from "./perfCommits";
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import '@lichess-org/chessground/assets/chessground.base.css';
+import '@lichess-org/chessground/assets/chessground.brown.css';
+import '@lichess-org/chessground/assets/chessground.cburnett.css';
+import '../styles.css';
+import { BrowserRouter } from 'react-router';
+import { BoardRouter } from './BoardRouter';
+import { ErrorBoundary } from './ErrorBoundary';
+import { CommitRecorder } from './perfCommits';
 
 // "/" is the home page (Play): canonicalize it to /play before the router
 // mounts, so the first commit already names Play instead of flashing one
@@ -21,9 +21,9 @@ import { CommitRecorder } from "./perfCommits";
 // asked for — still shareable, still debuggable — with no alias route to
 // maintain. In-app unknown paths cannot occur; hand-typed ones land here.
 const entryPath = window.location.pathname;
-if (entryPath === "/") window.history.replaceState(null, "", "/play");
+if (entryPath === '/') window.history.replaceState(null, '', '/play');
 
-createRoot(document.getElementById("root")!).render(
+createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary label="app">
       <BrowserRouter>

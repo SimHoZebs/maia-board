@@ -79,27 +79,47 @@ function isModel(value: unknown): value is BotModel {
 }
 
 const uci = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
-const probability = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+const probability = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
 
 function isTopMove(value: unknown): value is TopMove {
-  return isRecord(value) && typeof value.move === 'string' && uci.test(value.move) && probability(value.prob) && isWdlTuple(value.wdl);
+  return (
+    isRecord(value) &&
+    typeof value.move === 'string' &&
+    uci.test(value.move) &&
+    probability(value.prob) &&
+    isWdlTuple(value.wdl)
+  );
 }
 
 function isTopMoves(value: unknown): value is TopMove[] {
-  return Array.isArray(value) && value.length > 0 && value.length <= 5 && value.every(isTopMove)
-    && new Set(value.map(candidate => candidate.move)).size === value.length;
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= 5 &&
+    value.every(isTopMove) &&
+    new Set(value.map(candidate => candidate.move)).size === value.length
+  );
 }
 
 function isWdlTuple(value: unknown): value is [number, number, number] {
-  return Array.isArray(value) && value.length === 3 && value.every(probability)
-    && Math.abs(value.reduce((sum: number, part: number) => sum + part, 0) - 1) <= 1e-6;
+  return (
+    Array.isArray(value) &&
+    value.length === 3 &&
+    value.every(probability) &&
+    Math.abs(value.reduce((sum: number, part: number) => sum + part, 0) - 1) <= 1e-6
+  );
 }
 
 // Single legality source for engine responses. Returns the legal set; callers
 // throw their own domain error (BotApiError vs incomplete-evaluation Error)
 // so wire error types stay unchanged.
 export function legalUciSet(fen: string): Set<string> {
-  return new Set(new Chess(fen).moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`));
+  return new Set(
+    new Chess(fen)
+      .moves({ verbose: true })
+      .map(move => `${move.from}${move.to}${move.promotion ?? ''}`),
+  );
 }
 export function assertLegalUci(moves: string[], fen: string): void {
   const legal = legalUciSet(fen);
@@ -112,15 +132,18 @@ function stripAttachments(value: unknown): unknown {
   const { delta_baseline: _baseline, ...core } = value;
   const top = Array.isArray(core.top_moves)
     ? core.top_moves.map(candidate => {
-      if (!isRecord(candidate)) return candidate;
-      const { delta: _delta, ...rest } = candidate;
-      return rest;
-    })
+        if (!isRecord(candidate)) return candidate;
+        const { delta: _delta, ...rest } = candidate;
+        return rest;
+      })
     : core.top_moves;
   return { ...core, top_moves: top };
 }
 
-export function parseMoveResponse(value: unknown, expected?: { model: BotModel; fen: string; temperature?: number }): MoveResponse {
+export function parseMoveResponse(
+  value: unknown,
+  expected?: { model: BotModel; fen: string; temperature?: number },
+): MoveResponse {
   // Shape gate is spec-driven (Orval zod from Huma): unknown keys and
   // mistyped fields reject here. The delta attachments are excluded from
   // the gate on purpose — they are validated-or-absent by design below
@@ -130,7 +153,13 @@ export function parseMoveResponse(value: unknown, expected?: { model: BotModel; 
   if (!MoveResponseSchema.safeParse(stripAttachments(value)).success) {
     throw new BotApiError('unknown', 'Bot returned an incomplete response.');
   }
-  if (!isRecord(value) || typeof value.move !== 'string' || !uci.test(value.move) || !isModel(value.model_used) || typeof value.degraded !== 'boolean') {
+  if (
+    !isRecord(value) ||
+    typeof value.move !== 'string' ||
+    !uci.test(value.move) ||
+    !isModel(value.model_used) ||
+    typeof value.degraded !== 'boolean'
+  ) {
     throw new BotApiError('unknown', 'Bot returned an incomplete response.');
   }
   if (!isTopMoves(value.top_moves)) {
@@ -138,26 +167,45 @@ export function parseMoveResponse(value: unknown, expected?: { model: BotModel; 
   }
   const candidates = value.top_moves;
   const sum = candidates.reduce((total, candidate) => total + candidate.prob, 0);
-  if (sum <= 0 || sum > 1.000001 || candidates.some((candidate, index) => index > 0 && candidate.prob > candidates[index - 1].prob + 1e-7)) throw new BotApiError('unknown', 'Bot returned invalid candidate probabilities.');
+  if (
+    sum <= 0 ||
+    sum > 1.000001 ||
+    candidates.some(
+      (candidate, index) => index > 0 && candidate.prob > candidates[index - 1].prob + 1e-7,
+    )
+  )
+    throw new BotApiError('unknown', 'Bot returned invalid candidate probabilities.');
   if (!isWdlTuple(value.wdl)) {
     throw new BotApiError('unknown', 'Bot returned invalid WDL data.');
   }
   const wdl = value.wdl;
   if (expected) {
-    if (value.model_used !== expected.model && !(expected.model === '79m' && value.model_used === '5m' && value.degraded)) throw new BotApiError('unknown', 'Bot returned a different model.');
-    if (value.degraded !== (value.model_used !== expected.model)) throw new BotApiError('unknown', 'Bot returned inconsistent fallback identity.');
+    if (
+      value.model_used !== expected.model &&
+      !(expected.model === '79m' && value.model_used === '5m' && value.degraded)
+    )
+      throw new BotApiError('unknown', 'Bot returned a different model.');
+    if (value.degraded !== (value.model_used !== expected.model))
+      throw new BotApiError('unknown', 'Bot returned inconsistent fallback identity.');
     if (!expected.temperature && value.move !== candidates[0].move) {
       // Upstream argmax and topk may order equal logits differently. Preserve
       // its selected move when the highest policies tie, mirroring the
       // backend's deterministic validation (including a full 5-way tie whose
       // selected move can fall outside the listed ranks).
       const selected = candidates.find(candidate => candidate.move === value.move);
-      const tied = selected ? Math.abs(selected.prob - candidates[0].prob) <= 1e-7
+      const tied = selected
+        ? Math.abs(selected.prob - candidates[0].prob) <= 1e-7
         : candidates.length === 5 && Math.abs(candidates[4].prob - candidates[0].prob) <= 1e-7;
       if (!tied) throw new BotApiError('unknown', 'Bot returned an inconsistent selected move.');
     }
-    try { assertLegalUci([value.move, ...value.top_moves.map(candidate => candidate.move)], expected.fen); }
-    catch { throw new BotApiError('unknown', 'Bot returned an illegal candidate move.'); }
+    try {
+      assertLegalUci(
+        [value.move, ...value.top_moves.map(candidate => candidate.move)],
+        expected.fen,
+      );
+    } catch {
+      throw new BotApiError('unknown', 'Bot returned an illegal candidate move.');
+    }
   }
   return {
     move: value.move,
@@ -165,7 +213,9 @@ export function parseMoveResponse(value: unknown, expected?: { model: BotModel; 
       move: candidate.move,
       prob: candidate.prob,
       wdl: candidate.wdl,
-      ...(typeof candidate.delta === 'number' && Number.isFinite(candidate.delta) ? { delta: candidate.delta } : {}),
+      ...(typeof candidate.delta === 'number' && Number.isFinite(candidate.delta)
+        ? { delta: candidate.delta }
+        : {}),
     })),
     wdl,
     model_used: value.model_used,
@@ -180,17 +230,37 @@ export function parseMoveResponse(value: unknown, expected?: { model: BotModel; 
 function parseDeltaBaseline(value: Record<string, unknown>): Pick<MoveResponse, 'delta_baseline'> {
   const baseline: unknown = value.delta_baseline;
   if (baseline === undefined) return {};
-  if (!isRecord(baseline) || typeof baseline.value !== 'number' || !Number.isFinite(baseline.value)
-    || (baseline.kind !== 'before' && baseline.kind !== 'best')) return {};
+  if (
+    !isRecord(baseline) ||
+    typeof baseline.value !== 'number' ||
+    !Number.isFinite(baseline.value) ||
+    (baseline.kind !== 'before' && baseline.kind !== 'best')
+  )
+    return {};
   return { delta_baseline: { value: baseline.value, kind: baseline.kind } };
 }
 
 const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set([
-  'engine_busy', 'engine_unavailable', 'game_over', 'history_too_long', 'invalid_elo',
-  'invalid_fen', 'invalid_initial_fen', 'invalid_json', 'invalid_maia_color',
-  'invalid_model', 'invalid_move', 'invalid_position', 'invalid_request',
-  'method_not_allowed', 'missing_elo', 'not_maia_turn', 'position_mismatch',
-  'server_unreachable', 'superseded', 'unknown',
+  'engine_busy',
+  'engine_unavailable',
+  'game_over',
+  'history_too_long',
+  'invalid_elo',
+  'invalid_fen',
+  'invalid_initial_fen',
+  'invalid_json',
+  'invalid_maia_color',
+  'invalid_model',
+  'invalid_move',
+  'invalid_position',
+  'invalid_request',
+  'method_not_allowed',
+  'missing_elo',
+  'not_maia_turn',
+  'position_mismatch',
+  'server_unreachable',
+  'superseded',
+  'unknown',
 ]);
 
 export function isApiErrorCode(value: unknown): value is ApiErrorCode {
@@ -207,7 +277,10 @@ export function parseHumaError(body: unknown): { code: ApiErrorCode; message: st
   const errs = Array.isArray(body.errors) ? body.errors : [];
   let code: ApiErrorCode = 'unknown';
   for (const entry of errs) {
-    if (isRecord(entry) && isApiErrorCode(entry.message)) { code = entry.message; break; }
+    if (isRecord(entry) && isApiErrorCode(entry.message)) {
+      code = entry.message;
+      break;
+    }
   }
   return { code, message: typeof body.detail === 'string' ? body.detail : undefined };
 }
@@ -220,7 +293,11 @@ export function parseErrorMessage(value: unknown, fallback: string): string {
   return parseHumaError(value).message ?? fallback;
 }
 
-export async function requestMove(payload: MoveRequest, fetchImpl: FetchLike = fetch, signal?: AbortSignal): Promise<MoveResponse & { cached?: boolean }> {
+export async function requestMove(
+  payload: MoveRequest,
+  fetchImpl: FetchLike = fetch,
+  signal?: AbortSignal,
+): Promise<MoveResponse & { cached?: boolean }> {
   // Lane is endpoint-implied: POST /move → Play (live game replies).
   // superseded/503 codes flow through unchanged via the shared helper.
   // Do not send analysis here: sharing one depth-1 latest-wins lane would
@@ -231,7 +308,11 @@ export async function requestMove(payload: MoveRequest, fetchImpl: FetchLike = f
 
 export type BotAnalysisRequest = Omit<MoveRequest, 'temperature'>;
 
-export async function requestBotAnalysis(payload: BotAnalysisRequest, fetchImpl: FetchLike = fetch, signal?: AbortSignal): Promise<MoveResponse & { cached?: boolean }> {
+export async function requestBotAnalysis(
+  payload: BotAnalysisRequest,
+  fetchImpl: FetchLike = fetch,
+  signal?: AbortSignal,
+): Promise<MoveResponse & { cached?: boolean }> {
   // Lane is endpoint-implied: POST /move/analysis → Focus (retrospective
   // analysis). Same payload shape as /move minus sampling. The split is
   // load-bearing: analysis fires alongside the live reply every move, so it
@@ -240,17 +321,31 @@ export async function requestBotAnalysis(payload: BotAnalysisRequest, fetchImpl:
   return postBot('/move/analysis', payload, fetchImpl, signal);
 }
 
-async function postBot(path: '/move' | '/move/analysis', payload: MoveRequest | BotAnalysisRequest, fetchImpl: FetchLike, signal?: AbortSignal): Promise<MoveResponse & { cached?: boolean }> {
+async function postBot(
+  path: '/move' | '/move/analysis',
+  payload: MoveRequest | BotAnalysisRequest,
+  fetchImpl: FetchLike,
+  signal?: AbortSignal,
+): Promise<MoveResponse & { cached?: boolean }> {
   let response: Response;
   let body: unknown;
   try {
-    ({ response, body } = await fetchJsonWithBusyRetry(fetchImpl, path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }, signal));
+    ({ response, body } = await fetchJsonWithBusyRetry(
+      fetchImpl,
+      path,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      },
+      signal,
+    ));
   } catch (error) {
-    if (signal?.aborted || (error instanceof DOMException && (error.name === 'AbortError' || error.name === 'TimeoutError' && signal?.aborted))) {
+    if (
+      signal?.aborted ||
+      (error instanceof DOMException &&
+        (error.name === 'AbortError' || (error.name === 'TimeoutError' && signal?.aborted)))
+    ) {
       throw new DOMException('Aborted', 'AbortError');
     }
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
@@ -265,7 +360,11 @@ async function postBot(path: '/move' | '/move/analysis', payload: MoveRequest | 
   }
   if (!response.ok) {
     const { code, message } = parseHumaError(body);
-    throw new BotApiError(code, message ?? 'The bot server rejected this position.', response.status);
+    throw new BotApiError(
+      code,
+      message ?? 'The bot server rejected this position.',
+      response.status,
+    );
   }
   const parsed = parseMoveResponse(body, payload);
   return response.headers.get('X-Eval-Cache') === 'hit' ? { ...parsed, cached: true } : parsed;

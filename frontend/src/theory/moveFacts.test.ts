@@ -6,7 +6,11 @@ import { START_FEN } from '../shared/domain';
 // facts the wording layer reads, independently of any verdict copy.
 describe('createMoveFacts', () => {
   it('parses the applied move once', () => {
-    const facts = createMoveFacts({ beforeFen: '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1', playedUci: 'f5d4', mover: 'black' });
+    const facts = createMoveFacts({
+      beforeFen: '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1',
+      playedUci: 'f5d4',
+      mover: 'black',
+    });
     expect(facts?.san).toBe('Nd4');
     expect(facts?.from).toBe('f5');
     expect(facts?.to).toBe('d4');
@@ -17,12 +21,28 @@ describe('createMoveFacts', () => {
 
   it('returns null on illegal moves and bad FENs, never throws', () => {
     expect(createMoveFacts({ beforeFen: 'bad', playedUci: 'f5d4', mover: 'black' })).toBeNull();
-    expect(createMoveFacts({ beforeFen: '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1', playedUci: 'e2e9', mover: 'black' })).toBeNull();
-    expect(createMoveFacts({ beforeFen: '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1', playedUci: 'a7a8q', mover: 'black' })).toBeNull();
+    expect(
+      createMoveFacts({
+        beforeFen: '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1',
+        playedUci: 'e2e9',
+        mover: 'black',
+      }),
+    ).toBeNull();
+    expect(
+      createMoveFacts({
+        beforeFen: '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1',
+        playedUci: 'a7a8q',
+        mover: 'black',
+      }),
+    ).toBeNull();
   });
 
   it('grades the contested fork: defended cheapest, even net, safe forker', () => {
-    const facts = createMoveFacts({ beforeFen: '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1', playedUci: 'f5d4', mover: 'black' });
+    const facts = createMoveFacts({
+      beforeFen: '4k3/8/8/5n2/8/1Q6/2B5/4K3 b - - 0 1',
+      playedUci: 'f5d4',
+      mover: 'black',
+    });
     expect(facts?.fork()).toMatchObject({
       victims: ['b', 'q'],
       hasKing: false,
@@ -36,19 +56,46 @@ describe('createMoveFacts', () => {
   });
 
   it('grades the winning trade: defended rook, positive net', () => {
-    const facts = createMoveFacts({ beforeFen: '4k3/8/8/5n2/8/1Q6/2R5/4K3 b - - 0 1', playedUci: 'f5d4', mover: 'black' });
-    expect(facts?.fork()).toMatchObject({ victims: ['r', 'q'], cheapest: 'r', cheapestDefended: true, net: 2, hanging: false });
+    const facts = createMoveFacts({
+      beforeFen: '4k3/8/8/5n2/8/1Q6/2R5/4K3 b - - 0 1',
+      playedUci: 'f5d4',
+      mover: 'black',
+    });
+    expect(facts?.fork()).toMatchObject({
+      victims: ['r', 'q'],
+      cheapest: 'r',
+      cheapestDefended: true,
+      net: 2,
+      hanging: false,
+    });
   });
 
   it('marks royal forks king-first', () => {
-    const facts = createMoveFacts({ beforeFen: '4k3/8/8/8/8/3n4/8/3Q3K b - - 0 1', playedUci: 'd3f2', mover: 'black' });
-    expect(facts?.fork()).toMatchObject({ victims: ['k', 'q'], hasKing: true, cheapest: 'q', hanging: false });
+    const facts = createMoveFacts({
+      beforeFen: '4k3/8/8/8/8/3n4/8/3Q3K b - - 0 1',
+      playedUci: 'd3f2',
+      mover: 'black',
+    });
+    expect(facts?.fork()).toMatchObject({
+      victims: ['k', 'q'],
+      hasKing: true,
+      cheapest: 'q',
+      hanging: false,
+    });
   });
 
   it('flags hanging forkers, including king takes', () => {
-    const pawnTakes = createMoveFacts({ beforeFen: '4k3/8/8/5n2/8/1QP5/2B5/4K3 b - - 0 1', playedUci: 'f5d4', mover: 'black' });
+    const pawnTakes = createMoveFacts({
+      beforeFen: '4k3/8/8/5n2/8/1QP5/2B5/4K3 b - - 0 1',
+      playedUci: 'f5d4',
+      mover: 'black',
+    });
     expect(pawnTakes?.fork()).toMatchObject({ hanging: true });
-    const kingTakes = createMoveFacts({ beforeFen: '4k3/8/8/5n2/8/1Q2K3/2B5/8 b - - 0 1', playedUci: 'f5d4', mover: 'black' });
+    const kingTakes = createMoveFacts({
+      beforeFen: '4k3/8/8/5n2/8/1Q2K3/2B5/8 b - - 0 1',
+      playedUci: 'f5d4',
+      mover: 'black',
+    });
     expect(kingTakes?.fork()).toMatchObject({ hanging: true });
   });
 
@@ -59,7 +106,13 @@ describe('createMoveFacts', () => {
       mover: 'white',
     });
     expect(capture?.fork()).toBeNull();
-    expect(createMoveFacts({ beforeFen: '8/P7/7k/8/8/8/8/7K w - - 0 1', playedUci: 'a7a8q', mover: 'white' })?.fork() ?? null).toBeNull();
+    expect(
+      createMoveFacts({
+        beforeFen: '8/P7/7k/8/8/8/8/7K w - - 0 1',
+        playedUci: 'a7a8q',
+        mover: 'white',
+      })?.fork() ?? null,
+    ).toBeNull();
   });
 
   it('detects the Bd6 relative pin to the rook', () => {
@@ -108,46 +161,58 @@ describe('createMoveFacts', () => {
     // Rfe1 lines up queen-e4 behind rook-e8: the queen (9) shields the rook
     // (5), so there is no pin pressure. The c3 bishop holds e1, ruling out
     // the hanging-pinner suppression as the reason for silence.
-    expect(createMoveFacts({
-      beforeFen: '4r1k1/8/8/8/4q3/2B5/8/R4RK1 w - - 0 1',
-      playedUci: 'f1e1',
-      mover: 'white',
-    })?.pin()).toBeNull();
+    expect(
+      createMoveFacts({
+        beforeFen: '4r1k1/8/8/8/4q3/2B5/8/R4RK1 w - - 0 1',
+        playedUci: 'f1e1',
+        mover: 'white',
+      })?.pin(),
+    ).toBeNull();
     // Equal values are no pin either: rook shielding rook.
-    expect(createMoveFacts({
-      beforeFen: '4r1k1/8/8/8/4r3/2B5/8/R4RK1 w - - 0 1',
-      playedUci: 'f1e1',
-      mover: 'white',
-    })?.pin()).toBeNull();
+    expect(
+      createMoveFacts({
+        beforeFen: '4r1k1/8/8/8/4r3/2B5/8/R4RK1 w - - 0 1',
+        playedUci: 'f1e1',
+        mover: 'white',
+      })?.pin(),
+    ).toBeNull();
     // Queen shielding queen is no pin either.
-    expect(createMoveFacts({
-      beforeFen: '4q1k1/8/8/8/4q3/2B5/8/R4RK1 w - - 0 1',
-      playedUci: 'f1e1',
-      mover: 'white',
-    })?.pin()).toBeNull();
+    expect(
+      createMoveFacts({
+        beforeFen: '4q1k1/8/8/8/4q3/2B5/8/R4RK1 w - - 0 1',
+        playedUci: 'f1e1',
+        mover: 'white',
+      })?.pin(),
+    ).toBeNull();
     // A cheaper slider on a pricier shield is an attack, not a pin: Bb2
     // takes aim at Rc3 with Qd4 behind, but bishop-for-rook wins the
     // exchange outright, so the queen is incidental.
-    expect(createMoveFacts({
-      beforeFen: '6k1/8/8/8/3q4/2r5/8/B6K w - - 0 1',
-      playedUci: 'a1b2',
-      mover: 'white',
-    })?.pin()).toBeNull();
+    expect(
+      createMoveFacts({
+        beforeFen: '6k1/8/8/8/3q4/2r5/8/B6K w - - 0 1',
+        playedUci: 'a1b2',
+        mover: 'white',
+      })?.pin(),
+    ).toBeNull();
   });
 
   it('keeps pins where the back outvalues the front', () => {
     // Rook shielding the queen at equal value: real relative pin pressure.
-    expect(createMoveFacts({
-      beforeFen: '4q1k1/8/8/8/4r3/2B5/8/R4RK1 w - - 0 1',
-      playedUci: 'f1e1',
-      mover: 'white',
-    })?.pin()).toMatchObject({ front: 'r', back: 'q', hanging: false });
+    expect(
+      createMoveFacts({
+        beforeFen: '4q1k1/8/8/8/4r3/2B5/8/R4RK1 w - - 0 1',
+        playedUci: 'f1e1',
+        mover: 'white',
+      })?.pin(),
+    ).toMatchObject({ front: 'r', back: 'q', hanging: false });
     // Queen shielding the king is absolute: still a pin.
-    expect(createMoveFacts({
-      beforeFen: '4k3/8/8/8/4q3/2B5/8/R4RK1 w - - 0 1',
-      playedUci: 'f1e1',
-      mover: 'white',
-    })?.pin()).toMatchObject({ front: 'q', back: 'k', hanging: false });
+    expect(
+      createMoveFacts({
+        beforeFen: '4k3/8/8/8/4q3/2B5/8/R4RK1 w - - 0 1',
+        playedUci: 'f1e1',
+        mover: 'white',
+      })?.pin(),
+    ).toMatchObject({ front: 'q', back: 'k', hanging: false });
   });
 
   it('stays silent on captures, promotions, non-sliders, and quiet moves', () => {
@@ -157,14 +222,30 @@ describe('createMoveFacts', () => {
       mover: 'white',
     });
     expect(capture?.pin()).toBeNull();
-    expect(createMoveFacts({ beforeFen: '8/P7/7k/8/8/8/8/7K w - - 0 1', playedUci: 'a7a8q', mover: 'white' })?.pin() ?? null).toBeNull();
-    const knight = createMoveFacts({ beforeFen: '4k3/8/8/8/8/3n4/8/3Q3K b - - 0 1', playedUci: 'd3f2', mover: 'black' });
+    expect(
+      createMoveFacts({
+        beforeFen: '8/P7/7k/8/8/8/8/7K w - - 0 1',
+        playedUci: 'a7a8q',
+        mover: 'white',
+      })?.pin() ?? null,
+    ).toBeNull();
+    const knight = createMoveFacts({
+      beforeFen: '4k3/8/8/8/8/3n4/8/3Q3K b - - 0 1',
+      playedUci: 'd3f2',
+      mover: 'black',
+    });
     expect(knight?.pin()).toBeNull();
-    expect(createMoveFacts({ beforeFen: START_FEN, playedUci: 'e2e4', mover: 'white' })?.pin() ?? null).toBeNull();
+    expect(
+      createMoveFacts({ beforeFen: START_FEN, playedUci: 'e2e4', mover: 'white' })?.pin() ?? null,
+    ).toBeNull();
   });
 
   it('detects checking skewers through the king', () => {
-    const facts = createMoveFacts({ beforeFen: '8/2qk4/8/2B5/8/8/5K2/4R3 w - - 0 1', playedUci: 'e1e7', mover: 'white' });
+    const facts = createMoveFacts({
+      beforeFen: '8/2qk4/8/2B5/8/8/5K2/4R3 w - - 0 1',
+      playedUci: 'e1e7',
+      mover: 'white',
+    });
     expect(facts?.givesCheck).toBe(true);
     expect(facts?.skewer()).toMatchObject({
       back: 'q',
@@ -177,12 +258,24 @@ describe('createMoveFacts', () => {
   });
 
   it('rejects skewers without check, without sliders, and with hanging checkers', () => {
-    const quiet = createMoveFacts({ beforeFen: '8/2qk4/8/2B5/8/8/5K2/4R3 w - - 0 1', playedUci: 'f2f3', mover: 'white' });
+    const quiet = createMoveFacts({
+      beforeFen: '8/2qk4/8/2B5/8/8/5K2/4R3 w - - 0 1',
+      playedUci: 'f2f3',
+      mover: 'white',
+    });
     expect(quiet?.skewer()).toBeNull();
-    const knight = createMoveFacts({ beforeFen: '4k3/8/8/8/8/3n4/8/3Q3K b - - 0 1', playedUci: 'd3f2', mover: 'black' });
+    const knight = createMoveFacts({
+      beforeFen: '4k3/8/8/8/8/3n4/8/3Q3K b - - 0 1',
+      playedUci: 'd3f2',
+      mover: 'black',
+    });
     expect(knight?.skewer()).toBeNull();
     // No bishop on c5: the king simply eats the rook.
-    const hanging = createMoveFacts({ beforeFen: '8/2qk4/8/8/8/8/5K2/4R3 w - - 0 1', playedUci: 'e1e7', mover: 'white' });
+    const hanging = createMoveFacts({
+      beforeFen: '8/2qk4/8/8/8/8/5K2/4R3 w - - 0 1',
+      playedUci: 'e1e7',
+      mover: 'white',
+    });
     expect(hanging?.skewer()).toMatchObject({ hanging: true });
   });
 
@@ -204,11 +297,20 @@ describe('createMoveFacts', () => {
       prevBeforeFen: '4k3/3n4/8/4P3/3P4/8/8/4K3 b - - 0 1',
       prevUci: 'd7e5',
     });
-    expect(winning?.recapture()).toEqual({ prevPiece: 'p', thisPiece: 'n', sameSquare: true, net: 2 });
+    expect(winning?.recapture()).toEqual({
+      prevPiece: 'p',
+      thisPiece: 'n',
+      sameSquare: true,
+      net: 2,
+    });
   });
 
   it('stays silent off the recapture shape', () => {
-    const facts = createMoveFacts({ beforeFen: '4k3/8/8/4n3/3P4/8/8/4K3 w - - 0 2', playedUci: 'd4e5', mover: 'white' });
+    const facts = createMoveFacts({
+      beforeFen: '4k3/8/8/4n3/3P4/8/8/4K3 w - - 0 2',
+      playedUci: 'd4e5',
+      mover: 'white',
+    });
     // No prev move at all (game start shape).
     expect(facts?.recapture()).toBeNull();
     // Previous move was quiet: not a take-take.

@@ -69,7 +69,8 @@ export function walkObjectiveLine(args: {
   // grade that triggers the line is settled (settled grades carry a top).
   for (let step = 0; step < max; step++) {
     const top = topAt(moves);
-    if (top.kind === 'missing') return { ucis, stop: 'need-maia', maiaFrontier: moves, sfFrontier: null };
+    if (top.kind === 'missing')
+      return { ucis, stop: 'need-maia', maiaFrontier: moves, sfFrontier: null };
     if (top.kind === 'none') return { ucis, stop: 'settled', maiaFrontier: null, sfFrontier: null };
     const child = [...moves, top.uci];
     let turn: 'white' | 'black';
@@ -83,7 +84,8 @@ export function walkObjectiveLine(args: {
     }
     // A step that ends the game joins the line (a delivered mate is the
     // point), then the walk ends: terminal positions carry no lane rows.
-    if (outcome) return { ucis: [...ucis, top.uci], stop: 'terminal', maiaFrontier: null, sfFrontier: null };
+    if (outcome)
+      return { ucis: [...ucis, top.uci], stop: 'terminal', maiaFrontier: null, sfFrontier: null };
     const score = sfAt(child);
     if (score.kind === 'missing') {
       // Optimistic include: the step stands on the objective lane and no

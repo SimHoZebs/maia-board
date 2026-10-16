@@ -21,7 +21,14 @@ import { Chess } from 'chess.js';
 const PINNED_SHA = '4b8622759e7ae6f93f011cc6c83a3823401ab45e';
 const PINNED_DATE = '2026-08-04';
 const VOLUMES = ['a', 'b', 'c', 'd', 'e'];
-const OUT_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'backend', 'workers', 'openings_table.json');
+const OUT_PATH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  'backend',
+  'workers',
+  'openings_table.json',
+);
 
 // EPD key: FEN without move counters, en-passant square only when a capture is
 // actually legal. chess.js already blanks stale squares; the flags check covers
@@ -32,7 +39,7 @@ function epdKey(fen) {
   let ep = normalized[3];
   if (ep !== '-') {
     const probe = new Chess(fen);
-    const hasEp = probe.moves({ verbose: true }).some((m) => m.flags.includes('e'));
+    const hasEp = probe.moves({ verbose: true }).some(m => m.flags.includes('e'));
     if (!hasEp) ep = '-';
   }
   return `${normalized[0]} ${normalized[1]} ${normalized[2]} ${ep}`;
@@ -70,7 +77,9 @@ async function build() {
         game = new Chess();
         game.loadPgn(pgn);
       } catch (error) {
-        failures.push(`${volume}.tsv:${index + 1} (${eco} ${name}): PGN replay failed: ${error.message}`);
+        failures.push(
+          `${volume}.tsv:${index + 1} (${eco} ${name}): PGN replay failed: ${error.message}`,
+        );
         continue;
       }
       const history = game.history({ verbose: true });
@@ -83,7 +92,10 @@ async function build() {
       const prev = table.get(key);
       if (prev) {
         collisions++;
-        if (name.length > prev.name.length || (name.length === prev.name.length && ply > prev.ply)) {
+        if (
+          name.length > prev.name.length ||
+          (name.length === prev.name.length && ply > prev.ply)
+        ) {
           table.set(key, { eco, name, ply });
         }
       } else {
@@ -96,7 +108,7 @@ async function build() {
 
 function render(table, rows, collisions) {
   const positions = {};
-  for (const key of [...table.keys()].sort()) {
+  for (const key of [...table.keys()].toSorted()) {
     const { eco, name } = table.get(key);
     positions[key] = [eco, name];
   }
@@ -118,18 +130,26 @@ if (failures.length) {
   process.exit(1);
 }
 if (table.size < 3000) {
-  console.error(`build-openings-table: only ${table.size} positions from ${rows} rows — upstream truncation?`);
+  console.error(
+    `build-openings-table: only ${table.size} positions from ${rows} rows — upstream truncation?`,
+  );
   process.exit(1);
 }
 const output = render(table, rows, collisions);
 if (check) {
   const current = readFileSync(OUT_PATH, 'utf8');
   if (current !== output) {
-    console.error('build-openings-table: backend/workers/openings_table.json is stale — run node scripts/build-openings-table.mjs');
+    console.error(
+      'build-openings-table: backend/workers/openings_table.json is stale — run node scripts/build-openings-table.mjs',
+    );
     process.exit(1);
   }
-  console.log(`build-openings-table: fresh (${table.size} positions, ${rows} rows, ${collisions} collisions)`);
+  console.log(
+    `build-openings-table: fresh (${table.size} positions, ${rows} rows, ${collisions} collisions)`,
+  );
 } else {
   writeFileSync(OUT_PATH, output);
-  console.log(`build-openings-table: wrote ${OUT_PATH} (${table.size} positions, ${rows} rows, ${collisions} collisions)`);
+  console.log(
+    `build-openings-table: wrote ${OUT_PATH} (${table.size} positions, ${rows} rows, ${collisions} collisions)`,
+  );
 }

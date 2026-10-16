@@ -1,7 +1,12 @@
 import { normalizeBoardOrientation } from '../shared/domain';
 import { KEYS, readStorage } from '../history/storage';
 import { normalizeStockfishSettings, STOCKFISH_STORAGE_KEY } from '../eval/stockfishSettings';
-import { defaultArrowBasis, defaultArrowSettings, normalizeArrowBasis, normalizeArrowSettings, sameArrowSettings } from '../settings/arrowSettings';
+import {
+  defaultArrowSettings,
+  normalizeArrowBasis,
+  normalizeArrowSettings,
+  sameArrowSettings,
+} from '../settings/arrowSettings';
 import { normalizeBestLineWindow } from '../theory/material';
 import type { BadgeLoading } from '../review/ReviewCharts';
 import type { Action, State } from './types';
@@ -18,16 +23,29 @@ export function normalizeBadgeLoading(stored: unknown): BadgeLoading {
 // offsets that drift against fluid square sizes, while on-squares labels are
 // proportional and stay aligned at any viewport.
 export function normalizeCoordinatesOnSquares(stored: unknown): boolean {
-  return stored === false ? false : true;
+  return stored !== false;
 }
 
 // Move sounds default on: every chess platform sounds the board, and the
 // stored value only ever turns them off.
 export function normalizeSoundEnabled(stored: unknown): boolean {
-  return stored === false ? false : true;
+  return stored !== false;
 }
 
-export type DisplayState = Pick<State, 'stockfish' | 'feedback' | 'playVerdict' | 'badgeLoading' | 'coordinatesOnSquares' | 'soundEnabled' | 'boardOrientation' | 'bestLineWindow' | 'arrows' | 'arrowBasis' | 'flipped'>;
+export type DisplayState = Pick<
+  State,
+  | 'stockfish'
+  | 'feedback'
+  | 'playVerdict'
+  | 'badgeLoading'
+  | 'coordinatesOnSquares'
+  | 'soundEnabled'
+  | 'boardOrientation'
+  | 'bestLineWindow'
+  | 'arrows'
+  | 'arrowBasis'
+  | 'flipped'
+>;
 
 export function initialDisplayState(): DisplayState {
   return {
@@ -35,7 +53,9 @@ export function initialDisplayState(): DisplayState {
     feedback: readStorage<boolean>(KEYS.feedback) === true,
     playVerdict: readStorage<boolean>(KEYS.playVerdict) === true,
     badgeLoading: normalizeBadgeLoading(readStorage<unknown>(KEYS.badgeLoading)),
-    coordinatesOnSquares: normalizeCoordinatesOnSquares(readStorage<unknown>(KEYS.coordinatesOnSquares)),
+    coordinatesOnSquares: normalizeCoordinatesOnSquares(
+      readStorage<unknown>(KEYS.coordinatesOnSquares),
+    ),
     soundEnabled: normalizeSoundEnabled(readStorage<unknown>(KEYS.sound)),
     boardOrientation: normalizeBoardOrientation(readStorage<unknown>(KEYS.boardOrientation)),
     bestLineWindow: normalizeBestLineWindow(readStorage<unknown>(KEYS.bestLineWindow)),
@@ -47,26 +67,60 @@ export function initialDisplayState(): DisplayState {
 
 export function reduceDisplay(state: State, action: Action): State | undefined {
   switch (action.type) {
-    case 'stockfish-settings': return { ...state, stockfish: normalizeStockfishSettings({ ...state.stockfish, ...action.settings }) };
-    case 'feedback': return state.feedback === action.enabled ? state : { ...state, feedback: action.enabled };
-    case 'play-verdict': return state.playVerdict === action.enabled ? state : { ...state, playVerdict: action.enabled };
-    case 'badge-loading': return state.badgeLoading === action.loading ? state : { ...state, badgeLoading: action.loading };
-    case 'coordinates-on-squares': return state.coordinatesOnSquares === action.enabled ? state : { ...state, coordinatesOnSquares: action.enabled };
-    case 'sound-enabled': return state.soundEnabled === action.enabled ? state : { ...state, soundEnabled: action.enabled };
-    case 'board-orientation': return state.boardOrientation === action.orientation ? state : { ...state, boardOrientation: action.orientation };
+    case 'stockfish-settings':
+      return {
+        ...state,
+        stockfish: normalizeStockfishSettings({ ...state.stockfish, ...action.settings }),
+      };
+    case 'feedback':
+      return state.feedback === action.enabled ? state : { ...state, feedback: action.enabled };
+    case 'play-verdict':
+      return state.playVerdict === action.enabled
+        ? state
+        : { ...state, playVerdict: action.enabled };
+    case 'badge-loading':
+      return state.badgeLoading === action.loading
+        ? state
+        : { ...state, badgeLoading: action.loading };
+    case 'coordinates-on-squares':
+      return state.coordinatesOnSquares === action.enabled
+        ? state
+        : { ...state, coordinatesOnSquares: action.enabled };
+    case 'sound-enabled':
+      return state.soundEnabled === action.enabled
+        ? state
+        : { ...state, soundEnabled: action.enabled };
+    case 'board-orientation':
+      return state.boardOrientation === action.orientation
+        ? state
+        : { ...state, boardOrientation: action.orientation };
     // Display-only like badgeLoading: normalizing here keeps junk storage or
     // dispatches on the default, and the value never enters review cache keys
     // or engine requests, so changing it recomputes verdict text without a
     // refetch.
-    case 'best-line-window': { const window = normalizeBestLineWindow(action.window); return state.bestLineWindow === window ? state : { ...state, bestLineWindow: window }; }
+    case 'best-line-window': {
+      const window = normalizeBestLineWindow(action.window);
+      return state.bestLineWindow === window ? state : { ...state, bestLineWindow: window };
+    }
     case 'arrow-settings': {
       const current = state.arrows[action.source];
-      const merged = normalizeArrowSettings({ ...state.arrows, [action.source]: { ...current, ...action.style } });
+      const merged = normalizeArrowSettings({
+        ...state.arrows,
+        [action.source]: { ...current, ...action.style },
+      });
       return sameArrowSettings(merged, state.arrows) ? state : { ...state, arrows: merged };
     }
-    case 'arrow-settings-reset': return sameArrowSettings(state.arrows, defaultArrowSettings) ? state : { ...state, arrows: defaultArrowSettings };
-    case 'arrow-basis': { const basis = normalizeArrowBasis(action.basis); return state.arrowBasis === basis ? state : { ...state, arrowBasis: basis }; }
-    case 'flip': return { ...state, flipped: !state.flipped };
-    default: return undefined;
+    case 'arrow-settings-reset':
+      return sameArrowSettings(state.arrows, defaultArrowSettings)
+        ? state
+        : { ...state, arrows: defaultArrowSettings };
+    case 'arrow-basis': {
+      const basis = normalizeArrowBasis(action.basis);
+      return state.arrowBasis === basis ? state : { ...state, arrowBasis: basis };
+    }
+    case 'flip':
+      return { ...state, flipped: !state.flipped };
+    default:
+      return undefined;
   }
 }

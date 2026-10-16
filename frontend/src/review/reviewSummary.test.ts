@@ -6,35 +6,69 @@ import { summarizeReview } from './reviewSummary';
 function nodes(moves: string[], initialFen = START_FEN) {
   return buildTimeline(initialFen, moves).rows;
 }
-const quality = (accuracy: number, label: Quality['label'] = 'Good'): Quality => ({ accuracy, label, loss: null });
+const quality = (accuracy: number, label: Quality['label'] = 'Good'): Quality => ({
+  accuracy,
+  label,
+  loss: null,
+});
 const missing: Quality = { label: 'Unreviewed', accuracy: null, loss: null };
 
 it('averages each side independently and counts every actual move', () => {
-  const summary = summarizeReview(nodes(['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1b5']), [quality(100), quality(80), quality(40, 'Blunder'), quality(60, 'Mistake'), quality(100, 'Forced')]);
+  const summary = summarizeReview(nodes(['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1b5']), [
+    quality(100),
+    quality(80),
+    quality(40, 'Blunder'),
+    quality(60, 'Mistake'),
+    quality(100, 'Forced'),
+  ]);
   expect(summary.total).toBe(5);
   expect(summary.reviewed).toBe(5);
-  expect(summary.sides[0]).toMatchObject({ color: 'white', total: 3, reviewed: 3, accuracy: 80, issues: { Inaccuracy: 0, Mistake: 0, Blunder: 1 } });
-  expect(summary.sides[1]).toMatchObject({ color: 'black', total: 2, reviewed: 2, accuracy: 70, issues: { Inaccuracy: 0, Mistake: 1, Blunder: 0 } });
+  expect(summary.sides[0]).toMatchObject({
+    color: 'white',
+    total: 3,
+    reviewed: 3,
+    accuracy: 80,
+    issues: { Inaccuracy: 0, Mistake: 0, Blunder: 1 },
+  });
+  expect(summary.sides[1]).toMatchObject({
+    color: 'black',
+    total: 2,
+    reviewed: 2,
+    accuracy: 70,
+    issues: { Inaccuracy: 0, Mistake: 1, Blunder: 0 },
+  });
   expect(summary.sides[0].counts).toMatchObject({ Good: 1, Blunder: 1, Forced: 1 });
   expect(summary.sides[1].counts).toMatchObject({ Good: 1, Mistake: 1 });
 });
 
 it('counts blunders alongside inaccuracies and mistakes', () => {
-  const summary = summarizeReview(nodes(['e2e4', 'e7e5']), [quality(20, 'Blunder'), quality(100, 'Best')]);
+  const summary = summarizeReview(nodes(['e2e4', 'e7e5']), [
+    quality(20, 'Blunder'),
+    quality(100, 'Best'),
+  ]);
   expect(summary.sides[0]).toMatchObject({ issues: { Inaccuracy: 0, Mistake: 0, Blunder: 1 } });
   expect(summary.issues).toEqual([
     { beforePly: 0, color: 'white', moveNumber: 1, san: 'e4', label: 'Blunder', accuracy: 20 },
   ]);
 });
 it('counts allowed mates separately from blunders with zero accuracy', () => {
-  const summary = summarizeReview(nodes(['e2e4', 'e7e5']), [quality(0, 'Allowed mate'), quality(100, 'Best')]);
-  expect(summary.sides[0]).toMatchObject({ issues: { Inaccuracy: 0, Mistake: 0, Blunder: 0, 'Allowed mate': 1 } });
+  const summary = summarizeReview(nodes(['e2e4', 'e7e5']), [
+    quality(0, 'Allowed mate'),
+    quality(100, 'Best'),
+  ]);
+  expect(summary.sides[0]).toMatchObject({
+    issues: { Inaccuracy: 0, Mistake: 0, Blunder: 0, 'Allowed mate': 1 },
+  });
   expect(summary.issues).toEqual([
     { beforePly: 0, color: 'white', moveNumber: 1, san: 'e4', label: 'Allowed mate', accuracy: 0 },
   ]);
 });
 it('keeps unavailable moves out of means while retaining incomplete coverage', () => {
-  const summary = summarizeReview(nodes(['e2e4', 'e7e5', 'g1f3', 'b8c6']), [missing, quality(0, 'Blunder'), missing]);
+  const summary = summarizeReview(nodes(['e2e4', 'e7e5', 'g1f3', 'b8c6']), [
+    missing,
+    quality(0, 'Blunder'),
+    missing,
+  ]);
   expect(summary.sides[0]).toMatchObject({ total: 2, reviewed: 0, accuracy: null });
   expect(summary.sides[1]).toMatchObject({ total: 2, reviewed: 1, accuracy: 0 });
   expect(summary.reviewed).toBe(1);
@@ -43,7 +77,11 @@ it('keeps unavailable moves out of means while retaining incomplete coverage', (
 
 it('uses the actual mover and fullmove number for black-to-move imports', () => {
   const initialFen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 23';
-  const summary = summarizeReview(nodes(['e7e5', 'g1f3', 'b8c6'], initialFen), [quality(75, 'Inaccuracy'), quality(30, 'Blunder'), quality(55, 'Mistake')]);
+  const summary = summarizeReview(nodes(['e7e5', 'g1f3', 'b8c6'], initialFen), [
+    quality(75, 'Inaccuracy'),
+    quality(30, 'Blunder'),
+    quality(55, 'Mistake'),
+  ]);
   expect(summary.sides[0]).toMatchObject({ total: 1, reviewed: 1, accuracy: 30 });
   expect(summary.sides[1]).toMatchObject({ total: 2, reviewed: 2, accuracy: 65 });
   expect(summary.issues).toEqual([
@@ -55,16 +93,32 @@ it('uses the actual mover and fullmove number for black-to-move imports', () => 
 
 it('scopes totals, means, and issues to one side when requested', () => {
   const moves = ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1b5'];
-  const qs = [quality(100), quality(80), quality(40, 'Blunder'), quality(60, 'Mistake'), quality(100, 'Forced')];
+  const qs = [
+    quality(100),
+    quality(80),
+    quality(40, 'Blunder'),
+    quality(60, 'Mistake'),
+    quality(100, 'Forced'),
+  ];
   const summary = summarizeReview(nodes(moves), qs, 'black');
   expect(summary.sides).toHaveLength(1);
-  expect(summary.sides[0]).toMatchObject({ color: 'black', total: 2, reviewed: 2, accuracy: 70, issues: { Inaccuracy: 0, Mistake: 1, Blunder: 0 } });
+  expect(summary.sides[0]).toMatchObject({
+    color: 'black',
+    total: 2,
+    reviewed: 2,
+    accuracy: 70,
+    issues: { Inaccuracy: 0, Mistake: 1, Blunder: 0 },
+  });
   expect(summary).toMatchObject({ total: 2, reviewed: 2 });
   expect(summary.issues.map(issue => issue.beforePly)).toEqual([3]);
 });
 
 it('hides the other side even when it holds the only reviewed moves', () => {
-  const summary = summarizeReview(nodes(['e2e4', 'e7e5']), [quality(0, 'Blunder'), missing], 'black');
+  const summary = summarizeReview(
+    nodes(['e2e4', 'e7e5']),
+    [quality(0, 'Blunder'), missing],
+    'black',
+  );
   expect(summary.sides).toHaveLength(1);
   expect(summary.sides[0]).toMatchObject({ color: 'black', total: 1, reviewed: 0, accuracy: null });
   expect(summary).toMatchObject({ total: 1, reviewed: 0, issues: [] });
@@ -77,8 +131,16 @@ it('leaves both accuracies unavailable when there are no moves', () => {
 });
 
 it('includes the final mating move and identifies its pre-move position', () => {
-  const summary = summarizeReview(nodes(['f2f3', 'e7e5', 'g2g4', 'd8h4']), [quality(70, 'Inaccuracy'), quality(100), quality(0, 'Blunder'), quality(100, 'Best')]);
+  const summary = summarizeReview(nodes(['f2f3', 'e7e5', 'g2g4', 'd8h4']), [
+    quality(70, 'Inaccuracy'),
+    quality(100),
+    quality(0, 'Blunder'),
+    quality(100, 'Best'),
+  ]);
   expect(summary.total).toBe(4);
-  expect(summary.issues.map(issue => [issue.beforePly, issue.san])).toEqual([[0, 'f3'], [2, 'g4']]);
+  expect(summary.issues.map(issue => [issue.beforePly, issue.san])).toEqual([
+    [0, 'f3'],
+    [2, 'g4'],
+  ]);
   expect(summary.sides[1].accuracy).toBe(100);
 });

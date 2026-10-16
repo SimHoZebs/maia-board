@@ -1,5 +1,14 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { flushSync } from "react-dom";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
+import { flushSync } from 'react-dom';
 import {
   matchPath,
   Navigate,
@@ -8,46 +17,43 @@ import {
   Routes,
   useLocation,
   useNavigate,
-} from "react-router";
-import { App } from "./App";
-import { History, Microscope, Play, Settings } from "lucide-react";
-const EvalLoadingLab = lazy(() => import("../review/EvalLoadingLab").then(module => ({ default: module.EvalLoadingLab })));
-const VerdictLab = lazy(() => import("../review/VerdictLab").then(module => ({ default: module.VerdictLab })));
-import type { Mode } from "../shared/domain";
-import { loadLine } from "../shared/domain";
-import { NotFound } from "./NotFound";
-import type { Action, State } from "../state/index";
-import { useBotBoard } from "../play/useBotBoard";
-import { SyncContext } from "../history/syncStore";
-import { SessionContext, SessionStore, subscribeUnauthorized } from "../history/session";
-import { LoginGate } from "../history/LoginGate";
-import { analysisPath, analysisSearch, parseAnalysisSearch, sameLine } from "./analysisUrl";
-import { RegionRecorder } from "./perfCommits";
+} from 'react-router';
+import { App } from './App';
+import { History, Microscope, Play, Settings } from 'lucide-react';
+const EvalLoadingLab = lazy(() =>
+  import('../review/EvalLoadingLab').then(module => ({ default: module.EvalLoadingLab })),
+);
+const VerdictLab = lazy(() =>
+  import('../review/VerdictLab').then(module => ({ default: module.VerdictLab })),
+);
+import type { Mode } from '../shared/domain';
+import { loadLine } from '../shared/domain';
+import { NotFound } from './NotFound';
+import type { Action, State } from '../state/index';
+import { useBotBoard } from '../play/useBotBoard';
+import { SyncContext } from '../history/syncStore';
+import { SessionContext, SessionStore, subscribeUnauthorized } from '../history/session';
+import { LoginGate } from '../history/LoginGate';
+import { analysisPath, analysisSearch, parseAnalysisSearch, sameLine } from './analysisUrl';
+import { RegionRecorder } from './perfCommits';
 
 export const destinations = [
-  { mode: "play", path: "/play", label: "Play", Icon: Play },
-  { mode: "analysis", path: "/analyze", label: "Analyze", Icon: Microscope },
-  { mode: "history", path: "/history", label: "History", Icon: History },
-  { mode: "settings", path: "/settings", label: "Settings", Icon: Settings },
+  { mode: 'play', path: '/play', label: 'Play', Icon: Play },
+  { mode: 'analysis', path: '/analyze', label: 'Analyze', Icon: Microscope },
+  { mode: 'history', path: '/history', label: 'History', Icon: History },
+  { mode: 'settings', path: '/settings', label: 'Settings', Icon: Settings },
 ] as const;
-const pathFor = (mode: Mode) =>
-  destinations.find((destination) => destination.mode === mode)!.path;
+const pathFor = (mode: Mode) => destinations.find(destination => destination.mode === mode)!.path;
 
 // Shared Analyze-tab intent: tapping Analyze while a line is loaded unloads
 // to the importer instead of reopening behind a dialog. MobileMenu in
 // workspaces.tsx duplicates this check (read-only here); keep both branches
 // identical and report any drift.
 export function shouldUnloadAnalysis(destMode: string, analysisLoaded: boolean): boolean {
-  return destMode === "analysis" && analysisLoaded;
+  return destMode === 'analysis' && analysisLoaded;
 }
 
-function DestinationNav({
-  state,
-  dispatch,
-}: {
-  state: State;
-  dispatch: (action: Action) => void;
-}) {
+function DestinationNav({ state, dispatch }: { state: State; dispatch: (action: Action) => void }) {
   // The Analyze tab returns to the importer: tapping it while a line is
   // loaded unloads that line instead of reopening it behind a dialog.
   // Every tap also syncs the destination into the reducer explicitly, so
@@ -60,11 +66,11 @@ function DestinationNav({
           key={destMode}
           to={path}
           end
-          onClick={(event) => {
+          onClick={event => {
             dispatch({ type: 'mode', mode: destMode });
             if (shouldUnloadAnalysis(destMode, state.analysisLoaded)) {
               event.preventDefault();
-              dispatch({ type: "unload" });
+              dispatch({ type: 'unload' });
             }
           }}
         >
@@ -81,12 +87,11 @@ export function BoardRouter() {
   const navigate = useNavigate();
   // Redirects start in an inert context until the destination URL is committed.
   const mode =
-    destinations.find((destination) => matchPath(destination.path, pathname))
-      ?.mode ?? "history";
+    destinations.find(destination => matchPath(destination.path, pathname))?.mode ?? 'history';
   // Parsed once per location: the initializer takes the mount value for boot,
   // the sync effect takes the live one for Back/Forward.
   const urlLine = useMemo(
-    () => (mode === "analysis" ? parseAnalysisSearch(search) : undefined),
+    () => (mode === 'analysis' ? parseAnalysisSearch(search) : undefined),
     [mode, search],
   );
   const { state, dispatch: boardDispatch, sync } = useBotBoard(mode, urlLine);
@@ -111,7 +116,7 @@ export function BoardRouter() {
   const prevLoaded = useRef(state.analysisLoaded);
   // Latest push to a game URL; backs the popstate unload below. Declared up
   // here so the sync effect can record it.
-  const lastContentRef = useRef("");
+  const lastContentRef = useRef('');
   // Set while an in-app unload's bare push is still pending: the board is
   // already empty at the old game URL, which must not reload. Cleared when
   // the bare URL lands. Back/Forward never set it (pushes don't pop).
@@ -124,7 +129,7 @@ export function BoardRouter() {
       prevMode.current = mode;
       prevLoaded.current = state.analysisLoaded;
     };
-    if (mode !== "analysis") {
+    if (mode !== 'analysis') {
       syncRefs(search);
       return;
     }
@@ -139,7 +144,7 @@ export function BoardRouter() {
         unloadPendingRef.current = false;
       } else if (!unloadPendingRef.current) {
         boardDispatch({
-          type: "url-line",
+          type: 'url-line',
           initialFen: urlLine.initialFen,
           moves: urlLine.moves,
         });
@@ -154,7 +159,7 @@ export function BoardRouter() {
       // A content URL naming another line loads it; Back and Forward walk games.
       if (urlLine && !sameLine(urlLine, state.analysis)) {
         boardDispatch({
-          type: "url-line",
+          type: 'url-line',
           initialFen: urlLine.initialFen,
           moves: urlLine.moves,
         });
@@ -175,7 +180,7 @@ export function BoardRouter() {
     // from another mode still replace.
     let replace: boolean;
     if (!urlLine) {
-      replace = wasMode !== "analysis" || wasLoaded;
+      replace = wasMode !== 'analysis' || wasLoaded;
     } else {
       replace = sameLine(urlLine, state.analysis);
     }
@@ -185,15 +190,7 @@ export function BoardRouter() {
     syncRefs(analysisSearch(state.analysis));
     if (analysisSearch(state.analysis)) lastContentRef.current = analysisSearch(state.analysis);
     void navigate(wanted, { replace });
-  }, [
-    mode,
-    search,
-    urlLine,
-    state.analysis,
-    state.analysisLoaded,
-    navigate,
-    boardDispatch,
-  ]);
+  }, [mode, search, urlLine, state.analysis, state.analysisLoaded, navigate, boardDispatch]);
   // Back out of a game to the bare importer restores the list itself, not the
   // game behind the importer's URL: the location effect above deliberately
   // leaves bare URLs alone, so this popstate listener unloads instead. Pushes
@@ -211,16 +208,18 @@ export function BoardRouter() {
       const url = new URL(window.location.href);
       // Back/Forward moves location without an action: sync the reducer at
       // the event, the same explicit path as tab clicks (no-op when equal).
-      const dest = destinations.find((destination) => matchPath(destination.path, url.pathname))?.mode ?? "history";
-      boardDispatch({ type: "mode", mode: dest });
-      if (url.pathname !== "/analyze" || parseAnalysisSearch(url.search)) return;
+      const dest =
+        destinations.find(destination => matchPath(destination.path, url.pathname))?.mode ??
+        'history';
+      boardDispatch({ type: 'mode', mode: dest });
+      if (url.pathname !== '/analyze' || parseAnalysisSearch(url.search)) return;
       if (loadedRef.current && lastContentRef.current) {
-        lastContentRef.current = "";
-        boardDispatch({ type: "unload" });
+        lastContentRef.current = '';
+        boardDispatch({ type: 'unload' });
       }
     };
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
   }, [boardDispatch]);
   // Latest committed board state for event handlers: a repository sync can
   // land between render and click, so the review push below must read the
@@ -235,7 +234,7 @@ export function BoardRouter() {
       // below) — so a mode action only syncs the reducer and never
       // navigates itself. Navigating here would double-push behind the
       // NavLink that already owns the click.
-      if (action.type === "mode") {
+      if (action.type === 'mode') {
         boardDispatch(action);
         return;
       }
@@ -247,13 +246,13 @@ export function BoardRouter() {
       // effect stays inert, so this push is the only entry. Reviews from the
       // importer are left to the sync effect, which pushes the game onto the
       // importer instead of replacing it away.
-      if (action.type === "review" && mode !== "analysis") {
+      if (action.type === 'review' && mode !== 'analysis') {
         const play = action.id
-          ? stateRef.current.saved.find((game) => game.id === action.id)
+          ? stateRef.current.saved.find(game => game.id === action.id)
           : stateRef.current.play;
         if (play) {
           try {
-            const line = loadLine("", play.moves.join(" "));
+            const line = loadLine('', play.moves.join(' '));
             const wanted = analysisPath(line);
             if (`${pathname}${search}` !== wanted) {
               void navigate(wanted);
@@ -267,21 +266,23 @@ export function BoardRouter() {
         boardDispatch(action);
         return;
       }
-      if (action.type === "review") {
+      if (action.type === 'review') {
         boardDispatch(action);
         return;
       }
-      if (action.type === "unload") {
-        lastContentRef.current = "";
+      if (action.type === 'unload') {
+        lastContentRef.current = '';
         unloadPendingRef.current = true;
-        void navigate(pathFor("analysis"));
+        void navigate(pathFor('analysis'));
       }
-      if (action.type === "saved" && mode !== "play") {
+      if (action.type === 'saved' && mode !== 'play') {
         // Commit the navigation synchronously before dispatching: the
         // reducer flips mode to play immediately, and a lagging location
         // would make the render-phase adjustment flap back to history and
         // orphan the new request with a same-payload twin.
-        flushSync(() => { void navigate(pathFor("play")); });
+        flushSync(() => {
+          void navigate(pathFor('play'));
+        });
       }
       boardDispatch(action);
     },
@@ -298,9 +299,16 @@ export function BoardRouter() {
       </SyncContext.Provider>
     </RegionRecorder>
   );
-  const authed = session.status === 'signed-in' ? workspace : session.status === 'checking'
-    ? <main aria-label="Checking login"><p>Checking login…</p></main>
-    : <LoginGate session={session} onLogin={name => sessionStore.login(name)} />;
+  const authed =
+    session.status === 'signed-in' ? (
+      workspace
+    ) : session.status === 'checking' ? (
+      <main aria-label="Checking login">
+        <p>Checking login…</p>
+      </main>
+    ) : (
+      <LoginGate session={session} onLogin={name => sessionStore.login(name)} />
+    );
   // Invariant: every destination change dispatches its mode at the event
   // (tab taps, NotFound links, popstate, the review/unload/saved navigations
   // above, and the pre-mount canonicalization in main.tsx). No new <Navigate>
@@ -313,8 +321,22 @@ export function BoardRouter() {
   // all three branches identical and report any drift.
   return (
     <Routes>
-      <Route path="/dev/eval-loading" element={<Suspense fallback={null}><EvalLoadingLab /></Suspense>} />
-      <Route path="/dev/verdict-lab" element={<Suspense fallback={null}><VerdictLab /></Suspense>} />
+      <Route
+        path="/dev/eval-loading"
+        element={
+          <Suspense fallback={null}>
+            <EvalLoadingLab />
+          </Suspense>
+        }
+      />
+      <Route
+        path="/dev/verdict-lab"
+        element={
+          <Suspense fallback={null}>
+            <VerdictLab />
+          </Suspense>
+        }
+      />
       {destinations.map(({ path }) => (
         <Route key={path} path={path} element={authed} />
       ))}

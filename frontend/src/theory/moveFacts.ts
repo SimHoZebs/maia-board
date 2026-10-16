@@ -103,7 +103,11 @@ export type MoveFacts = {
 // Raw (possibly pinned) attackers of a square. Null when the query itself
 // fails, so callers stay silent instead of misfiring.
 function rawAttackers(game: Chess, square: Square, by: 'w' | 'b'): Square[] | null {
-  try { return game.attackers(square, by); } catch { return null; }
+  try {
+    return game.attackers(square, by);
+  } catch {
+    return null;
+  }
 }
 
 type ForkVictimDetail = { victim: ForkVictim; square: Square };
@@ -111,35 +115,60 @@ type ForkVictimDetail = { victim: ForkVictim; square: Square };
 // Victims attacked by the piece now on `to`: non-pawns from its legal
 // captures in a flipped-turn copy (only the turn field is swapped), plus the
 // king iff the destination attacks the king square. Null on failure.
-function collectForkVictimDetails(postMoveGame: Chess, to: Square, victimColor: 'w' | 'b', beneficiaryColor: 'w' | 'b'): ForkVictimDetail[] | null {
+function collectForkVictimDetails(
+  postMoveGame: Chess,
+  to: Square,
+  victimColor: 'w' | 'b',
+  beneficiaryColor: 'w' | 'b',
+): ForkVictimDetail[] | null {
   try {
     const parts = postMoveGame.fen().split(/\s+/);
     parts[1] = beneficiaryColor;
     const probe = new Chess(parts.join(' '));
-    const details: ForkVictimDetail[] = probe.moves({ square: to, verbose: true })
+    const details: ForkVictimDetail[] = probe
+      .moves({ square: to, verbose: true })
       .filter(move => move.captured && isForkVictim(move.captured.toLowerCase()))
-      .map(move => ({ victim: move.captured!.toLowerCase() as Exclude<ForkVictim, 'k'>, square: move.to }));
+      .map(move => ({
+        victim: move.captured!.toLowerCase() as Exclude<ForkVictim, 'k'>,
+        square: move.to,
+      }));
     const kingSquare = findKingSquare(probe, victimColor);
-    if (kingSquare && probe.attackers(kingSquare, beneficiaryColor).includes(to)) details.push({ victim: 'k', square: kingSquare });
+    if (kingSquare && probe.attackers(kingSquare, beneficiaryColor).includes(to))
+      details.push({ victim: 'k', square: kingSquare });
     return details;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 function orderForkVictimDetails(details: ForkVictimDetail[]): ForkVictimDetail[] | null {
   if (details.length < 2) return null;
-  const rest = details.filter((detail): detail is ForkVictimDetail & { victim: Exclude<ForkVictim, 'k'> } => detail.victim !== 'k')
-    .sort((a, b) => FORK_RANK[a.victim] - FORK_RANK[b.victim]);
+  const rest = details
+    .filter(
+      (detail): detail is ForkVictimDetail & { victim: Exclude<ForkVictim, 'k'> } =>
+        detail.victim !== 'k',
+    )
+    .toSorted((a, b) => FORK_RANK[a.victim] - FORK_RANK[b.victim]);
   if (rest.length === 0) return null;
   const king = details.find(detail => detail.victim === 'k');
   return [...(king ? [king] : []), ...rest];
 }
 
-function buildForkFacts(postMoveGame: Chess, to: Square, victimColor: 'w' | 'b', beneficiaryColor: 'w' | 'b', forkerType: string): ForkFacts | null {
+function buildForkFacts(
+  postMoveGame: Chess,
+  to: Square,
+  victimColor: 'w' | 'b',
+  beneficiaryColor: 'w' | 'b',
+  forkerType: string,
+): ForkFacts | null {
   const details = collectForkVictimDetails(postMoveGame, to, victimColor, beneficiaryColor);
   if (!details) return null;
   const ordered = orderForkVictimDetails(details);
   if (!ordered) return null;
-  const rest = ordered.filter((detail): detail is ForkVictimDetail & { victim: Exclude<ForkVictim, 'k'> } => detail.victim !== 'k');
+  const rest = ordered.filter(
+    (detail): detail is ForkVictimDetail & { victim: Exclude<ForkVictim, 'k'> } =>
+      detail.victim !== 'k',
+  );
   const cheapest = rest[0];
   const defended = rawAttackers(postMoveGame, cheapest.square, victimColor);
   if (defended === null) return null;
@@ -148,8 +177,13 @@ function buildForkFacts(postMoveGame: Chess, to: Square, victimColor: 'w' | 'b',
   let takesForker: boolean;
   try {
     takesForker = postMoveGame.moves({ verbose: true }).some(move => move.to === to);
-  } catch { return null; }
-  const net = forkerType === 'k' ? null : TACTIC_VALUES[cheapest.victim] - (TACTIC_VALUES[forkerType as CapturedPiece] ?? 3);
+  } catch {
+    return null;
+  }
+  const net =
+    forkerType === 'k'
+      ? null
+      : TACTIC_VALUES[cheapest.victim] - (TACTIC_VALUES[forkerType as CapturedPiece] ?? 3);
   return {
     victims: ordered.map(detail => detail.victim),
     hasKing: ordered.some(detail => detail.victim === 'k'),
@@ -162,8 +196,18 @@ function buildForkFacts(postMoveGame: Chess, to: Square, victimColor: 'w' | 'b',
   };
 }
 
-const ROOK_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
-const BISHOP_DIRS = [[1, 1], [1, -1], [-1, 1], [-1, -1]] as const;
+const ROOK_DIRS = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+] as const;
+const BISHOP_DIRS = [
+  [1, 1],
+  [1, -1],
+  [-1, 1],
+  [-1, -1],
+] as const;
 
 function squareAt(file: number, rank: number): Square | null {
   if (file < 0 || file > 7 || rank < 0 || rank > 7) return null;
@@ -177,9 +221,18 @@ function squareAt(file: number, rank: number): Square | null {
 // qualifies or the position is unreadable. Blocks of the check and captures
 // of the checker by third pieces are NOT proven here (v1): the played note
 // names only the attack, and the best-line window proves the fall.
-function detectSkewerRay(postMoveGame: Chess, to: Square, checkerType: 'r' | 'b' | 'q', victimColor: 'w' | 'b'): { back: Exclude<ForkVictim, 'k'>; backSquare: Square } | null {
+function detectSkewerRay(
+  postMoveGame: Chess,
+  to: Square,
+  checkerType: 'r' | 'b' | 'q',
+  victimColor: 'w' | 'b',
+): { back: Exclude<ForkVictim, 'k'>; backSquare: Square } | null {
   let board: ReturnType<Chess['board']>;
-  try { board = postMoveGame.board(); } catch { return null; }
+  try {
+    board = postMoveGame.board();
+  } catch {
+    return null;
+  }
   const at = (square: Square) => {
     const file = square.charCodeAt(0) - 97;
     const rank = square.charCodeAt(1) - 49;
@@ -187,14 +240,23 @@ function detectSkewerRay(postMoveGame: Chess, to: Square, checkerType: 'r' | 'b'
   };
   const file = to.charCodeAt(0) - 97;
   const rank = to.charCodeAt(1) - 49;
-  const dirs = checkerType === 'r' ? ROOK_DIRS : checkerType === 'b' ? BISHOP_DIRS : [...ROOK_DIRS, ...BISHOP_DIRS];
+  const dirs =
+    checkerType === 'r'
+      ? ROOK_DIRS
+      : checkerType === 'b'
+        ? BISHOP_DIRS
+        : [...ROOK_DIRS, ...BISHOP_DIRS];
   for (const [df, dr] of dirs) {
     let sawKing = false;
     for (let step = 1; step < 8; step++) {
       const square = squareAt(file + df * step, rank + dr * step);
       if (!square) break;
       let occupant: ReturnType<typeof at>;
-      try { occupant = at(square); } catch { return null; }
+      try {
+        occupant = at(square);
+      } catch {
+        return null;
+      }
       if (!occupant) continue;
       if (occupant.color !== victimColor) break;
       if (!sawKing) {
@@ -209,7 +271,15 @@ function detectSkewerRay(postMoveGame: Chess, to: Square, checkerType: 'r' | 'b'
   return null;
 }
 
-function buildSkewerFacts(postMoveGame: Chess, to: Square, victimColor: 'w' | 'b', beneficiaryColor: 'w' | 'b', moverPiece: string, givesCheck: boolean, promotion: string | undefined): SkewerFacts | null {
+function buildSkewerFacts(
+  postMoveGame: Chess,
+  to: Square,
+  victimColor: 'w' | 'b',
+  beneficiaryColor: 'w' | 'b',
+  moverPiece: string,
+  givesCheck: boolean,
+  promotion: string | undefined,
+): SkewerFacts | null {
   // O(1) gates before any scan: direct check by a non-promoting slider.
   if (!givesCheck || promotion) return null;
   if (moverPiece !== 'r' && moverPiece !== 'b' && moverPiece !== 'q') return null;
@@ -222,7 +292,9 @@ function buildSkewerFacts(postMoveGame: Chess, to: Square, victimColor: 'w' | 'b
   let takesChecker: boolean;
   try {
     takesChecker = postMoveGame.moves({ verbose: true }).some(move => move.to === to);
-  } catch { return null; }
+  } catch {
+    return null;
+  }
   return {
     back: ray.back,
     backSquare: ray.backSquare,
@@ -250,9 +322,23 @@ function buildSkewerFacts(postMoveGame: Chess, to: Square, victimColor: 'w' | 'b
 // pin still lets the front move (Ne7 keeps Nc8/Ng6/Nf5), so the note names
 // only the pressure.
 const PIN_BACK_RANK: Record<PinFacts['back'], number> = { k: 0, q: 1, r: 2 };
-function detectPinRay(postMoveGame: Chess, to: Square, pinnerType: 'r' | 'b' | 'q', victimColor: 'w' | 'b'): { front: Exclude<ForkVictim, 'k'>; frontSquare: Square; back: 'k' | 'q' | 'r'; backSquare: Square } | null {
+function detectPinRay(
+  postMoveGame: Chess,
+  to: Square,
+  pinnerType: 'r' | 'b' | 'q',
+  victimColor: 'w' | 'b',
+): {
+  front: Exclude<ForkVictim, 'k'>;
+  frontSquare: Square;
+  back: 'k' | 'q' | 'r';
+  backSquare: Square;
+} | null {
   let board: ReturnType<Chess['board']>;
-  try { board = postMoveGame.board(); } catch { return null; }
+  try {
+    board = postMoveGame.board();
+  } catch {
+    return null;
+  }
   const at = (square: Square) => {
     const file = square.charCodeAt(0) - 97;
     const rank = square.charCodeAt(1) - 49;
@@ -260,15 +346,29 @@ function detectPinRay(postMoveGame: Chess, to: Square, pinnerType: 'r' | 'b' | '
   };
   const file = to.charCodeAt(0) - 97;
   const rank = to.charCodeAt(1) - 49;
-  const dirs = pinnerType === 'r' ? ROOK_DIRS : pinnerType === 'b' ? BISHOP_DIRS : [...ROOK_DIRS, ...BISHOP_DIRS];
-  let best: { front: Exclude<ForkVictim, 'k'>; frontSquare: Square; back: 'k' | 'q' | 'r'; backSquare: Square } | null = null;
+  const dirs =
+    pinnerType === 'r'
+      ? ROOK_DIRS
+      : pinnerType === 'b'
+        ? BISHOP_DIRS
+        : [...ROOK_DIRS, ...BISHOP_DIRS];
+  let best: {
+    front: Exclude<ForkVictim, 'k'>;
+    frontSquare: Square;
+    back: 'k' | 'q' | 'r';
+    backSquare: Square;
+  } | null = null;
   for (const [df, dr] of dirs) {
     let front: { piece: Exclude<ForkVictim, 'k'>; square: Square } | null = null;
     for (let step = 1; step < 8; step++) {
       const square = squareAt(file + df * step, rank + dr * step);
       if (!square) break;
       let occupant: ReturnType<typeof at>;
-      try { occupant = at(square); } catch { return null; }
+      try {
+        occupant = at(square);
+      } catch {
+        return null;
+      }
       if (!occupant) continue;
       if (occupant.color !== victimColor) break;
       if (!front) {
@@ -282,13 +382,26 @@ function detectPinRay(postMoveGame: Chess, to: Square, pinnerType: 'r' | 'b' | '
       // The back must be strictly more valuable than the front (the king
       // counts as infinite). A queen shielding a rook, or equal values
       // (rook for rook, queen for queen), is no pin pressure.
-      if (back !== 'k' && TACTIC_VALUES[back as CapturedPiece] <= TACTIC_VALUES[front.piece as CapturedPiece]) break;
+      if (
+        back !== 'k' &&
+        TACTIC_VALUES[back as CapturedPiece] <= TACTIC_VALUES[front.piece as CapturedPiece]
+      )
+        break;
       // Relative pins need the pinner to match or outvalue the front: a
       // bishop on a rook wins the piece outright (even when the queen
       // recaptures), so the queen behind is incidental — an attack, not a
       // pin. The king leg is exempt: absolute pins bind at any price.
-      if (back !== 'k' && TACTIC_VALUES[front.piece as CapturedPiece] > TACTIC_VALUES[pinnerType as CapturedPiece]) break;
-      const candidate = { front: front.piece, frontSquare: front.square, back: back as 'k' | 'q' | 'r', backSquare: square };
+      if (
+        back !== 'k' &&
+        TACTIC_VALUES[front.piece as CapturedPiece] > TACTIC_VALUES[pinnerType as CapturedPiece]
+      )
+        break;
+      const candidate = {
+        front: front.piece,
+        frontSquare: front.square,
+        back: back as 'k' | 'q' | 'r',
+        backSquare: square,
+      };
       if (!best || PIN_BACK_RANK[candidate.back] < PIN_BACK_RANK[best.back]) {
         best = candidate;
         if (best.back === 'k') return best;
@@ -299,7 +412,13 @@ function detectPinRay(postMoveGame: Chess, to: Square, pinnerType: 'r' | 'b' | '
   return best;
 }
 
-function buildPinFacts(postMoveGame: Chess, to: Square, victimColor: 'w' | 'b', beneficiaryColor: 'w' | 'b', moverPiece: string): PinFacts | null {
+function buildPinFacts(
+  postMoveGame: Chess,
+  to: Square,
+  victimColor: 'w' | 'b',
+  beneficiaryColor: 'w' | 'b',
+  moverPiece: string,
+): PinFacts | null {
   if (moverPiece !== 'r' && moverPiece !== 'b' && moverPiece !== 'q') return null;
   const ray = detectPinRay(postMoveGame, to, moverPiece, victimColor);
   if (!ray) return null;
@@ -308,7 +427,9 @@ function buildPinFacts(postMoveGame: Chess, to: Square, victimColor: 'w' | 'b', 
   let takesPinner: boolean;
   try {
     takesPinner = postMoveGame.moves({ verbose: true }).some(move => move.to === to);
-  } catch { return null; }
+  } catch {
+    return null;
+  }
   return {
     front: ray.front,
     frontSquare: ray.frontSquare,
@@ -322,14 +443,19 @@ function buildPinFacts(postMoveGame: Chess, to: Square, victimColor: 'w' | 'b', 
 const isCapturedPiece = (piece: string): piece is CapturedPiece =>
   piece === 'p' || piece === 'n' || piece === 'b' || piece === 'r' || piece === 'q';
 
-function captureOf(beforeFen: string, uci: string): { piece: CapturedPiece; square: Square } | null {
+function captureOf(
+  beforeFen: string,
+  uci: string,
+): { piece: CapturedPiece; square: Square } | null {
   try {
     const probe = new Chess(beforeFen);
     const applied = applyUci(probe, uci);
     const piece = applied.captured?.toLowerCase();
     if (!piece || !isCapturedPiece(piece)) return null;
     return { piece, square: applied.to };
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 export function createMoveFacts(args: {
@@ -360,7 +486,9 @@ export function createMoveFacts(args: {
     promotion = applied.promotion;
     moverPiece = postMoveGame.get(to)?.type?.toLowerCase() ?? '';
     givesCheck = postMoveGame.inCheck();
-  } catch { return null; }
+  } catch {
+    return null;
+  }
   if (!moverPiece) return null;
   const victimColor = mover === 'white' ? 'b' : 'w';
   const beneficiaryColor = mover === 'white' ? 'w' : 'b';
@@ -372,7 +500,9 @@ export function createMoveFacts(args: {
       const game = new Chess(beforeFen);
       applyUci(game, playedUci);
       return game;
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   };
   let forkCache: ForkFacts | null | undefined;
   let skewerCache: SkewerFacts | null | undefined;
@@ -402,7 +532,17 @@ export function createMoveFacts(args: {
     skewer: () => {
       if (skewerCache !== undefined) return skewerCache;
       const game = freshPostMove();
-      skewerCache = game ? buildSkewerFacts(game, to, victimColor, beneficiaryColor, moverPiece, givesCheck, promotion) : null;
+      skewerCache = game
+        ? buildSkewerFacts(
+            game,
+            to,
+            victimColor,
+            beneficiaryColor,
+            moverPiece,
+            givesCheck,
+            promotion,
+          )
+        : null;
       return skewerCache;
     },
     pin: () => {

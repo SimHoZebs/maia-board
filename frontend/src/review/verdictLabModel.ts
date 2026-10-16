@@ -35,7 +35,11 @@ export type RarityLaneKnob = {
   topProb: number;
   prob: number;
 };
-export type ScoreKnob = { kind: 'none' | 'cp' | 'mate'; value: number; winningSide: 'white' | 'black' };
+export type ScoreKnob = {
+  kind: 'none' | 'cp' | 'mate';
+  value: number;
+  winningSide: 'white' | 'black';
+};
 export type NoteMode = 'auto' | 'manual' | 'off';
 
 export type LabState = {
@@ -135,17 +139,21 @@ function laneResponse(
   if (lane.mode === 'unknown') return { top_moves: [], degraded: true };
   // wdl is unused by botRarity; a neutral triple keeps the TopMove shape.
   const neutral = { wdl: [0.2, 0.6, 0.2] as [number, number, number] };
-  const top_moves = [{ move: lane.mode === 'top' ? playedUci : OTHER_UCI, prob: lane.topProb, ...neutral }];
+  const top_moves = [
+    { move: lane.mode === 'top' ? playedUci : OTHER_UCI, prob: lane.topProb, ...neutral },
+  ];
   if (lane.mode === 'listed') top_moves.push({ move: playedUci, prob: lane.prob, ...neutral });
   for (const entry of extra) {
-    if (!top_moves.some(candidate => candidate.move === entry.move)) top_moves.push({ ...entry, ...neutral });
+    if (!top_moves.some(candidate => candidate.move === entry.move))
+      top_moves.push({ ...entry, ...neutral });
   }
   return { top_moves, degraded: false };
 }
 
 function buildScore(knob: ScoreKnob): Score | null {
   if (knob.kind === 'cp') return { type: 'cp', value: knob.value };
-  if (knob.kind === 'mate') return { type: 'mate', value: knob.value, winning_side: knob.winningSide };
+  if (knob.kind === 'mate')
+    return { type: 'mate', value: knob.value, winning_side: knob.winningSide };
   return null;
 }
 
@@ -194,9 +202,10 @@ export function buildLabVerdict(state: LabState): LabVerdict {
   const ownResponse = laneResponse(state.ownLane, state.playedUci, bestExtra);
   const rarity = botRarity(ownResponse, state.playedUci);
   const rarity2400 = botRarity(laneResponse(state.lane2400, state.playedUci), state.playedUci);
-  const bestRarity = state.bestKind === 'same'
-    ? botRarity(ownResponse, state.playedUci)
-    : botRarity(ownResponse, bestUci);
+  const bestRarity =
+    state.bestKind === 'same'
+      ? botRarity(ownResponse, state.playedUci)
+      : botRarity(ownResponse, bestUci);
 
   // Stockfish grade through the real reviewMove. The before-position supplies
   // the legal-move count (Forced needs exactly 1); cp scores supply loss and
@@ -215,41 +224,60 @@ export function buildLabVerdict(state: LabState): LabVerdict {
       return null;
     }
   })();
-  const turn = state.mover === 'white' ? 'white' as const : 'black' as const;
+  const turn = state.mover === 'white' ? ('white' as const) : ('black' as const);
   const bestMove = state.playedIsBest
     ? state.playedUci
-    : state.playedUci === OTHER_UCI ? OTHER_UCI_2 : OTHER_UCI;
+    : state.playedUci === OTHER_UCI
+      ? OTHER_UCI_2
+      : OTHER_UCI;
   const line2Move = bestMove === OTHER_UCI_2 ? 'h2h3' : OTHER_UCI_2;
   const beforeScore = buildScore(state.beforeScore) ?? { type: 'cp' as const, value: 0 };
   const afterScore = buildScore(state.afterScore) ?? { type: 'cp' as const, value: 0 };
   const lines: Evaluation['lines'] = state.singleLine
     ? [{ move: bestMove, score: { type: 'cp', value: state.line1Cp }, depth: 20 }]
     : [
-      { move: bestMove, score: { type: 'cp', value: state.line1Cp }, depth: 20 },
-      { move: line2Move, score: { type: 'cp', value: state.line2Cp }, depth: 20 },
-    ];
+        { move: bestMove, score: { type: 'cp', value: state.line1Cp }, depth: 20 },
+        { move: line2Move, score: { type: 'cp', value: state.line2Cp }, depth: 20 },
+      ];
   const before: Evaluation = {
-    engine: 'Stockfish 19', search_policy: 'verdict-lab', depth: 20,
-    terminal: null, best_move: bestMove, score: beforeScore, lines,
+    engine: 'Stockfish 19',
+    search_policy: 'verdict-lab',
+    depth: 20,
+    terminal: null,
+    best_move: bestMove,
+    score: beforeScore,
+    lines,
   };
   const after: Evaluation = {
-    engine: 'Stockfish 19', search_policy: 'verdict-lab', depth: 20,
-    terminal: null, best_move: null, score: afterScore, lines: [],
+    engine: 'Stockfish 19',
+    search_policy: 'verdict-lab',
+    depth: 20,
+    terminal: null,
+    best_move: null,
+    score: afterScore,
+    lines: [],
   };
   const engineGrade = game ? reviewMove(before, after, game, state.playedUci) : UNREVIEWED;
   const sfGap = sfTopGap(before.lines, turn);
-  const autoQuality = alienUpgrade(effectiveQuality(engineGrade, rarity), rarity, rarity2400, sfGap);
+  const autoQuality = alienUpgrade(
+    effectiveQuality(engineGrade, rarity),
+    rarity,
+    rarity2400,
+    sfGap,
+  );
   const translated = effectiveQuality(engineGrade, rarity);
   const alienApplied = autoQuality?.label === 'Alien' && translated?.label === 'Excellent';
 
   // Novelty plumbing mirrors a line that was in book until this ply: the
   // prior position carries the exact hit, this ply leaves it.
-  const matches = state.noveltyOn && state.ply >= 1
-    ? [{ ply: state.ply - 1, eco: state.noveltyEco, name: state.noveltyName }]
-    : [];
-  const bookFlags = state.noveltyOn && state.ply >= 1
-    ? Array.from({ length: state.ply }, (_, i) => i !== state.ply - 1)
-    : [];
+  const matches =
+    state.noveltyOn && state.ply >= 1
+      ? [{ ply: state.ply - 1, eco: state.noveltyEco, name: state.noveltyName }]
+      : [];
+  const bookFlags =
+    state.noveltyOn && state.ply >= 1
+      ? Array.from({ length: state.ply }, (_, i) => i !== state.ply - 1)
+      : [];
 
   const inputs: VerdictInputs = {
     beforeFen: state.beforeFen,
@@ -330,10 +358,13 @@ export const PRESETS: LabPreset[] = [
     name: 'Exceptional find',
     blurb: 'Zero-loss best with a 20-point gap, unlisted at home, 3%-listed at 2400.',
     patch: {
-      san: 'Nf3', playedUci: 'g1f3', playedIsBest: true,
+      san: 'Nf3',
+      playedUci: 'g1f3',
+      playedIsBest: true,
       beforeScore: { kind: 'cp', value: 50, winningSide: 'white' },
       afterScore: { kind: 'cp', value: 50, winningSide: 'white' },
-      line1Cp: 120, line2Cp: -100,
+      line1Cp: 120,
+      line2Cp: -100,
       ownLane: { mode: 'unlisted', topProb: 0.4, prob: 0.4 },
       lane2400: { mode: 'listed', topProb: 0.4, prob: 0.03 },
     },
@@ -343,10 +374,13 @@ export const PRESETS: LabPreset[] = [
     name: 'Alien find',
     blurb: 'Unlisted at both pools with a 35-point gap (200/−200cp lines).',
     patch: {
-      san: 'Qg4', playedUci: 'd1g4', playedIsBest: true,
+      san: 'Qg4',
+      playedUci: 'd1g4',
+      playedIsBest: true,
       beforeScore: { kind: 'cp', value: 50, winningSide: 'white' },
       afterScore: { kind: 'cp', value: 50, winningSide: 'white' },
-      line1Cp: 200, line2Cp: -200,
+      line1Cp: 200,
+      line2Cp: -200,
       ownLane: { mode: 'unlisted', topProb: 0.4, prob: 0.4 },
       lane2400: { mode: 'unlisted', topProb: 0.4, prob: 0.4 },
     },
@@ -356,11 +390,14 @@ export const PRESETS: LabPreset[] = [
     name: 'Allowed mate with a pin',
     blurb: 'Mate allowed with a real pin; the best reply was unlisted.',
     patch: {
-      san: 'Qe2', playedUci: 'd1e2', playedIsBest: false,
+      san: 'Qe2',
+      playedUci: 'd1e2',
+      playedIsBest: false,
       beforeScore: { kind: 'cp', value: 100, winningSide: 'white' },
       afterScore: { kind: 'mate', value: 3, winningSide: 'black' },
       bestKind: 'unlisted',
-      pinMode: 'manual', pinManual: 'Pins the queen to the king.',
+      pinMode: 'manual',
+      pinManual: 'Pins the queen to the king.',
     },
   },
   {
@@ -368,10 +405,14 @@ export const PRESETS: LabPreset[] = [
     name: 'Book hit',
     blurb: 'Named theory outranks every grade.',
     patch: {
-      san: 'Bc4', playedUci: 'f1c4', playedIsBest: true,
+      san: 'Bc4',
+      playedUci: 'f1c4',
+      playedIsBest: true,
       beforeScore: { kind: 'cp', value: 50, winningSide: 'white' },
       afterScore: { kind: 'cp', value: 50, winningSide: 'white' },
-      line1Cp: 100, line2Cp: 60, inBook: true,
+      line1Cp: 100,
+      line2Cp: 60,
+      inBook: true,
     },
   },
   {
@@ -379,10 +420,14 @@ export const PRESETS: LabPreset[] = [
     name: 'Novelty bright-spot',
     blurb: 'Leaves French Defense book with a 15%-under-35% find 2400s play.',
     patch: {
-      san: 'c4', playedUci: 'c2c4', ply: 2, playedIsBest: true,
+      san: 'c4',
+      playedUci: 'c2c4',
+      ply: 2,
+      playedIsBest: true,
       beforeScore: { kind: 'cp', value: 50, winningSide: 'white' },
       afterScore: { kind: 'cp', value: 50, winningSide: 'white' },
-      line1Cp: 120, line2Cp: -100,
+      line1Cp: 120,
+      line2Cp: -100,
       ownLane: { mode: 'listed', topProb: 0.35, prob: 0.15 },
       lane2400: { mode: 'top', topProb: 0.35, prob: 0.35 },
       noveltyOn: true,
@@ -393,9 +438,14 @@ export const PRESETS: LabPreset[] = [
     name: "Scholar's mate",
     blurb: 'Terminal facts outrank even the book: named miniature.',
     patch: {
-      san: 'Qxf7#', playedUci: 'h5f7', ply: 7,
-      beforeFen: SCHOLARS_BEFORE, afterFen: SCHOLARS_AFTER,
-      afterOutcome: 'checkmate', mateWinner: 'white', mover: 'white',
+      san: 'Qxf7#',
+      playedUci: 'h5f7',
+      ply: 7,
+      beforeFen: SCHOLARS_BEFORE,
+      afterFen: SCHOLARS_AFTER,
+      afterOutcome: 'checkmate',
+      mateWinner: 'white',
+      mover: 'white',
       playedIsBest: true,
       beforeScore: { kind: 'cp', value: 200, winningSide: 'white' },
       afterScore: { kind: 'mate', value: 0, winningSide: 'white' },
@@ -417,7 +467,10 @@ export const PRESETS: LabPreset[] = [
     name: 'Underpromotion avoids stalemate',
     blurb: 'b7b8=N where the queen promotion stalemates.',
     patch: {
-      san: 'b8=N', playedUci: 'b7b8n', ply: 30, mover: 'white',
+      san: 'b8=N',
+      playedUci: 'b7b8n',
+      ply: 30,
+      mover: 'white',
       beforeFen: '8/1P6/8/8/8/K7/8/k7 w - - 0 1',
       afterFen: '1N6/8/8/8/8/K7/8/k7 b - - 0 1',
       playedIsBest: true,
@@ -430,7 +483,10 @@ export const PRESETS: LabPreset[] = [
     name: 'Known dead draw',
     blurb: 'KNN vs K reads as theoretical, no mate needed.',
     patch: {
-      san: 'Nb8', playedUci: 'a6b8', ply: 64, mover: 'white',
+      san: 'Nb8',
+      playedUci: 'a6b8',
+      ply: 64,
+      mover: 'white',
       afterFen: 'k7/8/1N6/8/8/8/8/KN6 w - - 0 1',
       playedIsBest: false,
       beforeScore: { kind: 'cp', value: 20, winningSide: 'white' },
@@ -442,8 +498,12 @@ export const PRESETS: LabPreset[] = [
     name: 'Only legal move',
     blurb: 'Kb1 is the single legal move in a Ka1 corner box.',
     patch: {
-      san: 'Kb1', playedUci: 'a1b1', ply: 40, mover: 'white',
-      beforeFen: FORCED_BEFORE, afterFen: FORCED_AFTER,
+      san: 'Kb1',
+      playedUci: 'a1b1',
+      ply: 40,
+      mover: 'white',
+      beforeFen: FORCED_BEFORE,
+      afterFen: FORCED_AFTER,
       playedIsBest: true,
       beforeScore: { kind: 'cp', value: 20, winningSide: 'white' },
       afterScore: { kind: 'cp', value: 20, winningSide: 'white' },

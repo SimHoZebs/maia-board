@@ -1,6 +1,6 @@
-import { NavLink } from "react-router";
-import { destinations, shouldUnloadAnalysis } from "./BoardRouter";
-import type { Action, State } from "../state/index";
+import { NavLink } from 'react-router';
+import { destinations, shouldUnloadAnalysis } from './BoardRouter';
+import type { Action, State } from '../state/index';
 
 // Unknown-URL page: a message plus links to the four destinations. Layout
 // reuses the existing `.entry` + `.panel` styles; the link row reuses the
@@ -28,11 +28,11 @@ export function NotFound({
               key={destMode}
               to={path}
               end
-              onClick={(event) => {
-                dispatch({ type: "mode", mode: destMode });
+              onClick={event => {
+                dispatch({ type: 'mode', mode: destMode });
                 if (shouldUnloadAnalysis(destMode, state.analysisLoaded)) {
                   event.preventDefault();
-                  dispatch({ type: "unload" });
+                  dispatch({ type: 'unload' });
                 }
               }}
             >

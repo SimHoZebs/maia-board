@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -7,10 +7,10 @@ import {
   CornerUpRight,
   SkipBack,
   SkipForward,
-} from "lucide-react";
-import { IconButton } from "../components";
-import { QualityBadge, type BadgeLoading } from "./ReviewCharts";
-import type { Quality } from "./reviewMetrics";
+} from 'lucide-react';
+import { IconButton } from '../components';
+import { QualityBadge, type BadgeLoading } from './ReviewCharts';
+import type { Quality } from './reviewMetrics';
 
 export function MoveNavBar({
   ply,
@@ -33,32 +33,32 @@ export function MoveNavBar({
       {menu && <div className="menu-slot">{menu}</div>}
       <div className="nav-buttons">
         {[
-          { id: "first", label: "First position", Icon: SkipBack, to: 0 },
+          { id: 'first', label: 'First position', Icon: SkipBack, to: 0 },
           {
-            id: "prev",
-            label: "Previous position",
+            id: 'prev',
+            label: 'Previous position',
             Icon: ArrowLeft,
             to: ply - 1,
           },
           {
-            id: "next",
-            label: "Next position",
+            id: 'next',
+            label: 'Next position',
             Icon: ArrowRight,
             to: ply + 1,
           },
           {
-            id: "last",
-            label: "Last position",
+            id: 'last',
+            label: 'Last position',
             Icon: SkipForward,
             to: total,
           },
-        ].map((item) => (
+        ].map(item => (
           <IconButton
             key={item.id}
             id={`analysis-${item.id}`}
             label={item.label}
             disabled={item.to < 0 || item.to > total || item.to === ply}
-            onClick={() => item.id === 'next' && onAdvance ? onAdvance() : onView(item.to)}
+            onClick={() => (item.id === 'next' && onAdvance ? onAdvance() : onView(item.to))}
           >
             <item.Icon size={16} aria-hidden="true" />
           </IconButton>
@@ -90,7 +90,12 @@ type MovesNavigation = {
 };
 
 type MovesBranch = {
-  original?: { sans: string[]; fromPly: number; qualities?: (Quality | undefined)[]; bookFlags?: boolean[] };
+  original?: {
+    sans: string[];
+    fromPly: number;
+    qualities?: (Quality | undefined)[];
+    bookFlags?: boolean[];
+  };
   branchUp?: boolean;
 };
 
@@ -121,10 +126,7 @@ function MovesPanel({
         const bounds = button.getBoundingClientRect(),
           viewport = container.getBoundingClientRect();
         container.scrollLeft +=
-          bounds.left -
-          viewport.left -
-          container.clientWidth / 2 +
-          bounds.width / 2;
+          bounds.left - viewport.left - container.clientWidth / 2 + bounds.width / 2;
       } else if (ply === 0) {
         container.scrollLeft = 0;
         container.scrollTop = 0;
@@ -135,12 +137,12 @@ function MovesPanel({
     observer.observe(container);
     return () => observer.disconnect();
   }, [ply, sans.length, analysis, original?.fromPly]);
-  const parts = initialFen.split(" "),
-    first = Number(parts[5]) * 2 + (parts[1] === "b" ? 1 : 0);
+  const parts = initialFen.split(' '),
+    first = Number(parts[5]) * 2 + (parts[1] === 'b' ? 1 : 0);
   const number = (index: number) => (
     <span>
       {Math.floor((first + index) / 2)}
-      {(first + index) % 2 ? "…" : "."}
+      {(first + index) % 2 ? '…' : '.'}
     </span>
   );
   // Every move reserves its badge box up front through the shared
@@ -153,13 +155,17 @@ function MovesPanel({
     <button
       ref={ply === index + 1 ? active : undefined}
       className="move-cell"
-      aria-current={ply === index + 1 ? "step" : undefined}
+      aria-current={ply === index + 1 ? 'step' : undefined}
       key={index}
       onClick={() => onView(index + 1)}
     >
-      {number(index)} {san}{" "}
+      {number(index)} {san}{' '}
       {bookFlags?.[index] ? (
-        <span className="quality quality-book" title="Book move — known opening, not engine-evaluated" aria-label="Book move">
+        <span
+          className="quality quality-book"
+          title="Book move — known opening, not engine-evaluated"
+          aria-label="Book move"
+        >
           <BookOpen size={13} aria-hidden="true" />
         </span>
       ) : (
@@ -169,32 +175,22 @@ function MovesPanel({
   );
   return (
     <section
-      className={`notation${analysis ? " analysis-notation" : ""}`}
+      className={`notation${analysis ? ' analysis-notation' : ''}`}
       aria-label="Move history"
     >
       <div className="move-list" id="move-list" ref={list}>
         {!sans.length && <span className="empty-copy">Moves appear here</span>}
         {original ? (
           <div className="original-line" aria-label="Original line">
-            {original.sans
-              .slice(0, Math.max(0, original.fromPly - 1))
-              .map(move)}
+            {original.sans.slice(0, Math.max(0, original.fromPly - 1)).map(move)}
             <div className="branch-point">
               {original.fromPly > 0 &&
                 move(original.sans[original.fromPly - 1], original.fromPly - 1)}
               <div className="variation-line" aria-label="Explored variation">
                 {branchUp ? (
-                  <CornerUpRight
-                    className="branch-connector"
-                    size={14}
-                    aria-hidden="true"
-                  />
+                  <CornerUpRight className="branch-connector" size={14} aria-hidden="true" />
                 ) : (
-                  <CornerDownRight
-                    className="branch-connector"
-                    size={14}
-                    aria-hidden="true"
-                  />
+                  <CornerDownRight className="branch-connector" size={14} aria-hidden="true" />
                 )}
                 {sans
                   .slice(original.fromPly)
@@ -205,17 +201,25 @@ function MovesPanel({
               <button
                 className="move-cell original-move"
                 key={original.fromPly + offset}
-                onClick={() =>
-                  (onOriginalView ?? onView)(original.fromPly + offset + 1)
-                }
+                onClick={() => (onOriginalView ?? onView)(original.fromPly + offset + 1)}
               >
-                {number(original.fromPly + offset)} {san}{" "}
+                {number(original.fromPly + offset)} {san}{' '}
                 {original.bookFlags?.[original.fromPly + offset] ? (
-                  <span className="quality quality-book" title="Book move — known opening, not engine-evaluated" aria-label="Book move">
+                  <span
+                    className="quality quality-book"
+                    title="Book move — known opening, not engine-evaluated"
+                    aria-label="Book move"
+                  >
                     <BookOpen size={13} aria-hidden="true" />
                   </span>
                 ) : (
-                  original.qualities && <QualityBadge quality={original.qualities[original.fromPly + offset]} reserveSpace loading={badgeLoading} />
+                  original.qualities && (
+                    <QualityBadge
+                      quality={original.qualities[original.fromPly + offset]}
+                      reserveSpace
+                      loading={badgeLoading}
+                    />
+                  )
                 )}
               </button>
             ))}

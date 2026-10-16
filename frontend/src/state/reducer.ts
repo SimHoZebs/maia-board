@@ -1,6 +1,14 @@
 import { Chess } from 'chess.js';
 import { toGroundColor } from '../board/board-colors';
-import { analysisLength, lineRecord, loadLine, newId, type Analysis, type Mode, type Settings } from '../shared/domain';
+import {
+  analysisLength,
+  lineRecord,
+  loadLine,
+  newId,
+  type Analysis,
+  type Mode,
+  type Settings,
+} from '../shared/domain';
 import { sameLine, type UrlLine } from '../app/analysisUrl';
 import { KEYS, loadSettings, readStorage } from '../history/storage';
 import { mergeSync } from '../history/serverGames';
@@ -14,14 +22,25 @@ import { reducePlay } from './play';
 import { reduceAnalysis } from './analysis';
 import type { Action, State } from './types';
 
-const sameSettings = (a: Settings, b: Settings) => a.userColor === b.userColor && a.model === b.model
-  && a.botElo === b.botElo && a.userElo === b.userElo && (a.temperature ?? 0) === (b.temperature ?? 0);
+const sameSettings = (a: Settings, b: Settings) =>
+  a.userColor === b.userColor &&
+  a.model === b.model &&
+  a.botElo === b.botElo &&
+  a.userElo === b.userElo &&
+  (a.temperature ?? 0) === (b.temperature ?? 0);
 
-export function initialState(mode: Mode = 'play', urlLine?: UrlLine, repository = readGameRepository()): State {
+export function initialState(
+  mode: Mode = 'play',
+  urlLine?: UrlLine,
+  repository = readGameRepository(),
+): State {
   const restored = repository.games.find(game => game.id === repository.currentId);
   const settings = restored?.settings ?? loadSettings();
   const stored = readStorage<Partial<State['inputs']>>(KEYS.analysis);
-  const inputs = { fen: typeof stored?.fen === 'string' ? stored.fen : '', pgn: typeof stored?.pgn === 'string' ? stored.pgn : '' };
+  const inputs = {
+    fen: typeof stored?.fen === 'string' ? stored.fen : '',
+    pgn: typeof stored?.pgn === 'string' ? stored.pgn : '',
+  };
   const restoredSession = readSnapshot();
   let analysis = loadLine();
   let analysisLoaded = false;
@@ -39,21 +58,47 @@ export function initialState(mode: Mode = 'play', urlLine?: UrlLine, repository 
         analysisLoaded = true;
         analysisSourceId = null;
       }
-    } catch { /* Fall through to restored-session/inputs below. */ }
+    } catch {
+      /* Fall through to restored-session/inputs below. */
+    }
   }
   if (!analysisLoaded) {
     if (restoredSession) {
       analysis = restoredSession.analysis;
       analysisLoaded = true;
     } else {
-      try { analysis = loadLine(inputs.fen, inputs.pgn); } catch { /* Keep editable invalid input for correction. */ }
+      try {
+        analysis = loadLine(inputs.fen, inputs.pgn);
+      } catch {
+        /* Keep editable invalid input for correction. */
+      }
     }
   }
-  const state: State = { mode, play: restored ?? { id: newId(), createdAt: new Date().toISOString(), moves: [], settings },
-    started: !!restored, setup: restored ? null : newPlayDraft(settings), viewedPly: null,
-    saved: repository.games, analysis, analysisSettings: { botElo: settings.botElo, model: settings.model, userColor: settings.userColor }, analysisLoaded, importing: !analysisLoaded, analysisSourceId,
+  const state: State = {
+    mode,
+    play: restored ?? { id: newId(), createdAt: new Date().toISOString(), moves: [], settings },
+    started: !!restored,
+    setup: restored ? null : newPlayDraft(settings),
+    viewedPly: null,
+    saved: repository.games,
+    analysis,
+    analysisSettings: {
+      botElo: settings.botElo,
+      model: settings.model,
+      userColor: settings.userColor,
+    },
+    analysisLoaded,
+    importing: !analysisLoaded,
+    analysisSourceId,
     ...initialDisplayState(),
-    inputs, flipped: false, promotion: null, insight: null, error: '', request: null, revision: 0 };
+    inputs,
+    flipped: false,
+    promotion: null,
+    insight: null,
+    error: '',
+    request: null,
+    revision: 0,
+  };
   return mode === 'play' && botTurn(state) ? queueRequest(state) : state;
 }
 
@@ -63,52 +108,123 @@ export function initialState(mode: Mode = 'play', urlLine?: UrlLine, repository 
 // the slices above and owns only what touches more than one of them.
 function reduceRoot(state: State, action: Action): State | undefined {
   switch (action.type) {
-    case 'mode': return action.mode === state.mode ? state : transition(state, { mode: action.mode, setup: state.started ? null : state.setup });
+    case 'mode':
+      return action.mode === state.mode
+        ? state
+        : transition(state, { mode: action.mode, setup: state.started ? null : state.setup });
     case 'move': {
       // History-aware terminality comes from the shared tipRow record (repetition
       // needs full history); the legality scan below is position-only.
       const playRecord = state.mode === 'play' ? lineRecord(state.play.moves) : null;
       const game = playRecord ? new Chess(playRecord.fen) : new Chess(currentPosition(state).fen);
-      if (state.promotion || (playRecord ? playRecord.terminal !== null : game.isGameOver()) || (state.mode !== 'play' && state.mode !== 'analysis')) return state;
-      if (state.mode === 'play' && (!state.started || state.play.result === 'resigned' || state.viewedPly !== null || state.request || toGroundColor(game.turn()) !== state.play.settings.userColor)) return state;
+      if (
+        state.promotion ||
+        (playRecord ? playRecord.terminal !== null : game.isGameOver()) ||
+        (state.mode !== 'play' && state.mode !== 'analysis')
+      )
+        return state;
+      if (
+        state.mode === 'play' &&
+        (!state.started ||
+          state.play.result === 'resigned' ||
+          state.viewedPly !== null ||
+          state.request ||
+          toGroundColor(game.turn()) !== state.play.settings.userColor)
+      )
+        return state;
       if (state.mode === 'analysis' && !state.analysisLoaded) return state;
-      if (!game.moves({ square: action.from, verbose: true }).some(move => move.to === action.to)) return state;
-      if (game.get(action.from)?.type === 'p' && /[18]$/.test(action.to)) return { ...state, promotion: { from: action.from, to: action.to } };
+      if (!game.moves({ square: action.from, verbose: true }).some(move => move.to === action.to))
+        return state;
+      if (game.get(action.from)?.type === 'p' && /[18]$/.test(action.to))
+        return { ...state, promotion: { from: action.from, to: action.to } };
       return commitMove(state, action.from, action.to);
     }
-    case 'promote': return state.promotion && action.piece ? commitMove(state, state.promotion.from, state.promotion.to, action.piece) : { ...state, promotion: null };
+    case 'promote':
+      return state.promotion && action.piece
+        ? commitMove(state, state.promotion.from, state.promotion.to, action.piece)
+        : { ...state, promotion: null };
     case 'view': {
       if (state.mode !== 'play' && state.mode !== 'analysis') return state;
       if (state.mode === 'play') {
-        const ply = action.ply === null ? null : Math.max(0, Math.min(state.play.moves.length, action.ply));
-        return { ...state, viewedPly: ply === state.play.moves.length ? null : ply, promotion: null };
+        const ply =
+          action.ply === null ? null : Math.max(0, Math.min(state.play.moves.length, action.ply));
+        return {
+          ...state,
+          viewedPly: ply === state.play.moves.length ? null : ply,
+          promotion: null,
+        };
       }
-      const index = Math.max(0, Math.min(analysisLength(state.analysis), action.ply ?? analysisLength(state.analysis)));
-      return index === state.analysis.index ? state : transition(state, { analysis: { ...state.analysis, index } }, false);
+      const index = Math.max(
+        0,
+        Math.min(analysisLength(state.analysis), action.ply ?? analysisLength(state.analysis)),
+      );
+      return index === state.analysis.index
+        ? state
+        : transition(state, { analysis: { ...state.analysis, index } }, false);
     }
-    case 'step': return reducer(state, { type: 'view', ply: (state.mode === 'play' ? state.viewedPly ?? state.play.moves.length : state.analysis.index) + action.delta });
+    case 'step':
+      return reducer(state, {
+        type: 'view',
+        ply:
+          (state.mode === 'play'
+            ? (state.viewedPly ?? state.play.moves.length)
+            : state.analysis.index) + action.delta,
+      });
     case 'review': {
       const play = action.id ? state.saved.find(game => game.id === action.id) : state.play;
       if (!play) return state;
       let analysis: Analysis;
-      try { analysis = loadLine('', play.moves.join(' ')); }
-      catch { return { ...state, error: 'Could not load this game.' }; }
+      try {
+        analysis = loadLine('', play.moves.join(' '));
+      } catch {
+        return { ...state, error: 'Could not load this game.' };
+      }
       // Analysis defaults to the Elo the game was played at, so the first
       // review reuses play-time bot compute instead of re-inferring at a
       // stale global rating. Changing the rating later only affects the
       // user's own moves (see useReviewPipeline); the bot's moves stay pinned. The
       // source id is always the game id (not null) so the pinned Elo survives
       // starting a new game while the analysis stays open.
-      return transition(state, { mode: 'analysis', analysis: { ...analysis, perspective: play.settings.userColor, ownGame: true }, analysisLoaded: true, importing: false, analysisSourceId: action.id ?? play.id,
-        analysisSettings: { ...state.analysisSettings, botElo: play.settings.botElo, model: play.settings.model } }, false);
+      return transition(
+        state,
+        {
+          mode: 'analysis',
+          analysis: { ...analysis, perspective: play.settings.userColor, ownGame: true },
+          analysisLoaded: true,
+          importing: false,
+          analysisSourceId: action.id ?? play.id,
+          analysisSettings: {
+            ...state.analysisSettings,
+            botElo: play.settings.botElo,
+            model: play.settings.model,
+          },
+        },
+        false,
+      );
     }
     case 'delete': {
       const saved = state.saved.filter(game => game.id !== action.id);
       const analysisSourceId = state.analysisSourceId === action.id ? null : state.analysisSourceId;
       const analysisLoaded = state.analysisSourceId === action.id ? false : state.analysisLoaded;
       if (state.play.id !== action.id) return { ...state, saved, analysisSourceId, analysisLoaded };
-      return transition(state, { saved, analysisSourceId, analysisLoaded, started: false, setup: newPlayDraft(state.play.settings), viewedPly: null,
-        play: { id: `${state.play.id}:deleted:${state.revision + 1}`, createdAt: state.play.createdAt, moves: [], settings: state.play.settings } }, false);
+      return transition(
+        state,
+        {
+          saved,
+          analysisSourceId,
+          analysisLoaded,
+          started: false,
+          setup: newPlayDraft(state.play.settings),
+          viewedPly: null,
+          play: {
+            id: `${state.play.id}:deleted:${state.revision + 1}`,
+            createdAt: state.play.createdAt,
+            moves: [],
+            settings: state.play.settings,
+          },
+        },
+        false,
+      );
     }
     case 'sync': {
       const rows = new Map(state.saved.map(game => [game.id, game]));
@@ -126,19 +242,44 @@ function reduceRoot(state: State, action: Action): State | undefined {
       const current = merged.saved.find(game => game.id === merged.currentId);
       if (!current) {
         if (!state.started) return base;
-        return transition(base, { started: false, setup: newPlayDraft(base.play.settings), viewedPly: null,
-          play: { id: `${state.play.id}:empty:${state.revision + 1}`, createdAt: state.play.createdAt, moves: [], settings: base.play.settings } }, false);
+        return transition(
+          base,
+          {
+            started: false,
+            setup: newPlayDraft(base.play.settings),
+            viewedPly: null,
+            play: {
+              id: `${state.play.id}:empty:${state.revision + 1}`,
+              createdAt: state.play.createdAt,
+              moves: [],
+              settings: base.play.settings,
+            },
+          },
+          false,
+        );
       }
-      if (current.id === state.play.id && current.moves.join(',') === state.play.moves.join(',') && current.result === state.play.result && sameSettings(current.settings, state.play.settings)) {
+      if (
+        current.id === state.play.id &&
+        current.moves.join(',') === state.play.moves.join(',') &&
+        current.result === state.play.result &&
+        sameSettings(current.settings, state.play.settings)
+      ) {
         // Same tip with inference already running: keep the request, no duplicate.
         return { ...base, started: true };
       }
       return transition(base, { play: current, started: true, setup: null, viewedPly: null });
     }
-    default: return undefined;
+    default:
+      return undefined;
   }
 }
 
 export function reducer(state: State, action: Action): State {
-  return reduceDisplay(state, action) ?? reducePlay(state, action) ?? reduceAnalysis(state, action) ?? reduceRoot(state, action) ?? state;
+  return (
+    reduceDisplay(state, action) ??
+    reducePlay(state, action) ??
+    reduceAnalysis(state, action) ??
+    reduceRoot(state, action) ??
+    state
+  );
 }

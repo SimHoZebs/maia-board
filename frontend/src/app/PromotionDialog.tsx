@@ -9,16 +9,51 @@ const PROMOTION_CHOICES = [
   { piece: 'n', name: 'Knight', Icon: ChessKnight },
 ] as const;
 
-export function PromotionDialog({ open, onChoose }: { open: boolean; onChoose: (piece: string | null) => void }) {
+export function PromotionDialog({
+  open,
+  onChoose,
+}: {
+  open: boolean;
+  onChoose: (piece: string | null) => void;
+}) {
   const dialog = useRef<HTMLDialogElement>(null);
   useLayoutEffect(() => {
-    if (open && !dialog.current!.open) dialog.current!.showModal();
-    if (!open && dialog.current!.open) dialog.current!.close();
-    return () => { if (dialog.current?.open) dialog.current.close(); };
+    const element = dialog.current!;
+    if (open && !element.open) element.showModal();
+    if (!open && element.open) element.close();
+    return () => {
+      if (element.open) element.close();
+    };
   }, [open]);
-  return <dialog className="promotion-dialog" id="promotion-dialog" aria-labelledby="promotion-title" ref={dialog} onCancel={event => { event.preventDefault(); onChoose(null); }}>
-    <form method="dialog"><p className="eyebrow">Promotion</p><h2 id="promotion-title">Choose a piece</h2><div className="promotion-options">
-      {PROMOTION_CHOICES.map(({ piece, name, Icon }) => <Button key={piece} data-promotion={piece} aria-label={name} title={name} onClick={() => onChoose(piece)}><Icon size={28} aria-hidden="true" className="promotion-icon" /><span>{name}</span></Button>)}
-    </div></form>
-  </dialog>;
+  return (
+    <dialog
+      className="promotion-dialog"
+      id="promotion-dialog"
+      aria-labelledby="promotion-title"
+      ref={dialog}
+      onCancel={event => {
+        event.preventDefault();
+        onChoose(null);
+      }}
+    >
+      <form method="dialog">
+        <p className="eyebrow">Promotion</p>
+        <h2 id="promotion-title">Choose a piece</h2>
+        <div className="promotion-options">
+          {PROMOTION_CHOICES.map(({ piece, name, Icon }) => (
+            <Button
+              key={piece}
+              data-promotion={piece}
+              aria-label={name}
+              title={name}
+              onClick={() => onChoose(piece)}
+            >
+              <Icon size={28} aria-hidden="true" className="promotion-icon" />
+              <span>{name}</span>
+            </Button>
+          ))}
+        </div>
+      </form>
+    </dialog>
+  );
 }

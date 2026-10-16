@@ -4,6 +4,9 @@ import { evaluationForOutcome } from './reviewMetrics';
 import { stockfishPolicy, type StockfishSettings } from '../eval/stockfishSettings';
 
 // Scoring adapter for consumers that still accept the engine evaluation shape.
-export function outcomeEvaluation(outcome: DomainOutcome | null, settings?: StockfishSettings): Evaluation | undefined {
+export function outcomeEvaluation(
+  outcome: DomainOutcome | null,
+  settings?: StockfishSettings,
+): Evaluation | undefined {
   return evaluationForOutcome(outcome, stockfishPolicy(settings));
 }

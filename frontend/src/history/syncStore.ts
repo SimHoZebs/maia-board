@@ -16,11 +16,15 @@ export type SyncDisplay = {
 
 // Direct selector over the repository snapshot: sync indicators derive from
 // this one function instead of a hand-kept field mirror.
-export function selectSyncDisplay(repo: RepositorySnapshot | null, preference: string): SyncDisplay {
+export function selectSyncDisplay(
+  repo: RepositorySnapshot | null,
+  preference: string,
+): SyncDisplay {
   const pending = (repo?.pending.length ?? 0) + (repo?.recovery.length ?? 0);
-  const recoveryMsg = (repo?.recovery.length ?? 0)
-    ? `${repo!.recovery.length} stored item(s) need recovery. Export pending work before discarding them.`
-    : '';
+  const recoveryMsg =
+    (repo?.recovery.length ?? 0)
+      ? `${repo!.recovery.length} stored item(s) need recovery. Export pending work before discarding them.`
+      : '';
   const combined = [repo?.error ?? '', recoveryMsg].filter(Boolean).join(' ');
   const error = [repo?.durabilityError ?? '', preference, combined].filter(Boolean).join(' ');
   return {
@@ -40,9 +44,18 @@ export function selectSyncDisplay(repo: RepositorySnapshot | null, preference: s
 // Single comparison key for the whole display, so the store notifies only
 // when something the indicators read actually changed.
 function displayKey(display: SyncDisplay): string {
-  return [display.pending, display.total, display.error, display.durabilityError,
-    display.hasMore, display.loading, display.pendingOperations.map(op => op.version).join(','),
-    display.recoveryItems.map(item => item.version).join(','), display.failedVersion, display.conflict].join('|');
+  return [
+    display.pending,
+    display.total,
+    display.error,
+    display.durabilityError,
+    display.hasMore,
+    display.loading,
+    display.pendingOperations.map(op => op.version).join(','),
+    display.recoveryItems.map(item => item.version).join(','),
+    display.failedVersion,
+    display.conflict,
+  ].join('|');
 }
 
 // Repository status and history controls have narrow subscriptions so an
@@ -56,7 +69,12 @@ export class HistorySyncStore {
   retry: () => Promise<void> = async () => {};
   exportPending: () => string = () => '';
   discardPending: (version: string) => void = () => {};
-  subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
+  subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
   snapshot = () => this.revision;
   private emit() {
     this.revision++;
@@ -68,16 +86,36 @@ export class HistorySyncStore {
   private currentDisplay() {
     return selectSyncDisplay(this.repo, this.preferenceMessage);
   }
-  get pending() { return this.currentDisplay().pending; }
-  get error() { return this.currentDisplay().error; }
-  get durabilityError() { return this.currentDisplay().durabilityError; }
-  get hasMore() { return this.currentDisplay().hasMore; }
-  get loading() { return this.currentDisplay().loading; }
-  get pendingOperations() { return this.currentDisplay().pendingOperations; }
-  get recoveryItems() { return this.currentDisplay().recoveryItems; }
-  get failedVersion() { return this.currentDisplay().failedVersion; }
-  get conflict() { return this.currentDisplay().conflict; }
-  get total() { return this.currentDisplay().total; }
+  get pending() {
+    return this.currentDisplay().pending;
+  }
+  get error() {
+    return this.currentDisplay().error;
+  }
+  get durabilityError() {
+    return this.currentDisplay().durabilityError;
+  }
+  get hasMore() {
+    return this.currentDisplay().hasMore;
+  }
+  get loading() {
+    return this.currentDisplay().loading;
+  }
+  get pendingOperations() {
+    return this.currentDisplay().pendingOperations;
+  }
+  get recoveryItems() {
+    return this.currentDisplay().recoveryItems;
+  }
+  get failedVersion() {
+    return this.currentDisplay().failedVersion;
+  }
+  get conflict() {
+    return this.currentDisplay().conflict;
+  }
+  get total() {
+    return this.currentDisplay().total;
+  }
   setSnapshot(snapshot: RepositorySnapshot) {
     const before = this.currentKey();
     this.repo = snapshot;

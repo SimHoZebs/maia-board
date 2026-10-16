@@ -29,6 +29,7 @@ it('mounts the slice window for either basis', () => {
   // markup only pins the window both states share.
   expect(html()).toContain('display-slice-window');
   expect(html({ basis: 'past' })).toContain('display-slice-window');
-  expect(html({ arrows: { ...defaultArrowSettings, actual: { color: '#000000', width: 64 } } }))
-    .toContain('display-slice-window');
+  expect(
+    html({ arrows: { ...defaultArrowSettings, actual: { color: '#000000', width: 64 } } }),
+  ).toContain('display-slice-window');
 });

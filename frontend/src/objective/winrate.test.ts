@@ -1,5 +1,15 @@
 import { expect, it } from 'vitest';
-import { deltaBaseline, deltaColumnTitle, formatWinrateDelta, botDisplayParts, botExpected, botPoint, botWhiteWdl, selectDeltaParts, trueCandidateDelta } from './winrate';
+import {
+  deltaBaseline,
+  deltaColumnTitle,
+  formatWinrateDelta,
+  botDisplayParts,
+  botExpected,
+  botPoint,
+  botWhiteWdl,
+  selectDeltaParts,
+  trueCandidateDelta,
+} from './winrate';
 
 it('reads mover-relative expected scores from WDL triples', () => {
   expect(botExpected([0.2, 0.3, 0.5])).toBeCloseTo(65, 9);
@@ -14,13 +24,25 @@ it('converts mover-relative WDL triples to white-relative percentages', () => {
 
 it('names the objective top only from clean responses', () => {
   expect(botPoint(undefined)).toEqual({ top: null, expected: null });
-  expect(botPoint({ top_moves: [{ move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], degraded: false }))
-    .toEqual({ top: 'e2e4', expected: 65 });
+  expect(
+    botPoint({
+      top_moves: [{ move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] }],
+      wdl: [0.2, 0.3, 0.5],
+      degraded: false,
+    }),
+  ).toEqual({ top: 'e2e4', expected: 65 });
   // Degraded rows still carry an expectation (shown, not graded).
-  expect(botPoint({ top_moves: [{ move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], degraded: true }))
-    .toEqual({ top: null, expected: 65 });
-  expect(botPoint({ top_moves: [], wdl: [0.2, 0.3, 0.5], degraded: false }))
-    .toEqual({ top: null, expected: 65 });
+  expect(
+    botPoint({
+      top_moves: [{ move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] }],
+      wdl: [0.2, 0.3, 0.5],
+      degraded: true,
+    }),
+  ).toEqual({ top: null, expected: 65 });
+  expect(botPoint({ top_moves: [], wdl: [0.2, 0.3, 0.5], degraded: false })).toEqual({
+    top: null,
+    expected: 65,
+  });
 });
 
 it('formats winrate deltas with one decimal and a zero guard', () => {

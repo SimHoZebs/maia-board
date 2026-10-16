@@ -3,18 +3,45 @@ import { GameRepository } from './gameRepository';
 import { defaultSettings, type StoredGame } from '../shared/domain';
 import { KEYS } from './storage';
 
-const game = (moves: string[] = []): StoredGame => ({ id: 'a', createdAt: '2026-09-10T00:00:00Z', settings: defaultSettings, moves });
-const row = (moves: string[] = []) => ({ id: 'a', created_at: '2026-09-10T00:00:00Z', updated_at: '2026-09-10T00:00:00Z', user_color: 'white', elo_maia: 1600, elo_user: 1600, model: '79m', moves, temperature: 0 });
-const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; };
+const game = (moves: string[] = []): StoredGame => ({
+  id: 'a',
+  createdAt: '2026-09-10T00:00:00Z',
+  settings: defaultSettings,
+  moves,
+});
+const row = (moves: string[] = []) => ({
+  id: 'a',
+  created_at: '2026-09-10T00:00:00Z',
+  updated_at: '2026-09-10T00:00:00Z',
+  user_color: 'white',
+  elo_maia: 1600,
+  elo_user: 1600,
+  model: '79m',
+  moves,
+  temperature: 0,
+});
+const deferred = <T>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(r => {
+    resolve = r;
+  });
+  return { promise, resolve };
+};
 beforeEach(() => {
   vi.unstubAllGlobals();
   const data = new Map<string, string>();
-  vi.stubGlobal('localStorage', { getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => data.set(k, v) });
+  vi.stubGlobal('localStorage', {
+    getItem: (k: string) => data.get(k) ?? null,
+    setItem: (k: string, v: string) => data.set(k, v),
+  });
 });
 
 it('acknowledges the exact operation while preserving a newer coalesced save', async () => {
   const held = deferred<Response>();
-  const fetcher = vi.fn().mockReturnValueOnce(held.promise).mockResolvedValue(Response.json(row(['e2e4'])));
+  const fetcher = vi
+    .fn()
+    .mockReturnValueOnce(held.promise)
+    .mockResolvedValue(Response.json(row(['e2e4'])));
   const repo = new GameRepository(fetcher);
   repo.save(game(), true);
   const flushing = repo.flush();
@@ -29,18 +56,34 @@ it('acknowledges the exact operation while preserving a newer coalesced save', a
 
 it('rejects a GET that predates a local save even after its acknowledgement', async () => {
   const held = deferred<Response>();
-  const repo = new GameRepository(vi.fn().mockReturnValueOnce(held.promise).mockResolvedValue(Response.json(row(['e2e4']))));
+  const repo = new GameRepository(
+    vi
+      .fn()
+      .mockReturnValueOnce(held.promise)
+      .mockResolvedValue(Response.json(row(['e2e4']))),
+  );
   const loading = repo.refresh();
   repo.save(game(['e2e4']), true);
   await repo.flush();
-  held.resolve(Response.json({ games: [row()], current_id: 'a', current_game: row(), total: 1, next_offset: null }));
+  held.resolve(
+    Response.json({
+      games: [row()],
+      current_id: 'a',
+      current_game: row(),
+      total: 1,
+      next_offset: null,
+    }),
+  );
   await loading;
   expect(repo.snapshot().games[0].moves).toEqual(['e2e4']);
 });
 
 it('keeps the request-start pending overlay when a GET races its acknowledgement', async () => {
-  const heldSave = deferred<Response>(); const heldGet = deferred<Response>();
-  const repo = new GameRepository(vi.fn().mockReturnValueOnce(heldSave.promise).mockReturnValueOnce(heldGet.promise));
+  const heldSave = deferred<Response>();
+  const heldGet = deferred<Response>();
+  const repo = new GameRepository(
+    vi.fn().mockReturnValueOnce(heldSave.promise).mockReturnValueOnce(heldGet.promise),
+  );
   repo.save(game(['e2e4']), true);
   const flushing = repo.flush();
   await vi.waitFor(() => expect(repo.snapshot().pending).toHaveLength(1));
@@ -48,14 +91,38 @@ it('keeps the request-start pending overlay when a GET races its acknowledgement
   const loading = repo.refresh();
   heldSave.resolve(Response.json(row(['e2e4'])));
   await flushing;
-  heldGet.resolve(Response.json({ games: [row()], current_id: 'a', current_game: row(), total: 1, next_offset: null }));
+  heldGet.resolve(
+    Response.json({
+      games: [row()],
+      current_id: 'a',
+      current_game: row(),
+      total: 1,
+      next_offset: null,
+    }),
+  );
   await loading;
   expect(repo.snapshot().games[0].moves).toEqual(['e2e4']);
 });
 
 it('keeps a failed operation visible after a successful history refresh', async () => {
-  const repo = new GameRepository(vi.fn().mockResolvedValueOnce(Response.json({ title: 'Bad Request', status: 400, detail: 'invalid game', errors: [{ message: 'invalid_request' }] }, { status: 400 }))
-    .mockResolvedValueOnce(Response.json({ games: [], current_id: null, total: 0, next_offset: null })));
+  const repo = new GameRepository(
+    vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            title: 'Bad Request',
+            status: 400,
+            detail: 'invalid game',
+            errors: [{ message: 'invalid_request' }],
+          },
+          { status: 400 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        Response.json({ games: [], current_id: null, total: 0, next_offset: null }),
+      ),
+  );
   repo.save(game(), true);
   await repo.retry();
   expect(repo.snapshot().error).toBe('invalid game');
@@ -63,8 +130,26 @@ it('keeps a failed operation visible after a successful history refresh', async 
 });
 
 it('merges truncated pages without deletes and retrieves a current game outside the page', async () => {
-  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ games: [], current_game: row(['e2e4']), current_id: 'a', total: 2, next_offset: 1 }))
-    .mockResolvedValueOnce(Response.json({ games: [{ ...row(), id: 'older' }], current_id: 'a', current_game: row(), total: 2, next_offset: null }));
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(
+      Response.json({
+        games: [],
+        current_game: row(['e2e4']),
+        current_id: 'a',
+        total: 2,
+        next_offset: 1,
+      }),
+    )
+    .mockResolvedValueOnce(
+      Response.json({
+        games: [{ ...row(), id: 'older' }],
+        current_id: 'a',
+        current_game: row(),
+        total: 2,
+        next_offset: null,
+      }),
+    );
   const repo = new GameRepository(fetcher);
   await repo.refresh();
   await repo.loadMore();
@@ -76,12 +161,20 @@ it('merges truncated pages without deletes and retrieves a current game outside 
 
 it('survives offline reload and retries save-delete-save in order including resignation', async () => {
   const repo = new GameRepository(vi.fn().mockRejectedValue(new Error('offline')));
-  repo.save(game(), true); repo.delete('a'); repo.save({ ...game(['e2e4']), result: 'resigned' }, true);
+  repo.save(game(), true);
+  repo.delete('a');
+  repo.save({ ...game(['e2e4']), result: 'resigned' }, true);
   await repo.flush();
   expect(repo.snapshot().error).toBeTruthy();
   // Per-id last-save-wins subsumes the pre-delete snapshot; the delete barrier
   // and the resigned snapshot still transmit in order.
-  const fetcher = vi.fn().mockImplementation((_url, init) => Promise.resolve(init.method === 'DELETE' ? new Response(null, { status: 204 }) : Response.json(row())));
+  const fetcher = vi
+    .fn()
+    .mockImplementation((_url, init) =>
+      Promise.resolve(
+        init.method === 'DELETE' ? new Response(null, { status: 204 }) : Response.json(row()),
+      ),
+    );
   const reloaded = new GameRepository(fetcher);
   await reloaded.flush();
   expect(fetcher.mock.calls.map(call => call[1].method)).toEqual(['DELETE', 'POST']);
@@ -93,7 +186,9 @@ it('keeps commands in memory when durable enqueue fails and does not upload them
   const fetcher = vi.fn().mockResolvedValue(Response.json(row(['e2e4'])));
   const repo = new GameRepository(fetcher);
   const setItem = localStorage.setItem;
-  localStorage.setItem = () => { throw new Error('quota'); };
+  localStorage.setItem = () => {
+    throw new Error('quota');
+  };
   repo.save(game(['e2e4']), true);
   await repo.flush();
   expect(repo.snapshot().games[0].moves).toEqual(['e2e4']);
@@ -109,14 +204,21 @@ it('keeps commands in memory when durable enqueue fails and does not upload them
 
 it('does not upload a newer snapshot when its durable write failed during an older acknowledgement', async () => {
   const held = deferred<Response>();
-  const fetcher = vi.fn().mockReturnValueOnce(held.promise).mockResolvedValue(Response.json(row(['e2e4'])));
-  const repo = new GameRepository(fetcher); repo.save(game(), true);
+  const fetcher = vi
+    .fn()
+    .mockReturnValueOnce(held.promise)
+    .mockResolvedValue(Response.json(row(['e2e4'])));
+  const repo = new GameRepository(fetcher);
+  repo.save(game(), true);
   const flushing = repo.flush();
   await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
   const setItem = localStorage.setItem;
-  localStorage.setItem = () => { throw new Error('quota'); };
+  localStorage.setItem = () => {
+    throw new Error('quota');
+  };
   repo.save(game(['e2e4']), true);
-  held.resolve(Response.json(row())); await flushing;
+  held.resolve(Response.json(row()));
+  await flushing;
   expect(fetcher).toHaveBeenCalledTimes(1);
   expect(repo.snapshot().pending[0]).toMatchObject({ game: { moves: ['e2e4'] } });
   localStorage.setItem = setItem;
@@ -126,14 +228,30 @@ it('does not upload a newer snapshot when its durable write failed during an old
 });
 
 it('preserves an acknowledged delete over a GET started while that delete was pending', async () => {
-  const heldDelete = deferred<Response>(); const heldGet = deferred<Response>();
-  const fetcher = vi.fn().mockReturnValueOnce(heldDelete.promise).mockReturnValueOnce(heldGet.promise);
+  const heldDelete = deferred<Response>();
+  const heldGet = deferred<Response>();
+  const fetcher = vi
+    .fn()
+    .mockReturnValueOnce(heldDelete.promise)
+    .mockReturnValueOnce(heldGet.promise);
   localStorage.setItem(KEYS.saved, JSON.stringify([game()]));
-  const repo = new GameRepository(fetcher); repo.delete('a'); const flushing = repo.flush();
+  const repo = new GameRepository(fetcher);
+  repo.delete('a');
+  const flushing = repo.flush();
   await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
   const loading = repo.refresh();
-  heldDelete.resolve(new Response(null, { status: 204 })); await flushing;
-  heldGet.resolve(Response.json({ games: [row()], current_id: 'a', current_game: row(), total: 1, next_offset: null })); await loading;
+  heldDelete.resolve(new Response(null, { status: 204 }));
+  await flushing;
+  heldGet.resolve(
+    Response.json({
+      games: [row()],
+      current_id: 'a',
+      current_game: row(),
+      total: 1,
+      next_offset: null,
+    }),
+  );
+  await loading;
   expect(repo.snapshot().games).toEqual([]);
   expect(repo.snapshot().currentId).toBeNull();
   expect(repo.snapshot().pending).toEqual([]);
@@ -143,10 +261,12 @@ it('preserves an acknowledged delete over a GET started while that delete was pe
 // longer read here, so the legacy-pending migration tests were deleted with it.
 it('coalesces saves per game id with last-save-wins and retains the current marker', () => {
   const repo = new GameRepository();
-  repo.save(game(), true); repo.save(game(['e2e4']), false);
+  repo.save(game(), true);
+  repo.save(game(['e2e4']), false);
   expect(repo.snapshot().pending).toHaveLength(1);
   expect(repo.snapshot().pending[0]).toMatchObject({ current: true, game: { moves: ['e2e4'] } });
-  repo.save({ ...game(), id: 'b' }, true); repo.save(game(['e2e4', 'e7e5']), false);
+  repo.save({ ...game(), id: 'b' }, true);
+  repo.save(game(['e2e4', 'e7e5']), false);
   // The newest snapshot per id is the only one transmitted; the earlier save
   // for 'a' collapses and its current marker carries onto the replacement.
   expect(repo.snapshot().pending).toHaveLength(2);
@@ -155,10 +275,13 @@ it('coalesces saves per game id with last-save-wins and retains the current mark
 
 it('refuses a competing tab write while retaining exportable local play', async () => {
   const first = new GameRepository(vi.fn().mockRejectedValue(new Error('offline')));
-  const fetcher = vi.fn(); const second = new GameRepository(fetcher);
-  first.save(game(), true); await first.flush();
+  const fetcher = vi.fn();
+  const second = new GameRepository(fetcher);
+  first.save(game(), true);
+  await first.flush();
   const before = localStorage.getItem('maia-board.games.v2');
-  second.save(game(['e2e4']), true); await second.flush();
+  second.save(game(['e2e4']), true);
+  await second.flush();
   expect(localStorage.getItem('maia-board.games.v2')).toBe(before);
   expect(second.snapshot().durabilityError).toContain('another tab');
   expect(JSON.parse(second.exportPending()).games[0].moves).toEqual(['e2e4']);
@@ -166,15 +289,27 @@ it('refuses a competing tab write while retaining exportable local play', async 
 });
 
 it('cancels page hydration and deferred lifecycle work on cleanup', async () => {
-  const fetcher = vi.fn(); const repo = new GameRepository(fetcher);
-  const stop = repo.start(); stop();
+  const fetcher = vi.fn();
+  const repo = new GameRepository(fetcher);
+  const stop = repo.start();
+  stop();
   await Promise.resolve();
   expect(fetcher).not.toHaveBeenCalled();
-  const held = deferred<Response>(); fetcher.mockReturnValue(held.promise);
+  const held = deferred<Response>();
+  fetcher.mockReturnValue(held.promise);
   const loading = repo.refresh();
-  const stopAgain = repo.start(); stopAgain();
+  const stopAgain = repo.start();
+  stopAgain();
   expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true);
-  held.resolve(Response.json({ games: [row()], current_id: 'a', current_game: row(), total: 1, next_offset: null }));
+  held.resolve(
+    Response.json({
+      games: [row()],
+      current_id: 'a',
+      current_game: row(),
+      total: 1,
+      next_offset: null,
+    }),
+  );
   await loading;
   expect(repo.snapshot().games).toEqual([]);
 });
@@ -183,7 +318,8 @@ it('persists and restores legal histories beyond the inference budget', async ()
   const moves = Array.from({ length: 260 }, (_, i) => ['g1f3', 'g8f6', 'f3g1', 'f6g8'][i % 4]);
   const fetcher = vi.fn().mockResolvedValue(Response.json(row(moves)));
   const repo = new GameRepository(fetcher);
-  repo.save(game(moves), true); await repo.flush();
+  repo.save(game(moves), true);
+  await repo.flush();
   expect(JSON.parse(fetcher.mock.calls[0][1].body).moves).toHaveLength(260);
   const restored = new GameRepository(fetcher);
   expect(restored.snapshot().games[0].moves).toEqual(moves);
@@ -191,8 +327,12 @@ it('persists and restores legal histories beyond the inference budget', async ()
 
 it('retains malformed v2 records for explicit recovery across reload', async () => {
   const corrupt = { op: 'save', game: { id: 'bad', moves: ['e9'] }, current: true };
-  localStorage.setItem('maia-board.games.v2', JSON.stringify({ schema: 2, games: [], currentId: null, pending: [corrupt], recovery: [] }));
-  const repo = new GameRepository(); await repo.flush();
+  localStorage.setItem(
+    'maia-board.games.v2',
+    JSON.stringify({ schema: 2, games: [], currentId: null, pending: [corrupt], recovery: [] }),
+  );
+  const repo = new GameRepository();
+  await repo.flush();
   const restored = new GameRepository();
   expect(restored.snapshot().recovery[0].value).toEqual(corrupt);
   expect(JSON.parse(restored.exportPending()).recovery[0].value).toEqual(corrupt);
@@ -202,10 +342,16 @@ it('retains malformed v2 records for explicit recovery across reload', async () 
 });
 
 it('allows a corrected save to recover from a permanent server rejection', async () => {
-  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ message: 'invalid game' }, { status: 400 })).mockResolvedValue(Response.json(row(['e2e4'])));
-  const repo = new GameRepository(fetcher); repo.save(game(), true); await repo.flush();
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(Response.json({ message: 'invalid game' }, { status: 400 }))
+    .mockResolvedValue(Response.json(row(['e2e4'])));
+  const repo = new GameRepository(fetcher);
+  repo.save(game(), true);
+  await repo.flush();
   expect(repo.snapshot().failedVersion).toBe(repo.snapshot().pending[0].version);
-  repo.save(game(['e2e4']), true); await repo.flush();
+  repo.save(game(['e2e4']), true);
+  await repo.flush();
   expect(repo.snapshot().pending).toEqual([]);
   expect(repo.snapshot().error).toBe('');
   expect(repo.snapshot().failedVersion).toBeNull();
@@ -213,18 +359,27 @@ it('allows a corrected save to recover from a permanent server rejection', async
 
 it('serializes cross-tab remote mutations with Web Locks', async () => {
   const queues = new Map<string, Promise<unknown>>();
-  vi.stubGlobal('navigator', { locks: { request: (name: string, work: () => Promise<unknown>) => {
-    const next = (queues.get(name) ?? Promise.resolve()).then(work);
-    queues.set(name, next.catch(() => {}));
-    return next;
-  } } });
+  vi.stubGlobal('navigator', {
+    locks: {
+      request: (name: string, work: () => Promise<unknown>) => {
+        const next = (queues.get(name) ?? Promise.resolve()).then(work);
+        queues.set(
+          name,
+          next.catch(() => {}),
+        );
+        return next;
+      },
+    },
+  });
   const held = deferred<Response>();
   const firstFetch = vi.fn().mockReturnValue(held.promise);
-  const first = new GameRepository(firstFetch); first.save(game(), true);
+  const first = new GameRepository(firstFetch);
+  first.save(game(), true);
   const firstFlush = first.flush();
   await vi.waitFor(() => expect(firstFetch).toHaveBeenCalledTimes(1));
   const secondFetch = vi.fn().mockResolvedValue(Response.json(row(['e2e4'])));
-  const second = new GameRepository(secondFetch); second.save(game(['e2e4']), true);
+  const second = new GameRepository(secondFetch);
+  second.save(game(['e2e4']), true);
   const secondFlush = second.flush();
   await Promise.resolve();
   expect(secondFetch).not.toHaveBeenCalled();
@@ -236,12 +391,27 @@ it('serializes cross-tab remote mutations with Web Locks', async () => {
 });
 
 it('detects another tab changing the document during repository construction', async () => {
-  const empty = JSON.stringify({ schema: 2, games: [], currentId: null, pending: [], recovery: [] });
-  const newer = JSON.stringify({ schema: 2, games: [game(['e2e4'])], currentId: 'a', pending: [], recovery: [] });
+  const empty = JSON.stringify({
+    schema: 2,
+    games: [],
+    currentId: null,
+    pending: [],
+    recovery: [],
+  });
+  const newer = JSON.stringify({
+    schema: 2,
+    games: [game(['e2e4'])],
+    currentId: 'a',
+    pending: [],
+    recovery: [],
+  });
   let reads = 0;
-  localStorage.getItem = key => key === 'maia-board.games.v2' ? (++reads === 1 ? empty : newer) : null;
-  const set = vi.fn(); localStorage.setItem = set;
-  const repo = new GameRepository(); await repo.flush();
+  localStorage.getItem = key =>
+    key === 'maia-board.games.v2' ? (++reads === 1 ? empty : newer) : null;
+  const set = vi.fn();
+  localStorage.setItem = set;
+  const repo = new GameRepository();
+  await repo.flush();
   expect(set).not.toHaveBeenCalled();
   expect(repo.snapshot().conflict).toBe(true);
 });
@@ -252,7 +422,8 @@ it('transmits a seeded delete and settles it on reload', async () => {
   const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
   const repo = new GameRepository(fetcher);
   expect(repo.snapshot().games).toHaveLength(1);
-  repo.delete('a'); await repo.flush();
+  repo.delete('a');
+  await repo.flush();
   expect(fetcher.mock.calls.map(call => call[1].method)).toEqual(['DELETE']);
   const restored = new GameRepository();
   expect(restored.snapshot().games).toEqual([]);
@@ -263,21 +434,31 @@ it('normalizes seeded games before exposing or uploading them', async () => {
   localStorage.setItem(KEYS.saved, JSON.stringify([{ id: 'a', moves: ['e2e4'] }]));
   const fetcher = vi.fn().mockResolvedValue(Response.json(row(['e2e4'])));
   const repo = new GameRepository(fetcher);
-  expect(repo.snapshot().games[0].settings).toMatchObject({ userColor: 'white', model: '79m', temperature: 0 });
-  repo.save(repo.snapshot().games[0], true); await repo.flush();
+  expect(repo.snapshot().games[0].settings).toMatchObject({
+    userColor: 'white',
+    model: '79m',
+    temperature: 0,
+  });
+  repo.save(repo.snapshot().games[0], true);
+  await repo.flush();
   expect(repo.snapshot().pending).toEqual([]);
-  expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({ model: '79m', user_color: 'white' });
+  expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({
+    model: '79m',
+    user_color: 'white',
+  });
 });
 
 it('requires the exact selected operation to be durable before uploading', async () => {
   const setItem = localStorage.setItem;
   localStorage.setItem = (key, value) => {
-    if (key === 'maia-board.games.v2' && JSON.parse(value).games[0]?.moves.length) throw new Error('quota on newer snapshot');
+    if (key === 'maia-board.games.v2' && JSON.parse(value).games[0]?.moves.length)
+      throw new Error('quota on newer snapshot');
     return setItem(key, value);
   };
   const fetcher = vi.fn().mockResolvedValue(Response.json(row(['e2e4'])));
   const repo = new GameRepository(fetcher);
-  repo.save(game(), true); const flushing = repo.flush();
+  repo.save(game(), true);
+  const flushing = repo.flush();
   repo.save(game(['e2e4']), true);
   await flushing;
   expect(fetcher).not.toHaveBeenCalled();

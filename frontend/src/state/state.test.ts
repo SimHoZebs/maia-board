@@ -1,9 +1,34 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Chess } from 'chess.js';
 import { BotApiError, type MoveResponse } from '../eval/api';
-import { absoluteWdl, analysisLine, buildTimeline, defaultSettings, exportExplored, exportLine, extendLine, legalPrefixLength, lineRecord, lineRecordMissesForTests, loadLine, positionOf, replay, resetLineRecordsForTests, resetTimelinesForTests, resultTextForTip, retreatLine, START_FEN, terminalFlags, timelineBuildsForTests } from '../shared/domain';
+import {
+  absoluteWdl,
+  analysisLine,
+  buildTimeline,
+  defaultSettings,
+  exportExplored,
+  exportLine,
+  extendLine,
+  legalPrefixLength,
+  lineRecord,
+  lineRecordMissesForTests,
+  loadLine,
+  positionOf,
+  replay,
+  resetLineRecordsForTests,
+  resetTimelinesForTests,
+  resultTextForTip,
+  retreatLine,
+  START_FEN,
+  terminalFlags,
+  timelineBuildsForTests,
+} from '../shared/domain';
 import { testNodes } from '../shared/testUtils';
-import { computeReviewQualities, type ReviewQualitiesMemo, type ReviewQualitiesStats } from '../review/useReview';
+import {
+  computeReviewQualities,
+  type ReviewQualitiesMemo,
+  type ReviewQualitiesStats,
+} from '../review/useReview';
 import { reviewKey, type ReviewNode } from '../review/reviewCoordinator';
 import { terminalEvaluation, type Evaluation } from '../review/reviewMetrics';
 import { outcomeEvaluation } from '../review/outcomeEvaluation';
@@ -14,9 +39,18 @@ import { KEYS, restoreGame } from '../history/storage';
 
 beforeEach(() => {
   const data = new Map<string, string>();
-  vi.stubGlobal('localStorage', { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => data.set(key, value) });
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => data.set(key, value),
+  });
 });
-const response: MoveResponse = { move: 'e7e5', top_moves: [], wdl: [0.2, 0.3, 0.5], model_used: '79m', degraded: false };
+const response: MoveResponse = {
+  move: 'e7e5',
+  top_moves: [],
+  wdl: [0.2, 0.3, 0.5],
+  model_used: '79m',
+  degraded: false,
+};
 const started = () => reducer(initialState(), { type: 'new', id: 'test', createdAt: '2026-09-10' });
 
 describe('request ownership', () => {
@@ -27,27 +61,48 @@ describe('request ownership', () => {
     const fallback: MoveResponse = { ...response, model_used: '5m', degraded: true };
     const accepted = reducer(pending, { type: 'reply', request: firstRequest, response: fallback });
     expect(accepted.play.moves).toEqual(['e2e4', 'e7e5']);
-    expect(accepted.insight).toEqual({ response: fallback, fen: firstRequest.payload.fen, mode: 'play' });
+    expect(accepted.insight).toEqual({
+      response: fallback,
+      fen: firstRequest.payload.fen,
+      mode: 'play',
+    });
     expect(accepted.play.settings.model).toBe('79m');
     const next = reducer(accepted, { type: 'move', from: 'g1', to: 'f3' });
     expect(next.insight).toBeNull();
     const latestResponse: MoveResponse = { ...response, move: 'b8c6' };
-    const latest = reducer(next, { type: 'reply', request: next.request!, response: latestResponse });
+    const latest = reducer(next, {
+      type: 'reply',
+      request: next.request!,
+      response: latestResponse,
+    });
     expect(latest.insight?.response).toBe(latestResponse);
-    expect(reducer(latest, { type: 'reply', request: firstRequest, response: fallback })).toBe(latest);
+    expect(reducer(latest, { type: 'reply', request: firstRequest, response: fallback })).toBe(
+      latest,
+    );
     expect(reducer(accepted, { type: 'takeback' }).insight).toBeNull();
-    expect(reducer(accepted, { type: 'new', id: 'fresh', createdAt: '2026-09-14' }).insight).toBeNull();
+    expect(
+      reducer(accepted, { type: 'new', id: 'fresh', createdAt: '2026-09-14' }).insight,
+    ).toBeNull();
   });
-  it.each(['play', 'analysis', 'history'] as const)('initializes %s before deciding whether to resume the bot', mode => {
-    const game = { id: 'pending', createdAt: '2026-09-10', moves: ['e2e4'], settings: defaultSettings };
-    localStorage.setItem(KEYS.current, JSON.stringify(game));
-    const state = initialState(mode);
-    expect(state.mode).toBe(mode);
-    expect(state.play).toEqual(game);
-    expect(state.started).toBe(true);
-    if (mode === 'play') expect(state.request?.payload.moves).toEqual(['e2e4']);
-    else expect(state.request).toBeNull();
-  });
+  it.each(['play', 'analysis', 'history'] as const)(
+    'initializes %s before deciding whether to resume the bot',
+    mode => {
+      const game = {
+        id: 'pending',
+        createdAt: '2026-09-10',
+        moves: ['e2e4'],
+        settings: defaultSettings,
+      };
+      localStorage.setItem(KEYS.current, JSON.stringify(game));
+      const state = initialState(mode);
+      expect(state.mode).toBe(mode);
+      expect(state.play).toEqual(game);
+      expect(state.started).toBe(true);
+      expect(mode === 'play' ? state.request?.payload.moves : state.request).toEqual(
+        mode === 'play' ? ['e2e4'] : null,
+      );
+    },
+  );
   it('rejects success and failure from another game at the same position', () => {
     const a = { id: 'a', createdAt: '2026-09-10', moves: ['e2e4'], settings: defaultSettings };
     localStorage.setItem(KEYS.current, JSON.stringify(a));
@@ -56,12 +111,25 @@ describe('request ownership', () => {
     const next = reducer(old, { type: 'saved', id: 'b' });
     expect(next.request!.payload.fen).toBe(old.request!.payload.fen);
     expect(reducer(next, { type: 'reply', request: old.request!, response })).toBe(next);
-    expect(reducer(next, { type: 'failure', request: old.request!, error: new BotApiError('engine_busy', 'busy') })).toBe(next);
-    expect(reducer(next, { type: 'reply', request: next.request!, response }).play.moves).toEqual(['e2e4', 'e7e5']);
+    expect(
+      reducer(next, {
+        type: 'failure',
+        request: old.request!,
+        error: new BotApiError('engine_busy', 'busy'),
+      }),
+    ).toBe(next);
+    expect(reducer(next, { type: 'reply', request: next.request!, response }).play.moves).toEqual([
+      'e2e4',
+      'e7e5',
+    ]);
   });
   it('rejects illegal bot moves without changing authoritative history and settles pending', () => {
     const state = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
-    const next = reducer(state, { type: 'reply', request: state.request!, response: { ...response, move: 'e7e4' } });
+    const next = reducer(state, {
+      type: 'reply',
+      request: state.request!,
+      response: { ...response, move: 'e7e4' },
+    });
     expect(next.play.moves).toEqual(['e2e4']);
     expect(next.request).toBeNull();
     expect(next.error).toBe('Bot returned an illegal move.');
@@ -76,12 +144,19 @@ describe('request ownership', () => {
 
 describe('task lifecycles', () => {
   it('waits for Start and commits one rating atomically', () => {
-    const setup = reducer(initialState(), { type: 'setup', draft: { userColor: 'black', botElo: 1800 } });
+    const setup = reducer(initialState(), {
+      type: 'setup',
+      draft: { userColor: 'black', botElo: 1800 },
+    });
     expect(setup.request).toBeNull();
     expect(reducer(setup, { type: 'move', from: 'e2', to: 'e4' }).play.moves).toEqual([]);
     const game = reducer(setup, { type: 'new', id: 'new', createdAt: 'today' });
     expect(game.setup).toBeNull();
-    expect(game.request?.payload).toMatchObject({ elo_maia: 1800, elo_user: 1800, maia_color: 'white' });
+    expect(game.request?.payload).toMatchObject({
+      elo_maia: 1800,
+      elo_user: 1800,
+      maia_color: 'white',
+    });
   });
   it('historical navigation and setup cancel preserve a live reply', () => {
     const pending = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
@@ -93,7 +168,9 @@ describe('task lifecycles', () => {
     expect(state.play.moves).toEqual(['e2e4', 'e7e5']);
     expect(currentPosition(state).moves).toEqual([]);
     expect(state.play.settings.botElo).toBe(1600);
-    expect(currentPosition(reducer(state, { type: 'view', ply: null })).moves).toEqual(state.play.moves);
+    expect(currentPosition(reducer(state, { type: 'view', ply: null })).moves).toEqual(
+      state.play.moves,
+    );
   });
   it('analysis ratings retire play requests and leave analysis inference to its owner', () => {
     const playing = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
@@ -160,7 +237,10 @@ describe('task lifecycles', () => {
     expect(state.analysis.index).toBe(4);
     expect(state.promotion).toBeNull();
     // Same UCI from either engine list lands on the same branch tip.
-    const replayed = reducer({ ...state, analysis: { ...state.analysis, index: 3, branchFromPly: null, branchMoves: [] } }, { type: 'explore', uci: 'g8f6' });
+    const replayed = reducer(
+      { ...state, analysis: { ...state.analysis, index: 3, branchFromPly: null, branchMoves: [] } },
+      { type: 'explore', uci: 'g8f6' },
+    );
     expect(analysisLine(replayed.analysis).moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'g8f6']);
   });
   it('spawns a PV branch from the verdict line and lands on its first move', () => {
@@ -194,7 +274,14 @@ describe('task lifecycles', () => {
     expect(state.analysis.branchFromPly).toBe(3);
     expect(state.analysis.branchMoves).toEqual(['b8c6', 'f1c4', 'g8f6']);
     expect(state.analysis.index).toBe(6);
-    expect(analysisLine(state.analysis).moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4', 'g8f6']);
+    expect(analysisLine(state.analysis).moves).toEqual([
+      'e2e4',
+      'e7e5',
+      'g1f3',
+      'b8c6',
+      'f1c4',
+      'g8f6',
+    ]);
     // Spawn from the branch root: the old tail is replaced, not appended.
     state = reducer(state, { type: 'view', ply: 3 });
     state = reducer(state, { type: 'explore-line', ucis: ['g8f6'] });
@@ -204,7 +291,9 @@ describe('task lifecycles', () => {
     // Before the fork: same guard as single-explore, branch preserved.
     state = reducer(state, { type: 'view', ply: 1 });
     const guarded = reducer(state, { type: 'explore-line', ucis: ['d7d5'] });
-    expect(guarded.error).toBe('Step forward to the branching point before exploring from an earlier position.');
+    expect(guarded.error).toBe(
+      'Step forward to the branching point before exploring from an earlier position.',
+    );
     expect(guarded.analysis.branchFromPly).toBe(3);
     expect(guarded.analysis.branchMoves).toEqual(['g8f6']);
     expect(guarded.analysis.index).toBe(1);
@@ -228,7 +317,11 @@ describe('task lifecycles', () => {
     state = reducer(state, { type: 'load' });
     const loaded = state.analysis;
     state = reducer(state, { type: 'view', ply: 1 });
-    const kept = reducer(state, { type: 'url-line', initialFen: loaded.initialFen, moves: loaded.moves });
+    const kept = reducer(state, {
+      type: 'url-line',
+      initialFen: loaded.initialFen,
+      moves: loaded.moves,
+    });
     expect(kept).toBe(state);
     expect(kept.analysis.index).toBe(1);
     const switched = reducer(state, { type: 'url-line', initialFen: START_FEN, moves: ['d2d4'] });
@@ -237,7 +330,10 @@ describe('task lifecycles', () => {
     expect(switched.analysisLoaded).toBe(true);
   });
   it('boots shared links over the snapshot but keeps its cursor on match', () => {
-    localStorage.setItem(KEYS.snapshot, JSON.stringify(snapshotOf({ ...loadLine('', '1. e4 e5'), index: 1 })));
+    localStorage.setItem(
+      KEYS.snapshot,
+      JSON.stringify(snapshotOf({ ...loadLine('', '1. e4 e5'), index: 1 })),
+    );
     const matched = initialState('analysis', { initialFen: START_FEN, moves: ['e2e4', 'e7e5'] });
     expect(matched.analysisLoaded).toBe(true);
     expect(matched.analysis.index).toBe(1);
@@ -267,7 +363,10 @@ describe('task lifecycles', () => {
   });
   it('ends a repetition draw using full game history', () => {
     const moves = ['g1f3', 'g8f6', 'f3g1', 'f6g8', 'g1f3', 'g8f6', 'f3g1', 'f6g8'];
-    localStorage.setItem(KEYS.current, JSON.stringify({ id: 'draw', createdAt: 'today', moves, settings: defaultSettings }));
+    localStorage.setItem(
+      KEYS.current,
+      JSON.stringify({ id: 'draw', createdAt: 'today', moves, settings: defaultSettings }),
+    );
     const state = initialState();
     expect(replay(moves).isThreefoldRepetition()).toBe(true);
     expect(reducer(state, { type: 'move', from: 'e2', to: 'e4' })).toBe(state);
@@ -275,13 +374,23 @@ describe('task lifecycles', () => {
   it('scopes the review summary to the played side', () => {
     expect(loadLine().perspective).toBe('white');
     expect(loadLine('4k3/8/8/8/8/8/4P3/4K3 b - - 0 12').perspective).toBe('black');
-    const game = { id: 'g', createdAt: '2026-09-10', moves: ['e2e4'], settings: { ...defaultSettings, userColor: 'black' as const } };
+    const game = {
+      id: 'g',
+      createdAt: '2026-09-10',
+      moves: ['e2e4'],
+      settings: { ...defaultSettings, userColor: 'black' as const },
+    };
     const reviewed = reducer({ ...initialState(), saved: [game] }, { type: 'review', id: 'g' });
     expect(reviewed.analysis.perspective).toBe('black');
     expect(reviewed.analysis.ownGame).toBe(true);
   });
   it('defaults analysis Elo/model to the reviewed game and pins its source', () => {
-    const game = { id: 'elo-game', createdAt: '2026-09-10', moves: ['e2e4', 'e7e5'], settings: { ...defaultSettings, botElo: 2000, userElo: 2000, model: '5m' as const } };
+    const game = {
+      id: 'elo-game',
+      createdAt: '2026-09-10',
+      moves: ['e2e4', 'e7e5'],
+      settings: { ...defaultSettings, botElo: 2000, userElo: 2000, model: '5m' as const },
+    };
     const base = { ...initialState(), saved: [game] };
     expect(base.analysisSettings.botElo).toBe(1600);
     const reviewed = reducer(base, { type: 'review', id: 'elo-game' });
@@ -303,20 +412,27 @@ describe('task lifecycles', () => {
 describe('legacy storage and analysis', () => {
   it('restores all four v1 formats including non-menu Elo values', () => {
     const settings = { ...defaultSettings, botElo: 1701, userElo: 1512, model: '5m' };
-    localStorage.setItem(KEYS.current, JSON.stringify({ id: 'old', createdAt: '2026-01-01', moves: ['d2d4', 'd7d5'], settings }));
+    localStorage.setItem(
+      KEYS.current,
+      JSON.stringify({ id: 'old', createdAt: '2026-01-01', moves: ['d2d4', 'd7d5'], settings }),
+    );
     localStorage.setItem(KEYS.settings, JSON.stringify(settings));
     localStorage.setItem(KEYS.analysis, JSON.stringify({ fen: '', pgn: '1. e4 e5' }));
     const state = initialState();
-    expect(state.play.id).toBe('old'); expect(state.play.settings).toEqual(settings);
-    expect(state.analysis.index).toBe(2); expect(state.analysis.moves).toEqual(['e2e4', 'e7e5']);
+    expect(state.play.id).toBe('old');
+    expect(state.play.settings).toEqual(settings);
+    expect(state.analysis.index).toBe(2);
+    expect(state.analysis.moves).toEqual(['e2e4', 'e7e5']);
   });
   it('handles corrupt storage without losing access to the board', () => {
     localStorage.setItem(KEYS.current, JSON.stringify({ id: 'bad', moves: ['e2e8'] }));
     localStorage.setItem(KEYS.saved, '{}');
     localStorage.setItem(KEYS.analysis, JSON.stringify({ fen: 'invalid', pgn: '' }));
     const state = initialState();
-    expect(state.play.moves).toEqual([]); expect(state.saved).toEqual([]);
-    expect(state.analysis.initialFen).toBe(START_FEN); expect(state.inputs.fen).toBe('invalid');
+    expect(state.play.moves).toEqual([]);
+    expect(state.saved).toEqual([]);
+    expect(state.analysis.initialFen).toBe(START_FEN);
+    expect(state.inputs.fen).toBe('invalid');
     expect(restoreGame({ moves: 'not an array' })).toBeUndefined();
   });
   it('round-trips custom-start PGN with history and black to move', () => {
@@ -328,29 +444,59 @@ describe('legacy storage and analysis', () => {
     expect(restored.sanMoves).toEqual(['Kd7', 'e4']);
   });
   it('parses comments, variations, UCI and PGN while rejecting illegal tokens', () => {
-    expect(loadLine('', '1. e4 {comment} (1. d4 (1... d5)) e7e5 $1 2. Nf3 ; note\n*').moves).toEqual(['e2e4', 'e7e5', 'g1f3']);
+    expect(
+      loadLine('', '1. e4 {comment} (1. d4 (1... d5)) e7e5 $1 2. Nf3 ; note\n*').moves,
+    ).toEqual(['e2e4', 'e7e5', 'g1f3']);
     expect(() => loadLine('', '1. e5')).toThrow('Could not read PGN move "e5".');
   });
 });
 
 describe('server sync', () => {
-  const serverGame = (id: string, moves: string[] = []) => ({ id, createdAt: '2026-09-10', moves, settings: defaultSettings });
+  const serverGame = (id: string, moves: string[] = []) => ({
+    id,
+    createdAt: '2026-09-10',
+    moves,
+    settings: defaultSettings,
+  });
   it('preserves live request identity and historical cursor on same-tip hydration', () => {
     const live = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
     const viewing = reducer(live, { type: 'view', ply: 0 });
     const { userColor, model, botElo, userElo, temperature } = viewing.play.settings;
-    const hydratedGame = { ...viewing.play, settings: { temperature, model, userElo, botElo, userColor } };
-    const next = reducer(viewing, { type: 'sync', saved: [hydratedGame], currentId: viewing.play.id, pending: [], total: 1 });
+    const hydratedGame = {
+      ...viewing.play,
+      settings: { temperature, model, userElo, botElo, userColor },
+    };
+    const next = reducer(viewing, {
+      type: 'sync',
+      saved: [hydratedGame],
+      currentId: viewing.play.id,
+      pending: [],
+      total: 1,
+    });
     expect(next.request).toBe(live.request);
     expect(next.viewedPly).toBe(0);
-    const failed = reducer(next, { type: 'failure', request: live.request!, error: new Error('offline') });
-    const hydrated = reducer(failed, { type: 'sync', saved: [{ ...failed.play }], currentId: failed.play.id, pending: [], total: 1 });
+    const failed = reducer(next, {
+      type: 'failure',
+      request: live.request!,
+      error: new Error('offline'),
+    });
+    const hydrated = reducer(failed, {
+      type: 'sync',
+      saved: [{ ...failed.play }],
+      currentId: failed.play.id,
+      pending: [],
+      total: 1,
+    });
     expect(hydrated.request).toBeNull();
     expect(hydrated.error).toBe(failed.error);
   });
   it('adopts the server current game and requeues a bot turn', () => {
     const state = reducer(initialState(), {
-      type: 'sync', saved: [serverGame('s', ['e2e4'])], currentId: 's', total: 1, pending: [],
+      type: 'sync',
+      saved: [serverGame('s', ['e2e4'])],
+      currentId: 's',
+      total: 1,
+      pending: [],
     });
     expect(state.play.id).toBe('s');
     expect(state.started).toBe(true);
@@ -358,7 +504,13 @@ describe('server sync', () => {
   });
   it('retires the current game when its repository delete is projected', () => {
     const local = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
-    const next = reducer(local, { type: 'sync', saved: [], currentId: null, total: 0, pending: [{ op: 'delete', id: local.play.id }] });
+    const next = reducer(local, {
+      type: 'sync',
+      saved: [],
+      currentId: null,
+      total: 0,
+      pending: [{ op: 'delete', id: local.play.id }],
+    });
     expect(next.started).toBe(false);
     expect(next.saved).toEqual([]);
     expect(next.request).toBeNull();
@@ -367,7 +519,10 @@ describe('server sync', () => {
     const local = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
     const pending = [{ op: 'save', game: local.play, current: true }] as const;
     const next = reducer(local, {
-      type: 'sync', saved: [serverGame('other')], currentId: 'other', total: 1,
+      type: 'sync',
+      saved: [serverGame('other')],
+      currentId: 'other',
+      total: 1,
       pending: [...pending],
     });
     expect(next.play.moves).toEqual(['e2e4']);
@@ -375,15 +530,32 @@ describe('server sync', () => {
     expect(next.request).toBe(local.request);
   });
   it('starts fresh when the server has no current game', () => {
-    const state = reducer(initialState(), { type: 'sync', saved: [serverGame('s')], currentId: null, total: 1, pending: [] });
+    const state = reducer(initialState(), {
+      type: 'sync',
+      saved: [serverGame('s')],
+      currentId: null,
+      total: 1,
+      pending: [],
+    });
     expect(state.started).toBe(false);
     expect(state.play.moves).toEqual([]);
     expect(state.setup).not.toBeNull();
   });
   it('keeps a cache-seeded game when the server is empty', () => {
-    const game = { id: 'cache', createdAt: '2026-09-10', moves: ['e2e4'], settings: defaultSettings };
+    const game = {
+      id: 'cache',
+      createdAt: '2026-09-10',
+      moves: ['e2e4'],
+      settings: defaultSettings,
+    };
     localStorage.setItem(KEYS.current, JSON.stringify(game));
-    const state = reducer(initialState(), { type: 'sync', saved: [], currentId: null, total: 0, pending: [] });
+    const state = reducer(initialState(), {
+      type: 'sync',
+      saved: [],
+      currentId: null,
+      total: 0,
+      pending: [],
+    });
     expect(state.play.id).toBe('cache');
     expect(state.started).toBe(true);
   });
@@ -404,7 +576,9 @@ describe('resign', () => {
     expect(resigned.request).toBeNull();
     expect(resigned.saved[0].result).toBe('resigned');
     // Stale bot reply is rejected by request identity.
-    expect(reducer(resigned, { type: 'reply', request: pending.request!, response })).toBe(resigned);
+    expect(reducer(resigned, { type: 'reply', request: pending.request!, response })).toBe(
+      resigned,
+    );
     expect(reducer(resigned, { type: 'move', from: 'd2', to: 'd4' })).toBe(resigned);
     expect(reducer(resigned, { type: 'takeback' })).toBe(resigned);
     expect(reducer(resigned, { type: 'resign' })).toBe(resigned);
@@ -412,7 +586,12 @@ describe('resign', () => {
   it('is a no-op before start or after checkmate', () => {
     const fresh = initialState();
     expect(reducer(fresh, { type: 'resign' })).toBe(fresh);
-    const mate = { id: 'mate', createdAt: '2026-09-10', moves: ['f2f3', 'e7e5', 'g2g4', 'd8h4'], settings: defaultSettings };
+    const mate = {
+      id: 'mate',
+      createdAt: '2026-09-10',
+      moves: ['f2f3', 'e7e5', 'g2g4', 'd8h4'],
+      settings: defaultSettings,
+    };
     localStorage.setItem(KEYS.current, JSON.stringify(mate));
     const over = initialState();
     expect(replay(over.play.moves).isCheckmate()).toBe(true);
@@ -421,7 +600,9 @@ describe('resign', () => {
 });
 
 describe('line records', () => {
-  beforeEach(() => { resetLineRecordsForTests(); });
+  beforeEach(() => {
+    resetLineRecordsForTests();
+  });
   const italian = ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4'];
 
   it('matches replay ground truth for fen, SAN, last move, and terminality', () => {
@@ -472,7 +653,12 @@ describe('line records', () => {
 
   it('serves takebacks from cache after incremental play with zero replays', () => {
     let moves: string[] = [];
-    for (const [from, to] of [['e2', 'e4'], ['e7', 'e5'], ['g1', 'f3'], ['b8', 'c6']] as const) {
+    for (const [from, to] of [
+      ['e2', 'e4'],
+      ['e7', 'e5'],
+      ['g1', 'f3'],
+      ['b8', 'c6'],
+    ] as const) {
       moves = extendLine(moves, START_FEN, from, to).moves;
     }
     const warm = lineRecordMissesForTests();
@@ -498,7 +684,10 @@ describe('line records', () => {
     expect(lineRecord(['f2f3', 'e7e5', 'g2g4', 'd8h4']).terminal?.terminal).toBe('black_win');
     expect(lineRecord([], 'k7/8/1Q6/8/8/8/8/7K b - - 0 1').terminal?.terminal).toBe('draw');
     expect(lineRecord([], 'k7/8/8/8/8/8/8/K7 w - - 0 1').terminal?.terminal).toBe('draw');
-    expect(lineRecord([], 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 100 51').terminal?.terminal).toBe('draw');
+    expect(
+      lineRecord([], 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 100 51').terminal
+        ?.terminal,
+    ).toBe('draw');
     expect(lineRecord([], START_FEN).terminal).toBeNull();
   });
 
@@ -571,9 +760,19 @@ describe('history sync store', () => {
     const calls: number[] = [];
     const stop = store.subscribe(() => calls.push(store.snapshot()));
     const snapshot = (overrides: Partial<RepositorySnapshot> = {}): RepositorySnapshot => ({
-      schema: 2, games: [], currentId: null, pending: [], recovery: [],
-      error: '', durabilityError: '', conflict: false, failedVersion: null,
-      total: null, nextOffset: null, loading: false, ...overrides,
+      schema: 2,
+      games: [],
+      currentId: null,
+      pending: [],
+      recovery: [],
+      error: '',
+      durabilityError: '',
+      conflict: false,
+      failedVersion: null,
+      total: null,
+      nextOffset: null,
+      loading: false,
+      ...overrides,
     });
     store.setSnapshot(snapshot());
     store.setSnapshot(snapshot());
@@ -677,7 +876,9 @@ describe('canonical timeline', () => {
   });
 
   it('throws on illegal moves; legalPrefixLength narrows untrusted lines', () => {
-    expect(() => buildTimeline(START_FEN, ['e2e4', 'e7e5', 'not-a-move'])).toThrow();
+    expect(() => buildTimeline(START_FEN, ['e2e4', 'e7e5', 'not-a-move'])).toThrow(
+      'Invalid UCI move',
+    );
     expect(legalPrefixLength(START_FEN, ['e2e4', 'e7e5', 'not-a-move'])).toBe(2);
     expect(legalPrefixLength(START_FEN, ['e2e4', 'e7e5'])).toBe(2);
     const narrowed = buildTimeline(START_FEN, ['e2e4', 'e7e5', 'not-a-move'].slice(0, 2));
@@ -688,9 +889,16 @@ describe('canonical timeline', () => {
 describe('review qualities incremental', () => {
   const settings = { botElo: 1600, userElo: 1600, model: '79m' as const };
   const evaluation = (move: string, value: number): Evaluation => ({
-    engine: 'Stockfish 19', search_policy: 'sf19-n100k-ms750-mpv2-t4-h128-v3', depth: 12, terminal: null, best_move: move,
+    engine: 'Stockfish 19',
+    search_policy: 'sf19-n100k-ms750-mpv2-t4-h128-v3',
+    depth: 12,
+    terminal: null,
+    best_move: move,
     score: { type: 'cp', value },
-    lines: [{ move, score: { type: 'cp', value }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: value - 20 }, depth: 12 }],
+    lines: [
+      { move, score: { type: 'cp', value }, depth: 12 },
+      { move: 'd2d4', score: { type: 'cp', value: value - 20 }, depth: 12 },
+    ],
   });
   const italianMoves = ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4'];
   const italianNodes = testNodes(START_FEN, italianMoves);
@@ -714,13 +922,27 @@ describe('review qualities incremental', () => {
     pending: Set<string> = new Set(),
     stats?: ReviewQualitiesStats,
     resolve: (node: ReviewNode) => typeof settings = () => settings,
-  ) => computeReviewQualities({
-    line: { moves }, nodes, evaluations: nodes.map(lookup), settingsForNode: resolve, pending, prev, stats,
-  });
+  ) =>
+    computeReviewQualities({
+      line: { moves },
+      nodes,
+      evaluations: nodes.map(lookup),
+      settingsForNode: resolve,
+      pending,
+      prev,
+      stats,
+    });
 
   it('computes settled verdicts with one review per settled ply', () => {
     const stats: ReviewQualitiesStats = { reviews: 0 };
-    const { qualities } = run(italianMoves, italianNodes, byNodes(italianEvals), null, new Set(), stats);
+    const { qualities } = run(
+      italianMoves,
+      italianNodes,
+      byNodes(italianEvals),
+      null,
+      new Set(),
+      stats,
+    );
     expect(stats).toEqual({ reviews: 5 });
     expect(qualities).toHaveLength(5);
     expect(qualities[0]?.label).toBe('Top');
@@ -730,13 +952,22 @@ describe('review qualities incremental', () => {
   it('reuses everything on an identical rerun', () => {
     const first = run(italianMoves, italianNodes, byNodes(italianEvals), null);
     const stats: ReviewQualitiesStats = { reviews: 0 };
-    const second = run(italianMoves, italianNodes, byNodes(italianEvals), first.memo, new Set(), stats);
+    const second = run(
+      italianMoves,
+      italianNodes,
+      byNodes(italianEvals),
+      first.memo,
+      new Set(),
+      stats,
+    );
     expect(stats).toEqual({ reviews: 0 });
     expect(second.qualities).toBe(first.qualities);
   });
 
   it('settle arrival recomputes only the changed plies', () => {
-    const partial = italianEvals.filter(([slice]) => JSON.stringify(slice) !== JSON.stringify(['e2e4', 'e7e5', 'g1f3']));
+    const partial = italianEvals.filter(
+      ([slice]) => JSON.stringify(slice) !== JSON.stringify(['e2e4', 'e7e5', 'g1f3']),
+    );
     const moves = ['e2e4', 'e7e5', 'g1f3'];
     const nodes = testNodes(START_FEN, moves);
     const afterNode = nodes[3];
@@ -762,19 +993,30 @@ describe('review qualities incremental', () => {
     const cold = run(moves, nodes, () => undefined, null, foreground);
     expect(cold.qualities[0]?.label).toBe('Unreviewed');
     expect(cold.qualities[1]).toBeUndefined();
-    const settled = run(moves, nodes, byNodes(italianEvals.filter(([slice]) => slice.length <= 1)), null, new Set());
+    const settled = run(
+      moves,
+      nodes,
+      byNodes(italianEvals.filter(([slice]) => slice.length <= 1)),
+      null,
+      new Set(),
+    );
     expect(settled.qualities[0]?.label).not.toBe('Unreviewed');
     expect(settled.qualities[1]).toBeUndefined();
   });
 
   it('matches a fresh compute exactly across build, settle, append, and takeback', () => {
     const store = new Map(italianEvals.map(([slice, entry]) => [JSON.stringify(slice), entry]));
-    const lookup = (node: ReviewNode) => store.get(JSON.stringify(node.timeline.moves.slice(0, node.ply)));
+    const lookup = (node: ReviewNode) =>
+      store.get(JSON.stringify(node.timeline.moves.slice(0, node.ply)));
     const fresh = (moves: string[]) => {
       const nodes = testNodes(START_FEN, moves);
       return computeReviewQualities({
-        line: { moves }, nodes, evaluations: nodes.map(lookup),
-        settingsForNode: () => settings, pending: new Set(), prev: null,
+        line: { moves },
+        nodes,
+        evaluations: nodes.map(lookup),
+        settingsForNode: () => settings,
+        pending: new Set(),
+        prev: null,
       }).qualities;
     };
     let prev: ReviewQualitiesMemo | null = null;
@@ -805,7 +1047,12 @@ describe('review qualities incremental', () => {
     expect(second.qualities).toBe(first.qualities);
     const clone = (node: ReviewNode) => {
       const found = byNodes(italianEvals)(node);
-      return found && { ...found, lines: found.lines.map(line => ({ ...line, score: { ...line.score } })) };
+      return (
+        found && {
+          ...found,
+          lines: found.lines.map(line => ({ ...line, score: { ...line.score } })),
+        }
+      );
     };
     const third = run(moves, nodes, clone, first.memo, new Set(), stats);
     expect(stats.reviews).toBeGreaterThan(0);

@@ -4,7 +4,11 @@ import { isUnauthorized, notifyUnauthorized, SessionStore, subscribeUnauthorized
 import { LoginGate } from './LoginGate';
 
 function jsonResponse(body: unknown, status = 200) {
-  return { ok: status >= 200 && status < 300, status, json: async () => body } as unknown as Response;
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+  } as unknown as Response;
 }
 
 const alice = { id: 'u1', created_at: '2024-01-01T00:00:00Z', display_name: 'Alice' };
@@ -21,7 +25,9 @@ describe('session store', () => {
 
   it('broadcasts unauthorized observations to subscribers', async () => {
     let observed = 0;
-    const stop = subscribeUnauthorized(() => { observed++; });
+    const stop = subscribeUnauthorized(() => {
+      observed++;
+    });
     const store = new SessionStore(async () => jsonResponse(alice));
     const stopOwner = subscribeUnauthorized(store.onUnauthorized);
     notifyUnauthorized();
@@ -41,7 +47,12 @@ describe('session store', () => {
 
 describe('login gate', () => {
   it('leads with Lichess and offers a local name', () => {
-    const html = renderToString(<LoginGate session={{ status: 'signed-out', account: null, error: '' }} onLogin={async () => undefined} />);
+    const html = renderToString(
+      <LoginGate
+        session={{ status: 'signed-out', account: null, error: '' }}
+        onLogin={async () => undefined}
+      />,
+    );
     expect(html).toContain('Log in with Lichess');
     expect(html).toContain('Display name');
     expect(html).toContain('Continue with a local name');
@@ -61,7 +72,9 @@ describe('transport auth', () => {
     expect(seen[0].credentials).toBe('include');
     // 401 responses announce themselves without a subscriber crashing.
     let announced = 0;
-    const stop = subscribeUnauthorized(() => { announced++; });
+    const stop = subscribeUnauthorized(() => {
+      announced++;
+    });
     const failing = (async () => jsonResponse({}, 401)) as typeof fetch;
     const error = await postJson(failing, '/move', {}).catch(() => null);
     expect(error).not.toBeNull();

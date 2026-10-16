@@ -20,38 +20,70 @@ async function bootHistory(page: Page, pgn: string, primeMs: number) {
     // restore-pending behavior asserted below.
     if (path === '/openings') {
       const moves = route.request().postDataJSON()?.moves;
-      await route.fulfill({ json: { matches: [], book_flags: Array.isArray(moves) ? moves.map(() => false) : [] } });
+      await route.fulfill({
+        json: { matches: [], book_flags: Array.isArray(moves) ? moves.map(() => false) : [] },
+      });
       return;
     }
     if (await cache.lookup(route, primeMs)) return;
     if (path === '/evaluate') {
       const payload = route.request().postDataJSON();
       const game = replay(payload.moves, payload.initial_fen);
-      const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
+      const legal = game
+        .moves({ verbose: true })
+        .map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
       // The app hardcodes Stockfish lines to 1: return exactly the requested
       // rank count with a matching policy, or parseEvaluation rejects the row.
       const count = Math.max(1, Math.min(payload.settings?.lines ?? 1, legal.length));
       const best = legal[0];
       const score = { type: 'cp', value: 20 };
-      await route.fulfill({ json: {
-        engine: 'Stockfish 19', search_policy: stockfishPolicy(payload.settings ?? defaultStockfishSettings), depth: 12, terminal: null, best_move: best, score,
-        lines: [{ move: best, score, depth: 12 }].slice(0, count),
-      } });
+      await route.fulfill({
+        json: {
+          engine: 'Stockfish 19',
+          search_policy: stockfishPolicy(payload.settings ?? defaultStockfishSettings),
+          depth: 12,
+          terminal: null,
+          best_move: best,
+          score,
+          lines: [{ move: best, score, depth: 12 }].slice(0, count),
+        },
+      });
       return;
     }
     if (path === '/move' || path === '/move/analysis') {
       const payload = route.request().postDataJSON();
       const game = replay(payload.moves, payload.initial_fen);
-      const best = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`)[0];
-      await route.fulfill({ json: { move: best, top_moves: [{ move: best, prob: .6, wdl: [.2,.3,.5] }], wdl: [.2,.3,.5], model_used: payload.model, degraded: false } });
+      const best = game
+        .moves({ verbose: true })
+        .map(move => `${move.from}${move.to}${move.promotion ?? ''}`)[0];
+      await route.fulfill({
+        json: {
+          move: best,
+          top_moves: [{ move: best, prob: 0.6, wdl: [0.2, 0.3, 0.5] }],
+          wdl: [0.2, 0.3, 0.5],
+          model_used: payload.model,
+          degraded: false,
+        },
+      });
       return;
     }
     if (path === '/games' || path.startsWith('/games/')) {
-      if (route.request().method() === 'GET' && path === '/games') { await route.fulfill({ json: { games: [], current_id: null, total: 0, next_offset: null } }); return; }
-      await route.fulfill({ status: 204, body: '' }); return;
+      if (route.request().method() === 'GET' && path === '/games') {
+        await route.fulfill({ json: { games: [], current_id: null, total: 0, next_offset: null } });
+        return;
+      }
+      await route.fulfill({ status: 204, body: '' });
+      return;
     }
     const filename = path.startsWith('/assets/') ? path.slice(1) : 'index.html';
-    await route.fulfill({ body: await readFile(resolve('dist-browser', filename)), contentType: filename.endsWith('.js') ? 'text/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html' });
+    await route.fulfill({
+      body: await readFile(resolve('dist-browser', filename)),
+      contentType: filename.endsWith('.js')
+        ? 'text/javascript'
+        : filename.endsWith('.css')
+          ? 'text/css'
+          : 'text/html',
+    });
   });
   await page.goto('http://maia.test/analyze');
   await page.locator('#analysis-pgn').fill(pgn);

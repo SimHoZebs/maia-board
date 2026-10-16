@@ -5,7 +5,12 @@ import type { ButtonHTMLAttributes } from 'react';
 // data-*, ...) pass through untouched.
 type ButtonVariant = 'default' | 'primary' | 'quiet';
 
-export function Button({ variant = 'default', type = 'button', ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }) {
-  const className = [variant !== 'default' ? variant : null, rest.className].filter(Boolean).join(' ') || undefined;
+export function Button({
+  variant = 'default',
+  type = 'button',
+  ...rest
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }) {
+  const className =
+    [variant !== 'default' ? variant : null, rest.className].filter(Boolean).join(' ') || undefined;
   return <button type={type} {...rest} className={className} />;
 }

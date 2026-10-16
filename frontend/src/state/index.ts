@@ -6,7 +6,12 @@
 // coupling); the './state' file is gone.
 export type { Action, AnalysisSnapshot, Draft, PlayDraft, State } from './types';
 export { currentPosition, botTurn } from './shared';
-export { initialDisplayState, normalizeBadgeLoading, normalizeCoordinatesOnSquares, type DisplayState } from './display';
+export {
+  initialDisplayState,
+  normalizeBadgeLoading,
+  normalizeCoordinatesOnSquares,
+  type DisplayState,
+} from './display';
 export { newPlayDraft } from './play';
 export { readSnapshot, snapshotOf } from './analysis';
 export { initialState, reducer } from './reducer';

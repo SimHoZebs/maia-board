@@ -9,9 +9,14 @@ import type { ObjectivePoint } from '../review/reviewMetrics';
 
 // One position's objective point. A degraded response still carries an
 // expectation (shown, not graded); only a clean top move names the best.
-export function botPoint(response: Pick<MoveResponse, 'top_moves' | 'wdl' | 'degraded'> | undefined): ObjectivePoint {
+export function botPoint(
+  response: Pick<MoveResponse, 'top_moves' | 'wdl' | 'degraded'> | undefined,
+): ObjectivePoint {
   if (!response) return { top: null, expected: null };
-  const top = !response.degraded && typeof response.top_moves?.[0]?.move === 'string' ? response.top_moves[0].move : null;
+  const top =
+    !response.degraded && typeof response.top_moves?.[0]?.move === 'string'
+      ? response.top_moves[0].move
+      : null;
   return { top, expected: botExpected(response.wdl) };
 }
 
@@ -19,7 +24,7 @@ export function botPoint(response: Pick<MoveResponse, 'top_moves' | 'wdl' | 'deg
 // compresses extremes relative to engine win%. It feeds the 2400 context
 // (footnotes, candidate columns), never the badge cutoffs.
 export function botExpected(wdl: MoveResponse['wdl']): number {
-  const [loss, draw, win] = wdl;
+  const [, draw, win] = wdl;
   return 100 * (win + 0.5 * draw);
 }
 
@@ -27,7 +32,10 @@ export function botExpected(wdl: MoveResponse['wdl']): number {
 // [loss, draw, win]. Turn decides which side the win/loss belong to; draws
 // are side-neutral. The bar renders these three segments; expected score
 // stays win + draw/2 for grading.
-export function botWhiteWdl(wdl: MoveResponse['wdl'], turn: 'white' | 'black'): { white: number; draw: number; black: number } {
+export function botWhiteWdl(
+  wdl: MoveResponse['wdl'],
+  turn: 'white' | 'black',
+): { white: number; draw: number; black: number } {
   const [loss, draw, win] = wdl;
   return turn === 'white'
     ? { white: win * 100, draw: draw * 100, black: loss * 100 }
@@ -65,16 +73,19 @@ export function trueCandidateDelta(
     return after - beforeExpected;
   }
   if (childExpected == null || !Number.isFinite(childExpected)) return null;
-  return (100 - childExpected) - beforeExpected;
+  return 100 - childExpected - beforeExpected;
 }
 
 export function formatWinrateDelta(delta: number): string {
   if (Math.abs(delta) < 0.05) return '0.0%';
-  const rounded = (Math.sign(delta) * Math.round(Math.abs(delta) * 10) / 10).toFixed(1);
+  const rounded = ((Math.sign(delta) * Math.round(Math.abs(delta) * 10)) / 10).toFixed(1);
   return delta > 0 ? `+${rounded}%` : `${rounded}%`;
 }
 
-export function botDisplayParts(topMoves: MoveResponse['top_moves'], baseline?: number | null): { prob: string; delta: string }[] {
+export function botDisplayParts(
+  topMoves: MoveResponse['top_moves'],
+  baseline?: number | null,
+): { prob: string; delta: string }[] {
   if (topMoves.length === 0) return [];
   const best = baseline ?? Math.max(...topMoves.map(candidate => botExpected(candidate.wdl)));
   return topMoves.map(candidate => ({
@@ -89,7 +100,10 @@ export function botDisplayParts(topMoves: MoveResponse['top_moves'], baseline?: 
 // by construction no row can special-case the played move and no viewing
 // side can flip the sign. Deltas stay side-to-move-relative throughout.
 export type DeltaBaseline = { baseline: number | null; kind: 'before' | 'best' | null };
-export function deltaBaseline(beforeExpected: number | null, bestListed: number | null): DeltaBaseline {
+export function deltaBaseline(
+  beforeExpected: number | null,
+  bestListed: number | null,
+): DeltaBaseline {
   if (beforeExpected != null) return { baseline: beforeExpected, kind: 'before' };
   if (bestListed != null) return { baseline: bestListed, kind: 'best' };
   return { baseline: null, kind: null };
@@ -97,9 +111,12 @@ export function deltaBaseline(beforeExpected: number | null, bestListed: number 
 
 export function deltaColumnTitle(kind: DeltaBaseline['kind']): string {
   switch (kind) {
-    case 'before': return 'Win-rate delta versus position before move';
-    case 'best': return 'Win-rate change versus 2400 best';
-    default: return 'Win-rate change versus best listed move';
+    case 'before':
+      return 'Win-rate delta versus position before move';
+    case 'best':
+      return 'Win-rate change versus 2400 best';
+    default:
+      return 'Win-rate change versus best listed move';
   }
 }
 
@@ -114,11 +131,23 @@ export function selectDeltaParts(
   server: { value: number; kind: 'before' | 'best' } | undefined | null,
   beforeExpected: number | null,
   bestListed: number | null,
-): { parts: { prob: string; delta: string }[]; baseline: number | null; kind: DeltaBaseline['kind'] } {
-  if (server && Number.isFinite(server.value) && (server.kind === 'before' || server.kind === 'best')
-    && rows.length > 0 && rows.every(row => typeof row.delta === 'number' && Number.isFinite(row.delta))) {
+): {
+  parts: { prob: string; delta: string }[];
+  baseline: number | null;
+  kind: DeltaBaseline['kind'];
+} {
+  if (
+    server &&
+    Number.isFinite(server.value) &&
+    (server.kind === 'before' || server.kind === 'best') &&
+    rows.length > 0 &&
+    rows.every(row => typeof row.delta === 'number' && Number.isFinite(row.delta))
+  ) {
     return {
-      parts: rows.map(row => ({ prob: `${Math.round(row.prob * 100)}%`, delta: formatWinrateDelta(row.delta as number) })),
+      parts: rows.map(row => ({
+        prob: `${Math.round(row.prob * 100)}%`,
+        delta: formatWinrateDelta(row.delta as number),
+      })),
       baseline: server.value,
       kind: server.kind,
     };
@@ -132,7 +161,10 @@ export function selectDeltaParts(
   const { baseline, kind } = deltaBaseline(beforeExpected, bestListed);
   const best = baseline ?? Math.max(...rows.map(row => row.expected));
   return {
-    parts: rows.map(row => ({ prob: `${Math.round(row.prob * 100)}%`, delta: formatWinrateDelta(row.expected - best) })),
+    parts: rows.map(row => ({
+      prob: `${Math.round(row.prob * 100)}%`,
+      delta: formatWinrateDelta(row.expected - best),
+    })),
     baseline,
     kind,
   };

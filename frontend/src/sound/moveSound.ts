@@ -11,7 +11,10 @@ export type SoundKind = 'move' | 'capture' | 'check' | 'checkmate' | 'gameEnd';
 // prefix or anything unparseable so callers stay silent instead of guessing.
 // Terminality replays the full line from its root, matching the history-aware
 // timeline reads (FEN parses miss threefold repetition).
-export function classifyTip(initialFen: string, displayedMoves: readonly string[]): SoundKind | null {
+export function classifyTip(
+  initialFen: string,
+  displayedMoves: readonly string[],
+): SoundKind | null {
   if (!displayedMoves.length) return null;
   let game: Chess;
   try {

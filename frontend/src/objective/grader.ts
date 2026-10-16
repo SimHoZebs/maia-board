@@ -7,7 +7,11 @@ import {
   type ReviewSettings,
 } from '../eval/evaluationStore';
 import type { ReviewCoordinator, SettingsInput } from '../review/reviewCoordinator';
-import { type Evaluation, type ObjectiveCandidates, type ObjectivePoint } from '../review/reviewMetrics';
+import {
+  type Evaluation,
+  type ObjectiveCandidates,
+  type ObjectivePoint,
+} from '../review/reviewMetrics';
 import { botExpected, botPoint, botWhiteWdl } from './winrate';
 
 // Grader role: 2400 context (human top + expected per position) plus rarity,
@@ -51,13 +55,21 @@ export function candidatesFor(
 ): ObjectiveCandidates | undefined {
   if (!row) return undefined;
   return {
-    entries: row.top_moves.map(candidate => ({ uci: candidate.move, expected: botExpected(candidate.wdl), prob: candidate.prob, delta: candidate.delta ?? null })),
+    entries: row.top_moves.map(candidate => ({
+      uci: candidate.move,
+      expected: botExpected(candidate.wdl),
+      prob: candidate.prob,
+      delta: candidate.delta ?? null,
+    })),
     degraded: row.degraded,
     baseline: row.delta_baseline ?? null,
   };
 }
 
-export function laneKey(node: ReviewNode, _settingsForNode: (node: ReviewNode) => ReviewSettings): string {
+export function laneKey(
+  node: ReviewNode,
+  _settingsForNode: (node: ReviewNode) => ReviewSettings,
+): string {
   return gradingBotKey(node);
 }
 
@@ -65,7 +77,10 @@ export function lanePending(coordinator: ReviewCoordinator): Set<string> {
   return coordinator.botPendingKeys();
 }
 
-export function laneError(coordinator: ReviewCoordinator, node: ReviewNode | undefined): string | undefined {
+export function laneError(
+  coordinator: ReviewCoordinator,
+  node: ReviewNode | undefined,
+): string | undefined {
   if (!node || node.outcome) return undefined;
   return coordinator.error('maia', node, GRADING_BOT_SETTINGS);
 }
@@ -80,7 +95,11 @@ export function laneFailures(nodes: ReviewNode[], coordinator: ReviewCoordinator
 // already waiting: the pump serves FIFO, so grading never disturbs the
 // display pair's order. Shares the bot queue with the display bot under
 // different keys.
-export function ensureLane(coordinator: ReviewCoordinator, targets: ReviewNode[], signal: AbortSignal): void {
+export function ensureLane(
+  coordinator: ReviewCoordinator,
+  targets: ReviewNode[],
+  signal: AbortSignal,
+): void {
   coordinator.ensure(targets, GRADING_BOT_SETTINGS, { priority: true, engines: ['maia'], signal });
 }
 
@@ -98,6 +117,10 @@ export function fixedElo(): number | null {
 // Bulk-restore descriptor for the lane. `settings` null means the source
 // needs no extra inference, so the second restore and batch entries stand
 // down; callers check presence, never model kind.
-export function restoreDescriptor(): { settings: SettingsInput | null; engines: Engine[]; suffix: string } {
+export function restoreDescriptor(): {
+  settings: SettingsInput | null;
+  engines: Engine[];
+  suffix: string;
+} {
   return { settings: GRADING_BOT_SETTINGS, engines: ['maia'], suffix: '|g2400' };
 }

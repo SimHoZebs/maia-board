@@ -1,32 +1,29 @@
-import { useEffect, useState } from "react";
-import { QualityBadge } from "./ReviewCharts";
-import "./eval-lab.css";
+import { useEffect, useState } from 'react';
+import { QualityBadge } from './ReviewCharts';
+import './eval-lab.css';
 
 const FACES = [
-  { label: "Best", glyph: "B", cls: "quality-best" },
-  { label: "Good", glyph: "G", cls: "quality-good" },
-  { label: "Great", glyph: "!", cls: "quality-great" },
-  { label: "Excellent", glyph: "!!", cls: "quality-excellent" },
-  { label: "Inaccuracy", glyph: "?!", cls: "quality-inaccuracy" },
-  { label: "Mistake", glyph: "?", cls: "quality-mistake" },
-  { label: "Blunder", glyph: "??", cls: "quality-blunder" },
-  { label: "Allowed mate", glyph: "💀", cls: "quality-allowed-mate" },
-  { label: "Alien", glyph: "👽", cls: "quality-alien" },
-  { label: "Forced", glyph: "F", cls: "quality-forced" },
+  { label: 'Best', glyph: 'B', cls: 'quality-best' },
+  { label: 'Good', glyph: 'G', cls: 'quality-good' },
+  { label: 'Great', glyph: '!', cls: 'quality-great' },
+  { label: 'Excellent', glyph: '!!', cls: 'quality-excellent' },
+  { label: 'Inaccuracy', glyph: '?!', cls: 'quality-inaccuracy' },
+  { label: 'Mistake', glyph: '?', cls: 'quality-mistake' },
+  { label: 'Blunder', glyph: '??', cls: 'quality-blunder' },
+  { label: 'Allowed mate', glyph: '💀', cls: 'quality-allowed-mate' },
+  { label: 'Alien', glyph: '👽', cls: 'quality-alien' },
+  { label: 'Forced', glyph: 'F', cls: 'quality-forced' },
 ] as const;
 
-const PIECES = ["♟", "♞", "♝", "♜", "♛", "♚"] as const;
+const PIECES = ['♟', '♞', '♝', '♜', '♛', '♚'] as const;
 
 // A genuinely pending evaluation, as the data layers produce it.
-const PENDING = { label: "Unreviewed", accuracy: null, loss: null } as const;
+const PENDING = { label: 'Unreviewed', accuracy: null, loss: null } as const;
 
 function useCycle(length: number, ms: number) {
   const [index, setIndex] = useState(0);
   useEffect(() => {
-    const id = window.setInterval(
-      () => setIndex((i) => (i + 1) % length),
-      ms,
-    );
+    const id = window.setInterval(() => setIndex(i => (i + 1) % length), ms);
     return () => window.clearInterval(id);
   }, [length, ms]);
   return index;
@@ -96,12 +93,7 @@ function EscalationBadge({ ms = 500 }: { ms?: number }) {
 function PieceBadge({ ms = 220 }: { ms?: number }) {
   const i = useCycle(PIECES.length, ms);
   return (
-    <span
-      className="quality lab-piece"
-      role="status"
-      aria-label="Evaluating…"
-      title="Evaluating…"
-    >
+    <span className="quality lab-piece" role="status" aria-label="Evaluating…" title="Evaluating…">
       {PIECES[i]}
     </span>
   );
@@ -110,12 +102,7 @@ function PieceBadge({ ms = 220 }: { ms?: number }) {
 /** 7 — Hue spin: single ? badge rainbow-cycling (conic/ hue-rotate). */
 function HueBadge() {
   return (
-    <span
-      className="quality lab-hue"
-      role="status"
-      aria-label="Evaluating…"
-      title="Evaluating…"
-    >
+    <span className="quality lab-hue" role="status" aria-label="Evaluating…" title="Evaluating…">
       ?
     </span>
   );
@@ -191,11 +178,9 @@ export function EvalLoadingLab() {
       <main>
         <h1>Evaluation badge loading states</h1>
         <p className="lab-intro">
-          Every row below is a live loading treatment for{" "}
-          <code>QualityBadge</code> while move grades settle. Badges
-          sit in real <code>.move-cell</code> rows so you can judge layout
-          shift. Animations pause under{" "}
-          <code>prefers-reduced-motion</code>.
+          Every row below is a live loading treatment for <code>QualityBadge</code> while move
+          grades settle. Badges sit in real <code>.move-cell</code> rows so you can judge layout
+          shift. Animations pause under <code>prefers-reduced-motion</code>.
         </p>
         <Row
           n="01"

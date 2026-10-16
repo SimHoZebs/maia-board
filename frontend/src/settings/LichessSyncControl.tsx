@@ -3,8 +3,16 @@ import { RefreshCw } from 'lucide-react';
 import { Button } from '../components';
 import { bulkImport, importStatus, type ImportStatus } from '../history/account';
 import {
-  LICHESS_BASIS_OPTIONS, downloadLichessGames, isLichessCacheStale, loadLichessEloCache, matchingLichessCache,
-  saveLichessEloBasis, syncLichessElo, useLichessEloBasis, useLichessEloCache, LichessSyncError,
+  LICHESS_BASIS_OPTIONS,
+  downloadLichessGames,
+  isLichessCacheStale,
+  loadLichessEloCache,
+  matchingLichessCache,
+  saveLichessEloBasis,
+  syncLichessElo,
+  useLichessEloBasis,
+  useLichessEloCache,
+  LichessSyncError,
   type LichessEloBasis,
 } from '../history/lichessSync';
 
@@ -90,7 +98,15 @@ export function LichessSyncControl({ username, rating }: { username: string; rat
     let live = true;
     const maybeSync = async () => {
       if (!live || syncingRef.current) return;
-      if (!isLichessCacheStale(loadLichessEloCache(), usernameRef.current, Date.now(), basisRef.current)) return;
+      if (
+        !isLichessCacheStale(
+          loadLichessEloCache(),
+          usernameRef.current,
+          Date.now(),
+          basisRef.current,
+        )
+      )
+        return;
       syncingRef.current = true;
       setBusy(true);
       try {
@@ -103,8 +119,16 @@ export function LichessSyncControl({ username, rating }: { username: string; rat
       }
     };
     void maybeSync();
-    const timer = setInterval(() => { void maybeSync(); }, 5 * 60 * 1000);
-    return () => { live = false; clearInterval(timer); };
+    const timer = setInterval(
+      () => {
+        void maybeSync();
+      },
+      5 * 60 * 1000,
+    );
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [username, basis]);
 
@@ -118,19 +142,45 @@ export function LichessSyncControl({ username, rating }: { username: string; rat
 
   const last = status?.last ?? null;
   const fellBack = matchedElo !== null && basis !== 'auto' && basis !== matchedElo.perf;
-  return <div className="settings-control">
-    <div className="account-row account-row--sync">
-      <span className="rating-value">{rating}</span>
-      <select value={basis} disabled={busy} onChange={event => doBasisChange(event.target.value as LichessEloBasis)} aria-label="Rating basis">
-        {LICHESS_BASIS_OPTIONS.map(option => (
-          <option key={option} value={option}>{option === 'auto' ? 'Auto (most played)' : option[0].toUpperCase() + option.slice(1)}</option>
-        ))}
-      </select>
-      {last
-        ? <Button variant="primary" className="sync-button" onClick={() => doSync(last.created_at)} disabled={busy} aria-label="Sync now" title="Sync now"><RefreshCw size={16} aria-hidden="true" /></Button>
-        : <Button variant="primary" onClick={() => doSync()} disabled={busy}>{busy ? 'Importing…' : 'Import games + rating'}</Button>}
+  return (
+    <div className="settings-control">
+      <div className="account-row account-row--sync">
+        <span className="rating-value">{rating}</span>
+        <select
+          value={basis}
+          disabled={busy}
+          onChange={event => doBasisChange(event.target.value as LichessEloBasis)}
+          aria-label="Rating basis"
+        >
+          {LICHESS_BASIS_OPTIONS.map(option => (
+            <option key={option} value={option}>
+              {option === 'auto' ? 'Auto (most played)' : option[0].toUpperCase() + option.slice(1)}
+            </option>
+          ))}
+        </select>
+        {last ? (
+          <Button
+            variant="primary"
+            className="sync-button"
+            onClick={() => doSync(last.created_at)}
+            disabled={busy}
+            aria-label="Sync now"
+            title="Sync now"
+          >
+            <RefreshCw size={16} aria-hidden="true" />
+          </Button>
+        ) : (
+          <Button variant="primary" onClick={() => doSync()} disabled={busy}>
+            {busy ? 'Importing…' : 'Import games + rating'}
+          </Button>
+        )}
+      </div>
+      <p>
+        {matchedElo
+          ? `Managed by Lichess sync${fellBack ? ` (${basis} unrated, using ${matchedElo.perf})` : ''}.`
+          : 'Syncs your Lichess rating as the baseline.'}
+      </p>
+      {syncState && <p role="status">{syncState}</p>}
     </div>
-    <p>{matchedElo ? `Managed by Lichess sync${fellBack ? ` (${basis} unrated, using ${matchedElo.perf})` : ''}.` : 'Syncs your Lichess rating as the baseline.'}</p>
-    {syncState && <p role="status">{syncState}</p>}
-  </div>;
+  );
 }

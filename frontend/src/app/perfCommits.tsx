@@ -1,12 +1,18 @@
 import { Profiler, type ReactNode } from 'react';
 
 export type PerfCommit = {
-  id: string; phase: 'mount' | 'update' | 'nested-update';
-  actualDuration: number; baseDuration: number; startTime: number; commitTime: number;
+  id: string;
+  phase: 'mount' | 'update' | 'nested-update';
+  actualDuration: number;
+  baseDuration: number;
+  startTime: number;
+  commitTime: number;
 };
 
 declare global {
-  interface Window { __perfCommits?: PerfCommit[] }
+  interface Window {
+    __perfCommits?: PerfCommit[];
+  }
 }
 
 const MAX_COMMITS = 50_000;
@@ -32,7 +38,14 @@ export function CommitRecorder({ children }: { children: ReactNode }) {
   );
 }
 
-function record(id: string, phase: 'mount' | 'update' | 'nested-update', actualDuration: number, baseDuration: number, startTime: number, commitTime: number) {
+function record(
+  id: string,
+  phase: 'mount' | 'update' | 'nested-update',
+  actualDuration: number,
+  baseDuration: number,
+  startTime: number,
+  commitTime: number,
+) {
   const log = window.__perfCommits;
   if (log && log.length < MAX_COMMITS) {
     log.push({ id, phase, actualDuration, baseDuration, startTime, commitTime });

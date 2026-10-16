@@ -1,11 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { computePlayQualities, getNavigatorOnLine, hasExhaustedPlayRetries, isOfflineNow, isOfflineValue, PLAY_RETRY_EXHAUSTED_MESSAGE, playExhaustedError, unsettledReviewNodes, wantedPlayPair, type PlayQualitiesMemo } from './usePlayFeedback';
+import {
+  computePlayQualities,
+  getNavigatorOnLine,
+  hasExhaustedPlayRetries,
+  isOfflineNow,
+  isOfflineValue,
+  PLAY_RETRY_EXHAUSTED_MESSAGE,
+  playExhaustedError,
+  unsettledReviewNodes,
+  wantedPlayPair,
+  type PlayQualitiesMemo,
+} from './usePlayFeedback';
 import { computeReviewQualities, translateReviewQualities } from '../review/useReview';
 import { qualityGlyphs } from '../review/ReviewCharts';
 import { initialState, reducer } from '../state/index';
 import { KEYS } from '../history/storage';
 import { buildTimeline, START_FEN, timelineBuildsForTests } from '../shared/domain';
-import { reviewKey, reviewNodes, stablePositionKey, type ReviewNode, type ReviewSettings } from '../review/reviewCoordinator';
+import {
+  reviewKey,
+  reviewNodes,
+  stablePositionKey,
+  type ReviewNode,
+  type ReviewSettings,
+} from '../review/reviewCoordinator';
 import { laneKey, lanePoints } from '../objective/grader';
 import type { ObjectiveLane } from '../review/qualities';
 import { sfFixture } from '../eval/evaluationTestFixtures';
@@ -14,7 +31,10 @@ import type { Evaluation } from '../review/reviewMetrics';
 
 beforeEach(() => {
   const data = new Map<string, string>();
-  vi.stubGlobal('localStorage', { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => data.set(key, value) });
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => data.set(key, value),
+  });
 });
 describe('feedback settings', () => {
   it('defaults off and round-trips through storage', () => {
@@ -35,7 +55,9 @@ describe('feedback settings', () => {
   });
   it('preserves loading indicator settings', () => {
     expect(initialState().badgeLoading).toBe('reel');
-    expect(reducer(initialState(), { type: 'badge-loading', loading: 'shimmer' }).badgeLoading).toBe('shimmer');
+    expect(
+      reducer(initialState(), { type: 'badge-loading', loading: 'shimmer' }).badgeLoading,
+    ).toBe('shimmer');
     localStorage.setItem(KEYS.badgeLoading, JSON.stringify('placeholder'));
     expect(initialState().badgeLoading).toBe('placeholder');
     localStorage.setItem(KEYS.badgeLoading, JSON.stringify(true));
@@ -64,36 +86,74 @@ describe('feedback settings', () => {
 });
 
 describe('timeline-backed move feedback', () => {
-  const settings: ReviewSettings = { botElo: 1600, userElo: 1600, model: '79m', stockfish: defaultStockfishSettings };
+  const settings: ReviewSettings = {
+    botElo: 1600,
+    userElo: 1600,
+    model: '79m',
+    stockfish: defaultStockfishSettings,
+  };
   const timeline = buildTimeline(START_FEN, ['e2e4', 'e7e5', 'g1f3', 'b8c6']);
   const nodes = reviewNodes(timeline);
   const values = new Map(nodes.map(node => [stablePositionKey(node), sfFixture(node.fen)]));
   const lookup = (node: ReviewNode) => values.get(stablePositionKey(node));
-  const compute = (prev: PlayQualitiesMemo | null = null, overrides: Partial<Parameters<typeof computePlayQualities>[0]> = {}) => computePlayQualities({ gameId: 'game', timeline, userColor: 'white', settings, sfLookup: lookup, botLookup: () => undefined, sfPending: new Set(), botPending: new Set(), prev, ...overrides });
+  const compute = (
+    prev: PlayQualitiesMemo | null = null,
+    overrides: Partial<Parameters<typeof computePlayQualities>[0]> = {},
+  ) =>
+    computePlayQualities({
+      gameId: 'game',
+      timeline,
+      userColor: 'white',
+      settings,
+      sfLookup: lookup,
+      botLookup: () => undefined,
+      sfPending: new Set(),
+      botPending: new Set(),
+      prev,
+      ...overrides,
+    });
 
   it('grades only the user side and reuses raw verdicts across unrelated cache updates', () => {
-    const first = compute(), stats = { reviews: 0 };
-    expect(first.qualities[0]).toBeDefined(); expect(first.qualities[1]).toBeUndefined();
-    expect(first.qualities[2]).toBeDefined(); expect(first.qualities[3]).toBeUndefined();
+    const first = compute(),
+      stats = { reviews: 0 };
+    expect(first.qualities[0]).toBeDefined();
+    expect(first.qualities[1]).toBeUndefined();
+    expect(first.qualities[2]).toBeDefined();
+    expect(first.qualities[3]).toBeUndefined();
     expect(first.grades).toHaveLength(first.qualities.length);
-    const count = timelineBuildsForTests(), second = compute(first.memo, { stats });
+    const count = timelineBuildsForTests(),
+      second = compute(first.memo, { stats });
     // Raw SF verdicts reuse (zero reviews); the translated display array is
     // fresh per call since Top/Holds translate into new Best/Good objects.
     expect(second.qualities).toEqual(first.qualities);
-    expect(stats.reviews).toBe(0); expect(timelineBuildsForTests()).toBe(count);
+    expect(stats.reviews).toBe(0);
+    expect(timelineBuildsForTests()).toBe(count);
     const black = compute(first.memo, { userColor: 'black' });
-    expect(black.qualities[0]).toBeUndefined(); expect(black.qualities[1]).toBeDefined();
+    expect(black.qualities[0]).toBeUndefined();
+    expect(black.qualities[1]).toBeDefined();
   });
   it('pending verdicts clear on failure and settle only after both evaluations exist', () => {
-    const missing = (node: ReviewNode) => node.ply === 1 ? undefined : lookup(node);
+    const missing = (node: ReviewNode) => (node.ply === 1 ? undefined : lookup(node));
     expect(compute(null, { sfLookup: missing }).qualities[0]).toBeUndefined();
-    expect(compute(null, { sfLookup: missing, sfPending: new Set([reviewKey('sf', nodes[1], settings)]) }).qualities[0]?.label).toBe('Unreviewed');
+    expect(
+      compute(null, {
+        sfLookup: missing,
+        sfPending: new Set([reviewKey('sf', nodes[1], settings)]),
+      }).qualities[0]?.label,
+    ).toBe('Unreviewed');
     expect(compute().qualities[0]?.label).not.toBe('Unreviewed');
   });
   it('a changed evaluation recomputes only affected user verdicts', () => {
-    const first = compute(), stats = { reviews: 0 };
-    const changed: Evaluation = { ...values.get(stablePositionKey(nodes[1]))!, score: { type: 'cp', value: -250 } };
-    const second = compute(first.memo, { stats, sfLookup: node => node.ply === 1 ? changed : lookup(node) });
+    const first = compute(),
+      stats = { reviews: 0 };
+    const changed: Evaluation = {
+      ...values.get(stablePositionKey(nodes[1]))!,
+      score: { type: 'cp', value: -250 },
+    };
+    const second = compute(first.memo, {
+      stats,
+      sfLookup: node => (node.ply === 1 ? changed : lookup(node)),
+    });
     expect(stats.reviews).toBe(1);
     expect(second.qualities[0]).not.toEqual(first.qualities[0]);
     expect(second.qualities[2]).toEqual(first.qualities[2]);
@@ -101,33 +161,74 @@ describe('timeline-backed move feedback', () => {
   it('takebacks and branches reuse surviving histories without retaining the wrong move verdict', () => {
     const first = compute();
     const shorter = compute(first.memo, { timeline: buildTimeline(START_FEN, ['e2e4', 'e7e5']) });
-    expect(shorter.qualities).toHaveLength(2); expect(shorter.qualities[0]).toEqual(first.qualities[0]);
+    expect(shorter.qualities).toHaveLength(2);
+    expect(shorter.qualities[0]).toEqual(first.qualities[0]);
     const branch = buildTimeline(START_FEN, ['e2e4', 'e7e5', 'f1c4']);
     const branched = compute(first.memo, { timeline: branch });
-    expect(branched.qualities[0]).toEqual(first.qualities[0]); expect(branched.qualities[2]).toBeUndefined();
+    expect(branched.qualities[0]).toEqual(first.qualities[0]);
+    expect(branched.qualities[2]).toBeUndefined();
   });
   it('uses side-to-move from custom-start timelines', () => {
     const custom = buildTimeline(nodes[1].fen, ['e7e5']);
-    const result = compute(null, { timeline: custom, userColor: 'black', sfLookup: node => sfFixture(node.fen) });
+    const result = compute(null, {
+      timeline: custom,
+      userColor: 'black',
+      sfLookup: node => sfFixture(node.fen),
+    });
     expect(result.qualities[0]).toBeDefined();
   });
   it('settles non-critical badges without the bot but holds engine-critical praise for it', () => {
     const line = buildTimeline(START_FEN, ['e2e4']);
     const [beforeNode, afterNode] = reviewNodes(line);
-    const critical = { ...sfFixture(beforeNode.fen), best_move: 'e2e4', score: { type: 'cp' as const, value: 50 },
-      lines: [{ move: 'e2e4', score: { type: 'cp' as const, value: 50 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp' as const, value: -300 }, depth: 12 }] };
+    const critical = {
+      ...sfFixture(beforeNode.fen),
+      best_move: 'e2e4',
+      score: { type: 'cp' as const, value: 50 },
+      lines: [
+        { move: 'e2e4', score: { type: 'cp' as const, value: 50 }, depth: 12 },
+        { move: 'd2d4', score: { type: 'cp' as const, value: -300 }, depth: 12 },
+      ],
+    };
     const held = { ...sfFixture(afterNode.fen), score: { type: 'cp' as const, value: 50 } };
-    const sfLookup = (node: ReviewNode) => node.ply === 0 ? critical : held;
+    const sfLookup = (node: ReviewNode) => (node.ply === 0 ? critical : held);
     const botKey = reviewKey('maia', beforeNode, settings);
-    const absent = { move: 'd2d4', top_moves: [{ move: 'd2d4', prob: 0.4, wdl: [0.2, 0.3, 0.5] as [number, number, number] }], wdl: [0.2, 0.3, 0.5] as [number, number, number], model_used: '79m' as const, degraded: false };
-    const expected = { ...absent, top_moves: [{ move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] as [number, number, number] }, { move: 'd2d4', prob: 0.4, wdl: [0.2, 0.3, 0.5] as [number, number, number] }] };
-    const base = { gameId: 'praise', timeline: line, userColor: 'white' as const, settings, sfLookup, botLookup: (_node: ReviewNode) => undefined, sfPending: new Set<string>(), botPending: new Set<string>(), prev: null };
+    const absent = {
+      move: 'd2d4',
+      top_moves: [{ move: 'd2d4', prob: 0.4, wdl: [0.2, 0.3, 0.5] as [number, number, number] }],
+      wdl: [0.2, 0.3, 0.5] as [number, number, number],
+      model_used: '79m' as const,
+      degraded: false,
+    };
+    const expected = {
+      ...absent,
+      top_moves: [
+        { move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] as [number, number, number] },
+        { move: 'd2d4', prob: 0.4, wdl: [0.2, 0.3, 0.5] as [number, number, number] },
+      ],
+    };
+    const base = {
+      gameId: 'praise',
+      timeline: line,
+      userColor: 'white' as const,
+      settings,
+      sfLookup,
+      botLookup: (_node: ReviewNode) => undefined,
+      sfPending: new Set<string>(),
+      botPending: new Set<string>(),
+      prev: null,
+    };
     // Bot still queued: spinner, not a provisional Best.
-    expect(computePlayQualities({ ...base, botPending: new Set([botKey]) }).qualities[0]?.label).toBe('Unreviewed');
+    expect(
+      computePlayQualities({ ...base, botPending: new Set([botKey]) }).qualities[0]?.label,
+    ).toBe('Unreviewed');
     // Bot absent from the top 5 with a critical engine gap: Excellent.
-    expect(computePlayQualities({ ...base, botLookup: () => absent }).qualities[0]?.label).toBe('Excellent');
+    expect(computePlayQualities({ ...base, botLookup: () => absent }).qualities[0]?.label).toBe(
+      'Excellent',
+    );
     // Bot expects it: Best.
-    expect(computePlayQualities({ ...base, botLookup: () => expected }).qualities[0]?.label).toBe('Best');
+    expect(computePlayQualities({ ...base, botLookup: () => expected }).qualities[0]?.label).toBe(
+      'Best',
+    );
   });
   it('grades play badges from Stockfish with 2400 footnotes, holding the spinner while pending', () => {
     const line = buildTimeline(START_FEN, ['e2e4']);
@@ -135,35 +236,65 @@ describe('timeline-backed move feedback', () => {
     // Stockfish names another move best and the pair is flat (no engine
     // loss); the 2400 lane drops 80 -> 40. The badge reads the engine hold
     // and the 2400 drop rides along.
-    const flat = { ...sfFixture(beforeNode.fen), best_move: 'd2d4', score: { type: 'cp' as const, value: 20 },
-      lines: [{ move: 'd2d4', score: { type: 'cp' as const, value: 20 }, depth: 12 }] };
+    const flat = {
+      ...sfFixture(beforeNode.fen),
+      best_move: 'd2d4',
+      score: { type: 'cp' as const, value: 20 },
+      lines: [{ move: 'd2d4', score: { type: 'cp' as const, value: 20 }, depth: 12 }],
+    };
     const flatAfter = { ...sfFixture(afterNode.fen), score: { type: 'cp' as const, value: 20 } };
-    const sfLookup = (node: ReviewNode) => node.ply === 0 ? flat : flatAfter;
-    const grade = (top: string, wdl: [number, number, number]) =>
-      ({ move: top, top_moves: [{ move: top, prob: 0.4, wdl: [0.2, 0.3, 0.5] as [number, number, number] }], wdl, model_used: '79m' as const, degraded: false });
-    const base = { gameId: 'grading', timeline: line, userColor: 'white' as const, settings, sfLookup,
-      botLookup: (_node: ReviewNode) => undefined, sfPending: new Set<string>(), botPending: new Set<string>(), prev: null };
+    const sfLookup = (node: ReviewNode) => (node.ply === 0 ? flat : flatAfter);
+    const grade = (top: string, wdl: [number, number, number]) => ({
+      move: top,
+      top_moves: [{ move: top, prob: 0.4, wdl: [0.2, 0.3, 0.5] as [number, number, number] }],
+      wdl,
+      model_used: '79m' as const,
+      degraded: false,
+    });
+    const base = {
+      gameId: 'grading',
+      timeline: line,
+      userColor: 'white' as const,
+      settings,
+      sfLookup,
+      botLookup: (_node: ReviewNode) => undefined,
+      sfPending: new Set<string>(),
+      botPending: new Set<string>(),
+      prev: null,
+    };
     const laneNodes = reviewNodes(line);
-    const laneFor = (rows: (Parameters<typeof lanePoints>[0][number])[], pending: Set<string>): ObjectiveLane => ({
+    const laneFor = (
+      rows: Parameters<typeof lanePoints>[0][number][],
+      pending: Set<string>,
+    ): ObjectiveLane => ({
       points: lanePoints(rows, laneNodes),
       pending,
       keyFor: (node: ReviewNode) => laneKey(node, () => settings),
     });
     // 2400s top d2d4 (exp 80); e4 leaves White at 60 mover-relative: engine
     // hold, 2400 footnote.
-    const held = computePlayQualities({ ...base,
-      objective: laneFor([grade('d2d4', [0.1, 0.2, 0.7]), grade('e7e5', [0.5, 0.2, 0.3])], new Set<string>()) });
+    const held = computePlayQualities({
+      ...base,
+      objective: laneFor(
+        [grade('d2d4', [0.1, 0.2, 0.7]), grade('e7e5', [0.5, 0.2, 0.3])],
+        new Set<string>(),
+      ),
+    });
     expect(held.qualities[0]?.label).toBe('Good');
     expect(held.qualities[0]?.maiaLoss).toBeCloseTo(20, 9);
     // Objective lane pending: spinner, not the settled grade.
-    const waiting = computePlayQualities({ ...base,
-      objective: laneFor([undefined, grade('e7e5', [0.5, 0.2, 0.3])], new Set([laneKey(beforeNode, () => settings)])) });
+    const waiting = computePlayQualities({
+      ...base,
+      objective: laneFor(
+        [undefined, grade('e7e5', [0.5, 0.2, 0.3])],
+        new Set([laneKey(beforeNode, () => settings)]),
+      ),
+    });
     expect(waiting.qualities[0]?.label).toBe('Unreviewed');
   });
 });
 
 describe('wantedPlayPair', () => {
-
   const pairNodes = (moves: string[]) => reviewNodes(buildTimeline(START_FEN, moves));
   it('selects nothing without nodes or without a move to grade', () => {
     expect(wantedPlayPair([], 'white')).toEqual({ sfNodes: [], botNode: null });
@@ -172,7 +303,10 @@ describe('wantedPlayPair', () => {
   });
   it('grades the newest move: SF pair plus the bot for a user mover', () => {
     const nodes = pairNodes(['e2e4']);
-    expect(wantedPlayPair(nodes, 'white')).toEqual({ sfNodes: [nodes[0], nodes[1]], botNode: nodes[0] });
+    expect(wantedPlayPair(nodes, 'white')).toEqual({
+      sfNodes: [nodes[0], nodes[1]],
+      botNode: nodes[0],
+    });
   });
   it('skips the bot fetch when the newest move is the opponent reply', () => {
     const nodes = pairNodes(['e2e4', 'e7e5']);
@@ -206,7 +340,11 @@ describe('play retry offline/exhaustion helpers', () => {
     expect(isOfflineNow(() => false)).toBe(true);
     expect(isOfflineNow(() => true)).toBe(false);
     expect(isOfflineNow(() => undefined)).toBe(false);
-    expect(isOfflineNow(() => { throw new Error('boom'); })).toBe(false);
+    expect(
+      isOfflineNow(() => {
+        throw new Error('boom');
+      }),
+    ).toBe(false);
   });
   it('exhausts exactly at the capped attempt budget', () => {
     expect(hasExhaustedPlayRetries(0)).toBe(false);
@@ -241,46 +379,107 @@ describe('unsettledReviewNodes', () => {
     const mated = reviewNodes(buildTimeline(START_FEN, ['f2f3', 'e7e5', 'g2g4', 'd8h4']));
     const terminal = mated[mated.length - 1];
     expect(terminal.outcome).not.toBeNull();
-    expect(unsettledReviewNodes(mated, { settled: () => false, busy: () => false }))
-      .not.toContain(terminal);
+    expect(unsettledReviewNodes(mated, { settled: () => false, busy: () => false })).not.toContain(
+      terminal,
+    );
   });
 });
 
 describe('settled badges only use labels the badge can render', () => {
-  const settings: ReviewSettings = { botElo: 1600, userElo: 1600, model: '79m', stockfish: defaultStockfishSettings };
+  const settings: ReviewSettings = {
+    botElo: 1600,
+    userElo: 1600,
+    model: '79m',
+    stockfish: defaultStockfishSettings,
+  };
   const glyphs = new Set(Object.keys(qualityGlyphs));
   // Engine Top (best move, no drama) and Holds (not best, nothing lost):
   // a line with no Critical anywhere must still translate both, or the
   // badge renders its gray box with no glyph.
-  const topBefore: Evaluation = { engine: 'Stockfish 19', search_policy: 'sf19-n100k-ms750-mpv2-t4-h128-v3', terminal: null, depth: 12, best_move: 'e2e4', score: { type: 'cp', value: 50 },
-    lines: [{ move: 'e2e4', score: { type: 'cp', value: 50 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: 30 }, depth: 12 }] };
+  const topBefore: Evaluation = {
+    engine: 'Stockfish 19',
+    search_policy: 'sf19-n100k-ms750-mpv2-t4-h128-v3',
+    terminal: null,
+    depth: 12,
+    best_move: 'e2e4',
+    score: { type: 'cp', value: 50 },
+    lines: [
+      { move: 'e2e4', score: { type: 'cp', value: 50 }, depth: 12 },
+      { move: 'd2d4', score: { type: 'cp', value: 30 }, depth: 12 },
+    ],
+  };
   const topAfter: Evaluation = { ...topBefore, lines: topBefore.lines };
-  const holdsBefore: Evaluation = { engine: 'Stockfish 19', search_policy: 'sf19-n100k-ms750-mpv2-t4-h128-v3', terminal: null, depth: 12, best_move: 'e2e4', score: { type: 'cp', value: 50 },
-    lines: [{ move: 'e2e4', score: { type: 'cp', value: 50 }, depth: 12 }, { move: 'd2d4', score: { type: 'cp', value: 48 }, depth: 12 }] };
-  const holdsAfter: Evaluation = { ...holdsBefore, score: { type: 'cp', value: 48 }, lines: holdsBefore.lines.map(line => ({ ...line })) };
+  const holdsBefore: Evaluation = {
+    engine: 'Stockfish 19',
+    search_policy: 'sf19-n100k-ms750-mpv2-t4-h128-v3',
+    terminal: null,
+    depth: 12,
+    best_move: 'e2e4',
+    score: { type: 'cp', value: 50 },
+    lines: [
+      { move: 'e2e4', score: { type: 'cp', value: 50 }, depth: 12 },
+      { move: 'd2d4', score: { type: 'cp', value: 48 }, depth: 12 },
+    ],
+  };
+  const holdsAfter: Evaluation = {
+    ...holdsBefore,
+    score: { type: 'cp', value: 48 },
+    lines: holdsBefore.lines.map(line => ({ ...line })),
+  };
   it('translates Top to Best and Holds to Good in play without any Critical', () => {
-    const top = computePlayQualities({ gameId: 'glyphs', timeline: buildTimeline(START_FEN, ['e2e4']), userColor: 'white', settings,
-      sfLookup: node => node.ply === 0 ? topBefore : topAfter, botLookup: () => undefined,
-      sfPending: new Set(), botPending: new Set(), prev: null });
+    const top = computePlayQualities({
+      gameId: 'glyphs',
+      timeline: buildTimeline(START_FEN, ['e2e4']),
+      userColor: 'white',
+      settings,
+      sfLookup: node => (node.ply === 0 ? topBefore : topAfter),
+      botLookup: () => undefined,
+      sfPending: new Set(),
+      botPending: new Set(),
+      prev: null,
+    });
     expect(top.qualities[0]?.label).toBe('Best');
-    const holds = computePlayQualities({ gameId: 'glyphs', timeline: buildTimeline(START_FEN, ['d2d4']), userColor: 'white', settings,
-      sfLookup: node => node.ply === 0 ? holdsBefore : holdsAfter, botLookup: () => undefined,
-      sfPending: new Set(), botPending: new Set(), prev: null });
+    const holds = computePlayQualities({
+      gameId: 'glyphs',
+      timeline: buildTimeline(START_FEN, ['d2d4']),
+      userColor: 'white',
+      settings,
+      sfLookup: node => (node.ply === 0 ? holdsBefore : holdsAfter),
+      botLookup: () => undefined,
+      sfPending: new Set(),
+      botPending: new Set(),
+      prev: null,
+    });
     expect(holds.qualities[0]?.label).toBe('Good');
-    for (const quality of [...top.qualities, ...holds.qualities]) {
-      if (quality && quality.label !== 'Unreviewed') expect(glyphs.has(quality.label)).toBe(true);
-    }
+    const unmapped = [...top.qualities, ...holds.qualities].flatMap(quality =>
+      quality && quality.label !== 'Unreviewed' && !glyphs.has(quality.label)
+        ? [quality.label]
+        : [],
+    );
+    expect(unmapped).toEqual([]);
   });
   it('translates engine-only labels in review as well', () => {
     const timeline = buildTimeline(START_FEN, ['d2d4']);
     const nodes = reviewNodes(timeline);
-    const raw = computeReviewQualities({ line: timeline, nodes,
-      evaluations: [holdsBefore, holdsAfter], settingsForNode: () => settings, pending: new Set(), prev: null });
+    const raw = computeReviewQualities({
+      line: timeline,
+      nodes,
+      evaluations: [holdsBefore, holdsAfter],
+      settingsForNode: () => settings,
+      pending: new Set(),
+      prev: null,
+    });
     expect(raw.qualities[0]?.label).toBe('Holds');
-    const qualities = translateReviewQualities({ grades: raw.qualities, nodes,
-      botResults: [undefined, undefined], rarities: [undefined, undefined],
-      settingsForNode: () => settings, isBotPending: () => false });
+    const qualities = translateReviewQualities({
+      grades: raw.qualities,
+      nodes,
+      botResults: [undefined, undefined],
+      rarities: [undefined, undefined],
+      settingsForNode: () => settings,
+      isBotPending: () => false,
+    });
     expect(qualities[0]?.label).toBe('Good');
-    if (qualities[0] && qualities[0].label !== 'Unreviewed') expect(glyphs.has(qualities[0].label)).toBe(true);
+    // Proven 'Good' above, so the glyph mapping must hold unconditionally.
+    expect(glyphs.has('Good')).toBe(true);
   });
 });

@@ -10,7 +10,10 @@ export default defineConfig({
   workers: 1,
   timeout: 240_000,
   expect: { timeout: 60_000 },
-  reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report/perf-presentation' }]],
+  reporter: [
+    ['list'],
+    ['html', { open: 'never', outputFolder: 'playwright-report/perf-presentation' }],
+  ],
   use: {
     browserName: 'chromium',
     headless: true,

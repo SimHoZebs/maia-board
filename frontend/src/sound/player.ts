@@ -12,8 +12,9 @@ let context: AudioContext | null = null;
 function audio(): AudioContext | null {
   if (typeof window === 'undefined') return null;
   try {
-    const Ctor = window.AudioContext
-      ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    const Ctor =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!Ctor) return null;
     context ??= new Ctor();
     return context;
@@ -33,7 +34,15 @@ export function unlockSounds(): void {
   }
 }
 
-function tone(ctx: AudioContext, at: number, freq: number, dur: number, vol: number, type: OscillatorType, freqEnd?: number): void {
+function tone(
+  ctx: AudioContext,
+  at: number,
+  freq: number,
+  dur: number,
+  vol: number,
+  type: OscillatorType,
+  freqEnd?: number,
+): void {
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
   osc.type = type;
@@ -53,7 +62,11 @@ let noiseBuffer: AudioBuffer | null = null;
 function thock(ctx: AudioContext, at: number, dur: number, cutoff: number, vol: number): void {
   try {
     noiseBuffer ??= (() => {
-      const buffer = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * 0.15)), ctx.sampleRate);
+      const buffer = ctx.createBuffer(
+        1,
+        Math.max(1, Math.floor(ctx.sampleRate * 0.15)),
+        ctx.sampleRate,
+      );
       const data = buffer.getChannelData(0);
       for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
       return buffer;

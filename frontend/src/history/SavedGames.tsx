@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   exportLine,
   loadLine,
@@ -7,25 +7,38 @@ import {
   resultTextForTip,
   storedGameResult,
   type StoredGame,
-} from "../shared/domain";
-import type { Action, State } from "../state/index";
-import { copyText } from "../board/BoardTools";
-import { Button, IconButton } from "../components";
-import { Dialog } from "../app/Dialog";
-import { ArrowUpDown, Check, ChevronDown, ChessPawn, Copy, Play, Trash2, Trophy, type LucideIcon } from "lucide-react";
-import { BoardThumbnail } from "../board/BoardThumbnail";
-import { useSyncSnapshot, useSyncStore } from "./syncStore";
-import { useAccountName } from "./session";
-import { useFlash } from "../app/useFlash";
+} from '../shared/domain';
+import type { Action, State } from '../state/index';
+import { copyText } from '../board/BoardTools';
+import { Button, IconButton } from '../components';
+import { Dialog } from '../app/Dialog';
+import {
+  ArrowUpDown,
+  Check,
+  ChevronDown,
+  ChessPawn,
+  Copy,
+  Play,
+  Trash2,
+  Trophy,
+  type LucideIcon,
+} from 'lucide-react';
+import { BoardThumbnail } from '../board/BoardThumbnail';
+import { useSyncSnapshot, useSyncStore } from './syncStore';
+import { useAccountName } from './session';
+import { useFlash } from '../app/useFlash';
 
 // Result from the player's perspective: a resignation is always the player's
 // own, so it reads as a loss; checkmate winners come from the result text.
 function userOutcome(game: StoredGame, result: string): 'win' | 'loss' | 'draw' | 'unfinished' {
   if (result === 'Unfinished') return 'unfinished';
   if (result === 'Draw') return 'draw';
-  const winner = game.result === 'resigned'
-    ? oppositeColor(game.settings.userColor)
-    : result.startsWith('White') ? 'white' : 'black';
+  const winner =
+    game.result === 'resigned'
+      ? oppositeColor(game.settings.userColor)
+      : result.startsWith('White')
+        ? 'white'
+        : 'black';
   return winner === game.settings.userColor ? 'win' : 'loss';
 }
 
@@ -69,10 +82,14 @@ function MultiSelect<T extends string>({
   useEffect(() => {
     if (!open) return;
     const onPointer = (event: PointerEvent) => {
-      if (root.current && !(event.target instanceof Node && root.current.contains(event.target))) setOpen(false);
+      if (root.current && !(event.target instanceof Node && root.current.contains(event.target)))
+        setOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { setOpen(false); trigger.current?.focus(); }
+      if (event.key === 'Escape') {
+        setOpen(false);
+        trigger.current?.focus();
+      }
     };
     document.addEventListener('pointerdown', onPointer);
     document.addEventListener('keydown', onKey);
@@ -80,47 +97,65 @@ function MultiSelect<T extends string>({
       document.removeEventListener('pointerdown', onPointer);
       document.removeEventListener('keydown', onKey);
     };
-  }, [open ]);
+  }, [open]);
   const toggle = (value: T) => {
     const order = new Map(options.map((option, index) => [option.value, index] as const));
-    const next = selected.includes(value) ? selected.filter(item => item !== value) : [...selected, value];
+    const next = selected.includes(value)
+      ? selected.filter(item => item !== value)
+      : [...selected, value];
     next.sort((a, b) => order.get(a)! - order.get(b)!);
     onChange(next);
   };
-  const summary = selected.length === options.length
-    ? 'All'
-    : selected.length === 0
-      ? 'None'
-      : options.filter(option => selected.includes(option.value)).map(option => option.label).join(', ');
-  return <div className="field multi-filter" ref={root}>
-    <span id={`${id}-label`} title={label}><Icon size={14} aria-hidden="true" /><span className="visually-hidden">{label}</span></span>
-    <button
-      type="button"
-      id={id}
-      ref={trigger}
-      className="multi-filter-trigger"
-      aria-haspopup="true"
-      aria-expanded={open}
-      aria-controls={`${id}-menu`}
-      aria-labelledby={`${id}-label ${id}`}
-      onClick={() => setOpen(value => !value)}
-    >
-      <span className="multi-filter-value">{summary}</span>
-      <ChevronDown size={16} aria-hidden="true" />
-    </button>
-    {open && <div className={`multi-filter-menu${layout === 'inline' ? ' multi-filter-menu--inline' : ''}`} id={`${id}-menu`} role="group" aria-label={label}>
-      {options.map(option => (
-        <label key={option.value}>
-          <input
-            type="checkbox"
-            checked={selected.includes(option.value)}
-            onChange={() => toggle(option.value)}
-          />
-          {option.label}
-        </label>
-      ))}
-    </div>}
-  </div>;
+  const summary =
+    selected.length === options.length
+      ? 'All'
+      : selected.length === 0
+        ? 'None'
+        : options
+            .filter(option => selected.includes(option.value))
+            .map(option => option.label)
+            .join(', ');
+  return (
+    <div className="field multi-filter" ref={root}>
+      <span id={`${id}-label`} title={label}>
+        <Icon size={14} aria-hidden="true" />
+        <span className="visually-hidden">{label}</span>
+      </span>
+      <button
+        type="button"
+        id={id}
+        ref={trigger}
+        className="multi-filter-trigger"
+        aria-haspopup="true"
+        aria-expanded={open}
+        aria-controls={`${id}-menu`}
+        aria-labelledby={`${id}-label ${id}`}
+        onClick={() => setOpen(value => !value)}
+      >
+        <span className="multi-filter-value">{summary}</span>
+        <ChevronDown size={16} aria-hidden="true" />
+      </button>
+      {open && (
+        <div
+          className={`multi-filter-menu${layout === 'inline' ? ' multi-filter-menu--inline' : ''}`}
+          id={`${id}-menu`}
+          role="group"
+          aria-label={label}
+        >
+          {options.map(option => (
+            <label key={option.value}>
+              <input
+                type="checkbox"
+                checked={selected.includes(option.value)}
+                onChange={() => toggle(option.value)}
+              />
+              {option.label}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function SavedGames({
@@ -135,7 +170,12 @@ export function SavedGames({
   const [deleting, setDeleting] = useState<string | null>(null);
   const [copiedId, flashCopied] = useFlash<string>();
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
-  const [resultSelection, setResultSelection] = useState<Outcome[]>(['win', 'loss', 'draw', 'unfinished']);
+  const [resultSelection, setResultSelection] = useState<Outcome[]>([
+    'win',
+    'loss',
+    'draw',
+    'unfinished',
+  ]);
   const [sideSelection, setSideSelection] = useState<('white' | 'black')[]>(['white', 'black']);
   // Sync display reads come from the isolated history-sync store, so the
   // "Syncing…" indicator never re-renders the board through game state.
@@ -146,7 +186,8 @@ export function SavedGames({
   // before login and in unit tests.
   const you = useAccountName() ?? 'You';
   const opponentOf = (game: StoredGame) =>
-    game.opponent || (game.source?.startsWith('lichess:') ? 'Lichess' : `Maia ${game.settings.botElo}`);
+    game.opponent ||
+    (game.source?.startsWith('lichess:') ? 'Lichess' : `Maia ${game.settings.botElo}`);
   // History titles carry both Elos: yours (raw) and the opponent's
   // (botElo, clamped to the trained range for Maia). Maia rows already
   // embed their Elo in the name, so only bare names gain a suffix.
@@ -163,52 +204,62 @@ export function SavedGames({
   };
   const syncPending = sync.pending;
   const historyTotal = sync.total;
-  const visibleGames = useMemo(() => state.saved.map(game => {
-    const position = lineRecord(game.moves);
-    const result = game.result === 'resigned' ? storedGameResult(game) : resultTextForTip(position.fen, position.terminal);
-    return { game, position, result, outcome: userOutcome(game, result) };
-  }).filter(({ game, outcome }) =>
-    resultSelection.includes(outcome) &&
-    sideSelection.includes(game.settings.userColor),
-  ).sort((a, b) => {
-    const time = (iso: string) => {
-      const parsed = Date.parse(iso);
-      return Number.isNaN(parsed) ? 0 : parsed;
-    };
-    const delta = time(a.game.createdAt) - time(b.game.createdAt);
-    return sortOrder === 'newest' ? -delta : delta;
-  }), [state.saved, resultSelection, sideSelection, sortOrder]);
+  const visibleGames = useMemo(
+    () =>
+      state.saved
+        .map(game => {
+          const position = lineRecord(game.moves);
+          const result =
+            game.result === 'resigned'
+              ? storedGameResult(game)
+              : resultTextForTip(position.fen, position.terminal);
+          return { game, position, result, outcome: userOutcome(game, result) };
+        })
+        .filter(
+          ({ game, outcome }) =>
+            resultSelection.includes(outcome) && sideSelection.includes(game.settings.userColor),
+        )
+        .toSorted((a, b) => {
+          const time = (iso: string) => {
+            const parsed = Date.parse(iso);
+            return Number.isNaN(parsed) ? 0 : parsed;
+          };
+          const delta = time(a.game.createdAt) - time(b.game.createdAt);
+          return sortOrder === 'newest' ? -delta : delta;
+        }),
+    [state.saved, resultSelection, sideSelection, sortOrder],
+  );
   const copyGame = (game: { id: string; moves: string[] }) =>
-    void copyText(exportLine(loadLine("", game.moves.join(" ")))).then(
-      (ok) => {
-        if (!ok) return;
-        flashCopied(game.id);
-      },
-    );
+    void copyText(exportLine(loadLine('', game.moves.join(' ')))).then(ok => {
+      if (!ok) return;
+      flashCopied(game.id);
+    });
   return (
     <section className="saved-panel" aria-label="Saved games">
       {!analysisOnly &&
-        (syncPending > 0 ||
-          (historyTotal !== null &&
-            historyTotal > state.saved.length)) && (
+        (syncPending > 0 || (historyTotal !== null && historyTotal > state.saved.length)) && (
           <div className="saved-heading">
             {syncPending > 0 && <span role="status">Syncing…</span>}
-            {historyTotal !== null &&
-              historyTotal > state.saved.length && (
+            {historyTotal !== null && historyTotal > state.saved.length && (
               <span>
                 Showing {state.saved.length} of {historyTotal}
               </span>
             )}
           </div>
         )}
-      {!state.saved.length && (
-        <p className="empty-copy">Your games will appear here.</p>
-      )}
+      {!state.saved.length && <p className="empty-copy">Your games will appear here.</p>}
       {state.saved.length > 0 && (
         <div className="saved-controls" role="group" aria-label="Sort and filter games">
           <label className="field" htmlFor="history-sort" title="Sort">
-            <span><ArrowUpDown size={14} aria-hidden="true" /><span className="visually-hidden">Sort</span></span>
-            <select id="history-sort" value={sortOrder} onChange={event => setSortOrder(event.target.value as 'newest' | 'oldest')}>
+            <span>
+              <ArrowUpDown size={14} aria-hidden="true" />
+              <span className="visually-hidden">Sort</span>
+            </span>
+            <select
+              id="history-sort"
+              value={sortOrder}
+              onChange={event => setSortOrder(event.target.value as 'newest' | 'oldest')}
+            >
               <option value="newest">Newest first</option>
               <option value="oldest">Oldest first</option>
             </select>
@@ -248,36 +299,29 @@ export function SavedGames({
                 type="button"
                 className="saved-open"
                 aria-label={`Analyze game · ${resultOf(game, result)}`}
-                onClick={() => dispatch({ type: "review", id: game.id })}
+                onClick={() => dispatch({ type: 'review', id: game.id })}
               >
-                <BoardThumbnail
-                  fen={position.fen}
-                  orientation={game.settings.userColor}
-                />
+                <BoardThumbnail fen={position.fen} orientation={game.settings.userColor} />
                 <div className="saved-details">
                   <time dateTime={game.createdAt}>
                     {new Date(game.createdAt).toLocaleString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                      hour: "numeric",
-                      minute: "2-digit",
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                      hour: 'numeric',
+                      minute: '2-digit',
                     })}
                   </time>
-                  <h2>
-                    {titleOf(game)}
-                  </h2>
-                  <p>
-                    {resultOf(game, result)}
-                  </p>
+                  <h2>{titleOf(game)}</h2>
+                  <p>{resultOf(game, result)}</p>
                 </div>
               </button>
               <div className="actions saved-actions">
-                {!analysisOnly && result === "Unfinished" && (
+                {!analysisOnly && result === 'Unfinished' && (
                   <IconButton
                     label="Resume"
                     data-game-id={game.id}
-                    onClick={() => dispatch({ type: "saved", id: game.id })}
+                    onClick={() => dispatch({ type: 'saved', id: game.id })}
                   >
                     <Play size={16} aria-hidden="true" />
                   </IconButton>
@@ -291,10 +335,7 @@ export function SavedGames({
                         <Copy size={16} aria-hidden="true" />
                       )}
                     </IconButton>
-                    <IconButton
-                      label="Delete"
-                      onClick={() => setDeleting(game.id)}
-                    >
+                    <IconButton label="Delete" onClick={() => setDeleting(game.id)}>
                       <Trash2 size={16} aria-hidden="true" />
                     </IconButton>
                   </>
@@ -304,7 +345,11 @@ export function SavedGames({
           );
         })}
       </div>
-      {sync.hasMore && <Button disabled={sync.loading} onClick={() => void sync.loadMore()}>{sync.loading ? 'Loading…' : 'Load more'}</Button>}
+      {sync.hasMore && (
+        <Button disabled={sync.loading} onClick={() => void sync.loadMore()}>
+          {sync.loading ? 'Loading…' : 'Load more'}
+        </Button>
+      )}
       {copiedId !== null && (
         <span role="status" className="visually-hidden">
           PGN copied to clipboard
@@ -317,7 +362,7 @@ export function SavedGames({
           <div className="actions">
             <Button
               onClick={() => {
-                dispatch({ type: "delete", id: deleting });
+                dispatch({ type: 'delete', id: deleting });
                 setDeleting(null);
               }}
             >

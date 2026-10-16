@@ -16,10 +16,26 @@ export function BoardThumbnail({ fen, orientation }: { fen: string; orientation:
       check = false;
     }
     const board = Chessground(element, {
-      fen, orientation, viewOnly: true, coordinates: false, check,
-      animation: { enabled: false }, drawable: { enabled: false, visible: false },
+      fen,
+      orientation,
+      viewOnly: true,
+      coordinates: false,
+      check,
+      animation: { enabled: false },
+      drawable: { enabled: false, visible: false },
     });
-    return () => { board.destroy(); element.replaceChildren(); };
+    return () => {
+      board.destroy();
+      element.replaceChildren();
+    };
   }, [fen, orientation]);
-  return <div className="board-thumbnail" role="img" aria-label={`Saved board position, ${orientation} at bottom`}><div ref={container} /></div>;
+  return (
+    <div
+      className="board-thumbnail"
+      role="img"
+      aria-label={`Saved board position, ${orientation} at bottom`}
+    >
+      <div ref={container} />
+    </div>
+  );
 }

@@ -1,6 +1,16 @@
 import { Chess } from 'chess.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { applyUci, buildTimeline, kingSquare, lineRecord, normalizeBoardOrientation, replay, resetTimelinesForTests, resolveBoardOrientation, START_FEN } from './domain';
+import {
+  applyUci,
+  buildTimeline,
+  kingSquare,
+  lineRecord,
+  normalizeBoardOrientation,
+  replay,
+  resetTimelinesForTests,
+  resolveBoardOrientation,
+  START_FEN,
+} from './domain';
 
 afterEach(() => vi.restoreAllMocks());
 describe('bounded canonical timeline', () => {
@@ -35,7 +45,8 @@ describe('bounded canonical timeline', () => {
   it('releases old content-cache identities after the bounded retention window', () => {
     resetTimelinesForTests();
     const original = buildTimeline(START_FEN, []);
-    for (let clock = 1; clock <= 65; clock++) buildTimeline(START_FEN.replace('0 1', `${clock} 1`), []);
+    for (let clock = 1; clock <= 65; clock++)
+      buildTimeline(START_FEN.replace('0 1', `${clock} 1`), []);
     const rebuilt = buildTimeline(START_FEN, []);
     expect(rebuilt).not.toBe(original);
     expect(rebuilt.rows[0]).not.toBe(original.rows[0]);
@@ -49,7 +60,9 @@ describe('bounded canonical timeline', () => {
     ['8/P7/7k/8/8/8/8/7K w - - 0 1', ['a7a8q']],
     ['8/8/8/8/8/7k/p7/7K b - - 0 1', ['a2a1n']],
   ] satisfies [string, string[]][])('matches independent history facts for %s', (fen, moves) => {
-    const timeline = buildTimeline(fen, moves), game = new Chess(fen);
+    const timeline = buildTimeline(fen, moves),
+      game = new Chess(fen);
+    const terminals: { outcome: unknown; winner: 'white' | 'black' }[] = [];
     timeline.rows.forEach((row, ply) => {
       const applied = ply ? applyUci(game, moves[ply - 1]) : undefined;
       expect(row.fen).toBe(game.fen());
@@ -57,8 +70,11 @@ describe('bounded canonical timeline', () => {
       expect(row.turn).toBe(game.turn() === 'w' ? 'white' : 'black');
       expect(row.lastMove).toEqual(applied ? [applied.from, applied.to] : undefined);
       expect(row.outcome !== null).toBe(game.isGameOver());
-      if (game.isCheckmate()) expect(row.outcome).toEqual({ kind: 'checkmate', winner: game.turn() === 'w' ? 'black' : 'white' });
+      if (game.isCheckmate())
+        terminals.push({ outcome: row.outcome, winner: game.turn() === 'w' ? 'black' : 'white' });
     });
+    for (const { outcome, winner } of terminals)
+      expect(outcome).toEqual({ kind: 'checkmate', winner });
   });
   it('never equates repeated boards or mutable caller arrays with their previous histories', () => {
     const moves = ['g1f3', 'g8f6', 'f3g1', 'f6g8'];
@@ -69,8 +85,10 @@ describe('bounded canonical timeline', () => {
     expect(timeline.moves).toHaveLength(4);
     expect(repeated.rows[8].outcome).toEqual({ kind: 'draw' });
     expect(new Chess(repeated.rows[8].fen).isThreefoldRepetition()).toBe(false);
-    expect(() => { timeline.rows[0].fen = 'poison'; }).toThrow();
-    expect(() => applyUci(new Chess(), 'e2e4junk')).toThrow();
+    expect(() => {
+      timeline.rows[0].fen = 'poison';
+    }).toThrow('read only property');
+    expect(() => applyUci(new Chess(), 'e2e4junk')).toThrow('Invalid UCI move');
   });
 });
 describe('board orientation', () => {

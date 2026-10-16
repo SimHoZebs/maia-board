@@ -8,7 +8,16 @@ import type { MoveRequest } from '../src/eval/api';
 import { EvaluationFixture } from './evaluation-fixture';
 import { defaultStockfishSettings, stockfishPolicy } from '../src/eval/stockfishSettings';
 
-const record = (moves: string[], color: 'white' | 'black' = 'white', id = 'fixture'): StoredGame => ({ id, createdAt: '2026-09-10T00:00:00Z', moves, settings: { ...defaultSettings, userColor: color } });
+const record = (
+  moves: string[],
+  color: 'white' | 'black' = 'white',
+  id = 'fixture',
+): StoredGame => ({
+  id,
+  createdAt: '2026-09-10T00:00:00Z',
+  moves,
+  settings: { ...defaultSettings, userColor: color },
+});
 
 // Capture clipboard writes: the fixtures serve plain HTTP, where the async
 // clipboard API is unavailable, so the app would take its execCommand
@@ -18,49 +27,69 @@ async function stubClipboard(page: Page) {
     const writes: string[] = [];
     (window as unknown as { copiedTexts: string[] }).copiedTexts = writes;
     Object.defineProperty(window.navigator, 'clipboard', {
-      value: { writeText: (text: string) => { writes.push(text); return Promise.resolve(); } },
+      value: {
+        writeText: (text: string) => {
+          writes.push(text);
+          return Promise.resolve();
+        },
+      },
       configurable: true,
     });
   });
 }
 async function copiedTexts(page: Page) {
-  return page.evaluate(() => (window as unknown as { copiedTexts: string[] }).copiedTexts.join('\n'));
+  return page.evaluate(() =>
+    (window as unknown as { copiedTexts: string[] }).copiedTexts.join('\n'),
+  );
 }
 
-async function boot(page: Page, storage: Record<string, unknown> = {}, start = true, path = '/', extraInit?: () => void, expectBoard = true) {
+async function boot(
+  page: Page,
+  storage: Record<string, unknown> = {},
+  start = true,
+  path = '/',
+  extraInit?: () => void,
+  expectBoard = true,
+) {
   const requests: { route: Route; payload: MoveRequest }[] = [];
   const gameStore = { games: new Map<string, any>(), currentId: null as string | null };
   const errors: string[] = [];
   const cache = new EvaluationFixture();
   page.on('pageerror', error => errors.push(error.message));
-  await page.addInitScript(({ storage }) => {
-    if (!sessionStorage.getItem('seeded')) {
-      for (const [key, value] of Object.entries(storage)) localStorage.setItem(key, JSON.stringify(value));
-      sessionStorage.setItem('seeded', '1');
-    }
-    // Deliver obsolete replies too: cancellation is an optimization, never the correctness guard.
-    const originalFetch = window.fetch;
-    window.fetch = (input, init) => originalFetch(input, { ...init, signal: undefined });
-    const stats = { adds: 0, removes: 0 };
-    Object.assign(window, { boardListeners: stats });
-    const add = document.addEventListener.bind(document);
-    const remove = document.removeEventListener.bind(document);
-    document.addEventListener = ((type: string, ...args: any[]) => {
-      if (type === 'mousemove') stats.adds++;
-      return (add as any)(type, ...args);
-    }) as typeof document.addEventListener;
-    document.removeEventListener = ((type: string, ...args: any[]) => {
-      if (type === 'mousemove') stats.removes++;
-      return (remove as any)(type, ...args);
-    }) as typeof document.removeEventListener;
-  }, { storage });
+  await page.addInitScript(
+    ({ storage }) => {
+      if (!sessionStorage.getItem('seeded')) {
+        for (const [key, value] of Object.entries(storage))
+          localStorage.setItem(key, JSON.stringify(value));
+        sessionStorage.setItem('seeded', '1');
+      }
+      // Deliver obsolete replies too: cancellation is an optimization, never the correctness guard.
+      const originalFetch = window.fetch;
+      window.fetch = (input, init) => originalFetch(input, { ...init, signal: undefined });
+      const stats = { adds: 0, removes: 0 };
+      Object.assign(window, { boardListeners: stats });
+      const add = document.addEventListener.bind(document);
+      const remove = document.removeEventListener.bind(document);
+      document.addEventListener = ((type: string, ...args: any[]) => {
+        if (type === 'mousemove') stats.adds++;
+        return (add as any)(type, ...args);
+      }) as typeof document.addEventListener;
+      document.removeEventListener = ((type: string, ...args: any[]) => {
+        if (type === 'mousemove') stats.removes++;
+        return (remove as any)(type, ...args);
+      }) as typeof document.removeEventListener;
+    },
+    { storage },
+  );
   if (extraInit) await page.addInitScript(extraInit);
   await page.route('http://maia.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
     if (await cache.lookup(route)) return;
     if (path === '/openings') {
       const moves = route.request().postDataJSON()?.moves;
-      await route.fulfill({ json: { matches: [], book_flags: Array.isArray(moves) ? moves.map(() => false) : [] } });
+      await route.fulfill({
+        json: { matches: [], book_flags: Array.isArray(moves) ? moves.map(() => false) : [] },
+      });
       return;
     }
     if (path === '/move' || path === '/move/analysis') {
@@ -76,55 +105,96 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
         // branches read naturally, else the first legal move; always
         // deterministic per position.
         const game = replay(payload.moves, payload.initial_fen);
-        const legal = game.moves({ verbose: true }).map(m => `${m.from}${m.to}${m.promotion ?? ''}`);
+        const legal = game
+          .moves({ verbose: true })
+          .map(m => `${m.from}${m.to}${m.promotion ?? ''}`);
         const preferred = ['e2e4', 'e7e5', 'g1f3', 'b8c6'][payload.moves.length];
-        const best = (preferred && legal.includes(preferred)) ? preferred : legal[0];
+        const best = preferred && legal.includes(preferred) ? preferred : legal[0];
         const second = legal.find(m => m !== best) ?? best;
         const extra = second === best ? [] : [{ move: second, prob: 0.25, wdl: [0.2, 0.3, 0.5] }];
-        const value = { move: best, top_moves: [{ move: best, prob: 0.6, wdl: [0.2, 0.3, 0.5] }, ...extra], wdl: [0.2, 0.3, 0.5], model_used: payload.model, degraded: false };
+        const value = {
+          move: best,
+          top_moves: [{ move: best, prob: 0.6, wdl: [0.2, 0.3, 0.5] }, ...extra],
+          wdl: [0.2, 0.3, 0.5],
+          model_used: payload.model,
+          degraded: false,
+        };
         cache.set('maia', payload, value);
         await route.fulfill({ json: value });
         return;
       }
-      requests.push({ route, payload: route.request().postDataJSON() }); return;
+      requests.push({ route, payload: route.request().postDataJSON() });
+      return;
     }
     if (path === '/evaluate') {
       const payload = route.request().postDataJSON();
       const game = replay(payload.moves, payload.initial_fen);
-      const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
+      const legal = game
+        .moves({ verbose: true })
+        .map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
       // Best follows the main test line while legal (mirroring review.spec's
       // bestMove): analysis specs choreograph every lane agreeing on it, so
       // the strict key-moves card fuses to one row with the Stockfish mark.
       const preferred = ['e2e4', 'e7e5', 'g1f3', 'b8c6'][payload.moves.length];
-      const best = (preferred && legal.includes(preferred)) ? preferred : legal[0];
+      const best = preferred && legal.includes(preferred) ? preferred : legal[0];
       // The app hardcodes Stockfish lines to 1: return exactly the requested
       // rank count with a matching policy, or parseEvaluation rejects the row.
       const count = Math.max(1, Math.min(payload.settings?.lines ?? 1, legal.length));
       const ranked = [best, ...legal.filter(move => move !== best)].slice(0, count);
       const score = { type: 'cp', value: 20 };
-      const value = { engine: 'Stockfish 19', search_policy: stockfishPolicy(payload.settings ?? defaultStockfishSettings), depth: 14, terminal: null, best_move: ranked[0] ?? null, score, lines: ranked.map(move => ({ move, score, depth: 14 })) };
+      const value = {
+        engine: 'Stockfish 19',
+        search_policy: stockfishPolicy(payload.settings ?? defaultStockfishSettings),
+        depth: 14,
+        terminal: null,
+        best_move: ranked[0] ?? null,
+        score,
+        lines: ranked.map(move => ({ move, score, depth: 14 })),
+      };
       cache.set('sf', payload, value);
-      await route.fulfill({ json: value }); return;
+      await route.fulfill({ json: value });
+      return;
     }
     if (path === '/games' || path.startsWith('/games/')) {
       const method = route.request().method();
       const id = path === '/games' ? null : decodeURIComponent(path.slice('/games/'.length));
       if (method === 'GET' && id === null) {
-        const rows = [...gameStore.games.values()].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-        await route.fulfill({ json: { games: rows, current_id: gameStore.currentId, total: rows.length, next_offset: null } });
+        const rows = [...gameStore.games.values()].toSorted((a, b) =>
+          b.updated_at.localeCompare(a.updated_at),
+        );
+        await route.fulfill({
+          json: {
+            games: rows,
+            current_id: gameStore.currentId,
+            total: rows.length,
+            next_offset: null,
+          },
+        });
         return;
       }
       if (method === 'POST') {
         const body = route.request().postDataJSON();
         const now = new Date().toISOString();
         const previous = gameStore.games.get(body.id ?? '');
-        const same = previous && previous.user_color === body.user_color && previous.elo_maia === body.elo_maia
-          && previous.elo_user === body.elo_user && previous.model === body.model && JSON.stringify(previous.moves) === JSON.stringify(body.moves)
-          && (previous.result ?? '') === (body.result ?? '');
+        const same =
+          previous &&
+          previous.user_color === body.user_color &&
+          previous.elo_maia === body.elo_maia &&
+          previous.elo_user === body.elo_user &&
+          previous.model === body.model &&
+          JSON.stringify(previous.moves) === JSON.stringify(body.moves) &&
+          (previous.result ?? '') === (body.result ?? '');
         const row = {
-          id: body.id ?? `mock-${gameStore.games.size + 1}`, created_at: body.created_at || previous?.created_at || now,
-          updated_at: same ? previous.updated_at : now, user_color: body.user_color, elo_maia: body.elo_maia,
-          elo_user: body.elo_user, model: body.model, temperature: body.temperature, moves: body.moves, result: body.result ?? previous?.result ?? '',
+          id: body.id ?? `mock-${gameStore.games.size + 1}`,
+          created_at: body.created_at || previous?.created_at || now,
+          updated_at: same ? previous.updated_at : now,
+          user_color: body.user_color,
+          elo_maia: body.elo_maia,
+          elo_user: body.elo_user,
+          model: body.model,
+          temperature: body.temperature,
+          moves: body.moves,
+          result: body.result ?? previous?.result ?? '',
         };
         gameStore.games.set(row.id, row);
         if (body.current) gameStore.currentId = row.id;
@@ -135,10 +205,15 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
         gameStore.games.delete(id);
         if (gameStore.currentId === id) gameStore.currentId = null;
       }
-      await route.fulfill({ status: 204, body: '' }); return;
+      await route.fulfill({ status: 204, body: '' });
+      return;
     }
     const filename = path.startsWith('/assets/') ? path.slice(1) : 'index.html';
-    const contentType = filename.endsWith('.js') ? 'text/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html';
+    const contentType = filename.endsWith('.js')
+      ? 'text/javascript'
+      : filename.endsWith('.css')
+        ? 'text/css'
+        : 'text/html';
     await route.fulfill({ body: await readFile(resolve('dist-browser', filename)), contentType });
   });
   await page.goto(`http://maia.test${path}`);
@@ -151,21 +226,53 @@ async function boot(page: Page, storage: Record<string, unknown> = {}, start = t
     if (start && !storage[KEYS.current]) await page.locator('#start-game').click();
     if (expectBoard) {
       await expect(page.locator('#board cg-board')).toHaveCount(1);
-      await expect(page.locator('#board piece:not(.ghost)')).toHaveCount(32 - (storage[KEYS.current] ? countCaptures(storage[KEYS.current] as StoredGame) : 0));
+      await expect(page.locator('#board piece:not(.ghost)')).toHaveCount(
+        32 - (storage[KEYS.current] ? countCaptures(storage[KEYS.current] as StoredGame) : 0),
+      );
     }
   }
-  async function reply(index: number, move?: string, status = 200, topMoves?: { move: string; prob: number }[]) {
+  async function reply(
+    index: number,
+    move?: string,
+    status = 200,
+    topMoves?: { move: string; prob: number }[],
+  ) {
     await expect.poll(() => requests.length).toBeGreaterThan(index);
     const item = requests[index];
-    const chosen = move ?? new Chess(item.payload.fen).moves({ verbose: true }).map(m => `${m.from}${m.to}${m.promotion ?? ''}`)[0];
+    const chosen =
+      move ??
+      new Chess(item.payload.fen)
+        .moves({ verbose: true })
+        .map(m => `${m.from}${m.to}${m.promotion ?? ''}`)[0];
     const delivered = page.waitForResponse(response => response.request() === item.route.request());
-    await item.route.fulfill({ status, json: status === 200 ? { move: chosen, top_moves: topMoves ?? [{ move: chosen, prob: 0.6, wdl: [0.2, 0.3, 0.5] }], wdl: [0.2, 0.3, 0.5], model_used: item.payload.model, degraded: false } : { errors: [{ message: 'engine_busy' }], detail: 'busy' } });
+    await item.route.fulfill({
+      status,
+      json:
+        status === 200
+          ? {
+              move: chosen,
+              top_moves: topMoves ?? [{ move: chosen, prob: 0.6, wdl: [0.2, 0.3, 0.5] }],
+              wdl: [0.2, 0.3, 0.5],
+              model_used: item.payload.model,
+              degraded: false,
+            }
+          : { errors: [{ message: 'engine_busy' }], detail: 'busy' },
+    });
     await (await delivered).finished();
-    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await page.evaluate(
+      () =>
+        new Promise<void>(resolve =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
   }
   return { requests, reply, errors };
 }
-function countCaptures(game: StoredGame) { return replay(game.moves).history({ verbose: true }).filter(move => move.captured).length; }
+function countCaptures(game: StoredGame) {
+  return replay(game.moves)
+    .history({ verbose: true })
+    .filter(move => move.captured).length;
+}
 
 for (const width of [390, 640, 1440]) {
   test(`destination tabs stay in place across modes at ${width}px`, async ({ page }) => {
@@ -182,15 +289,21 @@ for (const width of [390, 640, 1440]) {
       return;
     }
     const tabs = page.getByRole('navigation', { name: 'Destination' });
-    const positions = () => tabs.getByRole('link').evaluateAll(links => links.map(link => {
-      const { x, y, width, height } = link.getBoundingClientRect();
-      return { x, y, width, height };
-    }));
+    const positions = () =>
+      tabs.getByRole('link').evaluateAll(links =>
+        links.map(link => {
+          const { x, y, width, height } = link.getBoundingClientRect();
+          return { x, y, width, height };
+        }),
+      );
     const initial = await positions();
     const names = await tabs.getByRole('link').allTextContents();
     for (const name of [...names.filter(name => name !== 'Play'), 'Play']) {
       await tabs.getByRole('link', { name, exact: true }).click();
-      await expect(tabs.getByRole('link', { name, exact: true })).toHaveAttribute('aria-current', 'page');
+      await expect(tabs.getByRole('link', { name, exact: true })).toHaveAttribute(
+        'aria-current',
+        'page',
+      );
       expect(await positions()).toEqual(initial);
     }
   });
@@ -200,9 +313,14 @@ for (const path of ['/analyze', '/history']) {
   test(`direct ${path} and refresh never start restored play inference`, async ({ page }) => {
     const game = record(['e2e4']);
     const app = await boot(page, { [KEYS.current]: game, [KEYS.saved]: [game] }, false, path);
-    const destination = page.getByRole('link', { name: path === '/analyze' ? 'Analyze' : 'History', exact: true });
+    const destination = page.getByRole('link', {
+      name: path === '/analyze' ? 'Analyze' : 'History',
+      exact: true,
+    });
     await expect(destination).toHaveAttribute('aria-current', 'page');
-    await expect(page.locator(path === '/analyze' ? '#analysis-controls' : '.saved-panel')).toBeVisible();
+    await expect(
+      page.locator(path === '/analyze' ? '#analysis-controls' : '.saved-panel'),
+    ).toBeVisible();
     await page.reload();
     await expect(destination).toHaveAttribute('aria-current', 'page');
     expect(app.requests).toHaveLength(0);
@@ -216,7 +334,9 @@ for (const path of ['/analyze', '/history']) {
   });
 }
 
-test('direct play resumes once; Back/Forward preserves game viewing and analysis exploration', async ({ page }) => {
+test('direct play resumes once; Back/Forward preserves game viewing and analysis exploration', async ({
+  page,
+}) => {
   const app = await boot(page, { [KEYS.current]: record(['e2e4']) }, false, '/play');
   await app.reply(0, 'e7e5');
   await page.locator('#analysis-first').click();
@@ -259,7 +379,9 @@ test('direct play resumes once; Back/Forward preserves game viewing and analysis
   expect(app.errors).toEqual([]);
 });
 
-test('Back retires pending analysis; remounts refetch retired rows once and never resume play twice', async ({ page }) => {
+test('Back retires pending analysis; remounts refetch retired rows once and never resume play twice', async ({
+  page,
+}) => {
   const app = await boot(page, { [KEYS.current]: record(['e2e4']) }, false, '/analyze');
   await page.locator('#mode-play').click();
   await expect.poll(() => app.requests.length).toBe(1);
@@ -280,7 +402,9 @@ test('Back retires pending analysis; remounts refetch retired rows once and neve
   // The empty startpos line restores intact (not the importer): no move to
   // judge yet, so the panel shows its stepping hint instead of content.
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 1');
-  await expect(page.getByText('Current position — explore a candidate or step forward to review a move.')).toBeVisible();
+  await expect(
+    page.getByText('Current position — explore a candidate or step forward to review a move.'),
+  ).toBeVisible();
   await page.goForward();
   await expect(page).toHaveURL('http://maia.test/play');
   await piece(page, 'c5', 'black pawn');
@@ -380,7 +504,10 @@ test('analysis content URLs deep-link, copy, and walk games', async ({ page }) =
 // navigation the tabs are hidden and the bottom-bar menu owns the move.
 async function gotoMode(page: Page, mode: 'play' | 'analysis' | 'history' | 'settings') {
   const header = page.locator(`#mode-${mode}`);
-  if (await header.isVisible()) { await header.click(); return; }
+  if (await header.isVisible()) {
+    await header.click();
+    return;
+  }
   await page.locator('#mobile-menu').click();
   await page.locator(`#mobile-mode-${mode}`).click();
 }
@@ -388,25 +515,42 @@ async function squares(page: Page, keys: string[]) {
   const board = page.locator('#board cg-board');
   await board.scrollIntoViewIfNeeded();
   const bounds = (await board.boundingBox())!;
-  const black = await page.locator('#board .cg-wrap').evaluate(el => el.classList.contains('orientation-black'));
+  const black = await page
+    .locator('#board .cg-wrap')
+    .evaluate(el => el.classList.contains('orientation-black'));
   return keys.map(key => {
-    const file = key.charCodeAt(0) - 97, rank = Number(key[1]) - 1;
-    return { x: bounds.x + (black ? 7 - file + 0.5 : file + 0.5) * bounds.width / 8, y: bounds.y + (black ? rank + 0.5 : 7 - rank + 0.5) * bounds.height / 8 };
+    const file = key.charCodeAt(0) - 97,
+      rank = Number(key[1]) - 1;
+    return {
+      x: bounds.x + ((black ? 7 - file + 0.5 : file + 0.5) * bounds.width) / 8,
+      y: bounds.y + ((black ? rank + 0.5 : 7 - rank + 0.5) * bounds.height) / 8,
+    };
   });
 }
-async function square(page: Page, key: string) { return (await squares(page, [key]))[0]; }
+async function square(page: Page, key: string) {
+  return (await squares(page, [key]))[0];
+}
 async function move(page: Page, from: string, to: string, drag = false) {
   const [a, b] = await squares(page, [from, to]);
   if (drag) {
-    await page.mouse.move(a.x, a.y); await page.mouse.down();
-    await page.mouse.move(b.x, b.y, { steps: 12 }); await page.mouse.up();
-  } else { await page.mouse.click(a.x, a.y); await page.mouse.click(b.x, b.y); }
+    await page.mouse.move(a.x, a.y);
+    await page.mouse.down();
+    await page.mouse.move(b.x, b.y, { steps: 12 });
+    await page.mouse.up();
+  } else {
+    await page.mouse.click(a.x, a.y);
+    await page.mouse.click(b.x, b.y);
+  }
 }
 async function piece(page: Page, key: string, expected: string | null) {
-  await expect.poll(() => page.locator('#board cg-board piece:not(.ghost)').evaluateAll((els, key) => {
-    const node = els.find(el => (el as HTMLElement & { cgKey: string }).cgKey === key);
-    return node ? node.className.replace(/\s*(anim|dragging|fading)\b/g, '').trim() : null;
-  }, key)).toBe(expected);
+  await expect
+    .poll(() =>
+      page.locator('#board cg-board piece:not(.ghost)').evaluateAll((els, key) => {
+        const node = els.find(el => (el as HTMLElement & { cgKey: string }).cgKey === key);
+        return node ? node.className.replace(/\s*(anim|dragging|fading)\b/g, '').trim() : null;
+      }, key),
+    )
+    .toBe(expected);
 }
 async function currentMoves(page: Page) {
   return page.evaluate(() => {
@@ -419,29 +563,35 @@ async function screenshot(page: Page, path: string) {
   await page.screenshot({ path, fullPage: true });
 }
 
-for (const color of ['white', 'black'] as const) for (const drag of [false, true]) {
-  test(`${color}: ${drag ? 'drag' : 'click'}, bot reply, takeback and flip`, async ({ page }) => {
-    const app = await boot(page, { [KEYS.settings]: { ...defaultSettings, userColor: color } });
-    if (color === 'black') { await app.reply(0, 'e2e4'); await piece(page, 'e4', 'white pawn'); }
-    const before = color === 'black' ? 1 : 0;
-    await move(page, color === 'white' ? 'e2' : 'e7', color === 'white' ? 'e4' : 'e5', drag);
-    await expect.poll(() => app.requests.length).toBe(before + 1);
-    const request = app.requests[before].payload;
-    expect(request.maia_color).toBe(color === 'white' ? 'black' : 'white');
-    expect(replay(request.moves).fen()).toBe(request.fen);
-    expect(request.elo_maia).toBe(1600);
-    await app.reply(before, color === 'white' ? 'e7e5' : 'g1f3');
-    await expect(page.locator('#insight-title')).toHaveCount(0);
-    await expect(page.locator('.estimate')).toHaveCount(0);
-    await expect(page.locator('.candidate-list li')).toHaveCount(0);
-    await page.locator('#flip-board').click();
-    await expect(page.locator('#board .cg-wrap')).toHaveClass(new RegExp(`orientation-${color === 'white' ? 'black' : 'white'}`));
-    await page.locator('#takeback').click();
-    await expect.poll(() => currentMoves(page)).toEqual(color === 'white' ? [] : ['e2e4']);
-    await piece(page, color === 'white' ? 'e2' : 'e7', `${color} pawn`);
-    expect(app.errors).toEqual([]);
-  });
-}
+for (const color of ['white', 'black'] as const)
+  for (const drag of [false, true]) {
+    test(`${color}: ${drag ? 'drag' : 'click'}, bot reply, takeback and flip`, async ({ page }) => {
+      const app = await boot(page, { [KEYS.settings]: { ...defaultSettings, userColor: color } });
+      if (color === 'black') {
+        await app.reply(0, 'e2e4');
+        await piece(page, 'e4', 'white pawn');
+      }
+      const before = color === 'black' ? 1 : 0;
+      await move(page, color === 'white' ? 'e2' : 'e7', color === 'white' ? 'e4' : 'e5', drag);
+      await expect.poll(() => app.requests.length).toBe(before + 1);
+      const request = app.requests[before].payload;
+      expect(request.maia_color).toBe(color === 'white' ? 'black' : 'white');
+      expect(replay(request.moves).fen()).toBe(request.fen);
+      expect(request.elo_maia).toBe(1600);
+      await app.reply(before, color === 'white' ? 'e7e5' : 'g1f3');
+      await expect(page.locator('#insight-title')).toHaveCount(0);
+      await expect(page.locator('.estimate')).toHaveCount(0);
+      await expect(page.locator('.candidate-list li')).toHaveCount(0);
+      await page.locator('#flip-board').click();
+      await expect(page.locator('#board .cg-wrap')).toHaveClass(
+        new RegExp(`orientation-${color === 'white' ? 'black' : 'white'}`),
+      );
+      await page.locator('#takeback').click();
+      await expect.poll(() => currentMoves(page)).toEqual(color === 'white' ? [] : ['e2e4']);
+      await piece(page, color === 'white' ? 'e2' : 'e7', `${color} pawn`);
+      expect(app.errors).toEqual([]);
+    });
+  }
 
 for (const drag of [false, true]) {
   test(`invalid ${drag ? 'drag' : 'click'} snaps back to the original square`, async ({ page }) => {
@@ -458,35 +608,48 @@ for (const drag of [false, true]) {
 }
 
 const special = {
-  castle: { white: ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4', 'f8c5', 'd2d3', 'g8f6'], black: ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4', 'f8c5', 'd2d3', 'g8f6', 'e1g1'] },
+  castle: {
+    white: ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4', 'f8c5', 'd2d3', 'g8f6'],
+    black: ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4', 'f8c5', 'd2d3', 'g8f6', 'e1g1'],
+  },
   ep: { white: ['e2e4', 'a7a6', 'e4e5', 'd7d5'], black: ['a2a3', 'e7e5', 'a3a4', 'e5e4', 'd2d4'] },
-  promotion: { white: ['a2a4', 'h7h5', 'a4a5', 'h5h4', 'a5a6', 'h4h3', 'a6b7', 'h3g2'], black: ['a2a4', 'h7h5', 'a4a5', 'h5h4', 'a5a6', 'h4h3', 'a6b7', 'h3g2', 'b7a8q'] },
+  promotion: {
+    white: ['a2a4', 'h7h5', 'a4a5', 'h5h4', 'a5a6', 'h4h3', 'a6b7', 'h3g2'],
+    black: ['a2a4', 'h7h5', 'a4a5', 'h5h4', 'a5a6', 'h4h3', 'a6b7', 'h3g2', 'b7a8q'],
+  },
 };
 for (const color of ['white', 'black'] as const) {
   test(`${color}: castling reconciles rook`, async ({ page }) => {
     const app = await boot(page, { [KEYS.current]: record(special.castle[color], color) });
     const rank = color === 'white' ? '1' : '8';
     await move(page, `e${rank}`, `g${rank}`, color === 'black');
-    await piece(page, `g${rank}`, `${color} king`); await piece(page, `f${rank}`, `${color} rook`); await piece(page, `h${rank}`, null);
+    await piece(page, `g${rank}`, `${color} king`);
+    await piece(page, `f${rank}`, `${color} rook`);
+    await piece(page, `h${rank}`, null);
     await expect.poll(() => app.requests.length).toBe(1);
     expect(app.requests[0].payload.moves.at(-1)).toBe(`e${rank}g${rank}`);
-    await app.reply(0); await expect(page.locator('.turn-indicator')).toHaveText('To move');
+    await app.reply(0);
+    await expect(page.locator('.turn-indicator')).toHaveText('To move');
     expect(app.errors).toEqual([]);
   });
   test(`${color}: en passant removes captured pawn`, async ({ page }) => {
     const app = await boot(page, { [KEYS.current]: record(special.ep[color], color) });
-    const from = color === 'white' ? 'e5' : 'e4', to = color === 'white' ? 'd6' : 'd3';
+    const from = color === 'white' ? 'e5' : 'e4',
+      to = color === 'white' ? 'd6' : 'd3';
     await move(page, from, to, color === 'white');
-    await piece(page, to, `${color} pawn`); await piece(page, color === 'white' ? 'd5' : 'd4', null);
+    await piece(page, to, `${color} pawn`);
+    await piece(page, color === 'white' ? 'd5' : 'd4', null);
     await expect.poll(() => app.requests.length).toBe(1);
     expect(app.requests[0].payload.moves.at(-1)).toBe(from + to);
   });
   test(`${color}: promotion restores board, cancels and underpromotes`, async ({ page }) => {
     const app = await boot(page, { [KEYS.current]: record(special.promotion[color], color) });
-    const from = color === 'white' ? 'b7' : 'g2', to = color === 'white' ? 'a8' : 'h1';
+    const from = color === 'white' ? 'b7' : 'g2',
+      to = color === 'white' ? 'a8' : 'h1';
     await move(page, from, to);
     await expect(page.locator('#promotion-dialog')).toBeVisible();
-    await piece(page, from, `${color} pawn`); await piece(page, to, `${color === 'white' ? 'black' : 'white'} rook`);
+    await piece(page, from, `${color} pawn`);
+    await piece(page, to, `${color === 'white' ? 'black' : 'white'} rook`);
     expect(app.requests).toHaveLength(0);
     await page.keyboard.press('Escape');
     await expect(page.locator('#promotion-dialog')).not.toBeVisible();
@@ -499,7 +662,9 @@ for (const color of ['white', 'black'] as const) {
   });
 }
 
-test('analysis load, navigation, copy, request history, stale reply and mode reuse', async ({ page }) => {
+test('analysis load, navigation, copy, request history, stale reply and mode reuse', async ({
+  page,
+}) => {
   await stubClipboard(page);
   const app = await boot(page);
   await page.locator('#mode-analysis').click();
@@ -525,7 +690,8 @@ test('analysis load, navigation, copy, request history, stale reply and mode reu
   const fen = '4k3/8/8/8/8/8/4P3/4K3 w - - 0 1';
   await page.locator('#mode-analysis').click();
   await page.getByRole('button', { name: 'FEN', exact: true }).click();
-  await page.locator('#analysis-fen').fill(fen); await page.locator('#analysis-pgn').fill('1. e4');
+  await page.locator('#analysis-fen').fill(fen);
+  await page.locator('#analysis-pgn').fill('1. e4');
   await page.locator('#load-analysis').click();
   // Release obsolete singles too; only the loaded FEN's focus can populate
   // its panel. Queue order is an implementation detail.
@@ -546,46 +712,76 @@ test('analysis load, navigation, copy, request history, stale reply and mode reu
   await page.locator('#mode-play').click();
   await expect(page.locator('#takeback')).toBeVisible();
   await move(page, 'd2', 'd4');
-  await expect.poll(() => app.requests.some(request => !request.payload.initial_fen && request.payload.moves.join() === 'd2d4')).toBe(true);
-  await app.reply(app.requests.findIndex(request => !request.payload.initial_fen && request.payload.moves.join() === 'd2d4'), 'd7d5');
+  await expect
+    .poll(() =>
+      app.requests.some(
+        request => !request.payload.initial_fen && request.payload.moves.join() === 'd2d4',
+      ),
+    )
+    .toBe(true);
+  await app.reply(
+    app.requests.findIndex(
+      request => !request.payload.initial_fen && request.payload.moves.join() === 'd2d4',
+    ),
+    'd7d5',
+  );
   await piece(page, 'd5', 'black pawn');
   expect(app.errors).toEqual([]);
 });
 
-test('saved switching at identical FEN retires pending reply and persists selection', async ({ page }) => {
-  const a = record(['e2e4'], 'white', 'a'), b = record(['e2e4'], 'white', 'b');
+test('saved switching at identical FEN retires pending reply and persists selection', async ({
+  page,
+}) => {
+  const a = record(['e2e4'], 'white', 'a'),
+    b = record(['e2e4'], 'white', 'b');
   const app = await boot(page, { [KEYS.current]: a, [KEYS.saved]: [a, b] });
   await expect.poll(() => app.requests.length).toBe(1);
   await page.locator('#mode-history').click();
   await page.locator('[data-game-id="b"]').click();
   await expect.poll(() => app.requests.length).toBe(2);
-  await expect.poll(() => page.evaluate(key => {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw).currentId : null;
-  }, 'maia-board.games.v2')).toBe('b');
-  await app.reply(1, 'c7c5'); await app.reply(0, 'e7e5');
-  await piece(page, 'c5', 'black pawn'); await piece(page, 'e7', 'black pawn');
+  await expect
+    .poll(() =>
+      page.evaluate(key => {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw).currentId : null;
+      }, 'maia-board.games.v2'),
+    )
+    .toBe('b');
+  await app.reply(1, 'c7c5');
+  await app.reply(0, 'e7e5');
+  await piece(page, 'c5', 'black pawn');
+  await piece(page, 'e7', 'black pawn');
   await expect(page.locator('#insight-title')).toHaveCount(0);
-  await page.reload(); await piece(page, 'c5', 'black pawn');
+  await page.reload();
+  await piece(page, 'c5', 'black pawn');
   expect(app.errors).toEqual([]);
 });
 
-test('pending takeback/new game/mode/settings transitions reject obsolete replies', async ({ page }) => {
+test('pending takeback/new game/mode/settings transitions reject obsolete replies', async ({
+  page,
+}) => {
   const app = await boot(page);
-  await move(page, 'e2', 'e4'); await expect.poll(() => app.requests.length).toBe(1);
-  await page.locator('#takeback').click(); await app.reply(0, 'e7e5');
-  await piece(page, 'e2', 'white pawn'); await piece(page, 'e7', 'black pawn');
-  await move(page, 'e2', 'e4'); await expect.poll(() => app.requests.length).toBe(2);
-  await page.locator('#mode-analysis').click(); await page.locator('#mode-play').click();
+  await move(page, 'e2', 'e4');
+  await expect.poll(() => app.requests.length).toBe(1);
+  await page.locator('#takeback').click();
+  await app.reply(0, 'e7e5');
+  await piece(page, 'e2', 'white pawn');
+  await piece(page, 'e7', 'black pawn');
+  await move(page, 'e2', 'e4');
+  await expect.poll(() => app.requests.length).toBe(2);
+  await page.locator('#mode-analysis').click();
+  await page.locator('#mode-play').click();
   await expect.poll(() => app.requests.length).toBe(3);
-  await app.reply(1, 'e7e5'); await expect(page.locator('.turn-indicator')).toHaveText('Thinking…');
+  await app.reply(1, 'e7e5');
+  await expect(page.locator('.turn-indicator')).toHaveText('Thinking…');
   await page.locator('#new-game').click();
   await page.locator('#bot-elo').selectOption('1800');
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   expect(app.requests).toHaveLength(3);
   await page.locator('#new-game').click();
   await page.locator('#bot-elo').selectOption('2000');
-  await page.locator('#start-game').click(); await app.reply(2, 'e7e5');
+  await page.locator('#start-game').click();
+  await app.reply(2, 'e7e5');
   await expect.poll(() => currentMoves(page)).toEqual([]);
   await expect(page.locator('.turn-indicator')).toHaveText('To move');
   await piece(page, 'e7', 'black pawn');
@@ -599,12 +795,15 @@ test('busy retries are bounded, then manual retry recovers controls', async ({ p
   // are consumed by one logical request's retries, then the banner offers
   // the manual retry. No app-level hot-loop on top.
   for (let index = 0; index < 3; index++) await app.reply(index, undefined, 503);
-  await expect(page.locator('#error-banner')).toContainText('Bot is busy. Wait a moment and try again.');
+  await expect(page.locator('#error-banner')).toContainText(
+    'Bot is busy. Wait a moment and try again.',
+  );
   await expect(page.locator('#retry-request')).toBeVisible();
   await expect(page.locator('.turn-indicator')).not.toHaveText('Thinking…');
   await page.locator('#retry-request').click();
   await expect.poll(() => app.requests.length).toBe(4);
-  await app.reply(3, 'e7e5'); await expect(page.locator('.turn-indicator')).toHaveText('To move');
+  await app.reply(3, 'e7e5');
+  await expect(page.locator('.turn-indicator')).toHaveText('To move');
   expect(app.requests).toHaveLength(4);
   expect(app.errors).toEqual([]);
 });
@@ -615,19 +814,26 @@ test('board crashes stay inside the board panel, rest of app unaffected', async 
   // boundary must catch this while navigation and controls stay alive. The
   // stored game keeps the board reset key stable across server sync, so the
   // fallback persists until the scoped retry instead of auto-clearing.
-  const app = await boot(page, { [KEYS.current]: record([], 'white', 'crash-game') }, true, '/play', () => {
-    const RealRO = window.ResizeObserver;
-    let armed = true;
-    window.ResizeObserver = class extends RealRO {
-      observe(target: Element, options?: ResizeObserverOptions) {
-        if (armed && target instanceof Element && target.closest('.board-frame')) {
-          armed = false;
-          throw new Error('injected board crash');
+  const app = await boot(
+    page,
+    { [KEYS.current]: record([], 'white', 'crash-game') },
+    true,
+    '/play',
+    () => {
+      const RealRO = window.ResizeObserver;
+      let armed = true;
+      window.ResizeObserver = class extends RealRO {
+        observe(target: Element, options?: ResizeObserverOptions) {
+          if (armed && target instanceof Element && target.closest('.board-frame')) {
+            armed = false;
+            throw new Error('injected board crash');
+          }
+          super.observe(target, options);
         }
-        super.observe(target, options);
-      }
-    };
-  }, false);
+      };
+    },
+    false,
+  );
   await expect(page.locator('#board-error')).toContainText('Board failed to render');
   await expect(page.locator('#board-error')).toContainText('rest of the board is unaffected');
   await expect(page.locator('#board cg-board')).toHaveCount(0);
@@ -641,16 +847,22 @@ test('board crashes stay inside the board panel, rest of app unaffected', async 
   expect(app.errors).toEqual([]);
 });
 
-test('single live Chessground binding survives React updates and StrictMode cleanup', async ({ page }, testInfo) => {
+test('single live Chessground binding survives React updates and StrictMode cleanup', async ({
+  page,
+}, testInfo) => {
   const app = await boot(page);
-  const stats = () => page.evaluate(() => (window as any).boardListeners as { adds: number; removes: number });
+  const stats = () =>
+    page.evaluate(() => (window as any).boardListeners as { adds: number; removes: number });
   const initial = await stats();
   expect(initial.adds - initial.removes).toBe(1);
   if (process.env.NODE_ENV === 'development') expect(initial).toEqual({ adds: 2, removes: 1 });
-  await move(page, 'e2', 'e4'); await app.reply(0, 'e7e5');
+  await move(page, 'e2', 'e4');
+  await app.reply(0, 'e7e5');
   await expect(page.locator('.turn-indicator')).toHaveText('To move');
-  await page.locator('#mode-analysis').click(); await page.locator('#analysis-pgn').fill('1. d4 d5');
-  await page.locator('#load-analysis').click(); await page.locator('#mode-play').click();
+  await page.locator('#mode-analysis').click();
+  await page.locator('#analysis-pgn').fill('1. d4 d5');
+  await page.locator('#load-analysis').click();
+  await page.locator('#mode-play').click();
   await page.locator('#flip-board').click();
   // Workspaces mount per mode (each engine exists only on its own page), so
   // a mode switch remounts the board once; the invariant is no leaked
@@ -660,42 +872,64 @@ test('single live Chessground binding survives React updates and StrictMode clea
   await expect(page.locator('#board cg-board')).toHaveCount(1);
   await screenshot(page, testInfo.outputPath('desktop.png'));
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect.poll(() => page.locator('#board cg-board').evaluate(board => {
-    const bounds = board.getBoundingClientRect();
-    return [...board.querySelectorAll('piece:not(.ghost)')].every(piece => {
-      const rect = piece.getBoundingClientRect();
-      return rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1 && rect.top >= bounds.top - 1 && rect.bottom <= bounds.bottom + 1;
-    });
-  })).toBe(true);
+  await expect
+    .poll(() =>
+      page.locator('#board cg-board').evaluate(board => {
+        const bounds = board.getBoundingClientRect();
+        return [...board.querySelectorAll('piece:not(.ghost)')].every(piece => {
+          const rect = piece.getBoundingClientRect();
+          return (
+            rect.left >= bounds.left - 1 &&
+            rect.right <= bounds.right + 1 &&
+            rect.top >= bounds.top - 1 &&
+            rect.bottom <= bounds.bottom + 1
+          );
+        });
+      }),
+    )
+    .toBe(true);
   await move(page, 'g1', 'f3', true);
   await expect.poll(() => app.requests.length).toBe(2);
   await app.reply(1, 'b8c6');
   await piece(page, 'f3', 'white knight');
-  await expect.poll(() => page.locator('#board cg-board').evaluate(board => {
-    const bounds = board.getBoundingClientRect();
-    const black = board.closest('.cg-wrap')!.classList.contains('orientation-black');
-    return [...board.querySelectorAll('piece:not(.ghost)')].flatMap(el => {
-      const key = (el as HTMLElement & { cgKey: string }).cgKey;
-      const file = key.charCodeAt(0) - 97, rank = Number(key[1]) - 1;
-      const rect = el.getBoundingClientRect();
-      const x = bounds.left + (black ? 7 - file : file) * bounds.width / 8;
-      const y = bounds.top + (black ? rank : 7 - rank) * bounds.height / 8;
-      return Math.abs(rect.left - x) > 1 || Math.abs(rect.top - y) > 1 ? [{ key, actual: [rect.left, rect.top], expected: [x, y] }] : [];
-    });
-  })).toEqual([]);
+  await expect
+    .poll(() =>
+      page.locator('#board cg-board').evaluate(board => {
+        const bounds = board.getBoundingClientRect();
+        const black = board.closest('.cg-wrap')!.classList.contains('orientation-black');
+        return [...board.querySelectorAll('piece:not(.ghost)')].flatMap(el => {
+          const key = (el as HTMLElement & { cgKey: string }).cgKey;
+          const file = key.charCodeAt(0) - 97,
+            rank = Number(key[1]) - 1;
+          const rect = el.getBoundingClientRect();
+          const x = bounds.left + ((black ? 7 - file : file) * bounds.width) / 8;
+          const y = bounds.top + ((black ? rank : 7 - rank) * bounds.height) / 8;
+          return Math.abs(rect.left - x) > 1 || Math.abs(rect.top - y) > 1
+            ? [{ key, actual: [rect.left, rect.top], expected: [x, y] }]
+            : [];
+        });
+      }),
+    )
+    .toEqual([]);
   await screenshot(page, testInfo.outputPath('mobile.png'));
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
   expect(app.errors).toEqual([]);
 });
 
-test('setup disappears; draft cancel preserves a reply arriving while historical', async ({ page }) => {
+test('setup disappears; draft cancel preserves a reply arriving while historical', async ({
+  page,
+}) => {
   const app = await boot(page, {}, false);
   await expect(page.locator('#play-controls')).toBeVisible();
   expect(app.requests).toHaveLength(0);
   await page.locator('#bot-elo').selectOption('1800');
   await page.locator('#start-game').click();
   await expect(page.locator('#play-controls')).toHaveCount(0);
-  await expect(page.locator('.insight-panel, .saved-panel, .turn-chip, .stage-heading')).toHaveCount(0);
+  await expect(
+    page.locator('.insight-panel, .saved-panel, .turn-chip, .stage-heading'),
+  ).toHaveCount(0);
   await move(page, 'e2', 'e4');
   await expect.poll(() => app.requests.length).toBe(1);
   // Fresh users default to the adaptive Elo floor (800), not the bot Elo.
@@ -717,7 +951,9 @@ test('setup disappears; draft cancel preserves a reply arriving while historical
   await expect(page.locator('.player-strip').filter({ hasText: 'Bot' })).toContainText('1800');
 });
 
-test('analysis candidate list, independent rating, branch replay and PGN copies', async ({ page }, testInfo) => {
+test('analysis candidate list, independent rating, branch replay and PGN copies', async ({
+  page,
+}, testInfo) => {
   await stubClipboard(page);
   const app = await boot(page);
   await page.locator('#mode-analysis').click();
@@ -725,18 +961,29 @@ test('analysis candidate list, independent rating, branch replay and PGN copies'
   await page.locator('#analysis-pgn').fill('1. e4 e5 2. Nf3 Nc6');
   await page.locator('#load-analysis').click();
   await expect(page.locator('#analysis-controls')).toHaveCount(0);
-  await app.reply(0, 'b8c6', 200, [{ move: 'b8c6', prob: .4, wdl: [0.2, 0.3, 0.5] }, { move: 'g8f6', prob: .15, wdl: [0.2, 0.3, 0.5] }]);
+  await app.reply(0, 'b8c6', 200, [
+    { move: 'b8c6', prob: 0.4, wdl: [0.2, 0.3, 0.5] },
+    { move: 'g8f6', prob: 0.15, wdl: [0.2, 0.3, 0.5] },
+  ]);
   // Strict key rows: Nc6 merges Stockfish best, 2400 best/likely, my
   // likely, and played into one row. Runners-up without a role stay out.
   const keyMoves = page.locator('section[aria-label="Key moves"]');
   await expect(page.locator('#insight-content')).toBeVisible();
   await expect(keyMoves.locator('li:not(.candidate-header)')).toHaveCount(1);
   await expect(keyMoves.locator('.candidate-list')).toContainText('Nc6');
-  await expect(keyMoves.getByRole('button', { name: 'Explore Nc6 (played) from before this move', exact: true })).toBeVisible();
+  await expect(
+    keyMoves.getByRole('button', {
+      name: 'Explore Nc6 (played) from before this move',
+      exact: true,
+    }),
+  ).toBeVisible();
   // The only marker is the Stockfish fish: best/likely read off the 2400
   // and delta columns, and no played chip (the green row says played).
   await expect(keyMoves.locator('.key-role--sf-best svg')).toBeVisible();
-  await expect(keyMoves.locator('.key-role--sf-best')).toHaveAttribute('title', 'Stockfish best move');
+  await expect(keyMoves.locator('.key-role--sf-best')).toHaveAttribute(
+    'title',
+    'Stockfish best move',
+  );
   await expect(keyMoves.locator('.key-roles .key-role')).toHaveCount(1);
   // 2400 and viewed-Elo shares read off the merged Nc6 row (objective
   // auto-top 60%, display reply 40%).
@@ -744,7 +991,9 @@ test('analysis candidate list, independent rating, branch replay and PGN copies'
   await expect(merged).toContainText('60%');
   await expect(merged).toContainText('40%');
   await expect(page.locator('.win-hero')).toHaveCount(0);
-  await expect(page.locator('.balance-track')).toHaveAccessibleName(/White 50%.*Draw 30%.*Black 20%.*estimated White winning chance 65%/);
+  await expect(page.locator('.balance-track')).toHaveAccessibleName(
+    /White 50%.*Draw 30%.*Black 20%.*estimated White winning chance 65%/,
+  );
   await expect(page.locator('.balance-white-tag')).toHaveText('50%');
   await expect(page.locator('.balance-draw-tag')).toHaveText('30%');
   await expect(page.locator('.balance-black-tag')).toHaveText('20%');
@@ -769,10 +1018,15 @@ test('analysis candidate list, independent rating, branch replay and PGN copies'
   let tip = -1;
   for (let waited = 0; waited < 100 && tip < 0; waited++) {
     const last = app.requests.at(-1);
-    if (last && last.payload.moves.join() === full.join()) { tip = app.requests.length - 1; break; }
+    if (last && last.payload.moves.join() === full.join()) {
+      tip = app.requests.length - 1;
+      break;
+    }
     const pending = app.requests.findIndex((_, index) => !replied.has(index));
-    if (pending >= 0) { replied.add(pending); await app.reply(pending); }
-    else await page.waitForTimeout(100);
+    if (pending >= 0) {
+      replied.add(pending);
+      await app.reply(pending);
+    } else await page.waitForTimeout(100);
   }
   expect(tip).toBeGreaterThanOrEqual(1);
   expect(replay(app.requests[tip].payload.moves).fen()).toBe(app.requests[tip].payload.fen);
@@ -780,9 +1034,16 @@ test('analysis candidate list, independent rating, branch replay and PGN copies'
   // Resolve the focus single too, so the focus bot list paints at the old
   // identity (priming the stale-while-revalidating display below).
   const focusMoves = ['e2e4', 'e7e5', 'g1f3', 'g8f6'];
-  await expect.poll(() => app.requests.some(r => r.payload.moves.join() === focusMoves.join())).toBe(true);
-  const focusIdx = app.requests.findIndex((r, i) => !replied.has(i) && r.payload.moves.join() === focusMoves.join());
-  if (focusIdx >= 0) { replied.add(focusIdx); await app.reply(focusIdx); }
+  await expect
+    .poll(() => app.requests.some(r => r.payload.moves.join() === focusMoves.join()))
+    .toBe(true);
+  const focusIdx = app.requests.findIndex(
+    (r, i) => !replied.has(i) && r.payload.moves.join() === focusMoves.join(),
+  );
+  if (focusIdx >= 0) {
+    replied.add(focusIdx);
+    await app.reply(focusIdx);
+  }
   await expect(page.locator('section[aria-label="Key moves"] .candidate-list')).toBeVisible();
   // Let the display commit flush before changing the rating.
   await page.waitForTimeout(250);
@@ -801,12 +1062,22 @@ test('analysis candidate list, independent rating, branch replay and PGN copies'
   await expect(page.getByText('updating to 2000')).toBeVisible();
   await app.reply(app.requests.findIndex(r => r.payload.elo_maia === 2000));
   await expect.poll(() => app.requests.filter(r => r.payload.elo_maia === 2000)).toHaveLength(2);
-  await app.reply(app.requests.map((r, i) => (r.payload.elo_maia === 2000 ? i : -1)).filter(i => i >= 0).at(-1)!);
+  await app.reply(
+    app.requests
+      .map((r, i) => (r.payload.elo_maia === 2000 ? i : -1))
+      .filter(i => i >= 0)
+      .at(-1)!,
+  );
   // The key-moves card follows the reference Elo.
   await expect(page.locator('section[aria-label="Key moves"] h2 #analysis-rating')).toBeVisible();
   await expect(page.locator('#analysis-rating')).toHaveValue('2000');
-  expect(app.requests.some(r => r.payload.elo_maia === 2000 && r.payload.elo_user === 2000)).toBe(true);
-  for (const [id, expected] of [['copy-pgn', '1. e4 e5 2. Nf3 Nc6'], ['copy-explored-pgn', '1. e4 e5 2. Nf3 Nf6 3. Bc4']]) {
+  expect(app.requests.some(r => r.payload.elo_maia === 2000 && r.payload.elo_user === 2000)).toBe(
+    true,
+  );
+  for (const [id, expected] of [
+    ['copy-pgn', '1. e4 e5 2. Nf3 Nc6'],
+    ['copy-explored-pgn', '1. e4 e5 2. Nf3 Nf6 3. Bc4'],
+  ]) {
     await page.locator(`#${id}`).click();
     await expect(page.locator(`#${id}`)).toHaveText(/copied/i);
     await expect.poll(() => copiedTexts(page)).toContain(expected);
@@ -844,7 +1115,10 @@ test('history review, resume, copy, delete, and just-finished game review', asyn
   await expect(page).toHaveURL('http://maia.test/play');
   await piece(page, 'e5', 'black pawn');
   await page.locator('#mode-history').click();
-  await cards.filter({ has: page.getByRole('button', { name: 'Resume', exact: true }) }).getByRole('button', { name: 'Delete', exact: true }).click();
+  await cards
+    .filter({ has: page.getByRole('button', { name: 'Resume', exact: true }) })
+    .getByRole('button', { name: 'Delete', exact: true })
+    .click();
   await page.getByRole('button', { name: 'Delete game', exact: true }).click();
   await expect(cards).toHaveCount(1);
   await page.reload();
@@ -880,7 +1154,10 @@ test('analysis entry sources and input keyboard isolation', async ({ page }) => 
   await page.locator('#load-analysis').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 2');
   await page.locator('#mode-analysis').click();
-  await page.locator('#analysis-controls').getByRole('button', { name: 'Starting position', exact: true }).click();
+  await page
+    .locator('#analysis-controls')
+    .getByRole('button', { name: 'Starting position', exact: true })
+    .click();
   await page.locator('#load-analysis').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 1');
   // Drain the startpos display single: the boot mock strips abort signals,
@@ -890,7 +1167,9 @@ test('analysis entry sources and input keyboard isolation', async ({ page }) => 
   // own 2400 request — leave it held.
   await expect.poll(() => app.requests.length).toBeGreaterThan(0);
   const lane = app.requests.map(request => request.payload.elo_maia !== 2400);
-  await app.reply(lane.lastIndexOf(true), 'e2e4', 200, [{ move: 'e2e4', prob: .6, wdl: [0.2, 0.3, 0.5] }]);
+  await app.reply(lane.lastIndexOf(true), 'e2e4', 200, [
+    { move: 'e2e4', prob: 0.6, wdl: [0.2, 0.3, 0.5] },
+  ]);
   // The panel judges the displayed move from its before-position, so an
   // empty start has no candidates: unload back to the importer, then load
   // one move to read the single back.
@@ -937,15 +1216,24 @@ test('new analysis and the Analyze tab return to the importer', async ({ page })
   expect(app.errors).toEqual([]);
 });
 
-test('mobile bottom bar pins to the viewport without clipping trailing content', async ({ page }) => {
+test('mobile bottom bar pins to the viewport without clipping trailing content', async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const viewport = page.viewportSize()!;
   const game = record(['e2e4', 'e7e5'], 'white', 'g1');
   const mate = record(['f2f3', 'e7e5', 'g2g4', 'd8h4'], 'white', 'mate');
   // A long list so the page actually scrolls: the gap check below only
   // means something when content runs past the viewport.
-  const many = Array.from({ length: 12 }, (_, index) => record(['e2e4', 'e7e5'], 'white', `g${index}`));
-  await boot(page, { [KEYS.current]: game, [KEYS.saved]: [game, mate, ...many] }, false, '/history');
+  const many = Array.from({ length: 12 }, (_, index) =>
+    record(['e2e4', 'e7e5'], 'white', `g${index}`),
+  );
+  await boot(
+    page,
+    { [KEYS.current]: game, [KEYS.saved]: [game, mate, ...many] },
+    false,
+    '/history',
+  );
   // Menu-only bar on a list page: pinned to the viewport bottom …
   const pagebar = page.locator('.mobile-pagebar');
   await expect(pagebar).toBeVisible();
@@ -978,7 +1266,12 @@ test('mobile bottom bar pins to the viewport without clipping trailing content',
 
 test('mobile board stage stays fixed while the insight panel scrolls', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await boot(page, { [KEYS.current]: record(['e2e4', 'e7e5', 'g1f3', 'g8f6', 'f1c4', 'f8c5']) }, false, '/analyze?moves=e2e4,e7e5,g1f3,g8f6,f1c4,f8c5');
+  await boot(
+    page,
+    { [KEYS.current]: record(['e2e4', 'e7e5', 'g1f3', 'g8f6', 'f1c4', 'f8c5']) },
+    false,
+    '/analyze?moves=e2e4,e7e5,g1f3,g8f6,f1c4,f8c5',
+  );
   const stage = page.locator('.board-stage');
   await expect(page.locator('#board cg-board')).toHaveCount(1);
   await expect.poll(() => stage.evaluate(el => getComputedStyle(el).position)).toBe('sticky');
@@ -987,13 +1280,21 @@ test('mobile board stage stays fixed while the insight panel scrolls', async ({ 
   // Pinned to the viewport top (safe-area padding keeps it just below 0).
   expect(box.y).toBeLessThanOrEqual(16);
   // Supplemental pieces stay attached inside the pinned stage.
-  for (const selector of ['.board-toolbar', '.player-strip', '#move-list', '#board']) for (const inner of await page.locator(selector).evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; }))) {
-    expect(inner.top).toBeGreaterThanOrEqual(box.y - 1);
-    expect(inner.bottom).toBeLessThanOrEqual(box.y + box.height + 1);
-  }
+  for (const selector of ['.board-toolbar', '.player-strip', '#move-list', '#board'])
+    for (const inner of await page.locator(selector).evaluateAll(elements =>
+      elements.map(el => {
+        const r = el.getBoundingClientRect();
+        return { top: r.top, bottom: r.bottom };
+      }),
+    )) {
+      expect(inner.top).toBeGreaterThanOrEqual(box.y - 1);
+      expect(inner.bottom).toBeLessThanOrEqual(box.y + box.height + 1);
+    }
 });
 
-test('bottom bar swaps mounts across the mobile breakpoint without duplicating', async ({ page }) => {
+test('bottom bar swaps mounts across the mobile breakpoint without duplicating', async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await boot(page, { [KEYS.current]: record(['e2e4', 'e7e5']) });
   // Mobile: footer mount only, IDs unique, menu works from the footer.
@@ -1015,26 +1316,54 @@ test('bottom bar swaps mounts across the mobile breakpoint without duplicating',
   await expect(page.locator('.board-stage .move-navigation')).toHaveCount(0);
 });
 
-for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900 }, { width: 360, height: 800 }, { width: 390, height: 844 }]) {
-  test(`workspace geometry and horizontal notation ${viewport.width}x${viewport.height}`, async ({ page }, testInfo) => {
+for (const viewport of [
+  { width: 1366, height: 768 },
+  { width: 1440, height: 900 },
+  { width: 360, height: 800 },
+  { width: 390, height: 844 },
+]) {
+  test(`workspace geometry and horizontal notation ${viewport.width}x${viewport.height}`, async ({
+    page,
+  }, testInfo) => {
     await page.setViewportSize(viewport);
     const long = Array.from({ length: 18 }, () => ['g1f3', 'g8f6', 'f3g1', 'f6g8']).flat();
     await boot(page, { [KEYS.current]: record(long) });
     const board = await page.locator('#board').boundingBox();
     expect(board!.width).toBeGreaterThan(viewport.width < 760 ? 300 : 380);
     expect(Math.abs(board!.width - board!.height)).toBeLessThan(1);
-    for (const selector of ['.player-strip', '.move-navigation', '.board-actions']) for (const box of await page.locator(selector).evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; }))) {
-      expect(box.top).toBeGreaterThanOrEqual(0); expect(box.bottom).toBeLessThanOrEqual(viewport.height);
-    }
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    const actionBoxes = await page.locator('.board-actions button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height, top: r.top }; }));
+    for (const selector of ['.player-strip', '.move-navigation', '.board-actions'])
+      for (const box of await page.locator(selector).evaluateAll(elements =>
+        elements.map(el => {
+          const r = el.getBoundingClientRect();
+          return { top: r.top, bottom: r.bottom };
+        }),
+      )) {
+        expect(box.top).toBeGreaterThanOrEqual(0);
+        expect(box.bottom).toBeLessThanOrEqual(viewport.height);
+      }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    const actionBoxes = await page.locator('.board-actions button').evaluateAll(elements =>
+      elements.map(el => {
+        const r = el.getBoundingClientRect();
+        return { width: r.width, height: r.height, top: r.top };
+      }),
+    );
     for (const box of actionBoxes) {
-      expect(box.width).toBe(40); expect(box.height).toBe(40);
+      expect(box.width).toBe(40);
+      expect(box.height).toBe(40);
       expect(box.top).toBe(actionBoxes[0].top);
     }
-    const navBoxes = await page.locator('.nav-buttons button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height, top: r.top }; }));
+    const navBoxes = await page.locator('.nav-buttons button').evaluateAll(elements =>
+      elements.map(el => {
+        const r = el.getBoundingClientRect();
+        return { width: r.width, height: r.height, top: r.top };
+      }),
+    );
     for (const box of navBoxes) {
-      expect(box.width).toBe(40); expect(box.height).toBe(40);
+      expect(box.width).toBe(40);
+      expect(box.height).toBe(40);
       expect(box.top).toBe(navBoxes[0].top);
     }
     // Board actions live above the board (less reachable on mobile);
@@ -1046,14 +1375,19 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
     } else await expect(page.locator('.move-navigation .board-actions')).toBeVisible();
     expect(nav.y).toBeGreaterThanOrEqual(board!.y + board!.height);
     const list = page.locator('#move-list');
-    expect(await list.evaluate(el => el.scrollWidth > el.clientWidth && el.clientHeight <= 52)).toBe(true);
+    expect(
+      await list.evaluate(el => el.scrollWidth > el.clientWidth && el.clientHeight <= 52),
+    ).toBe(true);
     await page.locator('#analysis-first').click();
     await page.locator('#analysis-next').click();
     await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
     await page.locator('#analysis-last').click();
     await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
     await expect(page.locator('.game-result')).toBeInViewport();
-    await page.evaluate(({ key, game }) => localStorage.setItem(key, JSON.stringify(game)), { key: KEYS.current, game: record(['e2e4', 'e7e5']) });
+    await page.evaluate(({ key, game }) => localStorage.setItem(key, JSON.stringify(game)), {
+      key: KEYS.current,
+      game: record(['e2e4', 'e7e5']),
+    });
     await page.reload();
     const controls = (await page.locator('.board-actions').boundingBox())!;
     expect(controls.y + controls.height).toBeLessThanOrEqual(viewport.height);
@@ -1065,13 +1399,17 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
     const stage = (await page.locator('.board-stage').boundingBox())!;
     if (viewport.width > 760) expect(rail.x).toBeGreaterThan(stage.x + stage.width);
     else expect(rail.y).toBeGreaterThanOrEqual(stage.y + stage.height);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
     await screenshot(page, testInfo.outputPath(`analysis-${viewport.width}.png`));
   });
 }
 
 for (const width of [320, 360, 390]) {
-  test(`mobile bottom bar menu navigates pages, bar owns move navigation at ${width}px`, async ({ page }) => {
+  test(`mobile bottom bar menu navigates pages, bar owns move navigation at ${width}px`, async ({
+    page,
+  }) => {
     await page.setViewportSize({ width, height: 844 });
     const app = await boot(page, { [KEYS.current]: record(['e2e4', 'e7e5']) });
     const menu = page.locator('#mobile-menu');
@@ -1082,11 +1420,14 @@ for (const width of [320, 360, 390]) {
     // Menu on the left, move navigation filling the rest of the same bar.
     const menuBox = (await menu.boundingBox())!;
     const firstBox = (await page.locator('#analysis-first').boundingBox())!;
-    expect(menuBox.width).toBe(40); expect(menuBox.height).toBe(40);
+    expect(menuBox.width).toBe(40);
+    expect(menuBox.height).toBe(40);
     expect(menuBox.y).toBe(firstBox.y);
     expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(firstBox.x);
     // Bar rides above the board on the top z axis.
-    expect(await page.locator('.mobile-footer').evaluate(el => getComputedStyle(el).zIndex)).toBe('50');
+    expect(await page.locator('.mobile-footer').evaluate(el => getComputedStyle(el).zIndex)).toBe(
+      '50',
+    );
     // Move navigation works from the bar.
     await page.locator('#analysis-first').click();
     await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 3');
@@ -1141,8 +1482,17 @@ for (const width of [320, 390]) {
     expect(branch.y + branch.height).toBeLessThanOrEqual(origin.y + 1);
     expect(branch.x).toBeGreaterThan(origin.x);
     expect(continuation.y).toBe(origin.y);
-    const toolbar = await page.locator('.move-navigation button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { y: r.y, width: r.width, height: r.height }; }));
-    for (const box of toolbar) { expect(box.y).toBe(toolbar[0].y); expect(box.width).toBe(40); expect(box.height).toBe(40); }
+    const toolbar = await page.locator('.move-navigation button').evaluateAll(elements =>
+      elements.map(el => {
+        const r = el.getBoundingClientRect();
+        return { y: r.y, width: r.width, height: r.height };
+      }),
+    );
+    for (const box of toolbar) {
+      expect(box.y).toBe(toolbar[0].y);
+      expect(box.width).toBe(40);
+      expect(box.height).toBe(40);
+    }
     await expect(page.locator('#insight-title #analysis-rating')).toBeVisible();
     await expect(page.locator('#analysis-rating')).toHaveAccessibleName('Bot rating');
     await expect(page.locator('.insight-panel summary')).toHaveCount(0);
@@ -1150,23 +1500,30 @@ for (const width of [320, 390]) {
     await expect(page.getByText('Exploring', { exact: true })).toHaveCount(0);
     await expect(page.getByText('Unreviewed', { exact: false })).toHaveCount(0);
     await expect(page.locator('.selected-quality, .quality-unreviewed')).toHaveCount(0);
-    await expect(page.locator('.footer-analyze').getByRole('button', { name: 'Analyze explored line' })).toBeVisible();
-    const footerGeometry = await page.locator('.analysis-footer-section.footer-row, .analysis-actions, .footer-analyze').evaluateAll((elements) => {
-      const [footer, actions, analyze] = elements as HTMLElement[];
-      const footerRect = footer.getBoundingClientRect();
-      const actionsRect = actions.getBoundingClientRect();
-      const analyzeRect = analyze.getBoundingClientRect();
-      return {
-        footerRight: footerRect.right,
-        paddingRight: parseFloat(getComputedStyle(footer).paddingRight),
-        analyzeRight: analyzeRect.right,
-        actionsTop: actionsRect.top,
-        analyzeTop: analyzeRect.top,
-      };
-    });
+    await expect(
+      page.locator('.footer-analyze').getByRole('button', { name: 'Analyze explored line' }),
+    ).toBeVisible();
+    const footerGeometry = await page
+      .locator('.analysis-footer-section.footer-row, .analysis-actions, .footer-analyze')
+      .evaluateAll(elements => {
+        const [footer, actions, analyze] = elements as HTMLElement[];
+        const footerRect = footer.getBoundingClientRect();
+        const actionsRect = actions.getBoundingClientRect();
+        const analyzeRect = analyze.getBoundingClientRect();
+        return {
+          footerRight: footerRect.right,
+          paddingRight: parseFloat(getComputedStyle(footer).paddingRight),
+          analyzeRight: analyzeRect.right,
+          actionsTop: actionsRect.top,
+          analyzeTop: analyzeRect.top,
+        };
+      });
     // Wrapping allowed on narrow viewports: analyze stays right-aligned and
     // at or below the export buttons, never above them.
-    expect(footerGeometry.analyzeRight).toBeCloseTo(footerGeometry.footerRight - footerGeometry.paddingRight, 0);
+    expect(footerGeometry.analyzeRight).toBeCloseTo(
+      footerGeometry.footerRight - footerGeometry.paddingRight,
+      0,
+    );
     expect(footerGeometry.analyzeTop).toBeGreaterThanOrEqual(footerGeometry.actionsTop);
     const ratingBox = (await page.locator('#analysis-rating').boundingBox())!;
     expect(ratingBox.height).toBeLessThanOrEqual(32);
@@ -1179,7 +1536,9 @@ for (const width of [320, 390]) {
     await expect(page.locator('.board-stage .analysis-actions')).toHaveCount(0);
     await expect(page.locator('section[aria-label="Key moves"] .key-header')).toHaveCount(1);
     await expect(page.getByText('Engine moves', { exact: true })).toHaveCount(0);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
     await page.screenshot({ path: info.outputPath(`variation-${width}.png`), fullPage: true });
     // No return button: step back to the fork, then Next continues original.
     await page.locator('#analysis-prev').click();
@@ -1193,7 +1552,12 @@ for (const width of [320, 390]) {
 for (const originPly of [0, 9, 12]) {
   test(`variation is inserted at its origin ply ${originPly}`, async ({ page }, info) => {
     await page.setViewportSize({ width: 320, height: 844 });
-    await boot(page, {}, false, '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6,b5a4,g8f6,e1g1,f8e7,f1e1,b7b5');
+    await boot(
+      page,
+      {},
+      false,
+      '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6,b5a4,g8f6,e1g1,f8e7,f1e1,b7b5',
+    );
     await page.locator('#analysis-first').click();
     for (let index = 0; index < originPly; index++) await page.locator('#analysis-next').click();
     await expect(page.locator('#analysis-index')).toHaveText(`Position ${originPly + 1} / 13`);
@@ -1203,27 +1567,50 @@ for (const originPly of [0, 9, 12]) {
     await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
     const placement = await variation.evaluate(el => {
       const group = el.parentElement!;
-      const before = []; let sibling = group.previousElementSibling;
-      while (sibling) { before.push(sibling.tagName); sibling = sibling.previousElementSibling; }
+      const before = [];
+      let sibling = group.previousElementSibling;
+      while (sibling) {
+        before.push(sibling.tagName);
+        sibling = sibling.previousElementSibling;
+      }
       if (el.previousElementSibling) before.push(el.previousElementSibling.tagName);
-      const after = []; sibling = group.nextElementSibling;
-      while (sibling) { after.push(sibling.className); sibling = sibling.nextElementSibling; }
-      return { before, after, top: el.getBoundingClientRect().top, parentTop: el.previousElementSibling?.getBoundingClientRect().top, tailTop: group.nextElementSibling?.getBoundingClientRect().top, bottom: el.getBoundingClientRect().bottom };
+      const after = [];
+      sibling = group.nextElementSibling;
+      while (sibling) {
+        after.push(sibling.className);
+        sibling = sibling.nextElementSibling;
+      }
+      return {
+        before,
+        after,
+        top: el.getBoundingClientRect().top,
+        parentTop: el.previousElementSibling?.getBoundingClientRect().top,
+        tailTop: group.nextElementSibling?.getBoundingClientRect().top,
+        bottom: el.getBoundingClientRect().bottom,
+      };
     });
     expect(placement.before).toEqual(Array(originPly).fill('BUTTON'));
     expect(placement.after).toHaveLength(12 - originPly);
     for (const cls of placement.after) expect(cls).toContain('original-move');
     // Upwards expansion: the variation sits above its origin move, and the
     // original continuation stays on the origin (bottom) row below it.
-    if (placement.parentTop !== undefined) expect(placement.bottom).toBeLessThanOrEqual(placement.parentTop + 1);
+    if (placement.parentTop !== undefined)
+      expect(placement.bottom).toBeLessThanOrEqual(placement.parentTop + 1);
     if (placement.tailTop !== undefined) expect(placement.tailTop).toBeGreaterThan(placement.top);
-    await page.screenshot({ path: info.outputPath(`branch-origin-${originPly}.png`), fullPage: true });
+    await page.screenshot({
+      path: info.outputPath(`branch-origin-${originPly}.png`),
+      fullPage: true,
+    });
     await page.locator('#analysis-prev').click();
-    await expect(page.locator('#analysis-index')).toHaveText(`Position ${originPly + 1} / ${originPly + 2}`);
+    await expect(page.locator('#analysis-index')).toHaveText(
+      `Position ${originPly + 1} / ${originPly + 2}`,
+    );
     await page.locator('#analysis-next').click();
     // Next at the fork continues the original line, dropping the branch.
     // (At the tip fork there is no original continuation, so it just exits.)
-    await expect(page.locator('#analysis-index')).toHaveText(originPly === 12 ? 'Position 13 / 13' : `Position ${originPly + 2} / 13`);
+    await expect(page.locator('#analysis-index')).toHaveText(
+      originPly === 12 ? 'Position 13 / 13' : `Position ${originPly + 2} / 13`,
+    );
     await expect(page.getByLabel('Explored variation', { exact: true })).toHaveCount(0);
   });
 }
@@ -1246,14 +1633,23 @@ test('tapping an original move after the branch exits the branch', async ({ page
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 7');
 });
 
-test('analysis keeps one scrolling main row and adds height only for a branch', async ({ page }, info) => {
+test('analysis keeps one scrolling main row and adds height only for a branch', async ({
+  page,
+}, info) => {
   await page.setViewportSize({ width: 320, height: 844 });
-  await boot(page, {}, false, '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6,b5a4,g8f6,e1g1,f8e7,f1e1,b7b5');
+  await boot(
+    page,
+    {},
+    false,
+    '/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6,b5a4,g8f6,e1g1,f8e7,f1e1,b7b5',
+  );
   const list = page.locator('#move-list');
   const height = await list.evaluate(el => el.clientHeight);
   expect(height).toBe(40);
   expect(await list.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
-  const rows = await list.locator('.move-cell').evaluateAll(elements => elements.map(el => el.getBoundingClientRect().y));
+  const rows = await list
+    .locator('.move-cell')
+    .evaluateAll(elements => elements.map(el => el.getBoundingClientRect().y));
   expect(new Set(rows).size).toBe(1);
   await page.locator('#analysis-first').click();
   await page.locator('#analysis-next').click();
@@ -1261,14 +1657,30 @@ test('analysis keeps one scrolling main row and adds height only for a branch', 
   await page.locator('#analysis-last').click();
   await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
   await page.locator('#analysis-first').click();
-  for (const [from, to] of [['d2', 'd4'], ['d7', 'd5'], ['c2', 'c4'], ['e7', 'e6'], ['b1', 'c3'], ['g8', 'f6'], ['c1', 'g5'], ['f8', 'e7'], ['e2', 'e3'], ['e8', 'g8']]) await move(page, from, to);
+  for (const [from, to] of [
+    ['d2', 'd4'],
+    ['d7', 'd5'],
+    ['c2', 'c4'],
+    ['e7', 'e6'],
+    ['b1', 'c3'],
+    ['g8', 'f6'],
+    ['c1', 'g5'],
+    ['f8', 'e7'],
+    ['e2', 'e3'],
+    ['e8', 'g8'],
+  ])
+    await move(page, from, to);
   // The branch-point (64px: one 32px branch row over the origin row)
   // replaces the 40px single-row floor: the flushed move-list padding (no
   // vertical padding since the stacked-panel layout) means the list grows by
   // 24, not a full row.
   expect(await list.evaluate(el => el.clientHeight)).toBe(height + 24);
-  const mainRows = await list.locator('.original-move').evaluateAll(elements => elements.map(el => el.getBoundingClientRect().y));
-  const branchRows = await list.locator('.variation-line .move-cell').evaluateAll(elements => elements.map(el => el.getBoundingClientRect().y));
+  const mainRows = await list
+    .locator('.original-move')
+    .evaluateAll(elements => elements.map(el => el.getBoundingClientRect().y));
+  const branchRows = await list
+    .locator('.variation-line .move-cell')
+    .evaluateAll(elements => elements.map(el => el.getBoundingClientRect().y));
   expect(new Set(mainRows).size).toBe(1);
   expect(new Set(branchRows).size).toBe(1);
   expect(branchRows[0]).toBe(mainRows[0] - 32);
@@ -1292,8 +1704,17 @@ test('desktop analysis branches downward, next rejoins original', async ({ page 
   // Play layout: no toolbar above the board on desktop; flip shares the move row.
   await expect(page.locator('.board-toolbar')).toHaveCount(0);
   await expect(page.locator('.move-navigation .board-actions #flip-board')).toBeVisible();
-  const row = await page.locator('.move-navigation button').evaluateAll(elements => elements.map(el => { const r = el.getBoundingClientRect(); return { y: r.y, width: r.width, height: r.height }; }));
-  for (const box of row) { expect(box.y).toBe(row[0].y); expect(box.width).toBe(40); expect(box.height).toBe(40); }
+  const row = await page.locator('.move-navigation button').evaluateAll(elements =>
+    elements.map(el => {
+      const r = el.getBoundingClientRect();
+      return { y: r.y, width: r.width, height: r.height };
+    }),
+  );
+  for (const box of row) {
+    expect(box.y).toBe(row[0].y);
+    expect(box.width).toBe(40);
+    expect(box.height).toBe(40);
+  }
   await page.goto('http://maia.test/analyze?moves=e2e4,e7e5,g1f3,b8c6,f1b5,a7a6');
   await page.locator('#analysis-first').click();
   await page.locator('#analysis-next').click();
@@ -1319,10 +1740,11 @@ test('complete game navigation keeps board size stable', async ({ page }) => {
   const mate = record(['f2f3', 'e7e5', 'g2g4', 'd8h4'], 'white', 'mate');
   await boot(page, { [KEYS.current]: mate, [KEYS.saved]: [mate] });
   await expect(page.locator('.game-result')).toBeVisible();
-  const size = () => page.locator('#board').evaluate(el => {
-    const r = el.getBoundingClientRect();
-    return { width: r.width, height: r.height };
-  });
+  const size = () =>
+    page.locator('#board').evaluate(el => {
+      const r = el.getBoundingClientRect();
+      return { width: r.width, height: r.height };
+    });
   const tip = await size();
   await page.locator('#analysis-prev').click();
   await expect(page.getByRole('button', { name: 'Return to game' })).toHaveCount(0);
@@ -1334,11 +1756,17 @@ test('complete game navigation keeps board size stable', async ({ page }) => {
 });
 
 test('phone touch movement and board exploration', async ({ browser }) => {
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+  });
   const page = await context.newPage();
   const app = await boot(page);
-  const from = await square(page, 'e2'), to = await square(page, 'e4');
-  await page.touchscreen.tap(from.x, from.y); await page.touchscreen.tap(to.x, to.y);
+  const from = await square(page, 'e2'),
+    to = await square(page, 'e4');
+  await page.touchscreen.tap(from.x, from.y);
+  await page.touchscreen.tap(to.x, to.y);
   await app.reply(0, 'e7e5');
   await piece(page, 'e5', 'black pawn');
   await page.locator('#mobile-menu').tap();
@@ -1351,7 +1779,9 @@ test('phone touch movement and board exploration', async ({ browser }) => {
   // Top-align the insight panel before tapping: on phones the sticky board
   // stage and mobile footer can otherwise cover the row after it scrolls
   // into view.
-  await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
+  await page.locator('.insight-panel').evaluate(el => {
+    el.scrollTop = 0;
+  });
   await page.locator('#insight-content').getByRole('button', { name: 'Explore e4 (played)' }).tap();
   await piece(page, 'e4', 'white pawn');
   await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 2');

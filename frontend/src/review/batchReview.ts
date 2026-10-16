@@ -2,13 +2,33 @@ import { BotApiError, parseHumaError } from '../eval/api';
 import { postJson, readJsonBody } from '../eval/evaluationTransport';
 import { notifyUnauthorized } from '../history/session';
 import { isNonNegativeInt, isRecord, isStringMap } from '../shared/guards';
-import { ReviewsStatusResponse as BatchProgressSchema, ReviewsSubmitResponse as BatchSubmittedSchema } from '../api/generated/maia.zod';
-import { evaluationRequest, batchLineFor, resolveSettings, reviewKey, type BatchLine, type Engine, type ReviewNode, type SettingsInput } from '../eval/evaluationStore';
+import {
+  ReviewsStatusResponse as BatchProgressSchema,
+  ReviewsSubmitResponse as BatchSubmittedSchema,
+} from '../api/generated/maia.zod';
+import {
+  evaluationRequest,
+  batchLineFor,
+  resolveSettings,
+  reviewKey,
+  type BatchLine,
+  type Engine,
+  type ReviewNode,
+  type SettingsInput,
+} from '../eval/evaluationStore';
 
-export type BatchItem = { request: ReturnType<typeof evaluationRequest>; key: string; engine: Engine };
+export type BatchItem = {
+  request: ReturnType<typeof evaluationRequest>;
+  key: string;
+  engine: Engine;
+};
 export type BatchProgress = {
-  job_id: string; total: number; done: number; failed: number;
-  finished: boolean; errors?: Record<string, string>;
+  job_id: string;
+  total: number;
+  done: number;
+  failed: number;
+  finished: boolean;
+  errors?: Record<string, string>;
 };
 export type BatchSubmitted = { job_id: string; total: number; cached: number; pending: number };
 
@@ -51,9 +71,21 @@ export function readPersistedBatch(): PersistedBatch | null {
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed)) return null;
-    if (typeof parsed.jobId !== 'string' || !parsed.jobId || typeof parsed.lineKey !== 'string'
-      || typeof parsed.keysHash !== 'string' || typeof parsed.total !== 'number' || !Number.isInteger(parsed.total)) return null;
-    return { jobId: parsed.jobId, lineKey: parsed.lineKey, keysHash: parsed.keysHash, total: parsed.total };
+    if (
+      typeof parsed.jobId !== 'string' ||
+      !parsed.jobId ||
+      typeof parsed.lineKey !== 'string' ||
+      typeof parsed.keysHash !== 'string' ||
+      typeof parsed.total !== 'number' ||
+      !Number.isInteger(parsed.total)
+    )
+      return null;
+    return {
+      jobId: parsed.jobId,
+      lineKey: parsed.lineKey,
+      keysHash: parsed.keysHash,
+      total: parsed.total,
+    };
   } catch {
     return null;
   }
@@ -82,7 +114,10 @@ export function clearPersistedBatch(jobId?: string): void {
 }
 
 export class BatchGoneError extends Error {
-  constructor() { super('Review batch not found.'); this.name = 'BatchGoneError'; }
+  constructor() {
+    super('Review batch not found.');
+    this.name = 'BatchGoneError';
+  }
 }
 
 // 429 backpressure: the server rejects over-cap submits with 429 +
@@ -116,7 +151,12 @@ const defaultSleep: SleepLike = ms => new Promise(resolve => setTimeout(resolve,
 // objective lane (extra inference the active source needs beyond Stockfish)
 // appends one entry per node under its own Elo keys; entries colliding with
 // an identical display key collapse to one.
-export function buildBatchItems(nodes: ReviewNode[], settings: SettingsInput, engines: Engine[] = ['sf', 'maia'], objectiveLane?: SettingsInput | null): BatchItem[] {
+export function buildBatchItems(
+  nodes: ReviewNode[],
+  settings: SettingsInput,
+  engines: Engine[] = ['sf', 'maia'],
+  objectiveLane?: SettingsInput | null,
+): BatchItem[] {
   const items: BatchItem[] = [];
   const seen = new Set<string>();
   const push = (engine: Engine, node: ReviewNode, resolved: ReturnType<typeof resolveSettings>) => {
@@ -155,13 +195,25 @@ function parseProgress(body: unknown): BatchProgress {
   if (!BatchProgressSchema.safeParse(body).success) {
     throw new BotApiError('unknown', 'The review server returned unreadable data.');
   }
-  if (!isRecord(body) || typeof body.job_id !== 'string'
-    || !isNonNegativeInt(body.total) || !isNonNegativeInt(body.done) || !isNonNegativeInt(body.failed)
-    || typeof body.finished !== 'boolean' || (body.errors !== undefined && !isStringMap(body.errors))) {
+  if (
+    !isRecord(body) ||
+    typeof body.job_id !== 'string' ||
+    !isNonNegativeInt(body.total) ||
+    !isNonNegativeInt(body.done) ||
+    !isNonNegativeInt(body.failed) ||
+    typeof body.finished !== 'boolean' ||
+    (body.errors !== undefined && !isStringMap(body.errors))
+  ) {
     throw new BotApiError('unknown', 'The review server returned unreadable data.');
   }
-  return { job_id: body.job_id, total: body.total, done: body.done, failed: body.failed, finished: body.finished,
-    ...(body.errors === undefined ? {} : { errors: body.errors }) };
+  return {
+    job_id: body.job_id,
+    total: body.total,
+    done: body.done,
+    failed: body.failed,
+    finished: body.finished,
+    ...(body.errors === undefined ? {} : { errors: body.errors }),
+  };
 }
 
 function parseSubmitted(body: unknown, status?: number): BatchSubmitted {
@@ -171,8 +223,13 @@ function parseSubmitted(body: unknown, status?: number): BatchSubmitted {
   if (!BatchSubmittedSchema.safeParse(body).success) {
     throw new BotApiError('unknown', 'The review server returned unreadable data.', status);
   }
-  if (!isRecord(body) || typeof body.job_id !== 'string'
-    || !isNonNegativeInt(body.total) || !isNonNegativeInt(body.cached) || !isNonNegativeInt(body.pending)) {
+  if (
+    !isRecord(body) ||
+    typeof body.job_id !== 'string' ||
+    !isNonNegativeInt(body.total) ||
+    !isNonNegativeInt(body.cached) ||
+    !isNonNegativeInt(body.pending)
+  ) {
     throw new BotApiError('unknown', 'The review server returned unreadable data.', status);
   }
   return { job_id: body.job_id, total: body.total, cached: body.cached, pending: body.pending };
@@ -188,14 +245,29 @@ export function buildBatchLine(nodes: ReviewNode[]): BatchLine {
   return batchLineFor(first.timeline);
 }
 
-export async function submitBatch(items: BatchItem[], line: BatchLine, fetchImpl: FetchLike = fetch, sleepImpl: SleepLike = defaultSleep): Promise<BatchSubmitted> {
+export async function submitBatch(
+  items: BatchItem[],
+  line: BatchLine,
+  fetchImpl: FetchLike = fetch,
+  sleepImpl: SleepLike = defaultSleep,
+): Promise<BatchSubmitted> {
   // The one shared JSON-POST sender (see evaluationTransport.postJson): one
   // send + one body read per attempt. The line ships once; entries carry
   // ply. 429 wait-once backpressure below is per-endpoint policy and stays
   // here; per-endpoint codes ride the shared error map (errorFromBody).
-  const postOnce = () => postJson(fetchImpl, '/reviews', { line, requests: items.map(item => item.request) })
-    .catch(() => { throw new BotApiError('server_unreachable', 'The review server could not be reached.'); });
-  const readSuccess = ({ response, body }: { response: Response; body: unknown }): BatchSubmitted => {
+  const postOnce = () =>
+    postJson(fetchImpl, '/reviews', { line, requests: items.map(item => item.request) }).catch(
+      () => {
+        throw new BotApiError('server_unreachable', 'The review server could not be reached.');
+      },
+    );
+  const readSuccess = ({
+    response,
+    body,
+  }: {
+    response: Response;
+    body: unknown;
+  }): BatchSubmitted => {
     if (!response.ok) throw errorFromBody(response, body, 'The review server rejected this batch.');
     return parseSubmitted(body, response.status);
   };
@@ -213,9 +285,16 @@ export async function submitBatch(items: BatchItem[], line: BatchLine, fetchImpl
   return readSuccess(first);
 }
 
-export async function fetchBatchStatus(jobId: string, fetchImpl: FetchLike = fetch): Promise<BatchProgress> {
-  const response = await fetchImpl(`/reviews/${jobId}`, { method: 'GET', credentials: 'include' })
-    .catch(() => { throw new BotApiError('server_unreachable', 'The review server could not be reached.'); });
+export async function fetchBatchStatus(
+  jobId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<BatchProgress> {
+  const response = await fetchImpl(`/reviews/${jobId}`, {
+    method: 'GET',
+    credentials: 'include',
+  }).catch(() => {
+    throw new BotApiError('server_unreachable', 'The review server could not be reached.');
+  });
   if (response.status === 401) notifyUnauthorized();
   if (response.status === 404) throw new BatchGoneError();
   if (!response.ok) throw await readError(response, 'The review server rejected this batch.');
@@ -236,9 +315,14 @@ export async function fetchBatchStatus(jobId: string, fetchImpl: FetchLike = fet
 // bare BatchProgress as `data` (no wrapper). Native EventSource dispatches
 // named events to their listener, not to onmessage, so only the named
 // listener is subscribed.
-export type BatchEventSource = Pick<EventSource, 'onerror' | 'close' | 'addEventListener' | 'removeEventListener'>;
+export type BatchEventSource = Pick<
+  EventSource,
+  'onerror' | 'close' | 'addEventListener' | 'removeEventListener'
+>;
 export async function subscribeBatchEvents(
-  jobId: string, onProgress: (progress: BatchProgress) => void, signal: AbortSignal,
+  jobId: string,
+  onProgress: (progress: BatchProgress) => void,
+  signal: AbortSignal,
   createSource: new (url: string) => BatchEventSource = globalThis.EventSource,
 ): Promise<void> {
   if (signal.aborted) return;
@@ -249,6 +333,8 @@ export async function subscribeBatchEvents(
     let settled = false;
     const source = new createSource(`/reviews/${jobId}/events`);
     const cleanup = () => {
+      // onerror property pairs with the assignment below (single handler).
+      // oxlint-disable-next-line prefer-add-event-listener
       source.onerror = null;
       source.removeEventListener('progress', handleEvent as EventListener);
       source.close();
@@ -263,7 +349,11 @@ export async function subscribeBatchEvents(
     const handleEvent = (event: MessageEvent) => {
       if (settled || signal.aborted) return;
       let progress: BatchProgress;
-      try { progress = parseProgress(JSON.parse(event.data)); } catch { return; }
+      try {
+        progress = parseProgress(JSON.parse(event.data));
+      } catch {
+        return;
+      }
       onProgress(progress);
       if (progress.finished) {
         settled = true;
@@ -272,6 +362,8 @@ export async function subscribeBatchEvents(
       }
     };
     source.addEventListener('progress', handleEvent as EventListener);
+    // Single-handler error path; cleanup nulls it above.
+    // oxlint-disable-next-line prefer-add-event-listener
     source.onerror = () => {
       if (settled || signal.aborted) return;
       settled = true;

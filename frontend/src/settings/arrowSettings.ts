@@ -29,9 +29,17 @@ const HEX_6 = /^#[0-9a-fA-F]{6}$/;
 const normalizeStyle = (value: unknown, fallback: ArrowStyle): ArrowStyle => {
   if (typeof value !== 'object' || value === null) return fallback;
   const record = value as Record<string, unknown>;
-  const color = typeof record.color === 'string' && HEX_6.test(record.color) ? record.color.toLowerCase() : fallback.color;
-  const width = typeof record.width === 'number' && Number.isInteger(record.width) && record.width >= ARROW_WIDTH_MIN && record.width <= ARROW_WIDTH_MAX
-    ? record.width : fallback.width;
+  const color =
+    typeof record.color === 'string' && HEX_6.test(record.color)
+      ? record.color.toLowerCase()
+      : fallback.color;
+  const width =
+    typeof record.width === 'number' &&
+    Number.isInteger(record.width) &&
+    record.width >= ARROW_WIDTH_MIN &&
+    record.width <= ARROW_WIDTH_MAX
+      ? record.width
+      : fallback.width;
   return color === fallback.color && width === fallback.width ? fallback : { color, width };
 };
 
@@ -53,15 +61,19 @@ export function normalizeArrowSettings(value: unknown): ArrowSettings {
     stockfish: normalizeStyle(stockfishRaw, defaultArrowSettings.stockfish),
     next: normalizeStyle(record.next, defaultArrowSettings.next),
   };
-  return next.actual === defaultArrowSettings.actual && next.bot === defaultArrowSettings.bot
-    && next.objective === defaultArrowSettings.objective && next.stockfish === defaultArrowSettings.stockfish
-    && next.next === defaultArrowSettings.next
-    ? defaultArrowSettings : next;
+  return next.actual === defaultArrowSettings.actual &&
+    next.bot === defaultArrowSettings.bot &&
+    next.objective === defaultArrowSettings.objective &&
+    next.stockfish === defaultArrowSettings.stockfish &&
+    next.next === defaultArrowSettings.next
+    ? defaultArrowSettings
+    : next;
 }
 
 export function sameArrowSettings(a: ArrowSettings, b: ArrowSettings): boolean {
-  return (['actual', 'bot', 'objective', 'stockfish', 'next'] as const).every(key =>
-    a[key].color === b[key].color && a[key].width === b[key].width);
+  return (['actual', 'bot', 'objective', 'stockfish', 'next'] as const).every(
+    key => a[key].color === b[key].color && a[key].width === b[key].width,
+  );
 }
 
 // Opacities stay fixed (the request covers color + size only): the lane
@@ -73,10 +85,30 @@ export function buildReviewBrushes(settings: ArrowSettings): DrawBrushes {
     red: { key: 'r', color: '#882020', opacity: 1, lineWidth: 10 },
     blue: { key: 'b', color: '#003088', opacity: 1, lineWidth: 10 },
     yellow: { key: 'y', color: '#e68f00', opacity: 1, lineWidth: 10 },
-    actual: { key: 'actual', color: settings.actual.color, opacity: 0.45, lineWidth: settings.actual.width },
+    actual: {
+      key: 'actual',
+      color: settings.actual.color,
+      opacity: 0.45,
+      lineWidth: settings.actual.width,
+    },
     bot: { key: 'bot', color: settings.bot.color, opacity: 0.45, lineWidth: settings.bot.width },
-    objective: { key: 'objective', color: settings.objective.color, opacity: 0.45, lineWidth: settings.objective.width },
-    stockfish: { key: 'stockfish', color: settings.stockfish.color, opacity: 0.45, lineWidth: settings.stockfish.width },
-    next: { key: 'next', color: settings.next.color, opacity: 0.45, lineWidth: settings.next.width },
+    objective: {
+      key: 'objective',
+      color: settings.objective.color,
+      opacity: 0.45,
+      lineWidth: settings.objective.width,
+    },
+    stockfish: {
+      key: 'stockfish',
+      color: settings.stockfish.color,
+      opacity: 0.45,
+      lineWidth: settings.stockfish.width,
+    },
+    next: {
+      key: 'next',
+      color: settings.next.color,
+      opacity: 0.45,
+      lineWidth: settings.next.width,
+    },
   };
 }

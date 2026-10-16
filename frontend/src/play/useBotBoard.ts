@@ -20,10 +20,18 @@ type FlightRef = { current: PlayFiringIdentity | null };
 // identity — reply and failure match by request identity in the reducer, and
 // the record guard drops a late response a newer game superseded, so it can
 // never land on a newer game.
-function firePlayRequest(request: State['request'], flight: FlightRef, commit: (action: Action) => void, coordinator: ReviewCoordinator) {
+function firePlayRequest(
+  request: State['request'],
+  flight: FlightRef,
+  commit: (action: Action) => void,
+  coordinator: ReviewCoordinator,
+) {
   const running = flight.current;
   if (!request) {
-    if (running) { flight.current = null; coordinator.abortPlayMove(); }
+    if (running) {
+      flight.current = null;
+      coordinator.abortPlayMove();
+    }
     return;
   }
   if (running && running.id === request.id) return;
@@ -42,7 +50,14 @@ function firePlayRequest(request: State['request'], flight: FlightRef, commit: (
       error => {
         if (flight.current !== record) return;
         flight.current = null;
-        commit({ type: 'failure', request, error: error instanceof DOMException ? new BotApiError('server_unreachable', 'The bot server could not be reached.') : error });
+        commit({
+          type: 'failure',
+          request,
+          error:
+            error instanceof DOMException
+              ? new BotApiError('server_unreachable', 'The bot server could not be reached.')
+              : error,
+        });
       },
     );
   });
@@ -64,28 +79,36 @@ export function useBotBoard(mode: Mode, urlLine?: UrlLine) {
   const [playCoordinator] = useState(() => new ReviewCoordinator());
   const flight = useRef<PlayFiringIdentity | null>(null);
   const lastPersisted = useRef(new Map<string, string>());
-  const dispatch = useCallback((action: Action) => {
-    const before = current.current;
-    const next = reducer(before, action);
-    current.current = next;
-    setState(next);
-    // Commands persist their accepted result immediately, outside React's
-    // replayable reducer/render lifecycle. Boot reads have no mutation command.
-    if (action.type === 'delete') {
-      repository.delete(action.id);
-      const storedSnapshot = readStorage<{ gameId?: string }>(KEYS.snapshot);
-      if (storedSnapshot?.gameId === action.id) {
-        const error = writeStorage(KEYS.snapshot, null);
-        if (error) sync.setPreferenceError(error.message);
+  const dispatch = useCallback(
+    (action: Action) => {
+      const before = current.current;
+      const next = reducer(before, action);
+      current.current = next;
+      setState(next);
+      // Commands persist their accepted result immediately, outside React's
+      // replayable reducer/render lifecycle. Boot reads have no mutation command.
+      if (action.type === 'delete') {
+        repository.delete(action.id);
+        const storedSnapshot = readStorage<{ gameId?: string }>(KEYS.snapshot);
+        if (storedSnapshot?.gameId === action.id) {
+          const error = writeStorage(KEYS.snapshot, null);
+          if (error) sync.setPreferenceError(error.message);
+        }
+      } else if (
+        action.type !== 'sync' &&
+        next !== before &&
+        (next.play !== before.play || (action.type === 'saved' && next.started))
+      ) {
+        if (next.started || next.play.moves.length || next.play.result === 'resigned')
+          repository.save(next.play, next.started);
       }
-    } else if (action.type !== 'sync' && next !== before && (next.play !== before.play || action.type === 'saved' && next.started)) {
-      if (next.started || next.play.moves.length || next.play.result === 'resigned') repository.save(next.play, next.started);
-    }
-    // Execute a fresh play request; abort a superseded flight (takeback,
-    // resign, and new games clear `request` through transition, so the abort
-    // rides along with the same dispatch — no separate effect needed).
-    firePlayRequest(next.request, flight, dispatch, playCoordinator);
-  }, [repository, sync, playCoordinator]);
+      // Execute a fresh play request; abort a superseded flight (takeback,
+      // resign, and new games clear `request` through transition, so the abort
+      // rides along with the same dispatch — no separate effect needed).
+      firePlayRequest(next.request, flight, dispatch, playCoordinator);
+    },
+    [repository, sync, playCoordinator],
+  );
   // Boot + unmount: a restored game with the bot to move carries a request from
   // initialState that no dispatch may ever produce (e.g. history sync fails
   // or returns nothing new), so the mount pass fires it directly — the
@@ -122,21 +145,45 @@ export function useBotBoard(mode: Mode, urlLine?: UrlLine) {
       if (value.games !== previousGames || value.currentId !== previousCurrent) {
         previousGames = value.games;
         previousCurrent = value.currentId;
-        dispatch({ type: 'sync', saved: value.games, currentId: value.currentId, total: value.total, pending: value.pending });
+        dispatch({
+          type: 'sync',
+          saved: value.games,
+          currentId: value.currentId,
+          total: value.total,
+          pending: value.pending,
+        });
       }
     };
     const unsubscribe = repository.subscribe(update);
     update();
     const stop = repository.start();
-    return () => { unsubscribe(); stop(); };
+    return () => {
+      unsubscribe();
+      stop();
+    };
   }, [repository, sync, dispatch]);
 
   useEffect(() => {
     let errorMessage = '';
     for (const [key, value] of [
-      [KEYS.settings, state.play.settings], [KEYS.feedback, state.feedback], [KEYS.playVerdict, state.playVerdict], [KEYS.badgeLoading, state.badgeLoading], [KEYS.coordinatesOnSquares, state.coordinatesOnSquares], [KEYS.sound, state.soundEnabled], [KEYS.boardOrientation, state.boardOrientation], [KEYS.bestLineWindow, state.bestLineWindow], [KEYS.arrows, state.arrows], [KEYS.arrowBasis, state.arrowBasis],
-      [STOCKFISH_STORAGE_KEY, state.stockfish], [KEYS.analysis, state.inputs],
-      [KEYS.snapshot, state.analysisLoaded ? snapshotOf(state.analysis, state.analysisSourceId ?? undefined) : null],
+      [KEYS.settings, state.play.settings],
+      [KEYS.feedback, state.feedback],
+      [KEYS.playVerdict, state.playVerdict],
+      [KEYS.badgeLoading, state.badgeLoading],
+      [KEYS.coordinatesOnSquares, state.coordinatesOnSquares],
+      [KEYS.sound, state.soundEnabled],
+      [KEYS.boardOrientation, state.boardOrientation],
+      [KEYS.bestLineWindow, state.bestLineWindow],
+      [KEYS.arrows, state.arrows],
+      [KEYS.arrowBasis, state.arrowBasis],
+      [STOCKFISH_STORAGE_KEY, state.stockfish],
+      [KEYS.analysis, state.inputs],
+      [
+        KEYS.snapshot,
+        state.analysisLoaded
+          ? snapshotOf(state.analysis, state.analysisSourceId ?? undefined)
+          : null,
+      ],
     ] as const) {
       // Dirty-check: analysis object identity turns over on every move, but
       // its serialized inputs usually do not. Skip identical payloads so a
@@ -153,7 +200,24 @@ export function useBotBoard(mode: Mode, urlLine?: UrlLine) {
       else lastPersisted.current.set(key, serialized);
     }
     sync.setPreferenceError(errorMessage);
-  }, [state.play.settings, state.feedback, state.playVerdict, state.badgeLoading, state.coordinatesOnSquares, state.soundEnabled, state.boardOrientation, state.bestLineWindow, state.arrows, state.arrowBasis, state.stockfish, state.inputs, state.analysisLoaded, state.analysis, state.analysisSourceId, sync]);
+  }, [
+    state.play.settings,
+    state.feedback,
+    state.playVerdict,
+    state.badgeLoading,
+    state.coordinatesOnSquares,
+    state.soundEnabled,
+    state.boardOrientation,
+    state.bestLineWindow,
+    state.arrows,
+    state.arrowBasis,
+    state.stockfish,
+    state.inputs,
+    state.analysisLoaded,
+    state.analysis,
+    state.analysisSourceId,
+    sync,
+  ]);
 
   return { state, dispatch, sync, repository };
 }

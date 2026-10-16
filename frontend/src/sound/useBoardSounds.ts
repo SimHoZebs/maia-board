@@ -15,14 +15,27 @@ export type PlayCursor = { id: string; ply: number };
 export type AnalysisCursor = { root: string; ply: number };
 
 // Pure transition decisions (tested without React): null means silence.
-export function playTransitionSound(prev: PlayCursor | null, id: string, ply: number, moves: readonly string[], resigned: boolean, wasResigned: boolean): SoundKind | null {
+export function playTransitionSound(
+  prev: PlayCursor | null,
+  id: string,
+  ply: number,
+  moves: readonly string[],
+  resigned: boolean,
+  wasResigned: boolean,
+): SoundKind | null {
   if (!prev || prev.id !== id) return null;
   if (resigned && !wasResigned) return 'gameEnd';
   if (ply === prev.ply + 1 && !resigned) return classifyTip(START_FEN, moves.slice(0, ply));
   return null;
 }
 
-export function analysisTransitionSound(prev: AnalysisCursor | null, root: string, ply: number, initialFen: string, displayedMoves: readonly string[]): SoundKind | null {
+export function analysisTransitionSound(
+  prev: AnalysisCursor | null,
+  root: string,
+  ply: number,
+  initialFen: string,
+  displayedMoves: readonly string[],
+): SoundKind | null {
   if (!prev || prev.root !== root || ply !== prev.ply + 1) return null;
   return classifyTip(initialFen, displayedMoves);
 }
@@ -38,7 +51,14 @@ export function useBoardSounds(state: State): void {
       const ply = state.viewedPly ?? state.play.moves.length;
       const resigned = state.play.result === 'resigned';
       const kind = state.soundEnabled
-        ? playTransitionSound(prevPlay.current, id, ply, state.play.moves, resigned, prevResigned.current)
+        ? playTransitionSound(
+            prevPlay.current,
+            id,
+            ply,
+            state.play.moves,
+            resigned,
+            prevResigned.current,
+          )
         : null;
       prevPlay.current = { id, ply };
       prevResigned.current = resigned;
@@ -58,6 +78,14 @@ export function useBoardSounds(state: State): void {
       prevAnalysis.current = { root, ply };
       if (kind) playSound(kind);
     }
-  }, [state.mode, state.soundEnabled, state.play.id, state.play.moves, state.viewedPly,
-    state.play.result, state.analysis, state.analysisLoaded]);
+  }, [
+    state.mode,
+    state.soundEnabled,
+    state.play.id,
+    state.play.moves,
+    state.viewedPly,
+    state.play.result,
+    state.analysis,
+    state.analysisLoaded,
+  ]);
 }

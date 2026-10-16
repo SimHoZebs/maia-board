@@ -9,7 +9,12 @@ import { useEffect, useMemo } from 'react';
 import { buildTimeline } from '../shared/domain';
 import { laneError, lanePoints, laneRows } from '../objective/index';
 import { walkObjectiveLine } from '../objective/bestLine';
-import { reviewNodes, type ReviewCoordinator, type ReviewNode, type ReviewSettings } from './reviewCoordinator';
+import {
+  reviewNodes,
+  type ReviewCoordinator,
+  type ReviewNode,
+  type ReviewSettings,
+} from './reviewCoordinator';
 
 export function useObjectiveBestLine(args: {
   coordinator: ReviewCoordinator;
@@ -25,10 +30,28 @@ export function useObjectiveBestLine(args: {
   // Coordinator snapshot: recompute as rows (and failures) land.
   version: unknown;
 }): string[] {
-  const { coordinator, initialFen, lineMoves, reviewedPly, enabled, window, sfSettingsFor, ensureFrontier, version } = args;
-  const baseKey = useMemo(() => JSON.stringify(lineMoves.slice(0, Math.max(0, reviewedPly))), [lineMoves, reviewedPly]);
+  const {
+    coordinator,
+    initialFen,
+    lineMoves,
+    reviewedPly,
+    enabled,
+    window,
+    sfSettingsFor,
+    ensureFrontier,
+    version,
+  } = args;
+  const baseKey = useMemo(
+    () => JSON.stringify(lineMoves.slice(0, Math.max(0, reviewedPly))),
+    [lineMoves, reviewedPly],
+  );
   const walk = useMemo(() => {
-    if (!enabled || reviewedPly < 1) return { ucis: [], maiaFrontier: null as string[] | null, sfFrontier: null as string[] | null };
+    if (!enabled || reviewedPly < 1)
+      return {
+        ucis: [],
+        maiaFrontier: null as string[] | null,
+        sfFrontier: null as string[] | null,
+      };
     const baseMoves: string[] = JSON.parse(baseKey);
     const nodeFor = (prefix: string[]): ReviewNode | null => {
       try {
@@ -50,7 +73,9 @@ export function useObjectiveBestLine(args: {
         if (!row) return { kind: 'missing' as const };
         if (row.degraded || laneError(coordinator, node)) return { kind: 'none' as const };
         const top = lanePoints([row], [node])[0]?.top;
-        return typeof top === 'string' ? { kind: 'top' as const, uci: top } : { kind: 'none' as const };
+        return typeof top === 'string'
+          ? { kind: 'top' as const, uci: top }
+          : { kind: 'none' as const };
       },
       sfAt: prefix => {
         const node = nodeFor(prefix);

@@ -1,6 +1,13 @@
 import { Chess, type Square } from 'chess.js';
 import { applyUci } from '../shared/domain';
-import { createMoveFacts, TACTIC_VALUES, type ForkFacts, type ForkVictim, type MoveFacts, type PinFacts, type SkewerFacts } from './moveFacts';
+import {
+  createMoveFacts,
+  TACTIC_VALUES,
+  type ForkFacts,
+  type ForkVictim,
+  type MoveFacts,
+  type SkewerFacts,
+} from './moveFacts';
 
 export type CapturedPiece = 'p' | 'n' | 'b' | 'r' | 'q';
 export type Side = 'white' | 'black';
@@ -12,19 +19,21 @@ const isCapturedPiece = (piece: string): piece is CapturedPiece =>
   piece === 'p' || piece === 'n' || piece === 'b' || piece === 'r' || piece === 'q';
 
 export const sortCaptured = (pieces: CapturedPiece[]): CapturedPiece[] =>
-  [...pieces].sort((a, b) => SORT_ORDER[a] - SORT_ORDER[b]);
+  [...pieces].toSorted((a, b) => SORT_ORDER[a] - SORT_ORDER[b]);
 
 // Material from the current board only, so custom starts and promotions are
 // exact. Kings are worthless for the lead. Diff is White-relative.
 export function materialFromFen(fen: string): { white: number; black: number; diff: number } {
   const board = new Chess(fen).board();
-  let white = 0, black = 0;
-  for (const row of board) for (const square of row) {
-    if (!square || square.type === 'k') continue;
-    if (!isCapturedPiece(square.type)) continue;
-    if (square.color === 'w') white += TACTIC_VALUES[square.type];
-    else black += TACTIC_VALUES[square.type];
-  }
+  let white = 0,
+    black = 0;
+  for (const row of board)
+    for (const square of row) {
+      if (!square || square.type === 'k') continue;
+      if (!isCapturedPiece(square.type)) continue;
+      if (square.color === 'w') white += TACTIC_VALUES[square.type];
+      else black += TACTIC_VALUES[square.type];
+    }
   return { white, black, diff: white - black };
 }
 
@@ -54,10 +63,7 @@ export function buildCapturePrefix(initialFen: string, moves: string[]): Capture
   return snapshots;
 }
 
-export function captureAt(
-  prefix: CaptureSnapshot[],
-  ply: number,
-): CaptureSnapshot {
+export function captureAt(prefix: CaptureSnapshot[], ply: number): CaptureSnapshot {
   const clamped = Math.max(0, Math.min(ply, prefix.length - 1));
   return prefix[clamped] ?? { white: [], black: [] };
 }
@@ -93,9 +99,16 @@ const GLYPHS: Record<Side, Record<CapturedPiece, string>> = {
 };
 
 // Glyph for a piece captured BY side (i.e. drawn in the victim's color).
-export const capturedGlyph = (by: Side, piece: CapturedPiece): string => GLYPHS[by === 'white' ? 'white' : 'black'][piece];
+export const capturedGlyph = (by: Side, piece: CapturedPiece): string =>
+  GLYPHS[by === 'white' ? 'white' : 'black'][piece];
 
-const PIECE_NAMES: Record<CapturedPiece, string> = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen' };
+const PIECE_NAMES: Record<CapturedPiece, string> = {
+  p: 'pawn',
+  n: 'knight',
+  b: 'bishop',
+  r: 'rook',
+  q: 'queen',
+};
 
 export function capturedLabel(by: Side, pieces: readonly CapturedPiece[], lead: number): string {
   const side = by === 'white' ? 'White' : 'Black';
@@ -103,10 +116,12 @@ export function capturedLabel(by: Side, pieces: readonly CapturedPiece[], lead: 
   const counts = new Map<CapturedPiece, number>();
   for (const piece of pieces) counts.set(piece, (counts.get(piece) ?? 0) + 1);
   const parts = [...counts.entries()]
-    .sort((a, b) => SORT_ORDER[a[0]] - SORT_ORDER[b[0]])
+    .toSorted((a, b) => SORT_ORDER[a[0]] - SORT_ORDER[b[0]])
     .map(([piece, count]) => `${count} ${PIECE_NAMES[piece]}${count === 1 ? '' : 's'}`);
   const taken = parts.length ? `captured ${parts.join(', ')}` : 'captured nothing';
-  return lead > 0 ? `${side} ${taken}, up ${lead} pawn${lead === 1 ? '' : 's'}` : `${side} ${taken}`;
+  return lead > 0
+    ? `${side} ${taken}, up ${lead} pawn${lead === 1 ? '' : 's'}`
+    : `${side} ${taken}`;
 }
 
 // Piece taken by the played move itself (the far side of a
@@ -120,7 +135,9 @@ export function playedCapture(beforeFen: string, playedUci: string): CapturedPie
     const piece = applyUci(new Chess(beforeFen), playedUci).captured?.toLowerCase();
     if (!piece || !isCapturedPiece(piece)) return null;
     return piece;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 // Best-line material consequence over the next WINDOW plies of a Stockfish
 // rank-1 PV rooted at afterFen (the position after the played mistake).
@@ -157,19 +174,36 @@ export const BEST_LINE_WINDOW_MIN = 1;
 export const BEST_LINE_WINDOW_MAX = 5;
 export const DEFAULT_BEST_LINE_WINDOW = 3;
 export function normalizeBestLineWindow(value: unknown): number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= BEST_LINE_WINDOW_MIN && value <= BEST_LINE_WINDOW_MAX
-    ? value : DEFAULT_BEST_LINE_WINDOW;
+  return typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= BEST_LINE_WINDOW_MIN &&
+    value <= BEST_LINE_WINDOW_MAX
+    ? value
+    : DEFAULT_BEST_LINE_WINDOW;
 }
-const PIECE_ARTICLE: Record<CapturedPiece, string> = { p: 'a pawn', n: 'a knight', b: 'a bishop', r: 'a rook', q: 'a queen' };
+const PIECE_ARTICLE: Record<CapturedPiece, string> = {
+  p: 'a pawn',
+  n: 'a knight',
+  b: 'a bishop',
+  r: 'a rook',
+  q: 'a queen',
+};
 function piecesText(pieces: CapturedPiece[]): string {
   const counts = new Map<CapturedPiece, number>();
   for (const piece of sortCaptured(pieces)) counts.set(piece, (counts.get(piece) ?? 0) + 1);
   const parts = [...counts.entries()].map(([piece, count]) =>
-    count === 1 ? PIECE_ARTICLE[piece] : `${count} ${PIECE_NAMES[piece]}s`);
+    count === 1 ? PIECE_ARTICLE[piece] : `${count} ${PIECE_NAMES[piece]}s`,
+  );
   if (parts.length <= 1) return parts[0] ?? '';
   return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 }
-export function bestLineMaterialNote(afterFen: string, pv: readonly string[] | undefined, mover: Side, windowPlies: number = DEFAULT_BEST_LINE_WINDOW, playedTake: CapturedPiece | null = null): string | null {
+export function bestLineMaterialNote(
+  afterFen: string,
+  pv: readonly string[] | undefined,
+  mover: Side,
+  windowPlies: number = DEFAULT_BEST_LINE_WINDOW,
+  playedTake: CapturedPiece | null = null,
+): string | null {
   const analyzed = analyzeBestLineWindow(afterFen, pv, mover, windowPlies);
   if (!analyzed) return null;
   return noteFromAnalysis(afterFen, analyzed, mover, playedTake);
@@ -182,7 +216,13 @@ export function bestLineMaterialNote(afterFen: string, pv: readonly string[] | u
 // offer a branch. The caller spawns these ucis as a branch rooted at
 // afterFen, landing on its first move so the punishment is on the board.
 export type BestLinePreview = { ucis: string[]; sans: string[]; text: string; note: string };
-export function bestLinePreview(afterFen: string, pv: readonly string[] | undefined, mover: Side, windowPlies: number = DEFAULT_BEST_LINE_WINDOW, playedTake: CapturedPiece | null = null): BestLinePreview | null {
+export function bestLinePreview(
+  afterFen: string,
+  pv: readonly string[] | undefined,
+  mover: Side,
+  windowPlies: number = DEFAULT_BEST_LINE_WINDOW,
+  playedTake: CapturedPiece | null = null,
+): BestLinePreview | null {
   const analyzed = analyzeBestLineWindow(afterFen, pv, mover, windowPlies);
   if (!analyzed) return null;
   // Even non-tactic windows carry a clickable line but no claim: the note
@@ -194,8 +234,19 @@ export function bestLinePreview(afterFen: string, pv: readonly string[] | undefi
   return { ucis: analyzed.ucis, sans, text: formatSanLine(afterFen, sans), note };
 }
 
-type BestLineAnalysis = { ucis: string[]; oppCaptures: CapturedPiece[]; moverCaptures: CapturedPiece[]; oppSide: string; evenExchange: boolean };
-function noteFromAnalysis(afterFen: string, analyzed: BestLineAnalysis, mover: Side, playedTake: CapturedPiece | null = null): string | null {
+type BestLineAnalysis = {
+  ucis: string[];
+  oppCaptures: CapturedPiece[];
+  moverCaptures: CapturedPiece[];
+  oppSide: string;
+  evenExchange: boolean;
+};
+function noteFromAnalysis(
+  afterFen: string,
+  analyzed: BestLineAnalysis,
+  mover: Side,
+  playedTake: CapturedPiece | null = null,
+): string | null {
   // Even exchanges stay silent in the generic composition (no newsworthy
   // swing) but still reach the tactic layer, which names proven even
   // fork/skewer swaps. Null propagates: preview and note stay in agreement.
@@ -231,8 +282,19 @@ function genericNote(analyzed: BestLineAnalysis): string {
 // Geometry (victim discovery, ordering, defended-ness, nets) lives in
 // moveFacts.ts so every claimant shares one computation; this module owns
 // wording only.
-const FORK_NOUNS: Record<ForkVictim, string> = { k: 'king', q: 'queen', r: 'rook', b: 'bishop', n: 'knight' };
-const FORK_PLURALS: Record<Exclude<ForkVictim, 'k'>, string> = { q: 'queens', r: 'rooks', b: 'bishops', n: 'knights' };
+const FORK_NOUNS: Record<ForkVictim, string> = {
+  k: 'king',
+  q: 'queen',
+  r: 'rook',
+  b: 'bishop',
+  n: 'knight',
+};
+const FORK_PLURALS: Record<Exclude<ForkVictim, 'k'>, string> = {
+  q: 'queens',
+  r: 'rooks',
+  b: 'bishops',
+  n: 'knights',
+};
 // Names the tactic when PV move 1 forks or skewers with check and the window
 // proves the consequence. Three material shapes per tactic:
 // - Free win (victim undefended, capture square holds): "Nd4 forks White's
@@ -259,20 +321,26 @@ function tacticNote(afterFen: string, analyzed: BestLineAnalysis, mover: Side): 
   const side = mover === 'white' ? "White's" : "Black's";
   const skewer = facts.skewer();
   if (skewer && !skewer.hanging && analyzed.oppCaptures[0] === skewer.back) {
-    if (analyzed.moverCaptures.length === 1 && analyzed.moverCaptures[0] !== skewer.checkerType) return null;
+    if (analyzed.moverCaptures.length === 1 && analyzed.moverCaptures[0] !== skewer.checkerType)
+      return null;
     return skewerWindowNote(facts.san, side, skewer, analyzed, afterFen, victimColor);
   }
   const fork = facts.fork();
   if (!fork || fork.hanging) return null;
   if (analyzed.oppCaptures[0] !== fork.cheapest) return null;
-  if (analyzed.moverCaptures.length === 1 && analyzed.moverCaptures[0] !== fork.forkerType) return null;
+  if (analyzed.moverCaptures.length === 1 && analyzed.moverCaptures[0] !== fork.forkerType)
+    return null;
   return forkWindowNote(facts.san, side, fork, analyzed, afterFen, victimColor);
 }
 // Shared window tail: free fall vs contested vs proven exchange. The window
 // is trimmed to its last capture, so the capture square is the destination
 // of the final UCI; attacked means the recapture sits one ply past the
 // window and no fall may be claimed.
-function windowTail(afterFen: string, analyzed: BestLineAnalysis, victimColor: 'w' | 'b'): boolean | null {
+function windowTail(
+  afterFen: string,
+  analyzed: BestLineAnalysis,
+  victimColor: 'w' | 'b',
+): boolean | null {
   try {
     const replay = new Chess(afterFen);
     let square: Square | null = null;
@@ -282,15 +350,26 @@ function windowTail(afterFen: string, analyzed: BestLineAnalysis, victimColor: '
     }
     if (!square) return null;
     return replay.attackers(square, victimColor).length > 0;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
-function forkWindowNote(san: string, side: string, fork: ForkFacts, analyzed: BestLineAnalysis, afterFen: string, victimColor: 'w' | 'b'): string | null {
+function forkWindowNote(
+  san: string,
+  side: string,
+  fork: ForkFacts,
+  analyzed: BestLineAnalysis,
+  afterFen: string,
+  victimColor: 'w' | 'b',
+): string | null {
   const lead = `${san} forks ${side} ${joinVictims(fork.victims)}`;
   if (analyzed.moverCaptures.length === 1) {
     const back = analyzed.moverCaptures[0];
     if (fork.net === null) return null;
-    if (fork.net > 0) return `${lead}, losing the ${FORK_NOUNS[fork.cheapest]} for the ${PIECE_NAMES[back]}.`;
-    if (fork.net === 0) return `${lead}, only forcing an even ${FORK_NOUNS[fork.cheapest]}-for-${PIECE_NAMES[back]} exchange.`;
+    if (fork.net > 0)
+      return `${lead}, losing the ${FORK_NOUNS[fork.cheapest]} for the ${PIECE_NAMES[back]}.`;
+    if (fork.net === 0)
+      return `${lead}, only forcing an even ${FORK_NOUNS[fork.cheapest]}-for-${PIECE_NAMES[back]} exchange.`;
     return null;
   }
   const attacked = windowTail(afterFen, analyzed, victimColor);
@@ -299,17 +378,27 @@ function forkWindowNote(san: string, side: string, fork: ForkFacts, analyzed: Be
     // A looming recapture only contests the claim when the net does not
     // survive it: a knight given for a defended rook still wins the
     // exchange after the queen takes it back.
-    if (fork.net !== null && fork.net > 0) return `${lead}, losing the ${FORK_NOUNS[fork.cheapest]}.`;
+    if (fork.net !== null && fork.net > 0)
+      return `${lead}, losing the ${FORK_NOUNS[fork.cheapest]}.`;
     return `${lead}, but only forces an even exchange.`;
   }
   return `${lead}, losing the ${FORK_NOUNS[fork.cheapest]}.`;
 }
-function skewerWindowNote(san: string, side: string, skewer: SkewerFacts, analyzed: BestLineAnalysis, afterFen: string, victimColor: 'w' | 'b'): string | null {
+function skewerWindowNote(
+  san: string,
+  side: string,
+  skewer: SkewerFacts,
+  analyzed: BestLineAnalysis,
+  afterFen: string,
+  victimColor: 'w' | 'b',
+): string | null {
   const lead = `${san} skewers ${side} ${joinVictims(['k', skewer.back])}`;
   if (analyzed.moverCaptures.length === 1) {
     const back = analyzed.moverCaptures[0];
-    if (skewer.net > 0) return `${lead}, losing the ${FORK_NOUNS[skewer.back]} for the ${PIECE_NAMES[back]}.`;
-    if (skewer.net === 0) return `${lead}, only forcing an even ${FORK_NOUNS[skewer.back]}-for-${PIECE_NAMES[back]} exchange.`;
+    if (skewer.net > 0)
+      return `${lead}, losing the ${FORK_NOUNS[skewer.back]} for the ${PIECE_NAMES[back]}.`;
+    if (skewer.net === 0)
+      return `${lead}, only forcing an even ${FORK_NOUNS[skewer.back]}-for-${PIECE_NAMES[back]} exchange.`;
     return null;
   }
   const attacked = windowTail(afterFen, analyzed, victimColor);
@@ -327,7 +416,12 @@ function skewerWindowNote(san: string, side: string, skewer: SkewerFacts, analyz
 // +8 with no capture and would read as a false win (the promotion note owns
 // that story). The caller gates on praise grades, so a blunder capture that
 // hangs a bigger piece never earns this. Never throws.
-export function playedMoveGainNote(beforeFen: string, afterFen: string, playedUci: string, mover: Side): string | null {
+export function playedMoveGainNote(
+  beforeFen: string,
+  afterFen: string,
+  playedUci: string,
+  mover: Side,
+): string | null {
   if (typeof playedUci !== 'string' || playedUci.length === 5) return null;
   let captured: CapturedPiece | null = null;
   try {
@@ -335,12 +429,16 @@ export function playedMoveGainNote(beforeFen: string, afterFen: string, playedUc
     const piece = applyUci(probe, playedUci).captured?.toLowerCase();
     if (!piece || !isCapturedPiece(piece)) return null;
     captured = piece;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
   let swingMover: number;
   try {
     const swingWhite = materialFromFen(afterFen).diff - materialFromFen(beforeFen).diff;
     swingMover = mover === 'white' ? swingWhite : -swingWhite;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
   if (swingMover < 1) return null;
   return `Wins ${piecesText([captured])}.`;
 }
@@ -355,7 +453,11 @@ export function playedMoveGainNote(beforeFen: string, afterFen: string, playedUc
 // positive candidate. Same tight gates (moved piece only, no pawns, no
 // opening capture, no promotions). The caller gates on praise grades.
 // Never throws.
-export function playedMoveForkNote(beforeFen: string, playedUci: string, mover: Side): string | null {
+export function playedMoveForkNote(
+  beforeFen: string,
+  playedUci: string,
+  mover: Side,
+): string | null {
   const facts = createMoveFacts({ beforeFen, playedUci, mover });
   if (!facts) return null;
   return forkPlayedClaim(facts, mover);
@@ -379,7 +481,11 @@ export function forkPlayedClaim(facts: MoveFacts, mover: Side): string | null {
 // slider (Rxe7+) tells the forced-evacuation story, not the fresh-win story —
 // the taken piece is never part of the claim, so unlike the fork no opening-
 // capture exclusion applies. Same praise-grade gating. Never throws.
-export function playedMoveSkewerNote(beforeFen: string, playedUci: string, mover: Side): string | null {
+export function playedMoveSkewerNote(
+  beforeFen: string,
+  playedUci: string,
+  mover: Side,
+): string | null {
   const facts = createMoveFacts({ beforeFen, playedUci, mover });
   if (!facts) return null;
   return skewerPlayedClaim(facts, mover);
@@ -403,7 +509,11 @@ export function skewerPlayedClaim(facts: MoveFacts, mover: Side): string | null 
 // candidate. Same tight gates (moved slider only, no pawns, no opening
 // capture, no promotions). The caller gates on praise grades; the negative
 // concessive path reuses the same claim through pinClaim. Never throws.
-export function playedMovePinNote(beforeFen: string, playedUci: string, mover: Side): string | null {
+export function playedMovePinNote(
+  beforeFen: string,
+  playedUci: string,
+  mover: Side,
+): string | null {
   const facts = createMoveFacts({ beforeFen, playedUci, mover });
   if (!facts) return null;
   return pinPlayedClaim(facts, mover);
@@ -431,7 +541,10 @@ export function fusePinWithMate(pinClaim: string): string {
 // win: even ("Takes the knight back."), winning ("Wins a knight for a
 // pawn."). Losing recaptures stay silent. v1 requires the two takes to share
 // a square and looks one ply back only.
-export function playedMoveExchangeNote(thisPiece: CapturedPiece, prevPiece: CapturedPiece): string | null {
+export function playedMoveExchangeNote(
+  thisPiece: CapturedPiece,
+  prevPiece: CapturedPiece,
+): string | null {
   const net = TACTIC_VALUES[thisPiece] - TACTIC_VALUES[prevPiece];
   if (net < 0) return null;
   if (net > 0) return `Wins ${PIECE_ARTICLE[thisPiece]} for ${PIECE_ARTICLE[prevPiece]}.`;
@@ -443,7 +556,8 @@ export function exchangePlayedClaim(facts: MoveFacts): string | null {
   return playedMoveExchangeNote(recapture.thisPiece, recapture.prevPiece);
 }
 function joinVictims(victims: ForkVictim[]): string {
-  if (victims.length === 2 && victims[0] === victims[1] && victims[0] !== 'k') return `both ${FORK_PLURALS[victims[0]]}`;
+  if (victims.length === 2 && victims[0] === victims[1] && victims[0] !== 'k')
+    return `both ${FORK_PLURALS[victims[0]]}`;
   const nouns = victims.map(victim => FORK_NOUNS[victim]);
   if (nouns.length <= 1) return nouns[0] ?? '';
   return `${nouns.slice(0, -1).join(', ')} and ${nouns[nouns.length - 1]}`;
@@ -451,13 +565,19 @@ function joinVictims(victims: ForkVictim[]): string {
 
 function sansFromWindow(afterFen: string, window: readonly string[]): string[] | null {
   let game: Chess;
-  try { game = new Chess(afterFen); } catch { return null; }
+  try {
+    game = new Chess(afterFen);
+  } catch {
+    return null;
+  }
   const sans: string[] = [];
   for (const uci of window) {
     if (typeof uci !== 'string' || uci.length === 5) return null;
     try {
       sans.push(applyUci(game, uci).san);
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   }
   return sans.length ? sans : null;
 }
@@ -470,7 +590,9 @@ function formatSanLine(afterFen: string, sans: readonly string[]): string {
     turn = parts[1] === 'b' ? 'b' : 'w';
     const parsed = Number(parts[5]);
     if (Number.isInteger(parsed) && parsed > 0) fullmove = parsed;
-  } catch { /* Fall through with 1 w. */ }
+  } catch {
+    /* Fall through with 1 w. */
+  }
   let currentTurn = turn;
   let currentNo = fullmove;
   const numbered = sans.map(san => {
@@ -482,23 +604,44 @@ function formatSanLine(afterFen: string, sans: readonly string[]): string {
   return numbered.join(' ');
 }
 
-function analyzeBestLineWindow(afterFen: string, pv: readonly string[] | undefined, mover: Side, windowPlies: number = DEFAULT_BEST_LINE_WINDOW): BestLineAnalysis | null {
+function analyzeBestLineWindow(
+  afterFen: string,
+  pv: readonly string[] | undefined,
+  mover: Side,
+  windowPlies: number = DEFAULT_BEST_LINE_WINDOW,
+): BestLineAnalysis | null {
   if (!pv || pv.length === 0) return null;
   const window = pv.slice(0, normalizeBestLineWindow(windowPlies));
   let game: Chess;
-  try { game = new Chess(afterFen); } catch { return null; }
+  try {
+    game = new Chess(afterFen);
+  } catch {
+    return null;
+  }
   const opp: Side = mover === 'white' ? 'black' : 'white';
   const oppCaptures: CapturedPiece[] = [];
   const moverCaptures: CapturedPiece[] = [];
   let startDiff: number;
-  try { startDiff = materialFromFen(afterFen).diff; } catch { return null; }
+  try {
+    startDiff = materialFromFen(afterFen).diff;
+  } catch {
+    return null;
+  }
   let lastCapture = -1;
   for (const [ply, uci] of window.entries()) {
     if (typeof uci !== 'string' || uci.length === 5) return null; // promotion: material jump without capture
     let turn: string;
-    try { turn = game.turn(); } catch { return null; }
+    try {
+      turn = game.turn();
+    } catch {
+      return null;
+    }
     let applied: { captured?: string };
-    try { applied = applyUci(game, uci); } catch { return null; }
+    try {
+      applied = applyUci(game, uci);
+    } catch {
+      return null;
+    }
     const captured = applied.captured?.toLowerCase();
     if (captured && isCapturedPiece(captured)) {
       lastCapture = ply;
@@ -511,7 +654,9 @@ function analyzeBestLineWindow(afterFen: string, pv: readonly string[] | undefin
   try {
     const swingWhite = materialFromFen(game.fen()).diff - startDiff;
     swingMover = mover === 'white' ? swingWhite : -swingWhite;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
   if (swingMover > -1) {
     // Even exchanges (swing 0 with one take per side) flow through flagged:
     // the generic composition stays silent on them below, but the tactic
@@ -519,7 +664,13 @@ function analyzeBestLineWindow(afterFen: string, pv: readonly string[] | undefin
     if (swingMover !== 0 || oppCaptures.length !== 1 || moverCaptures.length !== 1) return null;
     if (!window.length) return null;
     const oppSide = opp === 'white' ? 'White' : 'Black';
-    return { ucis: window.slice(0, lastCapture + 1), oppCaptures, moverCaptures, oppSide, evenExchange: true };
+    return {
+      ucis: window.slice(0, lastCapture + 1),
+      oppCaptures,
+      moverCaptures,
+      oppSide,
+      evenExchange: true,
+    };
   }
   if (!oppCaptures.length) return null; // non-capture swing (should not happen outside promotions, already excluded)
   const oppSide = opp === 'white' ? 'White' : 'Black';
@@ -527,5 +678,11 @@ function analyzeBestLineWindow(afterFen: string, pv: readonly string[] | undefin
   // material claim (no captures, no promotions by the gates above), so the
   // clickable line ends where the story ends. The head is never trimmed —
   // the branch must root at the current position to stay explorable.
-  return { ucis: window.slice(0, lastCapture + 1), oppCaptures, moverCaptures, oppSide, evenExchange: false };
+  return {
+    ucis: window.slice(0, lastCapture + 1),
+    oppCaptures,
+    moverCaptures,
+    oppSide,
+    evenExchange: false,
+  };
 }

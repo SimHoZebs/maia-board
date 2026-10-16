@@ -21,7 +21,14 @@ describe('ErrorBoundary', () => {
     expect(ErrorBoundary.getDerivedStateFromError(error)).toEqual({ error });
   });
   it('renders narrow panel fallbacks with scope, message, and retry', () => {
-    const html = renderToString(<PanelError id="board-error" title="Board failed to render" message="injected board crash" onRetry={() => undefined} />);
+    const html = renderToString(
+      <PanelError
+        id="board-error"
+        title="Board failed to render"
+        message="injected board crash"
+        onRetry={() => undefined}
+      />,
+    );
     expect(html).toContain('id="board-error"');
     expect(html).toContain('Board failed to render');
     expect(html).toContain('rest of the board is unaffected');
@@ -37,7 +44,11 @@ describe('play request manual retry', () => {
     let state = reducer(initialState(), { type: 'new', id: 'g', createdAt: '2026-09-10' });
     state = reducer(state, { type: 'move', from: 'e2', to: 'e4' });
     const request = state.request!;
-    state = reducer(state, { type: 'failure', request, error: new BotApiError('engine_busy', 'busy') });
+    state = reducer(state, {
+      type: 'failure',
+      request,
+      error: new BotApiError('engine_busy', 'busy'),
+    });
     expect(state.request).toBeNull();
     expect(state.error).toContain('busy');
     const retried = reducer(state, { type: 'retry' });
@@ -54,9 +65,15 @@ describe('fetchEvaluation messages', () => {
     const line = loadLine('', '1. e4');
     const node = testNodes(line.initialFen, line.moves)[0];
     const signal = new AbortController().signal;
-    await expect(fetchEvaluation(node, signal, vi.fn<typeof fetch>().mockRejectedValue(new TypeError('down'))))
-      .rejects.toThrow('Stockfish is unreachable');
-    await expect(fetchEvaluation(node, signal, vi.fn<typeof fetch>().mockResolvedValue(new Response('not json', { status: 200 }))))
-      .rejects.toThrow('unreadable');
+    await expect(
+      fetchEvaluation(node, signal, vi.fn<typeof fetch>().mockRejectedValue(new TypeError('down'))),
+    ).rejects.toThrow('Stockfish is unreachable');
+    await expect(
+      fetchEvaluation(
+        node,
+        signal,
+        vi.fn<typeof fetch>().mockResolvedValue(new Response('not json', { status: 200 })),
+      ),
+    ).rejects.toThrow('unreadable');
   });
 });

@@ -1,19 +1,46 @@
 import { normalizeSettings, replay, type Settings, type StoredGame } from '../shared/domain';
 import { isRecord, isStringArray } from '../shared/guards';
 
-export const KEYS = { settings: 'maia-board.settings.v1', current: 'maia-board.current-game.v1', saved: 'maia-board.saved-games.v1', analysis: 'maia-board.analysis.v1', snapshot: 'maia-board.analysis-snapshot.v1', feedback: 'maia-board.feedback.v1', playVerdict: 'maia-board.play-verdict.v1', badgeLoading: 'maia-board.badge-loading.v1', coordinatesOnSquares: 'maia-board.coordinates-on-squares.v1', sound: 'maia-board.sound-enabled.v1', boardOrientation: 'maia-board.board-orientation.v1', bestLineWindow: 'maia-board.best-line-window.v1', arrows: 'maia-board.arrows.v1', arrowBasis: 'maia-board.arrow-basis.v1', userEloAnchor: 'maia-board.user-elo-anchor.v1', lichessSync: 'maia-board.lichess-sync.v1', lichessEloBasis: 'maia-board.lichess-elo-basis.v1' };
+export const KEYS = {
+  settings: 'maia-board.settings.v1',
+  current: 'maia-board.current-game.v1',
+  saved: 'maia-board.saved-games.v1',
+  analysis: 'maia-board.analysis.v1',
+  snapshot: 'maia-board.analysis-snapshot.v1',
+  feedback: 'maia-board.feedback.v1',
+  playVerdict: 'maia-board.play-verdict.v1',
+  badgeLoading: 'maia-board.badge-loading.v1',
+  coordinatesOnSquares: 'maia-board.coordinates-on-squares.v1',
+  sound: 'maia-board.sound-enabled.v1',
+  boardOrientation: 'maia-board.board-orientation.v1',
+  bestLineWindow: 'maia-board.best-line-window.v1',
+  arrows: 'maia-board.arrows.v1',
+  arrowBasis: 'maia-board.arrow-basis.v1',
+  userEloAnchor: 'maia-board.user-elo-anchor.v1',
+  lichessSync: 'maia-board.lichess-sync.v1',
+  lichessEloBasis: 'maia-board.lichess-elo-basis.v1',
+};
 export function readStorage<T>(key: string): T | undefined {
   // Quarantined JSON boundary: JSON.parse() returns `any`, which flows into
   // the generic without an assertion. Every caller validates downstream —
   // restoreGame (saved/current games), normalizeSettings (settings),
   // normalizeStockfishSettings / === true checks (state.ts), and key-specific
   // narrowing (useBotBoard.ts) — so no `as` cast is needed or allowed here.
-  try { const value = localStorage.getItem(key); return value ? JSON.parse(value) : undefined; }
-  catch { return undefined; }
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 export function writeStorage(key: string, value: unknown): Error | undefined {
-  try { localStorage.setItem(key, JSON.stringify(value)); }
-  catch (cause) { return new Error(`Local storage is unavailable: ${cause instanceof Error ? cause.message : String(cause)}`); }
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (cause) {
+    return new Error(
+      `Local storage is unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+  }
 }
 // Narrows unvalidated storage JSON to normalizeSettings' input without
 // asserting: only values normalizeSettings can distinguish pass through (its
@@ -35,19 +62,36 @@ function toSettingsInput(value: unknown): Partial<Settings> | undefined {
 }
 export function restoreGame(value: unknown): StoredGame | undefined {
   if (!isRecord(value)) return;
-  const { id, moves, createdAt, settings, result, source, opponent, ratingDiff, rating_diff } = value;
+  const { id, moves, createdAt, settings, result, source, opponent, ratingDiff, rating_diff } =
+    value;
   if (typeof id !== 'string' || !isStringArray(moves)) return;
   const diff = ratingDiff ?? rating_diff;
   try {
     replay(moves);
-    return { id, moves, createdAt: typeof createdAt === 'string' ? createdAt : new Date(0).toISOString(), settings: normalizeSettings(toSettingsInput(settings)), ...(result === 'resigned' ? { result: 'resigned' as const } : {}),
+    return {
+      id,
+      moves,
+      createdAt: typeof createdAt === 'string' ? createdAt : new Date(0).toISOString(),
+      settings: normalizeSettings(toSettingsInput(settings)),
+      ...(result === 'resigned' ? { result: 'resigned' as const } : {}),
       ...(typeof source === 'string' && source.length > 0 && source.length <= 64 ? { source } : {}),
-      ...(typeof opponent === 'string' && opponent.length > 0 && opponent.length <= 64 ? { opponent } : {}),
-      ...(typeof diff === 'number' && Number.isInteger(diff) && diff >= -1000 && diff <= 1000 ? { ratingDiff: diff } : {}) };
-  } catch { return; }
+      ...(typeof opponent === 'string' && opponent.length > 0 && opponent.length <= 64
+        ? { opponent }
+        : {}),
+      ...(typeof diff === 'number' && Number.isInteger(diff) && diff >= -1000 && diff <= 1000
+        ? { ratingDiff: diff }
+        : {}),
+    };
+  } catch {
+    return;
+  }
 }
 export function loadSaved(): StoredGame[] {
   const raw = readStorage<unknown>(KEYS.saved);
-  return Array.isArray(raw) ? raw.map(restoreGame).filter((game): game is StoredGame => !!game) : [];
+  return Array.isArray(raw)
+    ? raw.map(restoreGame).filter((game): game is StoredGame => !!game)
+    : [];
 }
-export function loadSettings(): Settings { return normalizeSettings(readStorage<Partial<Settings>>(KEYS.settings)); }
+export function loadSettings(): Settings {
+  return normalizeSettings(readStorage<Partial<Settings>>(KEYS.settings));
+}

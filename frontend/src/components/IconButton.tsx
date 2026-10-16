@@ -6,6 +6,16 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react';
 // `.header-action`), which the browser specs assert on. Callers pass the icon
 // element (lucide, size 18) as children. Hard-coded attributes come last so
 // callers cannot accidentally override them.
-export function IconButton({ id, label, className, children, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; children: ReactNode }) {
-  return <button {...rest} id={id} type="button" aria-label={label} title={label} className={className}>{children}</button>;
+export function IconButton({
+  id,
+  label,
+  className,
+  children,
+  ...rest
+}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; children: ReactNode }) {
+  return (
+    <button {...rest} id={id} type="button" aria-label={label} title={label} className={className}>
+      {children}
+    </button>
+  );
 }

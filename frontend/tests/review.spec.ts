@@ -6,8 +6,18 @@ import { defaultStockfishSettings, stockfishPolicy } from '../src/eval/stockfish
 import { KEYS } from '../src/history/storage';
 import { EvaluationFixture, evaluationIdentity } from './evaluation-fixture';
 
-async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,20,200,-700,-680]) {
-  const requests: { engine: string; moves: string[]; initial_fen: string; elo_maia?: number; live: boolean }[] = [];
+async function bootReview(
+  page: Page,
+  pgn = '1. e4 e5 2. Nf3 Nc6',
+  scores = [20, 20, 200, -700, -680],
+) {
+  const requests: {
+    engine: string;
+    moves: string[];
+    initial_fen: string;
+    elo_maia?: number;
+    live: boolean;
+  }[] = [];
   const cache = new EvaluationFixture();
   const evaluations = cache.entries;
   const errors: string[] = [];
@@ -17,7 +27,15 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
   // results into its eval cache so the post-batch prime resolves by lookup.
   // Without that filing, finished batches would leave every position missing
   // and no test could observe a settled line.
-  const batches = new Map<string, { total: number; line: { initial_fen: string; moves: string[] }; requests: any[]; filed: boolean }>();
+  const batches = new Map<
+    string,
+    {
+      total: number;
+      line: { initial_fen: string; moves: string[] };
+      requests: any[];
+      filed: boolean;
+    }
+  >();
   let batchSeq = 0;
   // Best-move selection shared by both engines: stay on the main test
   // line while it is legal, else fall back to the first legal move. The
@@ -25,17 +43,27 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
   // moves[0]); keep it so mocked bot play follows the PGN under test.
   const bestMove = (payload: any) => {
     const game = replay(payload.moves, payload.initial_fen);
-    const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
+    const legal = game
+      .moves({ verbose: true })
+      .map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
     const preferred = ['e2e4', 'e7e5', 'g1f3', 'b8c6'][payload.moves.length];
     return legal.includes(preferred) ? preferred : legal[0];
   };
   const maiaValue = (payload: any) => {
     const best = bestMove(payload);
     const game = replay(payload.moves, payload.initial_fen);
-    const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
+    const legal = game
+      .moves({ verbose: true })
+      .map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
     const second = legal.find(move => move !== best) ?? best;
-    const extra = second === best ? [] : [{ move: second, prob: .25, wdl: [.2,.3,.5] }];
-    return { move: best, top_moves: [{ move: best, prob: .6, wdl: [.2,.3,.5] }, ...extra], wdl: [.2,.3,.5], model_used: payload.model, degraded: false };
+    const extra = second === best ? [] : [{ move: second, prob: 0.25, wdl: [0.2, 0.3, 0.5] }];
+    return {
+      move: best,
+      top_moves: [{ move: best, prob: 0.6, wdl: [0.2, 0.3, 0.5] }, ...extra],
+      wdl: [0.2, 0.3, 0.5],
+      model_used: payload.model,
+      degraded: false,
+    };
   };
   // Objective (2400) lane: same PGN-following top as the display lane
   // while the PGN move holds (mover loss < 5), diverging to the first
@@ -46,12 +74,17 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
   // carries the position WDL (per-move WDLs are a server detail).
   const gradeValue = (payload: any) => {
     const game = replay(payload.moves, payload.initial_fen);
-    const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
+    const legal = game
+      .moves({ verbose: true })
+      .map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
     const pgn = bestMove(payload);
     const ply = payload.moves.length;
     const whiteWin = (cp: number) => 100 / (1 + Math.exp(-0.00368208 * cp));
-    const moverExp = (cp: number) => game.turn() === 'w' ? whiteWin(cp) : 100 - whiteWin(cp);
-    const loss = Math.max(0, moverExp(scores[ply] ?? 0) - moverExp(scores[ply + 1] ?? scores[ply] ?? 0));
+    const moverExp = (cp: number) => (game.turn() === 'w' ? whiteWin(cp) : 100 - whiteWin(cp));
+    const loss = Math.max(
+      0,
+      moverExp(scores[ply] ?? 0) - moverExp(scores[ply + 1] ?? scores[ply] ?? 0),
+    );
     const cp = scores[ply] ?? 0;
     const white = whiteWin(cp);
     const win = (game.turn() === 'w' ? white : 100 - white) / 100;
@@ -60,19 +93,32 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
       const top = legal.find(move => move !== pgn) ?? legal[0];
       // Single-legal-move positions (forced): no second entry, or the
       // duplicate-move validation rejects the row.
-      const entries = top === pgn
-        ? [{ move: top, prob: .6, wdl }]
-        : [{ move: top, prob: .5, wdl }, { move: pgn, prob: .3, wdl }];
+      const entries =
+        top === pgn
+          ? [{ move: top, prob: 0.6, wdl }]
+          : [
+              { move: top, prob: 0.5, wdl },
+              { move: pgn, prob: 0.3, wdl },
+            ];
       return { move: top, top_moves: entries, wdl, model_used: '79m', degraded: false };
     }
     const second = legal.find(move => move !== pgn) ?? pgn;
-    const extra = second === pgn ? [] : [{ move: second, prob: .25, wdl }];
-    return { move: pgn, top_moves: [{ move: pgn, prob: .6, wdl }, ...extra], wdl, model_used: '79m', degraded: false };
+    const extra = second === pgn ? [] : [{ move: second, prob: 0.25, wdl }];
+    return {
+      move: pgn,
+      top_moves: [{ move: pgn, prob: 0.6, wdl }, ...extra],
+      wdl,
+      model_used: '79m',
+      degraded: false,
+    };
   };
-  const botOrGrade = (payload: any) => payload.elo_maia === 2400 ? gradeValue(payload) : maiaValue(payload);
+  const botOrGrade = (payload: any) =>
+    payload.elo_maia === 2400 ? gradeValue(payload) : maiaValue(payload);
   const sfValue = (payload: any) => {
     const game = replay(payload.moves, payload.initial_fen);
-    const legal = game.moves({ verbose: true }).map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
+    const legal = game
+      .moves({ verbose: true })
+      .map(move => `${move.from}${move.to}${move.promotion ?? ''}`);
     const best = bestMove(payload);
     const score = { type: 'cp', value: scores[payload.moves.length] ?? 0 };
     // The app hardcodes Stockfish lines to 1: return exactly the requested
@@ -82,7 +128,12 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
     const depth = 12 + payload.moves.length;
     const ranked = [best, ...legal.filter(move => move !== best)].slice(0, count);
     return {
-      engine: 'Stockfish 19', search_policy: stockfishPolicy(payload.settings ?? defaultStockfishSettings), depth, terminal: null, best_move: ranked[0] ?? null, score,
+      engine: 'Stockfish 19',
+      search_policy: stockfishPolicy(payload.settings ?? defaultStockfishSettings),
+      depth,
+      terminal: null,
+      best_move: ranked[0] ?? null,
+      score,
       lines: ranked.map(move => ({ move, score, depth })),
     };
   };
@@ -93,8 +144,17 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
     for (const request of job.requests) {
       // Mock math replays the game, so it needs the move list; the row files
       // under the entry's native coordinates plus the shared line.
-      const payload = { ...request, moves: job.line.moves.slice(0, request.ply), initial_fen: job.line.initial_fen };
-      cache.set(request.engine, request, request.engine === 'maia' ? botOrGrade(payload) : sfValue(payload), job.line);
+      const payload = {
+        ...request,
+        moves: job.line.moves.slice(0, request.ply),
+        initial_fen: job.line.initial_fen,
+      };
+      cache.set(
+        request.engine,
+        request,
+        request.engine === 'maia' ? botOrGrade(payload) : sfValue(payload),
+        job.line,
+      );
     }
   };
   page.on('pageerror', error => errors.push(error.message));
@@ -105,7 +165,9 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
     // move shows its verdict.
     if (path === '/openings') {
       const moves = route.request().postDataJSON()?.moves;
-      await route.fulfill({ json: { matches: [], book_flags: Array.isArray(moves) ? moves.map(() => false) : [] } });
+      await route.fulfill({
+        json: { matches: [], book_flags: Array.isArray(moves) ? moves.map(() => false) : [] },
+      });
       return;
     }
     const method = route.request().method();
@@ -116,17 +178,31 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
       const line = body?.line ?? { initial_fen: '', moves: [] };
       const jobId = `mock-batch-${++batchSeq}`;
       batches.set(jobId, { total: requests.length, line, requests, filed: false });
-      await route.fulfill({ json: { job_id: jobId, total: requests.length, cached: 0, pending: requests.length } });
+      await route.fulfill({
+        json: { job_id: jobId, total: requests.length, cached: 0, pending: requests.length },
+      });
       return;
     }
     if (path.startsWith('/reviews/')) {
       const segments = path.slice('/reviews/'.length).split('/');
       const job = batches.get(segments[0]);
-      if (job === undefined) { await route.fulfill({ status: 404, body: '' }); return; }
+      if (job === undefined) {
+        await route.fulfill({ status: 404, body: '' });
+        return;
+      }
       fileBatch(segments[0]);
-      const progress = { job_id: segments[0], total: job.total, done: job.total, failed: 0, finished: true };
+      const progress = {
+        job_id: segments[0],
+        total: job.total,
+        done: job.total,
+        failed: 0,
+        finished: true,
+      };
       if (segments[1] === 'events') {
-        await route.fulfill({ body: `data: ${JSON.stringify({ progress })}\n\n`, contentType: 'text/event-stream' });
+        await route.fulfill({
+          body: `data: ${JSON.stringify({ progress })}\n\n`,
+          contentType: 'text/event-stream',
+        });
         return;
       }
       await route.fulfill({ json: progress });
@@ -148,27 +224,52 @@ async function bootReview(page: Page, pgn = '1. e4 e5 2. Nf3 Nc6', scores = [20,
       }
       const value = path === '/evaluate' ? sfValue(payload) : botOrGrade(payload);
       cache.set(engine, payload, value);
-      await route.fulfill({ json: value }); return;
+      await route.fulfill({ json: value });
+      return;
     }
     if (path === '/games' || path.startsWith('/games/')) {
       const method = route.request().method();
-      if (method === 'GET' && path === '/games') { await route.fulfill({ json: { games: [], current_id: null, total: 0, next_offset: null } }); return; }
-      if (method === 'POST') {
-        const body = route.request().postDataJSON();
-        await route.fulfill({ json: { id: body.id ?? 'mock-game', created_at: '2026-09-10T00:00:00Z', updated_at: '2026-09-10T00:00:00Z', user_color: body.user_color, elo_maia: body.elo_maia, elo_user: body.elo_user, model: body.model, moves: body.moves, temperature: body.temperature ?? 0 } });
+      if (method === 'GET' && path === '/games') {
+        await route.fulfill({ json: { games: [], current_id: null, total: 0, next_offset: null } });
         return;
       }
-      await route.fulfill({ status: 204, body: '' }); return;
+      if (method === 'POST') {
+        const body = route.request().postDataJSON();
+        await route.fulfill({
+          json: {
+            id: body.id ?? 'mock-game',
+            created_at: '2026-09-10T00:00:00Z',
+            updated_at: '2026-09-10T00:00:00Z',
+            user_color: body.user_color,
+            elo_maia: body.elo_maia,
+            elo_user: body.elo_user,
+            model: body.model,
+            moves: body.moves,
+            temperature: body.temperature ?? 0,
+          },
+        });
+        return;
+      }
+      await route.fulfill({ status: 204, body: '' });
+      return;
     }
     const filename = path.startsWith('/assets/') ? path.slice(1) : 'index.html';
-    await route.fulfill({ body: await readFile(resolve('dist-browser', filename)), contentType: filename.endsWith('.js') ? 'text/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html' });
+    await route.fulfill({
+      body: await readFile(resolve('dist-browser', filename)),
+      contentType: filename.endsWith('.js')
+        ? 'text/javascript'
+        : filename.endsWith('.css')
+          ? 'text/css'
+          : 'text/html',
+    });
   });
   // Fresh contexts default to past arrows; seed next so this fixture keeps
   // exercising next-mode rendering (the unit test pins the past default,
   // and the basis test below covers both modes explicitly).
   await page.addInitScript(() => localStorage.setItem('maia-board.arrow-basis.v1', '"next"'));
   await page.goto('http://maia.test/analyze');
-  await page.locator('#analysis-pgn').fill(pgn);   await page.locator('#load-analysis').click();
+  await page.locator('#analysis-pgn').fill(pgn);
+  await page.locator('#load-analysis').click();
   return { requests, errors, evaluations, batches };
 }
 const lines = (page: Page) => page.locator('#board svg.cg-shapes line');
@@ -176,11 +277,15 @@ const lines = (page: Page) => page.locator('#board svg.cg-shapes line');
 // frontiers) trail settled evaluations by design, so request-count snapshots
 // must wait for the count to stabilize first instead of racing them.
 async function settleRequests(page: Page, app: { requests: unknown[] }, rounds = 3) {
-  let stable = 0, last = -1;
+  let stable = 0,
+    last = -1;
   while (stable < rounds) {
     await page.waitForTimeout(200);
     if (app.requests.length === last) stable++;
-    else { last = app.requests.length; stable = 0; }
+    else {
+      last = app.requests.length;
+      stable = 0;
+    }
   }
 }
 // Click-click board move for analysis branching (mirrors board.spec's helper:
@@ -189,13 +294,21 @@ async function boardMove(page: Page, from: string, to: string) {
   const board = page.locator('#board cg-board');
   await board.scrollIntoViewIfNeeded();
   const bounds = (await board.boundingBox())!;
-  const black = await page.locator('#board .cg-wrap').evaluate(el => el.classList.contains('orientation-black'));
+  const black = await page
+    .locator('#board .cg-wrap')
+    .evaluate(el => el.classList.contains('orientation-black'));
   const point = (key: string) => {
-    const file = key.charCodeAt(0) - 97, rank = Number(key[1]) - 1;
-    return { x: bounds.x + (black ? 7 - file + 0.5 : file + 0.5) * bounds.width / 8, y: bounds.y + (black ? rank + 0.5 : 7 - rank + 0.5) * bounds.height / 8 };
+    const file = key.charCodeAt(0) - 97,
+      rank = Number(key[1]) - 1;
+    return {
+      x: bounds.x + ((black ? 7 - file + 0.5 : file + 0.5) * bounds.width) / 8,
+      y: bounds.y + ((black ? rank + 0.5 : 7 - rank + 0.5) * bounds.height) / 8,
+    };
   };
-  const a = point(from), b = point(to);
-  await page.mouse.click(a.x, a.y); await page.mouse.click(b.x, b.y);
+  const a = point(from),
+    b = point(to);
+  await page.mouse.click(a.x, a.y);
+  await page.mouse.click(b.x, b.y);
 }
 test('standalone FEN shows a fused key row; click branches', async ({ page }) => {
   const app = await bootReview(page);
@@ -213,7 +326,9 @@ test('standalone FEN shows a fused key row; click branches', async ({ page }) =>
   // Rows branch on click with no hover preview: there is no lookahead arrow.
   await bot.getByRole('button', { name: 'Explore e4', exact: true }).click();
   await expect(page.locator('.move-cell')).toContainText('23. e4');
-  await expect(bot.getByRole('button', { name: 'Explore e4 (played) from before this move', exact: true })).toBeVisible();
+  await expect(
+    bot.getByRole('button', { name: 'Explore e4 (played) from before this move', exact: true }),
+  ).toBeVisible();
   // Back at the branch root the same row branches again.
   await page.locator('#analysis-first').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 2');
@@ -227,22 +342,38 @@ test('root shows the fallback notice without model parameters', async ({ page })
     const body = route.request().postDataJSON();
     const move = replay(body.moves, body.initial_fen).moves({ verbose: true })[0];
     const uci = `${move.from}${move.to}${move.promotion ?? ''}`;
-    return route.fulfill({ json: { move: uci, top_moves: [{ move: uci, prob: .13, wdl: [.2,.3,.5] }], wdl: [.2,.3,.5], model_used: '5m', degraded: true } });
+    return route.fulfill({
+      json: {
+        move: uci,
+        top_moves: [{ move: uci, prob: 0.13, wdl: [0.2, 0.3, 0.5] }],
+        wdl: [0.2, 0.3, 0.5],
+        model_used: '5m',
+        degraded: true,
+      },
+    });
   });
   await page.goto('http://maia.test/analyze?moves=');
   await expect(page.locator('#insight-content')).toBeVisible();
-  await expect(page.locator('section[aria-label="Key moves"]').getByText('Bot fallback results.', { exact: true })).toBeVisible();
+  await expect(
+    page
+      .locator('section[aria-label="Key moves"]')
+      .getByText('Bot fallback results.', { exact: true }),
+  ).toBeVisible();
   await expect(page.getByText('Bot 2400 fallback results.', { exact: true })).toBeVisible();
   expect(app.errors).toEqual([]);
 });
 
-test('adjacent backward navigation animates and loaded positions start settled', async ({ page }) => {
+test('adjacent backward navigation animates and loaded positions start settled', async ({
+  page,
+}) => {
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await bootReview(page);
   await expect(page.locator('#board piece.anim')).toHaveCount(0);
   const animated = await page.evaluate(async () => {
     document.querySelector<HTMLButtonElement>('#analysis-prev')!.click();
-    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    await new Promise<void>(resolve =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
     return document.querySelectorAll('#board piece.anim').length;
   });
   expect(animated).toBeGreaterThan(0);
@@ -256,27 +387,53 @@ async function atStart(page: Page) {
   await expect(lines(page)).toHaveCount(4);
 }
 test('automatic review shows real overlapping SVG arrows', async ({ page }, info) => {
-  const app = await bootReview(page); await atStart(page);
-  const strokes = async () => lines(page).evaluateAll(elements => elements.map(el => ({ color: el.getAttribute('stroke'), opacity: el.getAttribute('opacity'), width: el.getAttribute('stroke-width'), from: [el.getAttribute('x1'), el.getAttribute('y1')], to: [el.getAttribute('x2'), el.getAttribute('y2')] })));
+  const app = await bootReview(page);
+  await atStart(page);
+  const strokes = async () =>
+    lines(page).evaluateAll(elements =>
+      elements.map(el => ({
+        color: el.getAttribute('stroke'),
+        opacity: el.getAttribute('opacity'),
+        width: el.getAttribute('stroke-width'),
+        from: [el.getAttribute('x1'), el.getAttribute('y1')],
+        to: [el.getAttribute('x2'), el.getAttribute('y2')],
+      })),
+    );
   const arrows = await strokes();
-  expect(arrows.map(arrow => arrow.color)).toEqual(['#ffffff','#ef4444','#facc15','#3b82f6']);
-  expect(arrows.map(arrow => arrow.width)).toEqual(['0.1875','0.125','0.09375','0.0625']);
-  expect(arrows.map(arrow => arrow.opacity)).toEqual(['0.45','0.45','0.45','0.45']);
-  expect(arrows.every(arrow => JSON.stringify(arrow.from) === JSON.stringify(arrows[0].from) && JSON.stringify(arrow.to) === JSON.stringify(arrows[0].to))).toBe(true);
+  expect(arrows.map(arrow => arrow.color)).toEqual(['#ffffff', '#ef4444', '#facc15', '#3b82f6']);
+  expect(arrows.map(arrow => arrow.width)).toEqual(['0.1875', '0.125', '0.09375', '0.0625']);
+  expect(arrows.map(arrow => arrow.opacity)).toEqual(['0.45', '0.45', '0.45', '0.45']);
+  expect(
+    arrows.every(
+      arrow =>
+        JSON.stringify(arrow.from) === JSON.stringify(arrows[0].from) &&
+        JSON.stringify(arrow.to) === JSON.stringify(arrows[0].to),
+    ),
+  ).toBe(true);
   await expect(lines(page)).toHaveCount(4);
   // Analysis board defaults to auto orientation (reviewed side at bottom, white here) with no flip button.
   await expect(page.locator('#flip-board')).toHaveCount(0);
   await expect(page.locator('#board .cg-wrap')).toHaveClass(/orientation-white/);
-  await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
+  await page.locator('.insight-panel').evaluate(el => {
+    el.scrollTop = 0;
+  });
   await page.screenshot({ path: info.outputPath('coincident-arrows.png'), fullPage: true });
   expect(app.errors).toEqual([]);
   // Display + grading lanes each fetch the root once in the foreground.
-  expect(app.requests.filter(request => (request.engine === '/move' || request.engine === '/move/analysis') && request.moves.length === 0)).toHaveLength(2);
+  expect(
+    app.requests.filter(
+      request =>
+        (request.engine === '/move' || request.engine === '/move/analysis') &&
+        request.moves.length === 0,
+    ),
+  ).toHaveLength(2);
 });
-test('whole game completes independently of viewing and updates the position balance', async ({ page }, info) => {
+test('whole game completes independently of viewing and updates the position balance', async ({
+  page,
+}, info) => {
   // Book chips would occupy the badge boxes on this all-book line (see
   // badge-loading.spec.ts): the fixture names nothing so verdicts render.
-  const app = await bootReview(page, '1. e4 e5 2. Nf3 Nc6', [20,20,200,-700,-680]);
+  const app = await bootReview(page, '1. e4 e5 2. Nf3 Nc6', [20, 20, 200, -700, -680]);
   await expect(page.locator('.balance-white-tag')).toHaveText('8%');
   await expect(page.locator('.balance-black-tag')).toHaveText('92%');
   await expect(page.locator('.balance-draw-tag')).toHaveCount(0);
@@ -301,8 +458,12 @@ test('whole game completes independently of viewing and updates the position bal
   await expect(page.locator('.balance-white-tag')).toHaveText('7%');
   await expect(page.locator('.balance-black-tag')).toHaveText('93%');
   await expect(page.locator('.balance-draw-tag')).toHaveCount(0);
-  await expect(page.locator('.balance-track')).toHaveAccessibleName(/White 7%.*Draw 0%.*Black 93%.*estimated White winning chance 7%/);
-  await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
+  await expect(page.locator('.balance-track')).toHaveAccessibleName(
+    /White 7%.*Draw 0%.*Black 93%.*estimated White winning chance 7%/,
+  );
+  await page.locator('.insight-panel').evaluate(el => {
+    el.scrollTop = 0;
+  });
   await page.screenshot({ path: info.outputPath('completed-review.png'), fullPage: true });
   expect(app.errors).toEqual([]);
   // First visit to a mistake focus runs the best-line walk frontier (live
@@ -317,17 +478,29 @@ test('whole game completes independently of viewing and updates the position bal
   expect(inferred()).toBe(resettled);
 });
 for (const width of [320, 1440]) {
-  test(`analysis container spaces both sides of section dividers at ${width}px`, async ({ page }, info) => {
+  test(`analysis container spaces both sides of section dividers at ${width}px`, async ({
+    page,
+  }, info) => {
     await page.setViewportSize({ width, height: 1000 });
     await bootReview(page);
     // Content top is the row top: the footer centers its shorter export row
     // against the taller Analyze button, so the first child sits below the
     // row edge by design and only the row itself holds the 12px rhythm.
-    const sections = await page.locator('.insight-panel > .analysis-section:visible').evaluateAll(elements => elements.map(el => {
-      const rect = el.getBoundingClientRect(), style = getComputedStyle(el);
-      const content = el.querySelector(':scope > .footer-analyze') ?? el.firstElementChild!;
-      return { top: rect.top, bottom: rect.bottom, border: parseFloat(style.borderTopWidth), contentTop: (content as HTMLElement).getBoundingClientRect().top };
-    }));
+    const sections = await page
+      .locator('.insight-panel > .analysis-section:visible')
+      .evaluateAll(elements =>
+        elements.map(el => {
+          const rect = el.getBoundingClientRect(),
+            style = getComputedStyle(el);
+          const content = el.querySelector(':scope > .footer-analyze') ?? el.firstElementChild!;
+          return {
+            top: rect.top,
+            bottom: rect.bottom,
+            border: parseFloat(style.borderTopWidth),
+            contentTop: (content as HTMLElement).getBoundingClientRect().top,
+          };
+        }),
+      );
     expect(sections).toHaveLength(3);
     // Mobile flattens the dividers away (no borders); sections ride the
     // panel's own 20px gap instead of the 12/12 divider rhythm.
@@ -335,17 +508,29 @@ for (const width of [320, 1440]) {
     for (let index = 1; index < sections.length; index++) {
       expect(sections[index].border).toBe(mobile ? 0 : 1);
       expect(sections[index].top - sections[index - 1].bottom).toBeCloseTo(mobile ? 20 : 12, 0);
-      if (!mobile) expect(sections[index].contentTop - sections[index].top - sections[index].border).toBeCloseTo(12, 0);
+      if (!mobile)
+        expect(
+          sections[index].contentTop - sections[index].top - sections[index].border,
+        ).toBeCloseTo(12, 0);
     }
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await page.screenshot({ path: info.outputPath(`analysis-spacing-${width}.png`), fullPage: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({
+      path: info.outputPath(`analysis-spacing-${width}.png`),
+      fullPage: true,
+    });
   });
 }
 
-test('move analysis summarizes the game below the engines and links mistakes from moves to review', async ({ page }, info) => {
+test('move analysis summarizes the game below the engines and links mistakes from moves to review', async ({
+  page,
+}, info) => {
   const app = await bootReview(page);
   await expect(page.locator('#insight-content')).toBeVisible();
-  await expect(page.locator('.overview-partial')).toContainText('Summary covers reviewed moves only');
+  await expect(page.locator('.overview-partial')).toContainText(
+    'Summary covers reviewed moves only',
+  );
   await expect(page.getByRole('region', { name: 'White move quality', exact: true })).toBeVisible();
   await expect(page.locator('.accuracy-value')).toHaveCount(0);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
@@ -357,27 +542,37 @@ test('move analysis summarizes the game below the engines and links mistakes fro
   await page.screenshot({ path: info.outputPath('overview-desktop.png'), fullPage: true });
   await page.getByRole('button', { name: 'Review 2. Nf3 · White · Blunder', exact: true }).click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
-  await expect(page.locator('#insight-content').getByRole('button', { name: 'Explore Nf3 (played) from before this move', exact: true })).toBeVisible();
+  await expect(
+    page
+      .locator('#insight-content')
+      .getByRole('button', { name: 'Explore Nf3 (played) from before this move', exact: true }),
+  ).toBeVisible();
   await expect(page.locator('.balance-white-tag')).toHaveText('7%');
   await expect(page.locator('.balance-black-tag')).toHaveText('93%');
   await expect(page.locator('.balance-draw-tag')).toHaveCount(0);
   expect(app.errors).toEqual([]);
 });
 
-test('moves to review links inaccuracies on mobile without stepping the board', async ({ page }, info) => {
+test('moves to review links inaccuracies on mobile without stepping the board', async ({
+  page,
+}, info) => {
   await page.setViewportSize({ width: 360, height: 800 });
-  const app = await bootReview(page, '1. e4 e5 2. Nf3 Nc6', [0,0,100,0,0]);
+  const app = await bootReview(page, '1. e4 e5 2. Nf3 Nc6', [0, 0, 100, 0, 0]);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   // Quiescence: the foreground pair-ensure drains against batch filing in a
   // ~40ms race window, so capture the baseline only after the inference
   // count settles (stable across 3x200ms).
-  let settled = -1, stableRounds = 0;
+  let settled = -1,
+    stableRounds = 0;
   while (stableRounds < 3) {
     await page.waitForTimeout(200);
     const count = app.requests.length;
     if (count === settled) stableRounds++;
-    else { settled = count; stableRounds = 0; }
+    else {
+      settled = count;
+      stableRounds = 0;
+    }
   }
   const before = app.requests.length;
   await expect(page.locator('.review-issue')).toHaveCount(2);
@@ -385,27 +580,41 @@ test('moves to review links inaccuracies on mobile without stepping the board', 
   expect(app.requests).toHaveLength(before);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath('overview-mobile.png'), fullPage: true });
-  await page.getByRole('button', { name: 'Review 1… e5 · Black · Inaccuracy', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Review 1… e5 · Black · Inaccuracy', exact: true })
+    .click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 5');
-  await expect(page.locator('#insight-content').getByRole('button', { name: 'Explore e5 (played) from before this move', exact: true })).toBeVisible();
+  await expect(
+    page
+      .locator('#insight-content')
+      .getByRole('button', { name: 'Explore e5 (played) from before this move', exact: true }),
+  ).toBeVisible();
   expect(app.errors).toEqual([]);
 });
 
-test('moves to review distinguishes empty games, no issues, and explored lines', async ({ page }) => {
-  await bootReview(page, '1. e4 e5', [0,0,0]);
+test('moves to review distinguishes empty games, no issues, and explored lines', async ({
+  page,
+}) => {
+  await bootReview(page, '1. e4 e5', [0, 0, 0]);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
-  await expect(page.getByText('No inaccuracies, mistakes, blunders, or allowed mates found.', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('No inaccuracies, mistakes, blunders, or allowed mates found.', { exact: true }),
+  ).toBeVisible();
   const board = (await page.locator('#board cg-board').boundingBox())!;
-  await page.mouse.click(board.x + board.width * 3.5 / 8, board.y + board.height * 6.5 / 8);
-  await page.mouse.click(board.x + board.width * 3.5 / 8, board.y + board.height * 4.5 / 8);
-  await expect(page.locator('.footer-analyze').getByRole('button', { name: 'Analyze explored line' })).toBeVisible();
+  await page.mouse.click(board.x + (board.width * 3.5) / 8, board.y + (board.height * 6.5) / 8);
+  await page.mouse.click(board.x + (board.width * 3.5) / 8, board.y + (board.height * 4.5) / 8);
+  await expect(
+    page.locator('.footer-analyze').getByRole('button', { name: 'Analyze explored line' }),
+  ).toBeVisible();
   // No return button: step back to the fork, then Next continues original.
   await page.locator('#analysis-prev').click();
   await page.locator('#analysis-next').click();
   await expect(page.getByLabel('Explored variation', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'Game overview' })).toBeVisible();
-  await expect(page.getByText('No inaccuracies, mistakes, blunders, or allowed mates found.', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('No inaccuracies, mistakes, blunders, or allowed mates found.', { exact: true }),
+  ).toBeVisible();
   await page.locator('#mode-analysis').click();
   await page.locator('#analysis-pgn').fill('1. d4');
   await page.locator('#load-analysis').click();
@@ -414,41 +623,58 @@ test('moves to review distinguishes empty games, no issues, and explored lines',
   // complete no-issues copy.
   await expect(page.locator('#analysis-index')).toHaveText('Position 2 / 2');
   await expect(page.locator('.accuracy-card')).toHaveCount(2);
-  await expect(page.getByText('No inaccuracies, mistakes, blunders, or allowed mates found.', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('No inaccuracies, mistakes, blunders, or allowed mates found.', { exact: true }),
+  ).toBeVisible();
   await page.locator('#mode-analysis').click();
-  await page.locator('#analysis-controls').getByRole('button', { name: 'Starting position', exact: true }).click();
+  await page
+    .locator('#analysis-controls')
+    .getByRole('button', { name: 'Starting position', exact: true })
+    .click();
   await page.locator('#load-analysis').click();
-  await expect(page.getByText('Play or load some moves to see a move summary.', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('Play or load some moves to see a move summary.', { exact: true }),
+  ).toBeVisible();
   await expect(page.locator('.accuracy-value')).toHaveCount(0);
 });
 
-for (const width of [1440, 360]) test(`move analysis restores evaluation graph at ${width}px`, async ({ page }, info) => {
-  await page.setViewportSize({ width, height: 900 });
-  const app = await bootReview(page);
-  await page.getByRole('button', { name: 'Analyze entire game' }).click();
-  await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
-  await expect(page.getByRole('region', { name: 'Evaluation graph', exact: true })).toBeVisible();
-  await expect(page.locator('.chart-line')).toHaveCount(4);
-  await expect(page.locator('.chart-point:disabled')).toHaveCount(0);
-  await expect(page.locator('.chart-dot-mistake')).toHaveCount(1);
-  await expect(page.locator('.chart-dot-blunder')).toHaveCount(1);
-  await expect(page.locator('.chart-point').nth(3)).toHaveAccessibleName(/2\. Nf3 · White.*White winning chance.*Blunder/);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.screenshot({ path: info.outputPath(`overview-graphs-${width}.png`), fullPage: true });
-  await page.locator('.chart-point').nth(3).click();
-  await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
-  await expect(page.locator('.review-charts')).toHaveCount(1);
-  await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/2\. Nf3/);
-  await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
-  await expect(page.locator('.chart-point').nth(4)).toHaveAccessibleName(/2… Nc6 · Black.*7\.6% White winning chance.*Best/);
-  await page.locator('.chart-point').nth(4).click();
-  await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
-  await expect(page.locator('.balance-white-tag')).toHaveText('8%');
-  await expect(page.locator('.balance-black-tag')).toHaveText('92%');
-  await expect(page.locator('.balance-draw-tag')).toHaveCount(0);
-  await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/2… Nc6/);
-  expect(app.errors).toEqual([]);
-});
+for (const width of [1440, 360])
+  test(`move analysis restores evaluation graph at ${width}px`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height: 900 });
+    const app = await bootReview(page);
+    await page.getByRole('button', { name: 'Analyze entire game' }).click();
+    await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
+    await expect(page.getByRole('region', { name: 'Evaluation graph', exact: true })).toBeVisible();
+    await expect(page.locator('.chart-line')).toHaveCount(4);
+    await expect(page.locator('.chart-point:disabled')).toHaveCount(0);
+    await expect(page.locator('.chart-dot-mistake')).toHaveCount(1);
+    await expect(page.locator('.chart-dot-blunder')).toHaveCount(1);
+    await expect(page.locator('.chart-point').nth(3)).toHaveAccessibleName(
+      /2\. Nf3 · White.*White winning chance.*Blunder/,
+    );
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({
+      path: info.outputPath(`overview-graphs-${width}.png`),
+      fullPage: true,
+    });
+    await page.locator('.chart-point').nth(3).click();
+    await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
+    await expect(page.locator('.review-charts')).toHaveCount(1);
+    await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/2\. Nf3/);
+    await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
+    await expect(page.locator('.chart-point').nth(4)).toHaveAccessibleName(
+      /2… Nc6 · Black.*7\.6% White winning chance.*Best/,
+    );
+    await page.locator('.chart-point').nth(4).click();
+    await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
+    await expect(page.locator('.balance-white-tag')).toHaveText('8%');
+    await expect(page.locator('.balance-black-tag')).toHaveText('92%');
+    await expect(page.locator('.balance-draw-tag')).toHaveCount(0);
+    await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/2… Nc6/);
+    expect(app.errors).toEqual([]);
+  });
 
 test('move analysis graphs leave unreviewed positions as gaps', async ({ page }) => {
   await bootReview(page);
@@ -459,7 +685,9 @@ test('move analysis graphs leave unreviewed positions as gaps', async ({ page })
   await expect(page.locator('.chart-point').nth(2).locator('i')).toHaveCount(0);
 });
 
-test('move analysis shows only your moves with your decision points on the graphs', async ({ page }) => {
+test('move analysis shows only your moves with your decision points on the graphs', async ({
+  page,
+}) => {
   const app = await bootReview(page);
   await page.evaluate(key => {
     const snapshot = JSON.parse(localStorage.getItem(key)!);
@@ -467,8 +695,12 @@ test('move analysis shows only your moves with your decision points on the graph
   }, KEYS.snapshot);
   await page.reload();
   await expect(page.locator('.accuracy-card')).toHaveCount(1);
-  await expect(page.getByRole('region', { name: 'Black move quality · You', exact: true })).toContainText('Black move quality · You');
-  await expect(page.getByRole('region', { name: 'White move quality', exact: true })).toHaveCount(0);
+  await expect(
+    page.getByRole('region', { name: 'Black move quality · You', exact: true }),
+  ).toContainText('Black move quality · You');
+  await expect(page.getByRole('region', { name: 'White move quality', exact: true })).toHaveCount(
+    0,
+  );
   await expect(page.locator('.quality-counts li')).toHaveCount(10);
   await expect(page.locator('.chart-point i')).toHaveCount(1);
   await expect(page.locator('.chart-point:disabled')).toHaveCount(0);
@@ -478,7 +710,9 @@ test('move analysis shows only your moves with your decision points on the graph
   await expect(page.locator('.quality-counts li')).toHaveCount(10);
   await expect(page.locator('.review-issue')).toHaveCount(1);
   await expect(page.locator('.issue-move small')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Review 1… e5 · Black · You · Mistake', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Review 1… e5 · Black · You · Mistake', exact: true })
+    .click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 3 / 5');
   await expect(page.locator('.chart-point i')).toHaveCount(2);
   await expect(page.locator('.chart-line')).toHaveCount(1);
@@ -487,36 +721,44 @@ test('move analysis shows only your moves with your decision points on the graph
   await expect(page.locator('.chart-line')).toHaveCount(1);
   expect(await page.locator('.chart-point span').allTextContents()).toEqual(['1…', '2…']);
   await expect(page.locator('.chart-point:disabled')).toHaveCount(0);
-  await expect(page.getByRole('region', { name: 'Black move quality · You', exact: true })).toContainText('Black move quality · You');
+  await expect(
+    page.getByRole('region', { name: 'Black move quality · You', exact: true }),
+  ).toContainText('Black move quality · You');
   expect(app.errors).toEqual([]);
 });
 
-test('analysis panel shows move analysis, moves to review, and footer analyze together', async ({ page }) => {
+test('analysis panel shows move analysis, moves to review, and footer analyze together', async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1440, height: 700 });
   await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   await expect(page.locator('section[aria-label="Key moves"]')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Moves to review' })).toBeVisible();
-  await expect(page.locator('.footer-analyze').getByRole('button', { name: 'Analyzed' })).toBeVisible();
-  const geometry = await page.locator('.analysis-footer-section.footer-row, .analysis-actions, .footer-analyze').evaluateAll((elements) => {
-    const [footer, actions, analyze] = elements as HTMLElement[];
-    const footerRect = footer.getBoundingClientRect();
-    const analyzeRect = analyze.getBoundingClientRect();
-    const actionsRect = actions.getBoundingClientRect();
-    const style = getComputedStyle(footer);
-    return {
-      footerLeft: footerRect.left,
-      footerRight: footerRect.right,
-      paddingLeft: parseFloat(style.paddingLeft),
-      paddingRight: parseFloat(style.paddingRight),
-      analyzeRight: analyzeRect.right,
-      actionsLeft: actionsRect.left,
-      analyzeLeft: analyzeRect.left,
-      actionsRight: actionsRect.right,
-      analyzeMarginLeft: parseFloat(getComputedStyle(analyze).marginLeft),
-    };
-  });
+  await expect(
+    page.locator('.footer-analyze').getByRole('button', { name: 'Analyzed' }),
+  ).toBeVisible();
+  const geometry = await page
+    .locator('.analysis-footer-section.footer-row, .analysis-actions, .footer-analyze')
+    .evaluateAll(elements => {
+      const [footer, actions, analyze] = elements as HTMLElement[];
+      const footerRect = footer.getBoundingClientRect();
+      const analyzeRect = analyze.getBoundingClientRect();
+      const actionsRect = actions.getBoundingClientRect();
+      const style = getComputedStyle(footer);
+      return {
+        footerLeft: footerRect.left,
+        footerRight: footerRect.right,
+        paddingLeft: parseFloat(style.paddingLeft),
+        paddingRight: parseFloat(style.paddingRight),
+        analyzeRight: analyzeRect.right,
+        actionsLeft: actionsRect.left,
+        analyzeLeft: analyzeRect.left,
+        actionsRight: actionsRect.right,
+        analyzeMarginLeft: parseFloat(getComputedStyle(analyze).marginLeft),
+      };
+    });
   // Content-box alignment: section padding offsets both edges by 18px.
   expect(geometry.actionsLeft).toBeCloseTo(geometry.footerLeft + geometry.paddingLeft, 0);
   expect(geometry.analyzeRight).toBeCloseTo(geometry.footerRight - geometry.paddingRight, 0);
@@ -535,12 +777,18 @@ test('unlisted played moves appear as their own key row', async ({ page }) => {
   // The played move is always a key row (with the Played chip), never a
   // "Played X" fallback line below the lists.
   await expect(page.locator('section[aria-label="Key moves"] .candidate-list')).toContainText('d4');
-  await expect(page.locator('section[aria-label="Key moves"]').getByRole('button', { name: /Explore d4 \(played\)/ })).toBeVisible();
+  await expect(
+    page
+      .locator('section[aria-label="Key moves"]')
+      .getByRole('button', { name: /Explore d4 \(played\)/ }),
+  ).toBeVisible();
 });
 
 test('checkmate fills the bar for the winning side', async ({ page }) => {
   await bootReview(page, '1. f3 e5 2. g4 Qh4#');
-  await expect(page.locator('.balance-track')).toHaveAccessibleName('Black wins · White 0% · Draw 0% · Black 100% · estimated White winning chance 0%');
+  await expect(page.locator('.balance-track')).toHaveAccessibleName(
+    'Black wins · White 0% · Draw 0% · Black 100% · estimated White winning chance 0%',
+  );
   await expect(page.locator('.balance-white')).toHaveCSS('height', '0px');
 });
 
@@ -573,7 +821,9 @@ test('server-cached positions skip inference after reload', async ({ page }) => 
   expect(app.requests.slice(calls).every(request => !request.live)).toBe(true);
   expect(app.errors).toEqual([]);
 });
-test('completed analysis restores automatically across reload without inference', async ({ page }) => {
+test('completed analysis restores automatically across reload without inference', async ({
+  page,
+}) => {
   const app = await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
@@ -591,18 +841,25 @@ test('completed analysis restores automatically across reload without inference'
   await settleRequests(page, app);
   expect(app.requests.slice(before).every(request => !request.live)).toBe(true);
 });
-test('partially evicted analysis restores cached positions and gates the rest', async ({ page }) => {
+test('partially evicted analysis restores cached positions and gates the rest', async ({
+  page,
+}) => {
   const app = await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   // Evict every bot row server-side: Stockfish stays cached.
-  const evicted = [...app.evaluations].filter(([, entry]) => entry.engine === 'maia').map(([hash]) => hash);
+  const evicted = [...app.evaluations]
+    .filter(([, entry]) => entry.engine === 'maia')
+    .map(([hash]) => hash);
   expect(evicted.length).toBeGreaterThan(0);
   for (const hash of evicted) app.evaluations.delete(hash);
-  const inferred = (engine: string) => app.requests.filter(request => request.engine === engine).length;
+  const inferred = (engine: string) =>
+    app.requests.filter(request => request.engine === engine).length;
   await page.reload();
   await expect(page.getByRole('button', { name: 'Analyze entire game' })).toBeVisible();
-  await expect(page.getByRole('status').filter({ hasText: /of \d+ positions cached/ })).toHaveCount(0);
+  await expect(page.getByRole('status').filter({ hasText: /of \d+ positions cached/ })).toHaveCount(
+    0,
+  );
   // Quiescence: the mount pair-ensure peeks full-row coverage at +200ms
   // against the instant prime filing it — order decides whether the viewed
   // pair's fast row fetches live. Wait past the debounce for prime coverage
@@ -622,13 +879,18 @@ test('partially evicted analysis restores cached positions and gates the rest', 
   // foreground may legitimately re-request the viewed position alongside the
   // batch, so duplicates are allowed but omissions are not.
   const resubmitted = new Set(
-    [...app.batches.values()].slice(jobsBefore)
-      .flatMap(job => job.requests.map(request => evaluationIdentity(request.engine, request, job.line))),
+    [...app.batches.values()]
+      .slice(jobsBefore)
+      .flatMap(job =>
+        job.requests.map(request => evaluationIdentity(request.engine, request, job.line)),
+      ),
   );
   expect(evicted.every(hash => resubmitted.has(hash))).toBe(true);
   expect(inferred('/evaluate') - evalsBefore).toBe(0);
 });
-test('changed analysis settings gate the missing positions behind a new batch', async ({ page }) => {
+test('changed analysis settings gate the missing positions behind a new batch', async ({
+  page,
+}) => {
   await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
@@ -648,10 +910,23 @@ test('mixed arrow sources retain their own endpoints', async ({ page }, info) =>
   await page.route('http://maia.test/move**', route => {
     const body = route.request().postDataJSON();
     const move = body?.elo_maia === 2400 ? 'd2d4' : 'g1f3';
-    return route.fulfill({ json: { move, top_moves: [{ move, prob: .6, wdl: [.2,.3,.5] }], wdl: [.2,.3,.5], model_used: '79m', degraded: false } });
+    return route.fulfill({
+      json: {
+        move,
+        top_moves: [{ move, prob: 0.6, wdl: [0.2, 0.3, 0.5] }],
+        wdl: [0.2, 0.3, 0.5],
+        model_used: '79m',
+        degraded: false,
+      },
+    });
   });
   await atStart(page);
-  const endpoints = await lines(page).evaluateAll(elements => elements.map(el => `${el.getAttribute('x1')},${el.getAttribute('y1')}:${el.getAttribute('x2')},${el.getAttribute('y2')}`));
+  const endpoints = await lines(page).evaluateAll(elements =>
+    elements.map(
+      el =>
+        `${el.getAttribute('x1')},${el.getAttribute('y1')}:${el.getAttribute('x2')},${el.getAttribute('y2')}`,
+    ),
+  );
   expect(new Set(endpoints).size).toBe(3);
   // Arrows project forward from the viewed position, but the panel judges the
   // displayed move from its before-position: step forward to read predictions.
@@ -660,7 +935,9 @@ test('mixed arrow sources retain their own endpoints', async ({ page }, info) =>
   await page.locator('#analysis-next').click();
   await expect(page.locator('section[aria-label="Key moves"] .candidate-list')).toContainText('d4');
   await expect(page.locator('section[aria-label="Key moves"] .candidate-list')).toContainText('e4');
-  await page.locator('.insight-panel').evaluate(el => { el.scrollTop = 0; });
+  await page.locator('.insight-panel').evaluate(el => {
+    el.scrollTop = 0;
+  });
   await page.screenshot({ path: info.outputPath('mixed-arrows.png'), fullPage: true });
 });
 test('current position balance replaces the win-rate sections', async ({ page }) => {
@@ -674,9 +951,13 @@ test('current position balance replaces the win-rate sections', async ({ page })
   await expect(page.locator('.win-hero')).toHaveCount(0);
   await expect(page.locator('.chart-line')).toHaveCount(1);
   await expect(page.getByText('Unreviewed', { exact: false })).toHaveCount(0);
-  await expect(page.locator('[title*="Unreviewed"], [aria-label*="Unreviewed"], .quality-unreviewed')).toHaveCount(0);
+  await expect(
+    page.locator('[title*="Unreviewed"], [aria-label*="Unreviewed"], .quality-unreviewed'),
+  ).toHaveCount(0);
 });
-test('analysis progress replaces the analyze button while running without a cancel option', async ({ page }) => {
+test('analysis progress replaces the analyze button while running without a cancel option', async ({
+  page,
+}) => {
   await bootReview(page);
   await expect(page.locator('#insight-content')).toBeVisible();
   // Hold the batch event stream AND the status endpoint open: the client
@@ -688,62 +969,116 @@ test('analysis progress replaces the analyze button while running without a canc
   // cannot stall a server batch; whole-game inference runs server-side now.)
   const heldEvents: Route[] = [];
   const heldStatus: Route[] = [];
-  await page.route('http://maia.test/reviews/*/events', route => { heldEvents.push(route); });
-  await page.route(url => {
-    if (url.host !== 'maia.test') return false;
-    const segments = url.pathname.slice('/reviews/'.length).split('/');
-    return url.pathname.startsWith('/reviews/') && segments.length === 1 && segments[0].length > 0;
-  }, route => { heldStatus.push(route); });
+  await page.route('http://maia.test/reviews/*/events', route => {
+    heldEvents.push(route);
+  });
+  await page.route(
+    url => {
+      if (url.host !== 'maia.test') return false;
+      const segments = url.pathname.slice('/reviews/'.length).split('/');
+      return (
+        url.pathname.startsWith('/reviews/') && segments.length === 1 && segments[0].length > 0
+      );
+    },
+    route => {
+      heldStatus.push(route);
+    },
+  );
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect.poll(() => heldEvents.length).toBeGreaterThan(0);
   await expect.poll(() => heldStatus.length).toBeGreaterThan(0);
-  await expect(page.locator('.footer-analyze').getByRole('status')).toHaveText(/Analyzing \d+ of \d+…/);
+  await expect(page.locator('.footer-analyze').getByRole('status')).toHaveText(
+    /Analyzing \d+ of \d+…/,
+  );
   await expect(page.getByRole('button', { name: 'Analyze entire game' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Cancel analysis' })).toHaveCount(0);
   for (const route of heldStatus) {
     const match = /\/reviews\/([^/]+)$/.exec(new URL(route.request().url()).pathname);
-    const progress = { job_id: match?.[1] ?? 'mock-batch-1', total: 10, done: 10, failed: 0, finished: true };
+    const progress = {
+      job_id: match?.[1] ?? 'mock-batch-1',
+      total: 10,
+      done: 10,
+      failed: 0,
+      finished: true,
+    };
     await route.fulfill({ json: progress });
   }
   for (const route of heldEvents) {
     const match = /\/reviews\/([^/]+)\/events/.exec(route.request().url());
-    const progress = { job_id: match?.[1] ?? 'mock-batch-1', total: 10, done: 10, failed: 0, finished: true };
-    await route.fulfill({ body: `data: ${JSON.stringify({ progress })}\n\n`, contentType: 'text/event-stream' });
+    const progress = {
+      job_id: match?.[1] ?? 'mock-batch-1',
+      total: 10,
+      done: 10,
+      failed: 0,
+      finished: true,
+    };
+    await route.fulfill({
+      body: `data: ${JSON.stringify({ progress })}\n\n`,
+      contentType: 'text/event-stream',
+    });
   }
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   await expect(page.locator('.footer-analyze').getByRole('status')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Cancel analysis' })).toHaveCount(0);
 });
-for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900 }, { width: 360, height: 800 }, { width: 390, height: 844 }]) {
-  test(`review geometry, arrows and balance ${viewport.width}x${viewport.height}`, async ({ page }, info) => {
-    await page.setViewportSize(viewport); await bootReview(page); await atStart(page);
+for (const viewport of [
+  { width: 1366, height: 768 },
+  { width: 1440, height: 900 },
+  { width: 360, height: 800 },
+  { width: 390, height: 844 },
+]) {
+  test(`review geometry, arrows and balance ${viewport.width}x${viewport.height}`, async ({
+    page,
+  }, info) => {
+    await page.setViewportSize(viewport);
+    await bootReview(page);
+    await atStart(page);
     await page.getByRole('button', { name: 'Analyze entire game' }).click();
     await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
-    await page.evaluate(() => { window.scrollTo(0, 0); document.querySelector('.insight-panel')!.scrollTop = 0; });
-    const box = (await page.locator('#board').boundingBox())!;
-    expect(box.width).toBeGreaterThan(300); expect(box.width).toBeCloseTo(box.height, 0);
-    for (const rect of await page.locator('.player-strip, .move-navigation, .board-actions').evaluateAll(elements => elements.map(el => { const rect = el.getBoundingClientRect(); return { top: rect.top, bottom: rect.bottom }; }))) {
-      expect(rect.top).toBeGreaterThanOrEqual(0); expect(rect.bottom).toBeLessThanOrEqual(viewport.height);
-    }
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    const footerGeometry = await page.locator('.analysis-footer-section.footer-row, .analysis-actions, .footer-analyze').evaluateAll((elements) => {
-      const [footer, actions, analyze] = elements as HTMLElement[];
-      const footerRect = footer.getBoundingClientRect();
-      const actionsRect = actions.getBoundingClientRect();
-      const analyzeRect = analyze.getBoundingClientRect();
-      return {
-        footerRight: footerRect.right,
-        paddingRight: parseFloat(getComputedStyle(footer).paddingRight),
-        analyzeRight: analyzeRect.right,
-        actionsTop: actionsRect.top,
-        analyzeTop: analyzeRect.top,
-      };
+    await page.evaluate(() => {
+      window.scrollTo(0, 0);
+      document.querySelector('.insight-panel')!.scrollTop = 0;
     });
+    const box = (await page.locator('#board').boundingBox())!;
+    expect(box.width).toBeGreaterThan(300);
+    expect(box.width).toBeCloseTo(box.height, 0);
+    for (const rect of await page
+      .locator('.player-strip, .move-navigation, .board-actions')
+      .evaluateAll(elements =>
+        elements.map(el => {
+          const rect = el.getBoundingClientRect();
+          return { top: rect.top, bottom: rect.bottom };
+        }),
+      )) {
+      expect(rect.top).toBeGreaterThanOrEqual(0);
+      expect(rect.bottom).toBeLessThanOrEqual(viewport.height);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    const footerGeometry = await page
+      .locator('.analysis-footer-section.footer-row, .analysis-actions, .footer-analyze')
+      .evaluateAll(elements => {
+        const [footer, actions, analyze] = elements as HTMLElement[];
+        const footerRect = footer.getBoundingClientRect();
+        const actionsRect = actions.getBoundingClientRect();
+        const analyzeRect = analyze.getBoundingClientRect();
+        return {
+          footerRight: footerRect.right,
+          paddingRight: parseFloat(getComputedStyle(footer).paddingRight),
+          analyzeRight: analyzeRect.right,
+          actionsTop: actionsRect.top,
+          analyzeTop: analyzeRect.top,
+        };
+      });
     // Wrapping allowed on narrow viewports: analyze stays right-aligned and,
     // when wrapped below the export buttons, at or below them. Unwrapped, the
     // row centers its shorter export row against the taller Analyze button,
     // so Analyze legitimately starts a few px above the exports.
-    expect(footerGeometry.analyzeRight).toBeCloseTo(footerGeometry.footerRight - footerGeometry.paddingRight, 0);
+    expect(footerGeometry.analyzeRight).toBeCloseTo(
+      footerGeometry.footerRight - footerGeometry.paddingRight,
+      0,
+    );
     if (footerGeometry.analyzeTop - footerGeometry.actionsTop > 10) {
       expect(footerGeometry.analyzeTop).toBeGreaterThanOrEqual(footerGeometry.actionsTop);
     }
@@ -758,20 +1093,38 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1440, height: 900
     // Analysis board defaults to auto orientation (reviewed side at bottom, white here) with no flip button.
     await expect(page.locator('#flip-board')).toHaveCount(0);
     await expect(page.locator('#board .cg-wrap')).toHaveClass(/orientation-white/);
-    await page.screenshot({ path: info.outputPath(`review-${viewport.width}.png`), fullPage: true });
+    await page.screenshot({
+      path: info.outputPath(`review-${viewport.width}.png`),
+      fullPage: true,
+    });
   });
 }
-test('evaluation bar follows rendered board dimensions on resize and fractional pixel density', async ({ browser }) => {
-  const context = await browser.newContext({ viewport: { width: 1103, height: 857 }, deviceScaleFactor: 1.25 });
+test('evaluation bar follows rendered board dimensions on resize and fractional pixel density', async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    viewport: { width: 1103, height: 857 },
+    deviceScaleFactor: 1.25,
+  });
   const page = await context.newPage();
   await bootReview(page);
-  for (const viewport of [{ width: 1103, height: 857 }, { width: 393, height: 851 }, { width: 1281, height: 901 }]) {
+  for (const viewport of [
+    { width: 1103, height: 857 },
+    { width: 393, height: 851 },
+    { width: 1281, height: 901 },
+  ]) {
     await page.setViewportSize(viewport);
-    await expect.poll(async () => {
-      const board = (await page.locator('#board cg-board').boundingBox())!;
-      const bar = (await page.locator('.balance-track').boundingBox())!;
-      return Math.max(Math.abs(bar.x - board.x - board.width), Math.abs(bar.y - board.y), Math.abs(bar.height - board.height));
-    }).toBeLessThan(.1);
+    await expect
+      .poll(async () => {
+        const board = (await page.locator('#board cg-board').boundingBox())!;
+        const bar = (await page.locator('.balance-track').boundingBox())!;
+        return Math.max(
+          Math.abs(bar.x - board.x - board.width),
+          Math.abs(bar.y - board.y),
+          Math.abs(bar.height - board.height),
+        );
+      })
+      .toBeLessThan(0.1);
   }
   await context.close();
 });
@@ -779,7 +1132,9 @@ test('evaluation bar follows rendered board dimensions on resize and fractional 
 test('terminal repetition skips the bot and keeps the local draw result', async ({ page }) => {
   const full = ['g1f3', 'g8f6', 'f3g1', 'f6g8', 'g1f3', 'g8f6', 'f3g1', 'f6g8'];
   const app = await bootReview(page, '1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. Ng1 Ng8');
-  await expect(page.locator('.balance-track')).toHaveAccessibleName('Draw · White 0% · Draw 100% · Black 0% · estimated White winning chance 50%');
+  await expect(page.locator('.balance-track')).toHaveAccessibleName(
+    'Draw · White 0% · Draw 100% · Black 0% · estimated White winning chance 50%',
+  );
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Cancel analysis' })).toHaveCount(0);
   // The terminal node itself is never evaluated (synthesized locally), but
@@ -789,8 +1144,13 @@ test('terminal repetition skips the bot and keeps the local draw result', async 
   expect(app.requests.some(request => request.moves.join() === full.join())).toBe(false);
 });
 test('touch move selection updates the position balance', async ({ browser }) => {
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
-  const page = await context.newPage(); await bootReview(page);
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+  });
+  const page = await context.newPage();
+  await bootReview(page);
   await page.getByRole('button', { name: 'Analyze entire game' }).tap();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   await page.locator('.move-cell').nth(0).tap();
@@ -801,7 +1161,7 @@ test('touch move selection updates the position balance', async ({ browser }) =>
   await context.close();
 });
 test('explored branches keep the original line badges', async ({ page }) => {
-  const app = await bootReview(page, '1. e4 e5 2. Nf3 Nc6', [20,20,200,-700,-680]);
+  const app = await bootReview(page, '1. e4 e5 2. Nf3 Nc6', [20, 20, 200, -700, -680]);
   await page.getByRole('button', { name: 'Analyze entire game' }).click();
   await expect(page.getByRole('button', { name: 'Analyzed' })).toBeDisabled();
   // Mainline badges settled: two Best, one Mistake, one Blunder.
@@ -810,7 +1170,9 @@ test('explored branches keep the original line badges', async ({ page }) => {
   // fused row offers no unplayed candidate.
   await page.locator('#analysis-first').click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 5');
-  const keyRows = page.locator('section[aria-label="Key moves"] li:not(.candidate-header) .candidate-reading');
+  const keyRows = page.locator(
+    'section[aria-label="Key moves"] li:not(.candidate-header) .candidate-reading',
+  );
   await expect(keyRows).toHaveCount(1);
   await boardMove(page, 'd2', 'd4');
   await expect(page.locator('.original-move')).toHaveCount(4);
@@ -820,24 +1182,48 @@ test('explored branches keep the original line badges', async ({ page }) => {
   await expect(page.locator('.original-move .quality-blunder')).toHaveCount(1);
   expect(app.errors).toEqual([]);
 });
-for (const bit of [0, 1]) test(`random side resolves once with crypto bit ${bit}`, async ({ page }) => {
-  await page.addInitScript(bit => { let calls = 0; crypto.getRandomValues = ((array: Uint32Array) => { calls++; array[0] = bit; (window as any).randomSideCalls = calls; return array; }) as typeof crypto.getRandomValues; }, bit);
-  await bootReview(page); await page.locator('#mode-play').click();
-  await page.getByRole('radio', { name: 'Random' }).check();
-  await page.locator('#start-game').click();
-  await expect(page.locator('#board .cg-wrap')).toHaveClass(new RegExp(`orientation-${bit ? 'black' : 'white'}`));
-  await page.locator('#new-game').click(); await page.getByRole('radio', { name: 'Random' }).check();
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-  expect(await page.evaluate(() => (window as any).randomSideCalls)).toBe(1);
-  await expect.poll(() => page.evaluate(key => {
-    const raw = localStorage.getItem(key);
-    const settings = raw ? JSON.parse(raw) : null;
-    return typeof settings?.userColor === 'string' ? settings.userColor : null;
-  }, KEYS.settings)).toBe(bit ? 'black' : 'white');
-});
+for (const bit of [0, 1])
+  test(`random side resolves once with crypto bit ${bit}`, async ({ page }) => {
+    await page.addInitScript(bit => {
+      let calls = 0;
+      crypto.getRandomValues = ((array: Uint32Array) => {
+        calls++;
+        array[0] = bit;
+        (window as any).randomSideCalls = calls;
+        return array;
+      }) as typeof crypto.getRandomValues;
+    }, bit);
+    await bootReview(page);
+    await page.locator('#mode-play').click();
+    await page.getByRole('radio', { name: 'Random' }).check();
+    await page.locator('#start-game').click();
+    await expect(page.locator('#board .cg-wrap')).toHaveClass(
+      new RegExp(`orientation-${bit ? 'black' : 'white'}`),
+    );
+    await page.locator('#new-game').click();
+    await page.getByRole('radio', { name: 'Random' }).check();
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    expect(await page.evaluate(() => (window as any).randomSideCalls)).toBe(1);
+    await expect
+      .poll(() =>
+        page.evaluate(key => {
+          const raw = localStorage.getItem(key);
+          const settings = raw ? JSON.parse(raw) : null;
+          return typeof settings?.userColor === 'string' ? settings.userColor : null;
+        }, KEYS.settings),
+      )
+      .toBe(bit ? 'black' : 'white');
+  });
 test('custom arrow colors and widths repaint shafts and heads', async ({ page }) => {
-  const app = await bootReview(page); await atStart(page);
-  const strokes = () => lines(page).evaluateAll(elements => elements.map(el => ({ color: el.getAttribute('stroke'), width: el.getAttribute('stroke-width') })));
+  const app = await bootReview(page);
+  await atStart(page);
+  const strokes = () =>
+    lines(page).evaluateAll(elements =>
+      elements.map(el => ({
+        color: el.getAttribute('stroke'),
+        width: el.getAttribute('stroke-width'),
+      })),
+    );
   await expect.poll(async () => (await strokes()).length).toBe(4);
   expect(await strokes()).toEqual([
     { color: '#ffffff', width: '0.1875' },
@@ -848,13 +1234,16 @@ test('custom arrow colors and widths repaint shafts and heads', async ({ page })
   // Seed custom arrows (width 64 = full square => stroke-width 1) and reload:
   // the board remounts with fresh marker defs, so shafts and heads agree.
   await page.evaluate(key => {
-    localStorage.setItem(key, JSON.stringify({
-      actual: { color: '#00ff00', width: 64 },
-      bot: { color: '#ff00ff', width: 32 },
-      objective: { color: '#0000ff', width: 16 },
-      stockfish: { color: '#ffff00', width: 8 },
-      next: { color: '#800080', width: 10 },
-    }));
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        actual: { color: '#00ff00', width: 64 },
+        bot: { color: '#ff00ff', width: 32 },
+        objective: { color: '#0000ff', width: 16 },
+        stockfish: { color: '#ffff00', width: 8 },
+        next: { color: '#800080', width: 10 },
+      }),
+    );
   }, KEYS.arrows);
   await page.reload();
   await expect(page.locator('#analysis-index')).toHaveText('Position 1 / 5');
@@ -865,7 +1254,9 @@ test('custom arrow colors and widths repaint shafts and heads', async ({ page })
     { color: '#ffff00', width: '0.125' },
     { color: '#0000ff', width: '0.25' },
   ]);
-  const heads = await page.locator('#board svg.cg-shapes defs marker path').evaluateAll(elements => elements.map(el => el.getAttribute('fill')));
+  const heads = await page
+    .locator('#board svg.cg-shapes defs marker path')
+    .evaluateAll(elements => elements.map(el => el.getAttribute('fill')));
   expect(heads).toEqual(expect.arrayContaining(['#00ff00', '#ff00ff', '#ffff00', '#0000ff']));
   // Settings controls reflect and persist the seeded values.
   await page.locator('#mode-settings').click();
@@ -874,23 +1265,40 @@ test('custom arrow colors and widths repaint shafts and heads', async ({ page })
   await expect(page.locator('#arrow-next-color')).toHaveValue('#800080');
   await expect(page.locator('#arrow-actual-width')).toHaveValue('64');
   await page.locator('#arrow-objective-width-number').fill('20');
-  await expect.poll(() => page.evaluate(key => JSON.parse(localStorage.getItem(key)!).objective.width, KEYS.arrows)).toBe(20);
+  await expect
+    .poll(() =>
+      page.evaluate(key => JSON.parse(localStorage.getItem(key)!).objective.width, KEYS.arrows),
+    )
+    .toBe(20);
   await page.reload();
   await expect(page.locator('#arrow-objective-width-number')).toHaveValue('20');
   expect(app.errors).toEqual([]);
 });
 test('past arrow basis shows prior-move options and persists', async ({ page }) => {
-  const app = await bootReview(page); await atStart(page);
-  const endpoints = () => lines(page).evaluateAll(elements => elements.map(el => `${el.getAttribute('x1')},${el.getAttribute('y1')}:${el.getAttribute('x2')},${el.getAttribute('y2')}`));
+  const app = await bootReview(page);
+  await atStart(page);
+  const endpoints = () =>
+    lines(page).evaluateAll(elements =>
+      elements.map(
+        el =>
+          `${el.getAttribute('x1')},${el.getAttribute('y1')}:${el.getAttribute('x2')},${el.getAttribute('y2')}`,
+      ),
+    );
   // Next-move basis at the root projects the first-move options.
   await expect.poll(async () => (await endpoints()).length).toBe(4);
   const nextRoot = await endpoints();
   // Past-move basis at the root has no prior move, so only the forward
   // next-best arrow draws.
   await page.locator('#mode-settings').click();
-  await page.locator('div[role="radiogroup"][aria-labelledby="arrows-basis-label"] label', { hasText: 'Past move' }).click();
+  await page
+    .locator('div[role="radiogroup"][aria-labelledby="arrows-basis-label"] label', {
+      hasText: 'Past move',
+    })
+    .click();
   await expect(page.locator('#arrow-basis-past')).toBeChecked();
-  await expect.poll(() => page.evaluate(key => localStorage.getItem(key), 'maia-board.arrow-basis.v1')).toBe('"past"');
+  await expect
+    .poll(() => page.evaluate(key => localStorage.getItem(key), 'maia-board.arrow-basis.v1'))
+    .toBe('"past"');
   await page.goBack();
   await expect(lines(page)).toHaveCount(1);
   // Step forward: past lanes show the e2e4 options from the before-position
@@ -917,6 +1325,3 @@ test('past arrow basis shows prior-move options and persists', async ({ page }) 
   await expect(page.locator('#arrow-basis-next')).toBeChecked();
   expect(app.errors).toEqual([]);
 });
-
-
-

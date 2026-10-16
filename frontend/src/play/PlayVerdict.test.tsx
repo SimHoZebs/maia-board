@@ -37,7 +37,10 @@ function setup(moveUci = 'e2e4') {
     nodes,
     evaluations,
     botResults: [bot, undefined],
-    objectivePoints: [{ top: moveUci, expected: 60 }, { top: 'e7e5', expected: 50 }],
+    objectivePoints: [
+      { top: moveUci, expected: 60 },
+      { top: 'e7e5', expected: 50 },
+    ],
     engineGrades: [{ label: 'Top', accuracy: 100, loss: 0 }],
     objectiveBestLine: [],
     settings: { botElo: 1600, userElo: 1600, model: '79m', stockfish: defaultStockfishSettings },
@@ -49,7 +52,11 @@ function setup(moveUci = 'e2e4') {
     playVerdict: true,
     viewedPly: 1,
     bestLineWindow: 3,
-    play: { ...base.play, moves: [moveUci], settings: { ...base.play.settings, userColor: 'white' } },
+    play: {
+      ...base.play,
+      moves: [moveUci],
+      settings: { ...base.play.settings, userColor: 'white' },
+    },
   };
   return { state, feedback };
 }
@@ -64,14 +71,19 @@ describe('PlayVerdict', () => {
 
   it('stays quiet when the verdict option is off', () => {
     const { state, feedback } = setup();
-    const html = renderToStaticMarkup(createElement(PlayVerdict, { state: { ...state, playVerdict: false }, feedback }));
+    const html = renderToStaticMarkup(
+      createElement(PlayVerdict, { state: { ...state, playVerdict: false }, feedback }),
+    );
     expect(html).toBe('');
   });
 
   it('stays quiet when move evaluation is off', () => {
     const { state, feedback } = setup();
     const html = renderToStaticMarkup(
-      createElement(PlayVerdict, { state: { ...state, feedback: false }, feedback: { ...feedback, active: false } }),
+      createElement(PlayVerdict, {
+        state: { ...state, feedback: false },
+        feedback: { ...feedback, active: false },
+      }),
     );
     expect(html).toBe('');
   });
@@ -96,13 +108,48 @@ describe('PlayVerdict', () => {
     // rank-1 reply was 12... Nxc4 (itself a Maia mistake), and the verdict
     // quoted the Stockfish line. The suggestion must come from the
     // grading-lane walk instead, even when a Stockfish PV is present.
-    const moves = ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4', 'h7h6', 'e1g1', 'f8c5', 'c2c3', 'g8f6', 'd2d4', 'e5d4', 'c3d4', 'c5b6', 'c1e3', 'd7d6', 'd4d5', 'c6a5', 'd1d3', 'e8g8', 'b1d2', 'f8e8', 'f3h4'];
+    const moves = [
+      'e2e4',
+      'e7e5',
+      'g1f3',
+      'b8c6',
+      'f1c4',
+      'h7h6',
+      'e1g1',
+      'f8c5',
+      'c2c3',
+      'g8f6',
+      'd2d4',
+      'e5d4',
+      'c3d4',
+      'c5b6',
+      'c1e3',
+      'd7d6',
+      'd4d5',
+      'c6a5',
+      'd1d3',
+      'e8g8',
+      'b1d2',
+      'f8e8',
+      'f3h4',
+    ];
     const timeline = buildTimeline(START_FEN, moves);
     const nodes = reviewNodes(timeline);
     const evaluations = nodes.map(node => sfFixture(node.fen));
     // Stockfish distractor: the old source would read bishop+pawn for knight.
-    evaluations[23] = { ...evaluations[23], best_move: 'a5c4', score: { type: 'cp' as const, value: -238 },
-      lines: [{ move: 'a5c4', score: { type: 'cp' as const, value: -238 }, depth: 14, pv: ['a5c4', 'd2c4', 'e8e4'] }] };
+    evaluations[23] = {
+      ...evaluations[23],
+      best_move: 'a5c4',
+      score: { type: 'cp' as const, value: -238 },
+      lines: [
+        {
+          move: 'a5c4',
+          score: { type: 'cp' as const, value: -238 },
+          depth: 14,
+          pv: ['a5c4', 'd2c4', 'e8e4'],
+        },
+      ],
+    };
     // Nh4 sits outside the bot's top moves: unlisted.
     const unlistedBot = {
       move: 'e3b6',
@@ -118,7 +165,11 @@ describe('PlayVerdict', () => {
       nodes,
       evaluations,
       botResults: [...Array(22).fill(undefined), unlistedBot, undefined],
-      objectivePoints: [...Array(22).fill(undefined), { top: 'e3b6', expected: 50 }, { top: 'f6e4', expected: 80 }],
+      objectivePoints: [
+        ...Array(22).fill(undefined),
+        { top: 'e3b6', expected: 50 },
+        { top: 'f6e4', expected: 80 },
+      ],
       engineGrades: [],
       // Grading-lane walk: Black's 2400 reply Nxe4 takes the e-pawn.
       objectiveBestLine: ['f6e4'],

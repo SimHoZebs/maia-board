@@ -1,7 +1,16 @@
 import type { StoredGame } from '../shared/domain';
 import { isRecord } from '../shared/guards';
 import { isUnauthorized, notifyUnauthorized } from './session';
-import { deleteRemote, fetchGames, mergeSync, restoreOutboxOp, saveRemote, toStoredGame, type FetchLike, type OutboxOp } from './serverGames';
+import {
+  deleteRemote,
+  fetchGames,
+  mergeSync,
+  restoreOutboxOp,
+  saveRemote,
+  toStoredGame,
+  type FetchLike,
+  type OutboxOp,
+} from './serverGames';
 import { KEYS, loadSaved, readStorage, restoreGame, writeStorage } from './storage';
 
 export const REPOSITORY_KEY = 'maia-board.games.v2';
@@ -11,10 +20,25 @@ export const REPOSITORY_KEY = 'maia-board.games.v2';
 // ahead of the tab holding it.
 export type PendingGameOperation = OutboxOp & { version: string };
 export type RecoveryItem = { version: string; value: unknown };
-type DurableGames = { schema: 2; games: StoredGame[]; currentId: string | null; pending: PendingGameOperation[]; recovery: RecoveryItem[] };
-export type RepositorySnapshot = DurableGames & { error: string; durabilityError: string; conflict: boolean; failedVersion: string | null; total: number | null; nextOffset: number | null; loading: boolean };
+type DurableGames = {
+  schema: 2;
+  games: StoredGame[];
+  currentId: string | null;
+  pending: PendingGameOperation[];
+  recovery: RecoveryItem[];
+};
+export type RepositorySnapshot = DurableGames & {
+  error: string;
+  durabilityError: string;
+  conflict: boolean;
+  failedVersion: string | null;
+  total: number | null;
+  nextOffset: number | null;
+  loading: boolean;
+};
 let sequence = 0;
-const version = () => `${typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`}-${++sequence}`;
+const version = () =>
+  `${typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`}-${++sequence}`;
 
 // Game-delete broadcast (abort scopes: line change/unmount aborts the
 // foreground owner; deletes announce here): the review-batch owner lives in a
@@ -25,7 +49,9 @@ export type GameDeleteListener = (id: string) => void;
 const gameDeleteListeners = new Set<GameDeleteListener>();
 export function subscribeGameDeletes(listener: GameDeleteListener): () => void {
   gameDeleteListeners.add(listener);
-  return () => { gameDeleteListeners.delete(listener); };
+  return () => {
+    gameDeleteListeners.delete(listener);
+  };
 }
 
 // The v2 document atomically stores records, marker and write-ahead operations.
@@ -37,27 +63,63 @@ export function readGameRepository(repositoryRaw?: string | null): DurableGames 
   const recover = (value: unknown) => recovery.push({ version: version(), value });
   const read = (key: string): unknown => {
     let raw: string | null;
-    try { raw = key === REPOSITORY_KEY && repositoryRaw !== undefined ? repositoryRaw : localStorage.getItem(key); } catch { return undefined; }
+    try {
+      raw =
+        key === REPOSITORY_KEY && repositoryRaw !== undefined
+          ? repositoryRaw
+          : localStorage.getItem(key);
+    } catch {
+      return undefined;
+    }
     if (raw === null) return undefined;
-    try { return JSON.parse(raw); }
-    catch { recover({ storageKey: key, raw }); return undefined; }
+    try {
+      return JSON.parse(raw);
+    } catch {
+      recover({ storageKey: key, raw });
+      return undefined;
+    }
   };
   const stored: unknown = read(REPOSITORY_KEY);
-  if (isRecord(stored) && stored.schema === 2 && Array.isArray(stored.games) && Array.isArray(stored.pending)) {
-    const games = stored.games.flatMap(value => { const game = restoreGame(value); if (game) return [game]; recover(value); return []; });
+  if (
+    isRecord(stored) &&
+    stored.schema === 2 &&
+    Array.isArray(stored.games) &&
+    Array.isArray(stored.pending)
+  ) {
+    const games = stored.games.flatMap(value => {
+      const game = restoreGame(value);
+      if (game) return [game];
+      recover(value);
+      return [];
+    });
     const pending = stored.pending.flatMap(value => {
       const op = restoreOutboxOp(value);
-      if (op && isRecord(value) && typeof value.version === 'string') return [{ ...op, version: value.version }];
-      recover(value); return [];
+      if (op && isRecord(value) && typeof value.version === 'string')
+        return [{ ...op, version: value.version }];
+      recover(value);
+      return [];
     });
-    const merged = mergeSync(games, typeof stored.currentId === 'string' ? stored.currentId : null, pending);
-    return { schema: 2, games: merged.saved, pending, currentId: merged.currentId,
-      recovery: [...(Array.isArray(stored.recovery) ? stored.recovery : []), ...recovery] };
+    const merged = mergeSync(
+      games,
+      typeof stored.currentId === 'string' ? stored.currentId : null,
+      pending,
+    );
+    return {
+      schema: 2,
+      games: merged.saved,
+      pending,
+      currentId: merged.currentId,
+      recovery: [...(Array.isArray(stored.recovery) ? stored.recovery : []), ...recovery],
+    };
   }
   if (stored !== undefined) recover(stored);
   const games = loadSaved();
   const current = restoreGame(readStorage(KEYS.current)) ?? null;
-  const merged = mergeSync(current ? [current, ...games.filter(g => g.id !== current.id)] : games, current?.id ?? null, []);
+  const merged = mergeSync(
+    current ? [current, ...games.filter(g => g.id !== current.id)] : games,
+    current?.id ?? null,
+    [],
+  );
   return { schema: 2, games: merged.saved, currentId: merged.currentId, pending: [], recovery };
 }
 
@@ -73,22 +135,52 @@ export class GameRepository {
   private active = false;
   private lifecycle = 0;
   constructor(private fetcher: FetchLike = fetch) {
-    try { this.expectedRaw = localStorage.getItem(REPOSITORY_KEY); } catch { /* persist exposes the failure */ }
-    this.value = { ...readGameRepository(this.expectedRaw), error: '', durabilityError: '', conflict: false, failedVersion: null, total: null, nextOffset: null, loading: false };
+    try {
+      this.expectedRaw = localStorage.getItem(REPOSITORY_KEY);
+    } catch {
+      /* persist exposes the failure */
+    }
+    this.value = {
+      ...readGameRepository(this.expectedRaw),
+      error: '',
+      durabilityError: '',
+      conflict: false,
+      failedVersion: null,
+      total: null,
+      nextOffset: null,
+      loading: false,
+    };
   }
   snapshot = () => this.value;
-  subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
-  private emit() { for (const listener of this.listeners) listener(); }
-  private update(changes: Partial<RepositorySnapshot>) { this.value = { ...this.value, ...changes }; this.emit(); }
+  subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+  private emit() {
+    for (const listener of this.listeners) listener();
+  }
+  private update(changes: Partial<RepositorySnapshot>) {
+    this.value = { ...this.value, ...changes };
+    this.emit();
+  }
   private persist() {
     // Cooperating tabs serialize compare-and-write under the single
     // repository lock. Conflicts never overwrite another tab's document;
     // local legal play remains available in memory. The document is read
     // fresh at write time so a queued write can never clobber newer state.
-    this.writes = this.writes.then(async () => {
-      if (typeof navigator !== 'undefined' && navigator.locks) await navigator.locks.request(REPOSITORY_KEY, () => { this.writeDocument(); });
-      else this.writeDocument();
-    }).catch(error => { this.update({ durabilityError: error instanceof Error ? error.message : String(error) }); });
+    this.writes = this.writes
+      .then(async () => {
+        if (typeof navigator !== 'undefined' && navigator.locks)
+          await navigator.locks.request(REPOSITORY_KEY, () => {
+            this.writeDocument();
+          });
+        else this.writeDocument();
+      })
+      .catch(error => {
+        this.update({ durabilityError: error instanceof Error ? error.message : String(error) });
+      });
   }
   private writeDocument() {
     const { games, currentId, pending, recovery } = this.value;
@@ -96,22 +188,35 @@ export class GameRepository {
     try {
       if (localStorage.getItem(REPOSITORY_KEY) !== this.expectedRaw) {
         this.update({ conflict: true });
-        throw new Error('Game history changed in another tab. Export this tab’s pending work before reloading.');
+        throw new Error(
+          'Game history changed in another tab. Export this tab’s pending work before reloading.',
+        );
       }
       const error = writeStorage(REPOSITORY_KEY, document);
       if (error) throw error;
       this.expectedRaw = JSON.stringify(document);
       if (this.value.durabilityError) this.update({ durabilityError: '' });
-    } catch (error) { this.update({ durabilityError: error instanceof Error ? error.message : String(error) }); }
+    } catch (error) {
+      this.update({ durabilityError: error instanceof Error ? error.message : String(error) });
+    }
   }
   save(game: StoredGame, current: boolean) {
     this.epoch++;
     // Per-id last-save-wins: only the newest snapshot per game needs
     // transmission, so earlier saves for this id collapse. Deletes stay
     // ordered in place; the current marker ORs across the collapsed saves.
-    current ||= this.value.pending.some(op => op.op === 'save' && op.game.id === game.id && op.current);
-    const pending: PendingGameOperation[] = [...this.value.pending.filter(op => !(op.op === 'save' && op.game.id === game.id)), { op: 'save', game, current, version: version() }];
-    this.update({ games: [game, ...this.value.games.filter(g => g.id !== game.id)], currentId: current ? game.id : this.value.currentId, pending });
+    current ||= this.value.pending.some(
+      op => op.op === 'save' && op.game.id === game.id && op.current,
+    );
+    const pending: PendingGameOperation[] = [
+      ...this.value.pending.filter(op => !(op.op === 'save' && op.game.id === game.id)),
+      { op: 'save', game, current, version: version() },
+    ];
+    this.update({
+      games: [game, ...this.value.games.filter(g => g.id !== game.id)],
+      currentId: current ? game.id : this.value.currentId,
+      pending,
+    });
     this.persist();
     if (this.active) void this.flush();
   }
@@ -124,20 +229,44 @@ export class GameRepository {
   delete(id: string) {
     this.epoch++;
     this.cancelScope(id);
+    // Snapshot iteration: listeners unsubscribe during dispatch.
+    // oxlint-disable-next-line no-useless-spread
     for (const listener of [...gameDeleteListeners]) {
-      try { listener(id); } catch { /* subscriber-owned cancel; never break delete */ }
+      try {
+        listener(id);
+      } catch {
+        /* subscriber-owned cancel; never break delete */
+      }
     }
-    this.update({ games: this.value.games.filter(g => g.id !== id), currentId: this.value.currentId === id ? null : this.value.currentId,
-      pending: [...this.value.pending, { op: 'delete', id, version: version() }] });
+    this.update({
+      games: this.value.games.filter(g => g.id !== id),
+      currentId: this.value.currentId === id ? null : this.value.currentId,
+      pending: [...this.value.pending, { op: 'delete', id, version: version() }],
+    });
     this.persist();
     if (this.active) void this.flush();
   }
-  exportPending = () => JSON.stringify({ games: this.value.games, currentId: this.value.currentId, pending: this.value.pending, recovery: this.value.recovery }, null, 2);
+  exportPending = () =>
+    JSON.stringify(
+      {
+        games: this.value.games,
+        currentId: this.value.currentId,
+        pending: this.value.pending,
+        recovery: this.value.recovery,
+      },
+      null,
+      2,
+    );
   // Explicit recovery for a rejected operation. The original local game remains
   // available for export or a corrected save; no server delete is inferred.
   discardPending(version: string) {
     this.epoch++;
-    this.update({ pending: this.value.pending.filter(op => op.version !== version), recovery: this.value.recovery.filter(op => op.version !== version), failedVersion: null, error: '' });
+    this.update({
+      pending: this.value.pending.filter(op => op.version !== version),
+      recovery: this.value.recovery.filter(op => op.version !== version),
+      failedVersion: null,
+      error: '',
+    });
     this.persist();
     if (this.active) void this.flush();
   }
@@ -163,9 +292,15 @@ export class GameRepository {
       this.persist();
       await this.writes;
       try {
-        while (this.value.pending.length && !controller.signal.aborted && !this.value.conflict && !this.value.durabilityError) {
+        while (
+          this.value.pending.length &&
+          !controller.signal.aborted &&
+          !this.value.conflict &&
+          !this.value.durabilityError
+        ) {
           const op = this.value.pending[0];
-          if (typeof navigator !== 'undefined' && navigator.locks) await navigator.locks.request(REPOSITORY_KEY, () => transmit(op));
+          if (typeof navigator !== 'undefined' && navigator.locks)
+            await navigator.locks.request(REPOSITORY_KEY, () => transmit(op));
           else await transmit(op);
           if (controller.signal.aborted) return;
           this.persist();
@@ -174,11 +309,20 @@ export class GameRepository {
         if (!controller.signal.aborted) this.update({ error: '', failedVersion: null });
       } catch (error) {
         if (isUnauthorized(error)) notifyUnauthorized();
-        if (!controller.signal.aborted) this.update({ error: error instanceof Error ? error.message : String(error), failedVersion: this.value.pending[0]?.version ?? null });
+        if (!controller.signal.aborted)
+          this.update({
+            error: error instanceof Error ? error.message : String(error),
+            failedVersion: this.value.pending[0]?.version ?? null,
+          });
       }
     })();
-    this.flushing = task.catch(error => { this.update({ error: error instanceof Error ? error.message : String(error) }); })
-      .finally(() => { this.flushing = undefined; });
+    this.flushing = task
+      .catch(error => {
+        this.update({ error: error instanceof Error ? error.message : String(error) });
+      })
+      .finally(() => {
+        this.flushing = undefined;
+      });
     return this.flushing;
   };
   private async page(offset: number) {
@@ -209,20 +353,39 @@ export class GameRepository {
       // locally too: a seeded/imported game the server hasn't seen yet keeps
       // its marker (an empty server list must not retire the live game).
       // Explicit deletes still win through mergeSync's pending-delete rule.
-      const currentId = list.current_id ?? (this.value.currentId !== null && games.has(this.value.currentId) ? this.value.currentId : null);
+      const currentId =
+        list.current_id ??
+        (this.value.currentId !== null && games.has(this.value.currentId)
+          ? this.value.currentId
+          : null);
       const merged = mergeSync([...games.values()], currentId, pendingAtStart);
-      this.update({ games: merged.saved, currentId: merged.currentId, total: list.total,
-        nextOffset: list.next_offset === undefined ? (offset + list.games.length < list.total && list.games.length ? offset + list.games.length : null) : list.next_offset,
-        error: this.value.pending.length ? this.value.error : '' });
+      this.update({
+        games: merged.saved,
+        currentId: merged.currentId,
+        total: list.total,
+        nextOffset:
+          list.next_offset === undefined
+            ? offset + list.games.length < list.total && list.games.length
+              ? offset + list.games.length
+              : null
+            : list.next_offset,
+        error: this.value.pending.length ? this.value.error : '',
+      });
       this.persist();
       await this.writes;
     } catch (error) {
       if (isUnauthorized(error)) notifyUnauthorized();
-      if (!controller.signal.aborted) this.update({ error: error instanceof Error ? error.message : String(error) });
-    } finally { if (this.pageController === controller) this.update({ loading: false }); }
+      if (!controller.signal.aborted)
+        this.update({ error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      if (this.pageController === controller) this.update({ loading: false });
+    }
   }
   refresh = () => this.page(0);
-  loadMore = async () => { if (!this.value.loading && this.value.nextOffset !== null) await this.page(this.value.nextOffset); };
+  loadMore = async () => {
+    if (!this.value.loading && this.value.nextOffset !== null)
+      await this.page(this.value.nextOffset);
+  };
   retry = async () => {
     const lifecycle = this.lifecycle;
     await this.flush();
@@ -232,7 +395,14 @@ export class GameRepository {
     this.active = true;
     const lifecycle = ++this.lifecycle;
     // Deferral makes React StrictMode's setup/cleanup rehearsal cancellable.
-    queueMicrotask(() => { if (this.active && lifecycle === this.lifecycle) void this.retry(); });
-    return () => { this.active = false; this.lifecycle++; this.pageController?.abort(); this.flushController?.abort(); };
+    queueMicrotask(() => {
+      if (this.active && lifecycle === this.lifecycle) void this.retry();
+    });
+    return () => {
+      this.active = false;
+      this.lifecycle++;
+      this.pageController?.abort();
+      this.flushController?.abort();
+    };
   };
 }

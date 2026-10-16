@@ -26,15 +26,24 @@ export type TrueDeltaEntry = { value: number | null; pending: boolean };
 // Heads of the three received lists: the 2400 best by expected score, the
 // 2400 most-likely by policy, and my most-likely (display top-1). Together
 // with the Stockfish best and the played move these are the card's rows.
-export function keyHeads(objective: ObjectiveCandidates | undefined, displayTopMoves: TopMove[]): {
-  best2400: string | null; likely2400: string | null; myLikely: string | null;
+export function keyHeads(
+  objective: ObjectiveCandidates | undefined,
+  displayTopMoves: TopMove[],
+): {
+  best2400: string | null;
+  likely2400: string | null;
+  myLikely: string | null;
 } {
   const entries = objective?.entries ?? [];
-  const hasProb = entries.length > 0
-    && entries.every(entry => typeof entry.prob === 'number' && Number.isFinite(entry.prob));
+  const hasProb =
+    entries.length > 0 &&
+    entries.every(entry => typeof entry.prob === 'number' && Number.isFinite(entry.prob));
   return {
-    best2400: entries.length > 0 ? entries.reduce((a, b) => (b.expected > a.expected ? b : a)).uci : null,
-    likely2400: hasProb ? entries.reduce((a, b) => ((b.prob ?? 0) > (a.prob ?? 0) ? b : a)).uci : null,
+    best2400:
+      entries.length > 0 ? entries.reduce((a, b) => (b.expected > a.expected ? b : a)).uci : null,
+    likely2400: hasProb
+      ? entries.reduce((a, b) => ((b.prob ?? 0) > (a.prob ?? 0) ? b : a)).uci
+      : null,
     myLikely: displayTopMoves.length > 0 ? displayTopMoves[0].move : null,
   };
 }
@@ -43,14 +52,18 @@ export function keyHeads(objective: ObjectiveCandidates | undefined, displayTopM
 // deduped so shared moves merge into one row carrying every role. Never
 // more than five rows.
 export function keyRowOrder(args: {
-  sfBest: string | null; best2400: string | null; likely2400: string | null;
-  myLikely: string | null; played?: string | undefined;
+  sfBest: string | null;
+  best2400: string | null;
+  likely2400: string | null;
+  myLikely: string | null;
+  played?: string | undefined;
 }): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   const push = (uci: string | null | undefined) => {
     if (typeof uci !== 'string' || uci.length === 0 || seen.has(uci)) return;
-    seen.add(uci); out.push(uci);
+    seen.add(uci);
+    out.push(uci);
   };
   push(args.sfBest);
   push(args.best2400);
@@ -64,7 +77,9 @@ export function formatProb(prob: number | null): string {
   return prob == null ? '—' : `${Math.round(prob * 100)}%`;
 }
 
-export function formatKeyDelta(move: Pick<KeyMove, 'delta' | 'deltaPending' | 'prospective'>): string {
+export function formatKeyDelta(
+  move: Pick<KeyMove, 'delta' | 'deltaPending' | 'prospective'>,
+): string {
   if (move.delta != null) return formatWinrateDelta(move.delta);
   if (move.deltaPending) return '…';
   if (move.prospective != null) return formatWinrateDelta(move.prospective);
@@ -108,12 +123,15 @@ export function buildKeyMoves(args: {
     const prob2400 = typeof obj?.prob === 'number' && Number.isFinite(obj.prob) ? obj.prob : null;
     const dispExpected = disp ? botExpected(disp.wdl) : null;
     const expected2400 = obj?.expected ?? dispExpected;
-    const probMine = typeof disp?.prob === 'number' && Number.isFinite(disp.prob) ? disp.prob : null;
+    const probMine =
+      typeof disp?.prob === 'number' && Number.isFinite(disp.prob) ? disp.prob : null;
     const trueEntry = trueDeltaByUci?.get(uci);
     const delta = trueEntry?.value ?? null;
     const deltaPending = trueEntry ? trueEntry.value == null && trueEntry.pending : false;
-    const serverDelta = typeof obj?.delta === 'number' && Number.isFinite(obj.delta) ? obj.delta : null;
-    const prospective = serverDelta ?? (expected2400 != null && baseline != null ? expected2400 - baseline : null);
+    const serverDelta =
+      typeof obj?.delta === 'number' && Number.isFinite(obj.delta) ? obj.delta : null;
+    const prospective =
+      serverDelta ?? (expected2400 != null && baseline != null ? expected2400 - baseline : null);
     return { uci, roles, prob2400, expected2400, probMine, delta, deltaPending, prospective };
   });
 }

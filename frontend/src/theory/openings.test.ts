@@ -9,9 +9,24 @@ const matches: OpeningMatch[] = [
 
 describe('openingAt', () => {
   it('returns the deepest named ancestor at or before the viewed ply', () => {
-    expect(openingAt(matches, 1)).toEqual({ eco: 'B00', name: 'Test Opening', matchedPly: 1, isExact: true });
-    expect(openingAt(matches, 5)).toEqual({ eco: 'C50', name: 'Test Opening: Variation', matchedPly: 3, isExact: false });
-    expect(openingAt(matches, 3)).toEqual({ eco: 'C50', name: 'Test Opening: Variation', matchedPly: 3, isExact: true });
+    expect(openingAt(matches, 1)).toEqual({
+      eco: 'B00',
+      name: 'Test Opening',
+      matchedPly: 1,
+      isExact: true,
+    });
+    expect(openingAt(matches, 5)).toEqual({
+      eco: 'C50',
+      name: 'Test Opening: Variation',
+      matchedPly: 3,
+      isExact: false,
+    });
+    expect(openingAt(matches, 3)).toEqual({
+      eco: 'C50',
+      name: 'Test Opening: Variation',
+      matchedPly: 3,
+      isExact: true,
+    });
   });
 
   it('names nothing at the root or off-book', () => {
@@ -26,7 +41,8 @@ describe('fetchLineOpenings', () => {
 
   it('parses a well-formed response', async () => {
     const line = await fetchLineOpenings(
-      ['e2e4', 'e7e5'], 'start',
+      ['e2e4', 'e7e5'],
+      'start',
       undefined,
       ok({ matches, book_flags: [true, false] }),
     );
@@ -36,8 +52,24 @@ describe('fetchLineOpenings', () => {
   it('rejects HTTP failures and misshapen bodies', async () => {
     const fail = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({}, 409));
     await expect(fetchLineOpenings(['e2e4'], 'start', undefined, fail)).rejects.toThrow('409');
-    await expect(fetchLineOpenings(['e2e4'], 'start', undefined, ok({ matches, book_flags: [true, false, true] }))).rejects.toThrow();
-    await expect(fetchLineOpenings(['e2e4'], 'start', undefined, ok({ matches, book_flags: ['yes'] }))).rejects.toThrow();
-    await expect(fetchLineOpenings(['e2e4'], 'start', undefined, ok({ matches: [{ ply: '1', eco: 'B00', name: 'X' }], book_flags: [true] }))).rejects.toThrow();
+    await expect(
+      fetchLineOpenings(
+        ['e2e4'],
+        'start',
+        undefined,
+        ok({ matches, book_flags: [true, false, true] }),
+      ),
+    ).rejects.toThrow('unexpected response');
+    await expect(
+      fetchLineOpenings(['e2e4'], 'start', undefined, ok({ matches, book_flags: ['yes'] })),
+    ).rejects.toThrow('unexpected response');
+    await expect(
+      fetchLineOpenings(
+        ['e2e4'],
+        'start',
+        undefined,
+        ok({ matches: [{ ply: '1', eco: 'B00', name: 'X' }], book_flags: [true] }),
+      ),
+    ).rejects.toThrow('unexpected response');
   });
 });
