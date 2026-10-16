@@ -32,6 +32,12 @@ describe('server mapping', () => {
     expect(toStoredGame({ ...row('l', ['e2e4']), source: 'lichess:abcd1234' })).toMatchObject({ id: 'l', source: 'lichess:abcd1234' });
     expect(toStoredGame(row('n', ['e2e4']))?.source).toBeUndefined();
   });
+  it('round-trips lichess rating diffs and drops out-of-range values', () => {
+    expect(toStoredGame({ ...row('d', ['e2e4']), rating_diff: 12 })?.ratingDiff).toBe(12);
+    expect(toStoredGame({ ...row('e', ['e2e4']), rating_diff: -5 })?.ratingDiff).toBe(-5);
+    expect(toStoredGame({ ...row('f', ['e2e4']), rating_diff: 5000 })?.ratingDiff).toBeUndefined();
+    expect(toStoredGame(row('g', ['e2e4']))?.ratingDiff).toBeUndefined();
+  });
   it('fetches lists, saves, and deletes with server errors preserved', async () => {
     const list = { games: [row('a')], current_id: 'a', current_game: row('a'), total: 1, next_offset: null };
     const fetchImpl = vi.fn()

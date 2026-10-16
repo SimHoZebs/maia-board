@@ -35,13 +35,15 @@ function toSettingsInput(value: unknown): Partial<Settings> | undefined {
 }
 export function restoreGame(value: unknown): StoredGame | undefined {
   if (!isRecord(value)) return;
-  const { id, moves, createdAt, settings, result, source, opponent } = value;
+  const { id, moves, createdAt, settings, result, source, opponent, ratingDiff, rating_diff } = value;
   if (typeof id !== 'string' || !isStringArray(moves)) return;
+  const diff = ratingDiff ?? rating_diff;
   try {
     replay(moves);
     return { id, moves, createdAt: typeof createdAt === 'string' ? createdAt : new Date(0).toISOString(), settings: normalizeSettings(toSettingsInput(settings)), ...(result === 'resigned' ? { result: 'resigned' as const } : {}),
       ...(typeof source === 'string' && source.length > 0 && source.length <= 64 ? { source } : {}),
-      ...(typeof opponent === 'string' && opponent.length > 0 && opponent.length <= 64 ? { opponent } : {}) };
+      ...(typeof opponent === 'string' && opponent.length > 0 && opponent.length <= 64 ? { opponent } : {}),
+      ...(typeof diff === 'number' && Number.isInteger(diff) && diff >= -1000 && diff <= 1000 ? { ratingDiff: diff } : {}) };
   } catch { return; }
 }
 export function loadSaved(): StoredGame[] {

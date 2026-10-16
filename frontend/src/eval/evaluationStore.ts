@@ -83,6 +83,24 @@ export function splitValueElos(settings: ReviewSettings): { valueBotElo?: number
     ...(valueUser !== undefined && valueUser !== policyUser ? { valueUserElo: valueUser } : {}),
   };
 }
+// Per-mover policy: Maia-2 conditions on (Self=mover, Oppo=other).
+// Stored settings keep botElo=opponent, userElo=self, while the wire sends
+// elo_maia=Self, elo_user=Oppo. Swap policy (and split values) on the user's
+// own turns so each side is evaluated at its own strength. Symmetric pairs
+// (analysis defaults, 2400 grading) swap to themselves: no cache churn.
+export function moverSettings(base: ReviewSettings, userColor: 'white' | 'black', turn: 'white' | 'black'): ReviewSettings {
+  if (turn !== userColor) return base;
+  return {
+    ...base,
+    botElo: base.userElo, userElo: base.botElo,
+    ...(base.valueBotElo !== undefined || base.valueUserElo !== undefined
+      ? {
+        ...(base.valueBotElo !== undefined ? { valueBotElo: base.valueUserElo } : {}),
+        ...(base.valueUserElo !== undefined ? { valueUserElo: base.valueBotElo } : {}),
+      }
+      : {}),
+  };
+}
 export function settingsHash(engine: Engine, settings: ReviewSettings): string {
   if (engine === 'sf') return stockfishPolicy(settings.stockfish);
   const split = splitValueElos(settings);

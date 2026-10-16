@@ -1,8 +1,9 @@
-import { beforeEach, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultSettings, normalizeSettings, START_FEN } from '../shared/domain';
 import { initialState, reducer } from '../state/index';
 import { defaultStockfishSettings, normalizeStockfishSettings, stockfishPolicy, STOCKFISH_STORAGE_KEY } from './stockfishSettings';
-import { fetchEvaluation, reviewKey, ReviewCoordinator } from '../review/reviewCoordinator';
+import { fetchEvaluation, moverSettings, reviewKey, ReviewCoordinator } from '../review/reviewCoordinator';
+import { evaluationRequest } from './evaluationStore';
 import { toStoredGame } from '../history/serverGames';
 import { KEYS, restoreGame } from '../history/storage';
 import { requestBodyText, testNodes } from '../shared/testUtils';
@@ -99,4 +100,32 @@ it('restores terminal positions with the selected policy without engine requests
   expect(await coordinator.ensure([node], settings, { signal: new AbortController().signal })).toEqual({ covered: 1, total: 1 });
   expect(coordinator.result('sf', node, settings)?.search_policy).toBe(stockfishPolicy(settings.stockfish));
   expect(fetcher).not.toHaveBeenCalled();
+});
+
+describe('moverSettings', () => {
+  const base = { botElo: 1700, userElo: 1800, model: '79m' as const };
+  it('evaluates each side at its own strength (Self=mover)', () => {
+    // Opponent turn: Self=opponent (botElo), Oppo=self.
+    expect(moverSettings(base, 'white', 'black')).toMatchObject({ botElo: 1700, userElo: 1800 });
+    // User turn: swap so Self=self (userElo), Oppo=opponent.
+    expect(moverSettings(base, 'white', 'white')).toMatchObject({ botElo: 1800, userElo: 1700 });
+    expect(moverSettings(base, 'black', 'black')).toMatchObject({ botElo: 1800, userElo: 1700 });
+  });
+  it('swaps split values with policy and leaves symmetric pairs untouched', () => {
+    const split = { ...base, valueBotElo: 2400, valueUserElo: 2400 };
+    expect(moverSettings(split, 'white', 'white')).toMatchObject({ botElo: 1800, userElo: 1700, valueBotElo: 2400, valueUserElo: 2400 });
+    const sym = { botElo: 1600, userElo: 1600, model: '79m' as const };
+    expect(moverSettings(sym, 'white', 'white')).toEqual(sym);
+    expect(moverSettings(sym, 'white', 'black')).toEqual(sym);
+  });
+  it('wires swapped Elos to Self/Oppo on the request', () => {
+    const nodes = testNodes(START_FEN, ['e2e4']);
+    const userNode = nodes[0];
+    const oppNode = nodes[1];
+    // userNode.turn is white (user mover when userColor=white).
+    const userSettings = moverSettings(base, 'white', userNode.turn);
+    const oppSettings = moverSettings(base, 'white', oppNode.turn);
+    expect(evaluationRequest('maia', userNode, userSettings)).toMatchObject({ elo_maia: 1800, elo_user: 1700 });
+    expect(evaluationRequest('maia', oppNode, oppSettings)).toMatchObject({ elo_maia: 1700, elo_user: 1800 });
+  });
 });

@@ -92,7 +92,7 @@ export async function startLichessLogin(fetchImpl: FetchLike = fetch): Promise<v
 
 export type ImportPayload = {
   user_color: string; elo_maia: number; elo_user: number; model: string;
-  moves: string[]; created_at?: string; result?: string; source?: string; opponent?: string;
+  moves: string[]; created_at?: string; result?: string; source?: string; opponent?: string; rating_diff?: number;
 };
 
 export type ImportRun = {

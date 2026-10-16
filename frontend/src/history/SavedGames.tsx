@@ -147,6 +147,20 @@ export function SavedGames({
   const you = useAccountName() ?? 'You';
   const opponentOf = (game: StoredGame) =>
     game.opponent || (game.source?.startsWith('lichess:') ? 'Lichess' : `Maia ${game.settings.botElo}`);
+  // History titles carry both Elos: yours (raw) and the opponent's
+  // (botElo, clamped to the trained range for Maia). Maia rows already
+  // embed their Elo in the name, so only bare names gain a suffix.
+  const titleOf = (game: StoredGame) => {
+    const youPart = `${you} (${game.settings.userElo})`;
+    const raw = opponentOf(game);
+    const oppPart = raw.startsWith('Maia ') ? raw : `${raw} (${game.settings.botElo})`;
+    return `${youPart} vs ${oppPart}`;
+  };
+  const resultOf = (game: StoredGame, result: string) => {
+    if (game.ratingDiff === undefined) return result;
+    const sign = game.ratingDiff > 0 ? '+' : '';
+    return `${result} · ${sign}${game.ratingDiff}`;
+  };
   const syncPending = sync.pending;
   const historyTotal = sync.total;
   const visibleGames = useMemo(() => state.saved.map(game => {
@@ -233,7 +247,7 @@ export function SavedGames({
               <button
                 type="button"
                 className="saved-open"
-                aria-label={`Analyze game · ${result}`}
+                aria-label={`Analyze game · ${resultOf(game, result)}`}
                 onClick={() => dispatch({ type: "review", id: game.id })}
               >
                 <BoardThumbnail
@@ -251,10 +265,10 @@ export function SavedGames({
                     })}
                   </time>
                   <h2>
-                    {you} vs {opponentOf(game)}
+                    {titleOf(game)}
                   </h2>
                   <p>
-                    {result}
+                    {resultOf(game, result)}
                   </p>
                 </div>
               </button>

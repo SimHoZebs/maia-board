@@ -262,7 +262,10 @@ export function formatSyncAge(fetchedAt: number, now = Date.now()): string {
 
 export type LichessGame = {
   id?: string; pgn?: string; createdAt?: number; winner?: string; status?: string;
-  players?: { white?: { rating?: number; user?: { id?: string } }; black?: { rating?: number; user?: { id?: string } } };
+  players?: {
+    white?: { rating?: number; ratingDiff?: number; user?: { id?: string } };
+    black?: { rating?: number; ratingDiff?: number; user?: { id?: string } };
+  };
 };
 
 export function toImportPayload(game: LichessGame, username: string): ImportPayload | undefined {
@@ -281,8 +284,11 @@ export function toImportPayload(game: LichessGame, username: string): ImportPayl
   if (!userColor) return undefined;
   const ownRating = userColor === 'white' ? game.players?.white?.rating : game.players?.black?.rating;
   const foeRating = userColor === 'white' ? game.players?.black?.rating : game.players?.white?.rating;
+  const ownDiff = userColor === 'white' ? game.players?.white?.ratingDiff : game.players?.black?.ratingDiff;
   const clamp = (value: unknown, fallback: number) =>
     typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 5000 ? value : fallback;
+  const clampDiff = (value: unknown): number | undefined =>
+    typeof value === 'number' && Number.isInteger(value) && value >= -1000 && value <= 1000 ? value : undefined;
   const winner = game.winner === 'white' ? 'white' : game.winner === 'black' ? 'black' : undefined;
   const resigned = winner !== undefined && winner !== userColor && game.status === 'resign';
   // Opponent identity comes from the game itself (PGN headers carry display
@@ -294,6 +300,7 @@ export function toImportPayload(game: LichessGame, username: string): ImportPayl
   const foeName = userColor === 'white'
     ? (headerName('Black') ?? game.players?.black?.user?.id)
     : (headerName('White') ?? game.players?.white?.user?.id);
+  const diff = clampDiff(ownDiff);
   return {
     user_color: userColor,
     elo_maia: clamp(foeRating, 1500),
@@ -304,6 +311,7 @@ export function toImportPayload(game: LichessGame, username: string): ImportPayl
     ...(resigned ? { result: 'resigned' } : {}),
     ...(typeof game.id === 'string' && /^[A-Za-z0-9]{4,16}$/.test(game.id) ? { source: `lichess:${game.id}` } : {}),
     ...(foeName ? { opponent: foeName } : {}),
+    ...(diff !== undefined ? { rating_diff: diff } : {}),
   };
 }
 

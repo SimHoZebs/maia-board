@@ -128,6 +128,26 @@ describe('game download mapping', () => {
     });
     expect(toImportPayload(JSON.parse(tagged), 'alice')).toMatchObject({ opponent: 'Bob Marley' });
   });
+  it('captures the mover ratingDiff for the user side only', () => {
+    const withDiff = JSON.stringify({
+      id: 'diff0001', pgn: '1. e4 e5', createdAt: 1_000_000, winner: 'black', status: 'mate',
+      players: {
+        white: { rating: 1800, ratingDiff: -7, user: { id: 'alice' } },
+        black: { rating: 1700, ratingDiff: 12, user: { id: 'bob' } },
+      },
+    });
+    expect(toImportPayload(JSON.parse(withDiff), 'alice')).toMatchObject({ rating_diff: -7 });
+    expect(toImportPayload(JSON.parse(withDiff), 'bob')).toMatchObject({ rating_diff: 12 });
+    const badDiff = JSON.stringify({
+      id: 'diff0002', pgn: '1. e4 e5', createdAt: 1_000_000,
+      players: {
+        white: { rating: 1800, ratingDiff: 5000, user: { id: 'alice' } },
+        black: { rating: 1700, user: { id: 'bob' } },
+      },
+    });
+    expect(toImportPayload(JSON.parse(badDiff), 'alice')).not.toHaveProperty('rating_diff');
+    expect(toImportPayload(JSON.parse(line('abcd1234', 'alice', 'bob')), 'alice')).not.toHaveProperty('rating_diff');
+  });
   it('downloads ndjson and counts skipped lines', async () => {
     const body = `${line('aaaa1111', 'alice', 'bob')}\nnot json\n\n${line('bbbb2222', 'alice', 'bob')}`;
     const fetchImpl = (async () => ({ ok: true, status: 200, body: true, text: async () => body })) as unknown as typeof fetch;

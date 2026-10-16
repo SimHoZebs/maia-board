@@ -13,7 +13,7 @@ export type Settings = { userColor: SideColor; botElo: number; userElo: number; 
 export type Position = { fen: string; moves: string[]; sanMoves: string[]; lastMove?: [Key, Key] };
 export type Analysis = { initialFen: string; moves: string[]; sanMoves: string[]; index: number; branchFromPly: number | null; branchMoves: string[]; perspective: SideColor; ownGame: boolean };
 export type Insight = { response: MoveResponse; fen: string; mode: Mode };
-export type StoredGame = { id: string; createdAt: string; moves: string[]; settings: Settings; result?: 'resigned'; source?: string; opponent?: string };
+export type StoredGame = { id: string; createdAt: string; moves: string[]; settings: Settings; result?: 'resigned'; source?: string; opponent?: string; ratingDiff?: number };
 export const defaultSettings: Settings = { userColor: 'white', botElo: 1600, userElo: 400, model: '79m', temperature: 1 };
 export const oppositeColor = (color: SideColor): SideColor => color === 'white' ? 'black' : 'white';
 export type BoardOrientationSetting = 'auto' | SideColor;

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { MoveResponse } from '../eval/api';
 import { buildTimeline, legalPrefixLength, lineKeyFor, START_FEN, type StoredGame, type Timeline, type TimelineRow } from '../shared/domain';
 import type { State } from '../state/index';
-import { ReviewCoordinator, resolveSettings, reviewKey, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings, type SettingsInput } from './reviewCoordinator';
+import { ReviewCoordinator, moverSettings, resolveSettings, reviewKey, reviewNodes, subscribeNone, type ReviewNode, type ReviewSettings, type SettingsInput } from './reviewCoordinator';
 import { ensureLane, candidatesFor, laneError, laneFailures, laneKey, lanePending, lanePoints, laneRows, restoreDescriptor } from '../objective/index';
 import { trueCandidateDelta } from '../objective/winrate';
 import type { ObjectiveLane } from './qualities';
@@ -271,14 +271,16 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   const gameForLine = ownGame ? gameIdentityFor(state.analysisSourceId, state.saved, state.play) : null;
   const pinnedKey = gameForLine ? JSON.stringify([gameForLine.settings.botElo, gameForLine.settings.userElo, gameForLine.settings.model, gameForLine.settings.userColor]) : '';
   const userColor = gameForLine?.settings.userColor;
-  // On own-game mainlines, bot positions retain the saved game identity for
-  // policy (what was actually played) but share the 2400 value anchor so all
-  // displayed winrates stay comparable. User positions and explored branches
-  // use adjustable analysis settings.
+  // On own-game mainlines, both sides retain the saved game identity for
+  // policy (what was actually played): Maia-2 conditions on (Self=mover,
+  // Oppo=other), so moverSettings swaps to Self on the user's turns and
+  // leaves opponent turns unchanged. Values stay 2400-vs-2400 so displayed
+  // winrates stay comparable. Explored branches (ownGame false) keep the
+  // adjustable analysis settings.
   const settingsForNode = useMemo(() => {
     const pinned = gameForLine ? { botElo: gameForLine.settings.botElo, userElo: gameForLine.settings.userElo,
       valueBotElo: 2400, valueUserElo: 2400, model: gameForLine.settings.model, stockfish: state.stockfish } : null;
-    return (node: ReviewNode): ReviewSettings => pinned && userColor && isBotPosition(node, userColor, ownGame) ? pinned : settings;
+    return (node: ReviewNode): ReviewSettings => pinned && userColor && ownGame ? moverSettings(pinned, userColor, node.turn) : settings;
   }, [settings, pinnedKey, userColor, ownGame]);
   // Mainline game identity for the continuation pass, gated on the line
   // instead of the view: ownGame flips false inside a branch, which would
@@ -292,7 +294,7 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     const pinned = mainGameForLine ? { botElo: mainGameForLine.settings.botElo, userElo: mainGameForLine.settings.userElo,
       valueBotElo: 2400, valueUserElo: 2400, model: mainGameForLine.settings.model, stockfish: state.stockfish } : null;
     const mainOwnGame = state.analysis.ownGame;
-    return (node: ReviewNode): ReviewSettings => pinned && mainUserColor && isBotPosition(node, mainUserColor, mainOwnGame) ? pinned : settings;
+    return (node: ReviewNode): ReviewSettings => pinned && mainUserColor && mainOwnGame ? moverSettings(pinned, mainUserColor, node.turn) : settings;
   }, [settings, mainPinnedKey, mainUserColor, state.analysis.ownGame]);
   const combinedKey = `${settingsKey}|${pinnedKey}|${ownGame}`;
   const currentPly = Math.max(0, Math.min(state.analysis.index, nodes.length - 1));

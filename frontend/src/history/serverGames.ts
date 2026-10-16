@@ -7,7 +7,7 @@ import { GamesCreateResponse as GameRowSchema, GamesListResponse as GamesListSch
 
 export type ServerGame = {
   id: string; created_at: string; updated_at: string; user_color: string;
-  elo_maia: number; elo_user: number; model: string; moves: string[]; temperature?: number; result?: string; source?: string; opponent?: string;
+  elo_maia: number; elo_user: number; model: string; moves: string[]; temperature?: number; result?: string; source?: string; opponent?: string; rating_diff?: number;
 };
 
 export type GamesList = { games: ServerGame[]; current_id: string | null; total: number; current_game?: ServerGame | null; next_offset?: number | null };
@@ -31,7 +31,8 @@ function isServerGame(value: unknown): value is ServerGame {
     && typeof value.user_color === 'string' && typeof value.elo_maia === 'number' && typeof value.elo_user === 'number'
     && typeof value.model === 'string' && Array.isArray(value.moves) && value.moves.every(move => typeof move === 'string')
     && (value.source === undefined || typeof value.source === 'string')
-    && (value.opponent === undefined || typeof value.opponent === 'string');
+    && (value.opponent === undefined || typeof value.opponent === 'string')
+    && (value.rating_diff === undefined || typeof value.rating_diff === 'number');
 }
 
 function isServerGameArray(value: unknown): value is ServerGame[] {
@@ -39,12 +40,14 @@ function isServerGameArray(value: unknown): value is ServerGame[] {
 }
 
 export function toStoredGame(row: ServerGame): StoredGame | undefined {
+  const diff = row.rating_diff;
   const base = restoreGame({
     id: row.id, createdAt: row.created_at, moves: row.moves,
     settings: { userColor: row.user_color, botElo: row.elo_maia, userElo: row.elo_user, model: row.model, temperature: row.temperature },
     ...(row.result === 'resigned' ? { result: 'resigned' } : {}),
     ...(typeof row.source === 'string' && row.source.length > 0 ? { source: row.source } : {}),
     ...(typeof row.opponent === 'string' && row.opponent.length > 0 ? { opponent: row.opponent } : {}),
+    ...(typeof diff === 'number' && Number.isInteger(diff) && diff >= -1000 && diff <= 1000 ? { ratingDiff: diff } : {}),
   });
   return base;
 }

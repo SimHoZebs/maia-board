@@ -7,9 +7,9 @@ import { clampBotElo } from '../board/BoardTools';
 // (PlayFiringIdentity, restoreFlights). Backend admission
 // (admit → Scheduler.Acquire) has no frontend symbol.
 import type { Evaluation } from './reviewMetrics';
-import { EvaluationStore, evaluationStore, fastReviewSettings, fetchEvaluation, reviewKey, resolveSettings, splitValueElos, stablePositionKey,
+import { EvaluationStore, evaluationStore, fastReviewSettings, fetchEvaluation, moverSettings, reviewKey, resolveSettings, splitValueElos, stablePositionKey,
   type Engine, type EvaluationResult, type Job, type ReviewNode, type ReviewSettings, type SettingsInput } from '../eval/evaluationStore';
-export { EvaluationStore, fastReviewSettings, fastStockfishSettings, fetchEvaluation, parseEvaluation, resolveSettings, reviewKey, reviewNodes, stablePositionKey,
+export { EvaluationStore, fastReviewSettings, fastStockfishSettings, fetchEvaluation, moverSettings, parseEvaluation, resolveSettings, reviewKey, reviewNodes, stablePositionKey,
   type Engine, type EvaluationResult, type Job, type ReviewNode, type ReviewSettings, type SettingsInput } from '../eval/evaluationStore';
 
 export function subscribeNone(): () => void { return () => undefined; }
