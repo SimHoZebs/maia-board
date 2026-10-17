@@ -639,11 +639,20 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
       played: focusNode ? timeline.moves[focusPly] : undefined,
     });
   }, [focusNode, focusPly, currentPly, timeline, botResults, evaluations, objectiveCandidates]);
+  // Content key for the child build below: the UCIs array identity churns
+  // on every coordinator bump (botResults/evaluations rebuild per version),
+  // but the UCIs themselves rarely change. Keying the build on content
+  // keeps child node identities stable, so the ensure effect below fires
+  // only when the wanted set actually changes. Without this, every store
+  // notify rebuilds the nodes, refires the effect, re-ensures, and
+  // re-notifies — an update cycle that trips React's maximum-update-depth
+  // guard (error #185). Same keying as the best-line walk's frontierKey.
+  const trueUciKey = trueUcis.join('\0');
   const trueChildNodes = useMemo(() => {
-    if (!trueTargetNode || trueUcis.length === 0) return [];
+    if (!trueTargetNode || !trueUciKey) return [];
     const base = timeline.moves.slice(0, trueTargetPly);
     const out: { uci: string; node: ReviewNode }[] = [];
-    for (const uci of trueUcis) {
+    for (const uci of trueUciKey.split('\0')) {
       try {
         const childTimeline = buildTimeline(timeline.initialFen, [...base, uci]);
         const row = childTimeline.rows[childTimeline.rows.length - 1];
@@ -660,7 +669,7 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
       }
     }
     return out;
-  }, [timeline, trueTargetPly, trueUcis, trueTargetNode]);
+  }, [timeline, trueTargetPly, trueUciKey, trueTargetNode]);
   useEffect(() => {
     if (!active || tooLong || trueChildNodes.length === 0) return;
     const targets = trueChildNodes.map(entry => entry.node).filter(node => !node.outcome);
