@@ -266,6 +266,9 @@ p {
   font-variant-numeric: tabular-nums;
   flex: none;
 }
+.clock-remaining.clock-low {
+  color: #e8a04c;
+}
 .turn-indicator {
   color: var(--accent);
   font-size: 12px;

@@ -144,6 +144,10 @@ export function normalizeClocks(value: unknown): number[] | undefined {
   return [...value];
 }
 
+// Urgency threshold for the remaining-time label: under a minute the
+// strip clock turns orange.
+export const LOW_TIME_CENTISECONDS = 6000;
+
 // Compact remaining-time label for one reading: `m:ss` under an hour,
 // `h:mm:ss` above. Centiseconds truncate (a clock shows whole seconds).
 export function formatClock(centiseconds: number): string {

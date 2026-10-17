@@ -15,6 +15,7 @@ import {
   gameResult,
   kingSquare,
   lineRecord,
+  LOW_TIME_CENTISECONDS,
   oppositeColor,
   parseKey,
   remainingAt,
@@ -422,7 +423,11 @@ export function PlayWorkspace({ state, dispatch }: Props) {
             {historic ? 'At this position' : request ? 'Thinking…' : 'To move'}
           </span>
         )}
-        {left !== undefined && <span className="clock-remaining">{formatClock(left)}</span>}
+        {left !== undefined && (
+          <span className={`clock-remaining${left < LOW_TIME_CENTISECONDS ? ' clock-low' : ''}`}>
+            {formatClock(left)}
+          </span>
+        )}
       </div>
     );
   };
@@ -765,7 +770,11 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
             To move
           </span>
         )}
-        {left !== undefined && <span className="clock-remaining">{formatClock(left)}</span>}
+        {left !== undefined && (
+          <span className={`clock-remaining${left < LOW_TIME_CENTISECONDS ? ' clock-low' : ''}`}>
+            {formatClock(left)}
+          </span>
+        )}
       </div>
     );
   };
