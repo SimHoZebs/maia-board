@@ -6,15 +6,19 @@ import { playSound } from './player';
 
 // Board sounds for committed and browsed moves. One instance mounts in the
 // route shell so play and analysis share it; only the active mode can sound.
-// A sound fires only on a single-step advance of the same game or analysis
-// root (+1 ply): new games, loaded lines, takebacks, jumps, and backwards
-// steps stay silent. Refs update before playing so a StrictMode rehearsal
-// second pass sees no change and cannot double-fire.
+// A sound fires on a single-step move in either direction within the same
+// game or analysis root (±1 ply): new games, loaded lines, takeback jumps,
+// multi-step jumps, and same-ply re-renders stay silent. The sound always
+// reflects the displayed position's tip (the generic knock at the start),
+// so stepping back over a move re-sounds the position you arrive at. Refs
+// update before playing so a StrictMode rehearsal second pass sees no change
+// and cannot double-fire.
 
 export type PlayCursor = { id: string; ply: number };
 export type AnalysisCursor = { root: string; ply: number };
 
 // Pure transition decisions (tested without React): null means silence.
+// Stepping back re-sounds the arrived-at position (generic knock at ply 0).
 export function playTransitionSound(
   prev: PlayCursor | null,
   id: string,
@@ -26,6 +30,7 @@ export function playTransitionSound(
   if (!prev || prev.id !== id) return null;
   if (resigned && !wasResigned) return 'gameEnd';
   if (ply === prev.ply + 1 && !resigned) return classifyTip(START_FEN, moves.slice(0, ply));
+  if (ply === prev.ply - 1) return classifyTip(START_FEN, moves.slice(0, ply)) ?? 'move';
   return null;
 }
 
@@ -36,8 +41,11 @@ export function analysisTransitionSound(
   initialFen: string,
   displayedMoves: readonly string[],
 ): SoundKind | null {
-  if (!prev || prev.root !== root || ply !== prev.ply + 1) return null;
-  return classifyTip(initialFen, displayedMoves);
+  if (!prev || prev.root !== root) return null;
+  if (ply === prev.ply + 1) return classifyTip(initialFen, displayedMoves);
+  // Stepping back: displayedMoves is already the arrived-at prefix.
+  if (ply === prev.ply - 1) return classifyTip(initialFen, displayedMoves) ?? 'move';
+  return null;
 }
 
 export function useBoardSounds(state: State): void {

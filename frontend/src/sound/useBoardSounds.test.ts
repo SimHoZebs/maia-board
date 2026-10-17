@@ -28,7 +28,20 @@ describe('playTransitionSound', () => {
     ).toBe('checkmate');
   });
 
-  it('stays silent on takebacks, jumps, and backwards steps', () => {
+  it('sounds the arrived-at position on a single-step step-back', () => {
+    // Landing prefix ends in a quiet move: re-sound it.
+    expect(playTransitionSound({ id: 'a', ply: 2 }, 'a', 1, ['e2e4', 'e7e5'], false, false)).toBe(
+      'move',
+    );
+    // Stepping back over a capture lands on a quiet prefix.
+    expect(
+      playTransitionSound({ id: 'a', ply: 3 }, 'a', 2, ['e2e4', 'd7d5', 'e4d5'], false, false),
+    ).toBe('move');
+    // Back to the start: generic knock so every step-back has feedback.
+    expect(playTransitionSound({ id: 'a', ply: 1 }, 'a', 0, [], false, false)).toBe('move');
+  });
+
+  it('stays silent on jumps and same-ply re-renders', () => {
     expect(
       playTransitionSound({ id: 'a', ply: 4 }, 'a', 2, ['e2e4', 'e7e5'], false, false),
     ).toBeNull();
@@ -55,11 +68,12 @@ describe('analysisTransitionSound', () => {
     ).toBeNull();
   });
 
-  it('sounds single-step navigation and stays silent otherwise', () => {
+  it('sounds single-step navigation in either direction and stays silent otherwise', () => {
     expect(analysisTransitionSound({ root, ply: 1 }, root, 2, START_FEN, ['e2e4', 'e7e5'])).toBe(
       'move',
     );
-    expect(analysisTransitionSound({ root, ply: 2 }, root, 1, START_FEN, ['e2e4'])).toBeNull();
+    expect(analysisTransitionSound({ root, ply: 2 }, root, 1, START_FEN, ['e2e4'])).toBe('move');
+    expect(analysisTransitionSound({ root, ply: 1 }, root, 0, START_FEN, [])).toBe('move');
     expect(
       analysisTransitionSound({ root, ply: 1 }, root, 3, START_FEN, ['e2e4', 'e7e5', 'g1f3']),
     ).toBeNull();
