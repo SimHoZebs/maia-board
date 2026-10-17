@@ -260,12 +260,12 @@ p {
   font-size: 12px;
 }
 .time-control {
+  margin-left: auto;
   color: var(--muted);
   font-size: 12px;
   flex: none;
 }
 .turn-indicator {
-  margin-left: auto;
   color: var(--accent);
   font-size: 12px;
 }

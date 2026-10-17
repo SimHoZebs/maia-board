@@ -159,4 +159,24 @@ describe('time controls', () => {
     expect(exportLine(line)).not.toContain('TimeControl');
     expect(exportLine(line, 'junk')).not.toContain('TimeControl');
   });
+  it('keeps PGN player names and Elos on the line and through export', () => {
+    const pgn =
+      '[White "Alice Cooper"]\n[Black "Bob Marley"]\n[WhiteElo "1500"]\n[BlackElo "1725"]\n\n1. e4 e5';
+    const line = loadLine('', pgn);
+    expect(line.players).toEqual({
+      white: { name: 'Alice Cooper', elo: 1500 },
+      black: { name: 'Bob Marley', elo: 1725 },
+    });
+    const exported = exportLine(line);
+    expect(exported).toContain('[White "Alice Cooper"]');
+    expect(exported).toContain('[Black "Bob Marley"]');
+    expect(exported).toContain('[WhiteElo "1500"]');
+    expect(exported).toContain('[BlackElo "1725"]');
+    expect(loadLine('', exported).players).toEqual(line.players);
+  });
+  it('leaves players absent for movetext-only input and ignores bad Elos', () => {
+    expect(loadLine('', '1. e4 e5').players).toBeUndefined();
+    const line = loadLine('', '[White "Alice"]\n[BlackElo "nine"]\n\n1. e4 e5');
+    expect(line.players).toEqual({ white: { name: 'Alice' }, black: { name: 'Black' } });
+  });
 });

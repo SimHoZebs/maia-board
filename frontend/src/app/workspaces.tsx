@@ -23,6 +23,7 @@ import {
   sideName,
   START_FEN,
   storedGameResult,
+  type LinePlayer,
 } from '../shared/domain';
 import type { BoardPosition, BoardTransition } from '../board/ChessBoard';
 import { toGroundColor } from '../board/board-colors';
@@ -389,15 +390,21 @@ export function PlayWorkspace({ state, dispatch }: Props) {
   );
   const playCaptures = captureAt(playCapturePrefix, displayedPly);
   const playDiff = materialFromFen(position.fen).diff;
+  const userLabel = `${you} (${settings.userElo})`;
+  const botLabel = `Maia (${settings.botElo})`;
   const strip = (color: 'white' | 'black') => {
     const shownGame = historic ? game : live;
     const shownOver =
       (historic ? (position.terminal ?? null) : (playLine?.terminal ?? null)) !== null;
     const active = !resigned && toGroundColor(shownGame.turn()) === color && !shownOver;
+    const label = color === settings.userColor ? userLabel : botLabel;
     return (
-      <div className={`player-strip${active && ready ? ' active' : ''}`}>
-        <span className={`side-dot ${color}`} />
-        <strong>{color === settings.userColor ? you : `Maia · ${settings.botElo}`}</strong>
+      <div
+        className={`player-strip${active && ready ? ' active' : ''}`}
+        aria-label={`${sideName(color)}: ${label}`}
+      >
+        <span className={`side-dot ${color}`} aria-hidden="true" />
+        <strong>{label}</strong>
         <MaterialSummary
           by={color}
           captures={playCaptures[color]}
@@ -406,13 +413,12 @@ export function PlayWorkspace({ state, dispatch }: Props) {
         {color !== settings.userColor && replyIdentity?.degraded && (
           <span role="status">Fallback model reply</span>
         )}
-        <span className="player-side">{sideName(color)}</span>
-        <span className="time-control">{formatTimeControl(state.play)}</span>
         {active && ready && (
           <span className="turn-indicator" role="status">
             {historic ? 'At this position' : request ? 'Thinking…' : 'To move'}
           </span>
         )}
+        <span className="time-control">{formatTimeControl(state.play)}</span>
       </div>
     );
   };
@@ -709,25 +715,57 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
       ? (state.saved.find(game => game.id === state.analysisSourceId) ?? state.play)
       : state.play,
   );
+  // Identity for the player strips: the signed-in display name, falling
+  // back to 'You' before login and in unit tests (same as the play room).
+  const you = useAccountName() ?? 'You';
+  // Reviewed-game identity for the strips: your name + Elo on your color,
+  // the opponent's name + Elo on the other. Imported PGNs carry their own
+  // roster in the White/Black (/WhiteElo/BlackElo) headers. Ad-hoc lines
+  // with neither (FEN/start, bare movetext) fall back to the color names.
+  const sourceGame = state.analysis.ownGame
+    ? state.analysisSourceId
+      ? (state.saved.find(game => game.id === state.analysisSourceId) ??
+        (state.play.id === state.analysisSourceId ? state.play : null))
+      : null
+    : null;
+  const pgnName = (player: LinePlayer) =>
+    player.elo === undefined ? player.name : `${player.name} (${player.elo})`;
+  const pgnPlayers = state.analysis.players;
+  const analysisNames: Record<'white' | 'black', string> | null = sourceGame
+    ? (() => {
+        const userLabel = `${you} (${sourceGame.settings.userElo})`;
+        const raw =
+          sourceGame.opponent || (sourceGame.source?.startsWith('lichess:') ? 'Lichess' : 'Maia');
+        const oppLabel = raw.startsWith('Maia ') ? raw : `${raw} (${sourceGame.settings.botElo})`;
+        return sourceGame.settings.userColor === 'white'
+          ? { white: userLabel, black: oppLabel }
+          : { white: oppLabel, black: userLabel };
+      })()
+    : pgnPlayers
+      ? { white: pgnName(pgnPlayers.white), black: pgnName(pgnPlayers.black) }
+      : null;
   const strip = (color: 'white' | 'black') => {
     const shownOver = viewedOver;
     const active = toGroundColor(game.turn()) === color && !shownOver;
+    const label = analysisNames?.[color] ?? sideName(color);
     return (
-      <div className={`player-strip${active && ready ? ' active' : ''}`}>
-        <span className={`side-dot ${color}`} />
-        <strong>{sideName(color)}</strong>
+      <div
+        className={`player-strip${active && ready ? ' active' : ''}`}
+        aria-label={`${sideName(color)}: ${label}`}
+      >
+        <span className={`side-dot ${color}`} aria-hidden="true" />
+        <strong>{label}</strong>
         <MaterialSummary
           by={color}
           captures={analysisCaptures[color]}
           lead={materialLeadFor(analysisDiff, color)}
         />
-        <span className="player-side"></span>
-        <span className="time-control">{analysisClock}</span>
         {active && ready && (
           <span className="turn-indicator" role="status">
             To move
           </span>
         )}
+        <span className="time-control">{analysisClock}</span>
       </div>
     );
   };

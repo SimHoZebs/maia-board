@@ -342,6 +342,22 @@ describe('task lifecycles', () => {
     expect(linked.analysis.index).toBe(1);
     expect(linked.analysisSourceId).toBeNull();
   });
+  it('restores imported PGN player names from the snapshot across refresh', () => {
+    const line = loadLine(
+      '',
+      '[White "Alice Cooper"]\n[Black "Bob Marley"]\n[WhiteElo "1500"]\n\n1. e4 e5',
+    );
+    localStorage.setItem(KEYS.snapshot, JSON.stringify(snapshotOf({ ...line, index: 1 })));
+    const booted = initialState('analysis', {
+      initialFen: START_FEN,
+      moves: ['e2e4', 'e7e5'],
+    });
+    expect(booted.analysisLoaded).toBe(true);
+    expect(booted.analysis.players).toEqual({
+      white: { name: 'Alice Cooper', elo: 1500 },
+      black: { name: 'Bob Marley' },
+    });
+  });
   it('replays custom-start black promotion with the complete analysis history', () => {
     let state = reducer(started(), { type: 'mode', mode: 'analysis' });
     const fen = '4k3/8/8/8/8/8/p6P/4K3 b - - 0 12';

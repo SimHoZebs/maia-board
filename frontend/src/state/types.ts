@@ -4,6 +4,7 @@ import type {
   Analysis,
   BoardOrientationSetting,
   Insight,
+  LinePlayers,
   Mode,
   Settings,
   StoredGame,
@@ -111,4 +112,5 @@ export type AnalysisSnapshot = {
   perspective: SideColor;
   ownGame: boolean;
   gameId?: string;
+  players?: LinePlayers;
 };
