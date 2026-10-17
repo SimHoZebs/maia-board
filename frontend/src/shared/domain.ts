@@ -4,7 +4,7 @@ import type { SideColor, BotModel, MoveResponse } from '../eval/api';
 import type { Evaluation } from '../review/reviewMetrics';
 import { outcomeFromGame } from '../review/reviewMetrics';
 import { outcomeEvaluation } from '../review/outcomeEvaluation';
-import { clampBotElo } from '../board/BoardTools';
+import { clampElo } from '../board/BoardTools';
 
 // Terms: see spec/GLOSSARY.md (position/line/posId/lineKey).
 export const START_FEN = new Chess().fen();
@@ -26,7 +26,14 @@ export type Analysis = {
   branchMoves: string[];
   perspective: SideColor;
   ownGame: boolean;
+  // Board identity from a pasted PGN's seven-tag roster. Present only when
+  // the import carried at least one player name; movetext-only input and
+  // platform games (which resolve identity from settings) leave it absent.
+  players?: LinePlayers;
 };
+// One side's board identity: display name plus Elo when the source knew it.
+export type LinePlayer = { name: string; elo?: number };
+export type LinePlayers = { white: LinePlayer; black: LinePlayer };
 export type Insight = { response: MoveResponse; fen: string; mode: Mode };
 export type StoredGame = {
   id: string;
@@ -156,7 +163,7 @@ export function normalizeSettings(
   // Opponent bot strength never leaves the trained range (a stored
   // 400 still conditions, displays, and caches as 800); the player's own
   // identity stays raw for the coming global-Elo pass.
-  const botElo = (value: unknown, fallback: number) => clampBotElo(elo(value, fallback));
+  const botElo = (value: unknown, fallback: number) => clampElo(elo(value, fallback));
   const storedBotElo = stored?.botElo ?? stored?.eloMaia;
   // The player's own rating defaults to the 400 anchor (see userElo.ts),
   // never to the bot strength: mirroring botElo guesses the user is a 1600
@@ -269,6 +276,7 @@ export function loadLine(fen = '', pgn = ''): Analysis {
   ).fen();
   const moves = parsePgnMoves(pgn, new Chess(initialFen));
   const timeline = buildTimeline(initialFen, moves);
+  const players = parsePgnPlayers(pgn);
   return {
     initialFen,
     moves,
@@ -278,11 +286,72 @@ export function loadLine(fen = '', pgn = ''): Analysis {
     branchMoves: [],
     perspective: timeline.rows[0].turn,
     ownGame: false,
+    ...(players ? { players } : {}),
   };
+}
+// PGN seven-tag roster carries the board names: White/Black plus their Elos
+// when present. Parsed on import so pasted games keep their identity on the
+// strips; absent name headers mean movetext-only input (no players). A bare
+// `White` tag never matches `WhiteElo`: the closing quote pattern requires
+// whitespace after the tag name.
+export function parsePgnPlayers(pgn: string): LinePlayers | undefined {
+  const tag = (name: string): string | undefined => {
+    const value = pgn.match(new RegExp(`\\[${name}\\s+"([^"]+)"\\]`, 'i'))?.[1]?.trim();
+    // PGN uses "?" for unknown: chess.js also emits it for unset headers on
+    // export, so it parses as absent and header-less lines round-trip clean.
+    if (!value || value === '?') return undefined;
+    return value.slice(0, 64);
+  };
+  const elo = (name: string): number | undefined => {
+    const parsed = Number.parseInt(tag(name) ?? '', 10);
+    return Number.isInteger(parsed) && parsed >= 0 && parsed <= 5000 ? parsed : undefined;
+  };
+  const player = (color: 'White' | 'Black'): LinePlayer | undefined => {
+    const name = tag(color);
+    if (name === undefined) return undefined;
+    const rating = elo(`${color}Elo`);
+    return rating === undefined ? { name } : { name, elo: rating };
+  };
+  const white = player('White');
+  const black = player('Black');
+  if (white === undefined && black === undefined) return undefined;
+  return { white: white ?? { name: 'White' }, black: black ?? { name: 'Black' } };
+}
+// Untrusted-storage counterpart of parsePgnPlayers: snapshots persist the
+// parsed roster, so refresh restores it only when it still validates.
+export function normalizeLinePlayers(value: unknown): LinePlayers | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const side = (entry: unknown, fallback: string): LinePlayer => {
+    if (typeof entry !== 'object' || entry === null) return { name: fallback };
+    const record = entry as Record<string, unknown>;
+    const name =
+      typeof record.name === 'string' && record.name.trim()
+        ? record.name.trim().slice(0, 64)
+        : fallback;
+    const elo =
+      typeof record.elo === 'number' &&
+      Number.isInteger(record.elo) &&
+      record.elo >= 0 &&
+      record.elo <= 5000
+        ? record.elo
+        : undefined;
+    return elo === undefined ? { name } : { name, elo };
+  };
+  const record = value as Record<string, unknown>;
+  if (record.white === undefined && record.black === undefined) return undefined;
+  return { white: side(record.white, 'White'), black: side(record.black, 'Black') };
 }
 export function exportLine(analysis: Analysis, timeControl?: string): string {
   const game = replay(analysis.moves, analysis.initialFen);
   game.setHeader('Event', 'Maia Board');
+  if (analysis.players) {
+    game.setHeader('White', analysis.players.white.name);
+    game.setHeader('Black', analysis.players.black.name);
+    if (analysis.players.white.elo !== undefined)
+      game.setHeader('WhiteElo', String(analysis.players.white.elo));
+    if (analysis.players.black.elo !== undefined)
+      game.setHeader('BlackElo', String(analysis.players.black.elo));
+  }
   if (timeControl !== undefined && normalizeTimeControl(timeControl) !== undefined) {
     game.setHeader('TimeControl', timeControl);
   }

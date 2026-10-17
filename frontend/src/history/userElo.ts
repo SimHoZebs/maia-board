@@ -1,5 +1,5 @@
 import { Chess } from 'chess.js';
-import { clampBotElo } from '../board/BoardTools';
+import { clampElo } from '../board/BoardTools';
 import type { StoredGame } from '../shared/domain';
 import { replay } from '../shared/domain';
 import { isRecord } from '../shared/guards';
@@ -85,7 +85,7 @@ export function scoreForGame(
 }
 
 export function opponentElo(game: Pick<StoredGame, 'settings'>): number {
-  return clampBotElo(game.settings.botElo);
+  return clampElo(game.settings.botElo);
 }
 
 // Lichess imports carry their rating inside the synced baseline (see

@@ -9,7 +9,7 @@ import {
   type Position,
 } from '../shared/domain';
 import type { Evaluation } from '../review/reviewMetrics';
-import { clampBotElo } from '../board/BoardTools';
+import { clampElo } from '../board/BoardTools';
 import type { State } from './types';
 
 // Cross-slice board mechanics shared by the play, analysis, and root
@@ -57,8 +57,8 @@ export function queueRequest(state: State): State {
     payload: {
       fen: position.fen,
       moves: position.moves,
-      elo_maia: clampBotElo(settings.botElo),
-      elo_user: clampBotElo(settings.userElo),
+      elo_maia: clampElo(settings.botElo),
+      elo_user: clampElo(settings.userElo),
       model: settings.model,
       maia_color: oppositeColor(settings.userColor),
       temperature: settings.temperature ?? 0,

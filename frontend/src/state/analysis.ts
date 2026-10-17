@@ -1,9 +1,16 @@
 import { Chess } from 'chess.js';
-import { analysisLength, applyUci, loadLine, parseSquare, uciFromMove } from '../shared/domain';
+import {
+  analysisLength,
+  applyUci,
+  loadLine,
+  normalizeLinePlayers,
+  parseSquare,
+  uciFromMove,
+} from '../shared/domain';
 import { sameLine } from '../app/analysisUrl';
 import { KEYS, readStorage } from '../history/storage';
 import { currentPosition, commitMove, transition } from './shared';
-import { clampBotElo } from '../board/BoardTools';
+import { clampElo } from '../board/BoardTools';
 import type { Action, AnalysisSnapshot, State } from './types';
 
 // Analysis slice: the reviewed line (cursor, branches, importer inputs) plus
@@ -26,6 +33,9 @@ export function readSnapshot(): { analysis: State['analysis']; gameId?: string }
     return;
   }
   if (base.moves.length !== stored.moves.length) return;
+  // Imported PGN names survive refresh: the snapshot persists the parsed
+  // roster, and untrusted stored values validate before display.
+  const players = normalizeLinePlayers(stored.players);
   const analysis: State['analysis'] = {
     ...base,
     index:
@@ -37,6 +47,7 @@ export function readSnapshot(): { analysis: State['analysis']; gameId?: string }
         ? stored.perspective
         : base.perspective,
     ownGame: stored.ownGame === true,
+    ...(players ? { players } : {}),
   };
   return { analysis, ...(typeof stored.gameId === 'string' ? { gameId: stored.gameId } : {}) };
 }
@@ -48,6 +59,7 @@ export function snapshotOf(analysis: State['analysis'], gameId?: string): Analys
     perspective: analysis.perspective,
     ownGame: analysis.ownGame,
     ...(gameId ? { gameId } : {}),
+    ...(analysis.players ? { players: analysis.players } : {}),
   };
 }
 
@@ -62,7 +74,7 @@ export function reduceAnalysis(state: State, action: Action): State | undefined 
             ...action.settings,
             ...(action.settings.botElo === undefined
               ? {}
-              : { botElo: clampBotElo(action.settings.botElo) }),
+              : { botElo: clampElo(action.settings.botElo) }),
           },
         },
         false,

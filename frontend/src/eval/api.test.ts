@@ -3,7 +3,7 @@ import {
   BotApiError,
   parseMoveResponse,
   readableApiError,
-  requestBotAnalysis,
+  requestEngineAnalysis,
   requestMove,
 } from './api';
 import { START_FEN } from '../shared/domain';
@@ -107,7 +107,7 @@ describe('requestMove', () => {
       }),
     );
     fetchImpl.mockClear();
-    await requestBotAnalysis(payload, fetchImpl);
+    await requestEngineAnalysis(payload, fetchImpl);
     expect(fetchImpl).toHaveBeenCalledWith(
       '/move/analysis',
       expect.objectContaining({

@@ -1,5 +1,5 @@
 import type { MoveResponse } from './api';
-import { clampBotElo } from '../board/BoardTools';
+import { clampElo } from '../board/BoardTools';
 import {
   reviewKey,
   stablePositionKey,
@@ -30,8 +30,8 @@ export function selectBotDisplay(
     ? {
         positionId,
         requestKey: key,
-        botElo: clampBotElo(settings.botElo),
-        userElo: clampBotElo(settings.userElo),
+        botElo: clampElo(settings.botElo),
+        userElo: clampElo(settings.userElo),
         result: fresh,
       }
     : previous?.positionId === positionId

@@ -306,10 +306,10 @@ export async function requestMove(
   return postBot('/move', payload, fetchImpl, signal);
 }
 
-export type BotAnalysisRequest = Omit<MoveRequest, 'temperature'>;
+export type EngineAnalysisRequest = Omit<MoveRequest, 'temperature'>;
 
-export async function requestBotAnalysis(
-  payload: BotAnalysisRequest,
+export async function requestEngineAnalysis(
+  payload: EngineAnalysisRequest,
   fetchImpl: FetchLike = fetch,
   signal?: AbortSignal,
 ): Promise<MoveResponse & { cached?: boolean }> {
@@ -323,7 +323,7 @@ export async function requestBotAnalysis(
 
 async function postBot(
   path: '/move' | '/move/analysis',
-  payload: MoveRequest | BotAnalysisRequest,
+  payload: MoveRequest | EngineAnalysisRequest,
   fetchImpl: FetchLike,
   signal?: AbortSignal,
 ): Promise<MoveResponse & { cached?: boolean }> {
