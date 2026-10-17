@@ -144,6 +144,7 @@ export type ImportPayload = {
   rating_diff?: number;
   time_control?: string;
   speed?: string;
+  clocks?: number[];
 };
 
 export type ImportRun = {

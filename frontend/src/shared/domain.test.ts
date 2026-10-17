@@ -4,13 +4,16 @@ import {
   applyUci,
   buildTimeline,
   exportLine,
+  formatClock,
   formatTimeControl,
   kingSquare,
   lineRecord,
   loadLine,
   normalizeBoardOrientation,
+  normalizeClocks,
   normalizeSpeed,
   normalizeTimeControl,
+  remainingAt,
   replay,
   resetTimelinesForTests,
   resolveBoardOrientation,
@@ -158,6 +161,31 @@ describe('time controls', () => {
     expect(exportLine(line, '300+3')).toContain('[TimeControl "300+3"]');
     expect(exportLine(line)).not.toContain('TimeControl');
     expect(exportLine(line, 'junk')).not.toContain('TimeControl');
+  });
+  it('normalizes per-ply readings and rejects misshapen arrays', () => {
+    expect(normalizeClocks([18000, 17950])).toEqual([18000, 17950]);
+    expect(normalizeClocks([])).toBeUndefined();
+    expect(normalizeClocks(undefined)).toBeUndefined();
+    expect(normalizeClocks([18000, -1])).toBeUndefined();
+    expect(normalizeClocks([18000, 1.5])).toBeUndefined();
+    expect(normalizeClocks('18000')).toBeUndefined();
+  });
+  it('formats remaining time as m:ss, h:mm:ss above an hour', () => {
+    expect(formatClock(18000)).toBe('3:00');
+    expect(formatClock(9050)).toBe('1:30');
+    expect(formatClock(372300)).toBe('1:02:03');
+    expect(formatClock(0)).toBe('0:00');
+  });
+  it('reads each side latest entry at a viewed ply with initial fallback', () => {
+    const game = { clocks: [18000, 17950, 17900], timeControl: '180+2' };
+    expect(remainingAt(game, 0, 'white')).toBe(18000);
+    expect(remainingAt(game, 1, 'white')).toBe(18000);
+    expect(remainingAt(game, 1, 'black')).toBe(18000);
+    expect(remainingAt(game, 2, 'black')).toBe(17950);
+    expect(remainingAt(game, 3, 'white')).toBe(17900);
+    expect(remainingAt(game, 3, 'black')).toBe(17950);
+    expect(remainingAt({ timeControl: '180+2' }, 0, 'white')).toBe(18000);
+    expect(remainingAt({}, 4, 'white')).toBeUndefined();
   });
   it('keeps PGN player names and Elos on the line and through export', () => {
     const pgn =

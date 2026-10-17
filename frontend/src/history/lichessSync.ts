@@ -359,6 +359,10 @@ export type LichessGame = {
   speed?: string;
   perf?: string | { key?: string; name?: string };
   clock?: { initial?: number; increment?: number };
+  // Per-ply remaining time in centiseconds for the side that just moved
+  // (Lichess `clocks` field, requested with clocks=true). Absent for
+  // correspondence/untimed games and older exports.
+  clocks?: unknown;
   daysPerTurn?: number;
   timeControl?: string;
   players?: {
@@ -408,6 +412,35 @@ function clockOf(game: LichessGame): string | undefined {
     return `${game.daysPerTurn}d`;
   }
   return undefined;
+}
+
+// Per-ply remaining centiseconds, one entry per move for the side that
+// just moved. Prefers the structured `clocks` array, falls back to PGN
+// [%clk h:mm:ss] comments. Returns undefined unless the readings line up
+// exactly with the move list (a partial array is worse than none: the
+// review strips index by ply).
+function clocksOf(game: LichessGame, moveCount: number): number[] | undefined {
+  if (moveCount <= 0) return undefined;
+  const valid = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 14 * 86400 * 100;
+  if (Array.isArray(game.clocks)) {
+    if (game.clocks.length === moveCount && game.clocks.every(valid)) {
+      return [...game.clocks];
+    }
+  }
+  const matches = [...(game.pgn ?? '').matchAll(/\{\s*\[%clk\s+([0-9:.]+)\s*\]\s*\}/g)];
+  if (matches.length !== moveCount) return undefined;
+  const parsed: number[] = [];
+  for (const match of matches) {
+    const parts = match[1].split(':').map(Number);
+    if (parts.some(part => !Number.isFinite(part) || part < 0)) return undefined;
+    let seconds = 0;
+    for (const part of parts) seconds = seconds * 60 + part;
+    const centiseconds = Math.round(seconds * 100);
+    if (!valid(centiseconds)) return undefined;
+    parsed.push(centiseconds);
+  }
+  return parsed;
 }
 
 function speedOf(game: LichessGame): string | undefined {
@@ -475,6 +508,7 @@ export function toImportPayload(game: LichessGame, username: string): ImportPayl
   const diff = clampDiff(ownDiff);
   const clock = clockOf(game);
   const pool = speedOf(game);
+  const readings = clocksOf(game, moves.length);
   return {
     user_color: userColor,
     elo_maia: clamp(foeRating, 1500),
@@ -492,11 +526,12 @@ export function toImportPayload(game: LichessGame, username: string): ImportPayl
     ...(diff !== undefined ? { rating_diff: diff } : {}),
     ...(clock !== undefined ? { time_control: clock } : {}),
     ...(pool !== undefined ? { speed: pool } : {}),
+    ...(readings !== undefined ? { clocks: readings } : {}),
   };
 }
 
 export function lichessGamesUrl(username: string, since?: string): string {
-  const params = new URLSearchParams({ max: '1000', pgnInJson: 'true' });
+  const params = new URLSearchParams({ max: '1000', pgnInJson: 'true', clocks: 'true' });
   const sinceMs = since ? Date.parse(since) : NaN;
   if (Number.isFinite(sinceMs)) params.set('since', String(sinceMs));
   return `https://lichess.org/api/games/user/${encodeURIComponent(username.trim())}?${params}`;

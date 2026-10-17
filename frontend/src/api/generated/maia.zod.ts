@@ -101,6 +101,7 @@ export const GamesListResponse = zod.strictObject({
   "$schema": zod.url().optional().describe('A URL to the JSON Schema for this object.'),
   "current_game": zod.strictObject({
   "$schema": zod.url().optional().describe('A URL to the JSON Schema for this object.'),
+  "clocks": zod.array(zod.int()).nullish(),
   "created_at": zod.string(),
   "elo_maia": zod.int(),
   "elo_user": zod.int(),
@@ -121,6 +122,7 @@ export const GamesListResponse = zod.strictObject({
   "current_id": zod.string().nullable(),
   "games": zod.array(zod.strictObject({
   "$schema": zod.url().optional().describe('A URL to the JSON Schema for this object.'),
+  "clocks": zod.array(zod.int()).nullish(),
   "created_at": zod.string(),
   "elo_maia": zod.int(),
   "elo_user": zod.int(),
@@ -147,6 +149,7 @@ export const GamesListResponse = zod.strictObject({
  * @summary Save a game (upsert by id)
  */
 export const GamesCreateBody = zod.strictObject({
+  "clocks": zod.array(zod.int()).nullish(),
   "created_at": zod.string().optional(),
   "current": zod.boolean().optional(),
   "elo_maia": zod.int().nullable(),
@@ -167,6 +170,7 @@ export const GamesCreateBody = zod.strictObject({
 
 export const GamesCreateResponse = zod.strictObject({
   "$schema": zod.url().optional().describe('A URL to the JSON Schema for this object.'),
+  "clocks": zod.array(zod.int()).nullish(),
   "created_at": zod.string(),
   "elo_maia": zod.int(),
   "elo_user": zod.int(),
@@ -205,6 +209,7 @@ export const GamesGetParams = zod.object({
 
 export const GamesGetResponse = zod.strictObject({
   "$schema": zod.url().optional().describe('A URL to the JSON Schema for this object.'),
+  "clocks": zod.array(zod.int()).nullish(),
   "created_at": zod.string(),
   "elo_maia": zod.int(),
   "elo_user": zod.int(),

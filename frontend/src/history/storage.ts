@@ -1,4 +1,5 @@
 import {
+  normalizeClocks,
   normalizeSettings,
   normalizeSpeed,
   normalizeTimeControl,
@@ -82,11 +83,13 @@ export function restoreGame(value: unknown): StoredGame | undefined {
     timeControl,
     time_control,
     speed,
+    clocks,
   } = value;
   if (typeof id !== 'string' || !isStringArray(moves)) return;
   const diff = ratingDiff ?? rating_diff;
   const clock = normalizeTimeControl(timeControl ?? time_control);
   const pool = normalizeSpeed(speed);
+  const readings = normalizeClocks(clocks);
   try {
     replay(moves);
     return {
@@ -104,6 +107,7 @@ export function restoreGame(value: unknown): StoredGame | undefined {
         : {}),
       ...(clock !== undefined ? { timeControl: clock } : {}),
       ...(pool !== undefined ? { speed: pool } : {}),
+      ...(readings !== undefined ? { clocks: readings } : {}),
     };
   } catch {
     return;

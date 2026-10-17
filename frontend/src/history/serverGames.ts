@@ -1,5 +1,5 @@
 import type { StoredGame } from '../shared/domain';
-import { normalizeSpeed, normalizeTimeControl } from '../shared/domain';
+import { normalizeClocks, normalizeSpeed, normalizeTimeControl } from '../shared/domain';
 // Canonical term per spec/GLOSSARY.md: this module is the gameClient
 // (durable game requests), never the engine transport (evaluationTransport).
 import { isRecord } from '../shared/guards';
@@ -25,6 +25,7 @@ export type ServerGame = {
   rating_diff?: number;
   time_control?: string;
   speed?: string;
+  clocks?: number[];
 };
 
 export type GamesList = {
@@ -64,7 +65,9 @@ function isServerGame(value: unknown): value is ServerGame {
     (value.opponent === undefined || typeof value.opponent === 'string') &&
     (value.rating_diff === undefined || typeof value.rating_diff === 'number') &&
     (value.time_control === undefined || typeof value.time_control === 'string') &&
-    (value.speed === undefined || typeof value.speed === 'string')
+    (value.speed === undefined || typeof value.speed === 'string') &&
+    (value.clocks === undefined ||
+      (Array.isArray(value.clocks) && value.clocks.every(entry => typeof entry === 'number')))
   );
 }
 
@@ -76,6 +79,7 @@ export function toStoredGame(row: ServerGame): StoredGame | undefined {
   const diff = row.rating_diff;
   const clock = normalizeTimeControl(row.time_control);
   const pool = normalizeSpeed(row.speed);
+  const readings = normalizeClocks(row.clocks);
   const base = restoreGame({
     id: row.id,
     createdAt: row.created_at,
@@ -97,6 +101,7 @@ export function toStoredGame(row: ServerGame): StoredGame | undefined {
       : {}),
     ...(clock !== undefined ? { timeControl: clock } : {}),
     ...(pool !== undefined ? { speed: pool } : {}),
+    ...(readings !== undefined ? { clocks: readings } : {}),
   });
   return base;
 }

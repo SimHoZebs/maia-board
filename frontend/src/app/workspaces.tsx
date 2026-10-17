@@ -11,12 +11,14 @@ import { InsightPanel, MoveNavBar, MovesPanel, ObjectiveBar } from './ReadPanels
 import { Dialog } from './Dialog';
 import {
   analysisLength,
+  formatClock,
   formatTimeControl,
   gameResult,
   kingSquare,
   lineRecord,
   oppositeColor,
   parseKey,
+  remainingAt,
   replay,
   resolveBoardOrientation,
   resultTextForTip,
@@ -398,6 +400,9 @@ export function PlayWorkspace({ state, dispatch }: Props) {
       (historic ? (position.terminal ?? null) : (playLine?.terminal ?? null)) !== null;
     const active = !resigned && toGroundColor(shownGame.turn()) === color && !shownOver;
     const label = color === settings.userColor ? userLabel : botLabel;
+    // Remaining time at the displayed ply for resumed imports (local games
+    // carry no readings, so the span stays unmounted there).
+    const left = remainingAt(state.play, displayedPly, color);
     return (
       <div
         className={`player-strip${active && ready ? ' active' : ''}`}
@@ -419,6 +424,7 @@ export function PlayWorkspace({ state, dispatch }: Props) {
           </span>
         )}
         <span className="time-control">{formatTimeControl(state.play)}</span>
+        {left !== undefined && <span className="clock-remaining">{formatClock(left)}</span>}
       </div>
     );
   };
@@ -748,6 +754,9 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
     const shownOver = viewedOver;
     const active = toGroundColor(game.turn()) === color && !shownOver;
     const label = analysisNames?.[color] ?? sideName(color);
+    // Remaining time at the viewed ply for reviewed imports (ad-hoc lines
+    // and local games carry no readings, so the span stays unmounted there).
+    const left = remainingAt(sourceGame ?? state.play, ply, color);
     return (
       <div
         className={`player-strip${active && ready ? ' active' : ''}`}
@@ -766,6 +775,7 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
           </span>
         )}
         <span className="time-control">{analysisClock}</span>
+        {left !== undefined && <span className="clock-remaining">{formatClock(left)}</span>}
       </div>
     );
   };

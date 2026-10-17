@@ -265,6 +265,12 @@ p {
   font-size: 12px;
   flex: none;
 }
+.clock-remaining {
+  color: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
 .turn-indicator {
   color: var(--accent);
   font-size: 12px;

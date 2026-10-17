@@ -50,6 +50,11 @@ export type StoredGame = {
   timeControl?: string;
   // Lichess speed pool (`blitz`, `rapid`, ...). Absent when unknown.
   speed?: string;
+  // Per-ply remaining time in centiseconds, one entry per move for the side
+  // that just moved (Lichess `clocks`, requested with clocks=true). Absent
+  // when unknown: local games, correspondence/untimed imports, and rows
+  // imported before readings were requested.
+  clocks?: number[];
 };
 export const defaultSettings: Settings = {
   userColor: 'white',
@@ -118,6 +123,64 @@ export function normalizeTimeControl(value: unknown): string | undefined {
 export function normalizeSpeed(value: unknown): string | undefined {
   if (typeof value !== 'string' || !value) return undefined;
   return (LICHESS_SPEEDS as readonly string[]).includes(value) ? value : undefined;
+}
+
+// Per-ply remaining centiseconds: every entry a non-negative integer
+// within 14 days, at most one per ply. Empty and mismatched arrays are
+// dropped by the importer (length is checked against the move list there);
+// this boundary only guards the shape.
+export function normalizeClocks(value: unknown): number[] | undefined {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 4096) return undefined;
+  if (
+    !value.every(
+      entry =>
+        typeof entry === 'number' &&
+        Number.isInteger(entry) &&
+        entry >= 0 &&
+        entry <= 14 * 86400 * 100,
+    )
+  )
+    return undefined;
+  return [...value];
+}
+
+// Compact remaining-time label for one reading: `m:ss` under an hour,
+// `h:mm:ss` above. Centiseconds truncate (a clock shows whole seconds).
+export function formatClock(centiseconds: number): string {
+  const totalSeconds = Math.max(0, Math.floor(centiseconds / 100));
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const hours = Math.floor(totalSeconds / 3600);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  if (hours > 0) return `${hours}:${pad(minutes)}:${pad(seconds)}`;
+  return `${minutes}:${pad(seconds)}`;
+}
+
+// Remaining time for one side at a viewed ply. Readings are per-move for
+// the side that just moved, so each side reads its latest entry at or
+// before the ply; a side yet to move falls back to the initial time when
+// the time control names one. Undefined when no data covers the position.
+export function remainingAt(
+  game: Pick<StoredGame, 'clocks' | 'timeControl'>,
+  ply: number,
+  color: SideColor,
+): number | undefined {
+  const readings = game.clocks;
+  if (readings !== undefined) {
+    const parity = color === 'white' ? 0 : 1;
+    for (let index = Math.min(ply, readings.length) - 1; index >= 0; index--) {
+      if (index % 2 === parity) return readings[index];
+    }
+  }
+  if (
+    game.timeControl !== undefined &&
+    game.timeControl !== '-' &&
+    !game.timeControl.endsWith('d')
+  ) {
+    const initial = Number(game.timeControl.split('+')[0]);
+    if (Number.isInteger(initial) && initial >= 0) return initial * 100;
+  }
+  return undefined;
 }
 
 // Static clock label for history and board strips (no ticking: finished

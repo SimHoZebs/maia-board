@@ -8,6 +8,7 @@ import {
   formatSyncAge,
   isLichessCacheStale,
   lichessEloRevisionForTests,
+  lichessGamesUrl,
   loadLichessEloBasis,
   loadLichessEloCache,
   matchingLichessCache,
@@ -197,6 +198,48 @@ describe('game download mapping', () => {
       },
     });
     expect(toImportPayload(JSON.parse(tagged), 'alice')).toMatchObject({ opponent: 'Bob Marley' });
+  });
+  it('maps per-ply readings from the clocks array', () => {
+    const timed = JSON.stringify({
+      id: 'rd10001',
+      pgn: '1. e4 e5 2. Nf3 Nc6',
+      createdAt: 1_000_000,
+      speed: 'blitz',
+      clock: { initial: 180, increment: 2 },
+      clocks: [18000, 17950, 17900, 17800],
+      players: {
+        white: { rating: 1800, user: { id: 'alice' } },
+        black: { rating: 1700, user: { id: 'bob' } },
+      },
+    });
+    expect(toImportPayload(JSON.parse(timed), 'alice')).toMatchObject({
+      time_control: '180+2',
+      clocks: [18000, 17950, 17900, 17800],
+    });
+    const short = JSON.stringify({
+      ...JSON.parse(timed),
+      id: 'rd10002',
+      clocks: [18000],
+    });
+    expect(toImportPayload(JSON.parse(short), 'alice')).not.toHaveProperty('clocks');
+  });
+  it('falls back to PGN [%clk] comments when the array is absent', () => {
+    const tagged = JSON.stringify({
+      id: 'rd10003',
+      pgn: '1. e4 { [%clk 0:03:00] } e5 { [%clk 0:02:59] }',
+      createdAt: 1_000_000,
+      speed: 'blitz',
+      players: {
+        white: { rating: 1800, user: { id: 'alice' } },
+        black: { rating: 1700, user: { id: 'bob' } },
+      },
+    });
+    expect(toImportPayload(JSON.parse(tagged), 'alice')).toMatchObject({
+      clocks: [18000, 17900],
+    });
+  });
+  it('requests clock readings from the games export', () => {
+    expect(lichessGamesUrl('alice')).toContain('clocks=true');
   });
   it('maps clocks, speeds, and correspondence days', () => {
     const timed = JSON.stringify({

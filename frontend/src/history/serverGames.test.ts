@@ -82,6 +82,16 @@ describe('server mapping', () => {
     expect(dropped?.speed).toBeUndefined();
     expect(toStoredGame(row('v', ['e2e4']))?.timeControl).toBeUndefined();
   });
+  it('round-trips per-ply readings and drops misshapen arrays', () => {
+    expect(toStoredGame({ ...row('c', ['e2e4', 'e7e5']), clocks: [18000, 17950] })?.clocks).toEqual(
+      [18000, 17950],
+    );
+    expect(toStoredGame({ ...row('d', ['e2e4']), clocks: [18000, -5] })?.clocks).toBeUndefined();
+    expect(
+      toStoredGame({ ...row('e', ['e2e4']), clocks: 'soon' as unknown as number[] })?.clocks,
+    ).toBeUndefined();
+    expect(toStoredGame(row('f', ['e2e4']))?.clocks).toBeUndefined();
+  });
   it('fetches lists, saves, and deletes with server errors preserved', async () => {
     const list = {
       games: [row('a')],
