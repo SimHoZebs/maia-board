@@ -237,7 +237,6 @@ p {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 0 8px;
   font-size: 14px;
 }
 .player-strip strong {
