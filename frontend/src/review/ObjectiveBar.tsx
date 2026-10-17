@@ -43,6 +43,12 @@ function useTweenedPercent(target: number): number {
   // delays; only a change from rest holds first.
   const busyRef = useRef(false);
   useEffect(() => {
+    // Non-finite targets never tween: interpolating toward NaN would set
+    // state every frame without converging, and the render-phase retention
+    // below would re-set on every render (NaN !== NaN), tripping React's
+    // maximum-update-depth guard. Callers fall back to the last finite
+    // reading, so this only skips the animation, never the value.
+    if (!Number.isFinite(target)) return;
     if (
       typeof window !== 'undefined' &&
       window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
@@ -129,25 +135,30 @@ export function ObjectiveBar({
   // tween runs previous -> current instead of previous -> 50 -> current.
   // Render-phase retention (no effect): the committed value is available to
   // the same commit's tween input, with no one-commit ref lag.
-  const [last, setLast] = useState(display);
+  // Only finite readings are retained: NaN !== NaN is always true, so
+  // retaining a non-finite reading would call setLast on every render and
+  // trip React's maximum-update-depth guard (error #185). A non-finite
+  // reading renders as pending on the last finite value instead.
+  const valid = display && Number.isFinite(display.percent) ? display : undefined;
+  const [last, setLast] = useState(valid);
   const lastWdl = last?.wdl;
-  const displayWdl = display?.wdl;
+  const displayWdl = valid?.wdl;
   const wdlChanged =
     (displayWdl?.white ?? null) !== (lastWdl?.white ?? null) ||
     (displayWdl?.draw ?? null) !== (lastWdl?.draw ?? null) ||
     (displayWdl?.black ?? null) !== (lastWdl?.black ?? null);
   const tagsChanged =
-    (display?.whiteText ?? null) !== (last?.whiteText ?? null) ||
-    (display?.blackText ?? null) !== (last?.blackText ?? null) ||
-    (display?.drawText ?? null) !== (last?.drawText ?? null);
-  if (display && (display.percent !== last?.percent || tagsChanged || wdlChanged)) setLast(display);
-  const shown = display ?? last;
+    (valid?.whiteText ?? null) !== (last?.whiteText ?? null) ||
+    (valid?.blackText ?? null) !== (last?.blackText ?? null) ||
+    (valid?.drawText ?? null) !== (last?.drawText ?? null);
+  if (valid && (valid.percent !== last?.percent || tagsChanged || wdlChanged)) setLast(valid);
+  const shown = valid ?? last;
   const percent = shown ? shown.percent : 50;
   const whitePct = shown?.wdl ? shown.wdl.white : percent;
   const drawPct = shown?.wdl ? shown.wdl.draw : 0;
   const whiteTween = useTweenedPercent(whitePct);
   const drawTween = useTweenedPercent(drawPct);
-  const pending = !display;
+  const pending = !valid;
   // A failed fetch is not loading: drop the pulse so the bar never spins
   // forever on the old value. Retry clears the failure upstream and the pulse
   // resumes while the refetch is in flight.
