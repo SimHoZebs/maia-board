@@ -259,13 +259,8 @@ p {
   color: var(--muted);
   font-size: 12px;
 }
-.time-control {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 12px;
-  flex: none;
-}
 .clock-remaining {
+  margin-left: auto;
   color: inherit;
   font-size: 12px;
   font-variant-numeric: tabular-nums;

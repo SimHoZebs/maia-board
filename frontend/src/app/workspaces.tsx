@@ -12,7 +12,6 @@ import { Dialog } from './Dialog';
 import {
   analysisLength,
   formatClock,
-  formatTimeControl,
   gameResult,
   kingSquare,
   lineRecord,
@@ -423,7 +422,6 @@ export function PlayWorkspace({ state, dispatch }: Props) {
             {historic ? 'At this position' : request ? 'Thinking…' : 'To move'}
           </span>
         )}
-        <span className="time-control">{formatTimeControl(state.play)}</span>
         {left !== undefined && <span className="clock-remaining">{formatClock(left)}</span>}
       </div>
     );
@@ -714,13 +712,6 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   );
   const analysisCaptures = captureAt(analysisCapturePrefix, ply);
   const analysisDiff = materialFromFen(position.fen).diff;
-  // Static clock label: the reviewed saved game carries the imported time
-  // control; live reviews fall back to the current play game (untimed).
-  const analysisClock = formatTimeControl(
-    state.analysisSourceId
-      ? (state.saved.find(game => game.id === state.analysisSourceId) ?? state.play)
-      : state.play,
-  );
   // Identity for the player strips: the signed-in display name, falling
   // back to 'You' before login and in unit tests (same as the play room).
   const you = useAccountName() ?? 'You';
@@ -774,7 +765,6 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
             To move
           </span>
         )}
-        <span className="time-control">{analysisClock}</span>
         {left !== undefined && <span className="clock-remaining">{formatClock(left)}</span>}
       </div>
     );
