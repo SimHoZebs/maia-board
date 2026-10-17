@@ -291,6 +291,41 @@ func (s *GameStore) UpdateRatingDiffIfEmpty(ownerID, source string, ratingDiff *
 	return count > 0, nil
 }
 
+// UpdateTimeControlIfEmpty backfills a missing clock setting on an imported
+// row (re-imports refresh time controls for rows saved before they were
+// stamped). Never touches updated_at: a clock refresh must not churn recency.
+func (s *GameStore) UpdateTimeControlIfEmpty(ownerID, source string, timeControl, speed *string) (bool, error) {
+	if ownerID == "" || source == "" || (timeControl == nil && speed == nil) {
+		return false, nil
+	}
+	updated := false
+	if timeControl != nil {
+		result, err := s.db.Exec(`UPDATE games SET time_control = ? WHERE owner_id = ? AND source = ? AND time_control IS NULL`,
+			*timeControl, ownerID, source)
+		if err != nil {
+			return false, err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return false, err
+		}
+		updated = updated || count > 0
+	}
+	if speed != nil {
+		result, err := s.db.Exec(`UPDATE games SET speed = ? WHERE owner_id = ? AND source = ? AND speed IS NULL`,
+			*speed, ownerID, source)
+		if err != nil {
+			return false, err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return false, err
+		}
+		updated = updated || count > 0
+	}
+	return updated, nil
+}
+
 // AdoptLegacyGames claims every unowned (pre-user) game row for ownerID and
 // moves the legacy global current marker onto that user's marker when it
 // points at an adopted row. It is idempotent: a second caller adopts nothing.

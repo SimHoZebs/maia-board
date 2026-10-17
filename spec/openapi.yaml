@@ -297,9 +297,13 @@ components:
           type: string
         source:
           type: string
+        speed:
+          type: string
         temperature:
           format: double
           type: number
+        time_control:
+          type: string
         user_color:
           type: string
       required:
@@ -348,9 +352,13 @@ components:
           type: string
         source:
           type: string
+        speed:
+          type: string
         temperature:
           format: double
           type: number
+        time_control:
+          type: string
         updated_at:
           type: string
         user_color:

@@ -144,6 +144,10 @@ func (s *Server) handleGamesCreate(ctx context.Context, input *GamesCreateInput)
 	payload.Opponent = "Maia " + strconv.Itoa(*payload.EloMaia)
 	payload.Source = ""
 	payload.RatingDiff = nil
+	// Local play is untimed: no user-facing clock setting exists, so the
+	// server clears any client-sent clock rather than storing it.
+	payload.TimeControl = nil
+	payload.Speed = nil
 	game, isNew, err := s.store.Save(payload)
 	if err != nil {
 		if errors.Is(err, store.ErrOwnerMismatch) {

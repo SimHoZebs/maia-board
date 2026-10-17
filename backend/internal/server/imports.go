@@ -32,6 +32,12 @@ var importSourcePattern = regexp.MustCompile(`^lichess:[A-Za-z0-9]{4,16}$`)
 // control characters, bounded so rows stay list-shaped.
 var importOpponentPattern = regexp.MustCompile(`^[^\x00-\x1f]{1,64}$`)
 
+// importSpeedValues gates the server-owned speed stamp to known Lichess pools.
+var importSpeedValues = map[string]bool{
+	"ultrabullet": true, "bullet": true, "blitz": true, "rapid": true,
+	"classical": true, "correspondence": true, "unlimited": true,
+}
+
 func (s *Server) serveBulkImport(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	if r.Method != http.MethodPost {
@@ -82,6 +88,10 @@ func (s *Server) serveBulkImport(w http.ResponseWriter, r *http.Request) {
 			writeHumaError(w, http.StatusBadRequest, "invalid_opponent", "game opponent must be 1-64 printable characters")
 			return
 		}
+		if speed := body.Games[index].Speed; speed != nil && *speed != "" && !importSpeedValues[*speed] {
+			writeHumaError(w, http.StatusBadRequest, "invalid_speed", "game speed must be a Lichess pool")
+			return
+		}
 		sources = append(sources, source)
 	}
 	known, err := s.store.ExistingSources(ownerID, sources)
@@ -102,6 +112,7 @@ func (s *Server) serveBulkImport(w http.ResponseWriter, r *http.Request) {
 			if entry.RatingDiff != nil {
 				_, _ = s.store.UpdateRatingDiffIfEmpty(ownerID, entry.Source, entry.RatingDiff)
 			}
+			_, _ = s.store.UpdateTimeControlIfEmpty(ownerID, entry.Source, entry.TimeControl, entry.Speed)
 			skipped++
 			continue
 		}

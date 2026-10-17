@@ -9,7 +9,17 @@ func migrateGameSchema(db *sql.DB) error {
 	if err := ensureGameColumn(db, "result", "ALTER TABLE games ADD COLUMN result TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	return ensureGameColumn(db, "rating_diff", "ALTER TABLE games ADD COLUMN rating_diff INTEGER")
+	if err := ensureGameColumn(db, "rating_diff", "ALTER TABLE games ADD COLUMN rating_diff INTEGER"); err != nil {
+		return err
+	}
+	return migrateGameTimeColumns(db)
+}
+
+func migrateGameTimeColumns(db *sql.DB) error {
+	if err := ensureGameColumn(db, "time_control", "ALTER TABLE games ADD COLUMN time_control TEXT"); err != nil {
+		return err
+	}
+	return ensureGameColumn(db, "speed", "ALTER TABLE games ADD COLUMN speed TEXT")
 }
 
 func ensureGameColumn(db *sql.DB, column, alter string) error {

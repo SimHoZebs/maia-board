@@ -102,6 +102,20 @@ func TestImportRunsAndSources(t *testing.T) {
 	if err != nil || updated {
 		t.Fatalf("diff overwrite protection: updated=%t err=%v", updated, err)
 	}
+	clock, pool := "300+3", "blitz"
+	updated, err = store.UpdateTimeControlIfEmpty(user.ID, "lichess:noname1", &clock, &pool)
+	if err != nil || !updated {
+		t.Fatalf("clock backfill: updated=%t err=%v", updated, err)
+	}
+	got, err = store.Get("noname")
+	if err != nil || got.TimeControl == nil || *got.TimeControl != "300+3" || got.Speed == nil || *got.Speed != "blitz" {
+		t.Fatalf("backfilled clock: %+v %v", got, err)
+	}
+	otherClock, otherPool := "600+0", "rapid"
+	updated, err = store.UpdateTimeControlIfEmpty(user.ID, "lichess:noname1", &otherClock, &otherPool)
+	if err != nil || updated {
+		t.Fatalf("clock overwrite protection: updated=%t err=%v", updated, err)
+	}
 	known, err := store.ExistingSources(user.ID, []string{"lichess:zzz99999", "lichess:missing"})
 	if err != nil || !known["lichess:zzz99999"] || known["lichess:missing"] {
 		t.Fatalf("existing sources: %+v %v", known, err)

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,6 +48,17 @@ type GameRow struct {
 	// rows imported before the field existed. Server-trusted like
 	// Opponent: bulk import stamps it, single saves leave it empty.
 	RatingDiff *int `json:"rating_diff,omitempty"`
+	// TimeControl is the canonical clock setting (`600+5`, `180+0`, `3d`
+	// for correspondence days, `-` for untimed). Nil means unlimited:
+	// local engine games and rows imported before the field existed.
+	// Server-trusted like Opponent: bulk import stamps it, single saves
+	// leave it empty.
+	TimeControl *string `json:"time_control,omitempty"`
+	// Speed is the Lichess speed pool (`bullet`, `blitz`, `rapid`,
+	// `classical`, `correspondence`, ...). Nil when unknown: local games
+	// and rows imported before the field existed. Server-trusted like
+	// Opponent: bulk import stamps it, single saves leave it empty.
+	Speed *string `json:"speed,omitempty"`
 	// OwnerID scopes the row to one user. Empty means a legacy pre-user row.
 	OwnerID string `json:"owner_id,omitempty"`
 }
@@ -71,6 +83,13 @@ type GamePayload struct {
 	// RatingDiff is server-owned like Opponent: bulk import stamps the
 	// user's Lichess ratingDiff; single saves must leave it empty.
 	RatingDiff *int `json:"rating_diff,omitempty"`
+	// TimeControl is server-owned like Opponent: bulk import stamps the
+	// canonical clock (`600+5`, `3d`, `-`); single saves must leave it
+	// empty (local play is unlimited).
+	TimeControl *string `json:"time_control,omitempty"`
+	// Speed is server-owned like Opponent: bulk import stamps the Lichess
+	// speed pool; single saves must leave it empty.
+	Speed *string `json:"speed,omitempty"`
 	// OwnerID is server-owned: handlers overwrite it from the session. It
 	// stays in the payload so the store has one save path for legacy ('')
 	// and owned rows.
@@ -166,6 +185,52 @@ func NewHexID() (string, error) {
 }
 
 // ValidateGamePayload checks a game save before it reaches the store.
+func ValidateTimeControl(value *string) *apierror.RequestError {
+	if value == nil {
+		return nil
+	}
+	raw := *value
+	if raw == "-" {
+		return nil
+	}
+	if len(raw) > 32 {
+		return &apierror.RequestError{Code: "invalid_time_control", Message: "time_control must be like 600+5, 3d, or -"}
+	}
+	if strings.HasSuffix(raw, "d") {
+		days, err := strconv.Atoi(strings.TrimSuffix(raw, "d"))
+		if err != nil || days < 1 || days > 14 {
+			return &apierror.RequestError{Code: "invalid_time_control", Message: "time_control must be like 600+5, 3d, or -"}
+		}
+		return nil
+	}
+	parts := strings.Split(raw, "+")
+	if len(parts) != 2 {
+		return &apierror.RequestError{Code: "invalid_time_control", Message: "time_control must be like 600+5, 3d, or -"}
+	}
+	initial, err := strconv.Atoi(parts[0])
+	if err != nil || initial < 0 || initial > 1209600 {
+		return &apierror.RequestError{Code: "invalid_time_control", Message: "time_control must be like 600+5, 3d, or -"}
+	}
+	increment, err := strconv.Atoi(parts[1])
+	if err != nil || increment < 0 || increment > 3600 {
+		return &apierror.RequestError{Code: "invalid_time_control", Message: "time_control must be like 600+5, 3d, or -"}
+	}
+	return nil
+}
+
+// ValidateSpeed checks a Lichess speed pool label before it reaches the store.
+func ValidateSpeed(value *string) *apierror.RequestError {
+	if value == nil || *value == "" {
+		return nil
+	}
+	switch *value {
+	case "ultrabullet", "bullet", "blitz", "rapid", "classical", "correspondence", "unlimited":
+		return nil
+	default:
+		return &apierror.RequestError{Code: "invalid_speed", Message: "speed must be a Lichess pool"}
+	}
+}
+
 func ValidateGamePayload(payload *GamePayload) *apierror.RequestError {
 	if !chess.ValidTemperature(payload.Temperature) {
 		return &apierror.RequestError{Code: "invalid_request", Message: "temperature must be between 0 and 2"}
@@ -181,6 +246,12 @@ func ValidateGamePayload(payload *GamePayload) *apierror.RequestError {
 	}
 	if payload.RatingDiff != nil && (*payload.RatingDiff < -1000 || *payload.RatingDiff > 1000) {
 		return &apierror.RequestError{Code: "invalid_rating_diff", Message: "rating_diff must be between -1000 and 1000"}
+	}
+	if err := ValidateTimeControl(payload.TimeControl); err != nil {
+		return err
+	}
+	if err := ValidateSpeed(payload.Speed); err != nil {
+		return err
 	}
 	if payload.Model != "79m" && payload.Model != "5m" {
 		return &apierror.RequestError{Code: "invalid_model", Message: "model must be lowercase 79m or 5m"}
@@ -231,8 +302,9 @@ func (s *GameStore) Save(payload GamePayload) (GameRow, bool, error) {
 		var storedMaia, storedUser int
 		var storedTemperature float64
 		var storedRatingDiff sql.NullInt64
-		err := tx.QueryRow(`SELECT created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent, rating_diff
-			FROM games WHERE id = ?`, id).Scan(&created, &updated, &storedColor, &storedMaia, &storedUser, &storedModel, &stored, &storedTemperature, &storedResult, &storedOwner, &storedSource, &storedOpponent, &storedRatingDiff)
+		var storedTimeControl, storedSpeed sql.NullString
+		err := tx.QueryRow(`SELECT created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent, rating_diff, time_control, speed
+			FROM games WHERE id = ?`, id).Scan(&created, &updated, &storedColor, &storedMaia, &storedUser, &storedModel, &stored, &storedTemperature, &storedResult, &storedOwner, &storedSource, &storedOpponent, &storedRatingDiff, &storedTimeControl, &storedSpeed)
 		isNew := false
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
@@ -254,25 +326,34 @@ func (s *GameStore) Save(payload GamePayload) (GameRow, bool, error) {
 			// must not churn either, and a conflicting source never rewrites.
 			if storedColor == payload.UserColor && storedMaia == *payload.EloMaia && storedUser == *payload.EloUser &&
 				storedModel == payload.Model && stored == moves && storedTemperature == payload.Temperature && storedResult == payload.Result &&
-				storedSource == payload.Source && storedOpponent == payload.Opponent && ratingDiffEqual(storedRatingDiff, payload.RatingDiff) {
+				storedSource == payload.Source && storedOpponent == payload.Opponent && ratingDiffEqual(storedRatingDiff, payload.RatingDiff) &&
+				nullableStringEqual(storedTimeControl, payload.TimeControl) && nullableStringEqual(storedSpeed, payload.Speed) {
 				if payload.Current {
 					if err := setCurrentTx(tx, payload.OwnerID, id); err != nil {
 						return saveResult{}, err
 					}
 				}
 				return saveResult{game: GameRow{ID: id, CreatedAt: created, UpdatedAt: updated, UserColor: payload.UserColor,
-					EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result, OwnerID: payload.OwnerID, Source: payload.Source, Opponent: payload.Opponent, RatingDiff: payload.RatingDiff}}, nil
+					EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result, OwnerID: payload.OwnerID, Source: payload.Source, Opponent: payload.Opponent, RatingDiff: payload.RatingDiff, TimeControl: payload.TimeControl, Speed: payload.Speed}}, nil
 			}
 		}
 		var ratingDiff any
 		if payload.RatingDiff != nil {
 			ratingDiff = *payload.RatingDiff
 		}
-		_, err = tx.Exec(`INSERT INTO games (id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent, rating_diff)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		var timeControl any
+		if payload.TimeControl != nil {
+			timeControl = *payload.TimeControl
+		}
+		var speed any
+		if payload.Speed != nil {
+			speed = *payload.Speed
+		}
+		_, err = tx.Exec(`INSERT INTO games (id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent, rating_diff, time_control, speed)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (id) DO UPDATE SET updated_at = excluded.updated_at, user_color = excluded.user_color,
-				elo_maia = excluded.elo_maia, elo_user = excluded.elo_user, model = excluded.model, moves = excluded.moves, temperature = excluded.temperature, result = excluded.result, owner_id = excluded.owner_id, source = excluded.source, opponent = excluded.opponent, rating_diff = excluded.rating_diff`,
-			id, created, now, payload.UserColor, *payload.EloMaia, *payload.EloUser, payload.Model, moves, payload.Temperature, payload.Result, payload.OwnerID, payload.Source, payload.Opponent, ratingDiff)
+				elo_maia = excluded.elo_maia, elo_user = excluded.elo_user, model = excluded.model, moves = excluded.moves, temperature = excluded.temperature, result = excluded.result, owner_id = excluded.owner_id, source = excluded.source, opponent = excluded.opponent, rating_diff = excluded.rating_diff, time_control = excluded.time_control, speed = excluded.speed`,
+			id, created, now, payload.UserColor, *payload.EloMaia, *payload.EloUser, payload.Model, moves, payload.Temperature, payload.Result, payload.OwnerID, payload.Source, payload.Opponent, ratingDiff, timeControl, speed)
 		if err != nil {
 			return saveResult{}, err
 		}
@@ -282,7 +363,7 @@ func (s *GameStore) Save(payload GamePayload) (GameRow, bool, error) {
 			}
 		}
 		return saveResult{game: GameRow{ID: id, CreatedAt: created, UpdatedAt: now, UserColor: payload.UserColor,
-			EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result, OwnerID: payload.OwnerID, Source: payload.Source, Opponent: payload.Opponent, RatingDiff: payload.RatingDiff}, isNew: isNew}, nil
+			EloMaia: *payload.EloMaia, EloUser: *payload.EloUser, Model: payload.Model, Moves: payload.Moves, Temperature: payload.Temperature, Result: payload.Result, OwnerID: payload.OwnerID, Source: payload.Source, Opponent: payload.Opponent, RatingDiff: payload.RatingDiff, TimeControl: payload.TimeControl, Speed: payload.Speed}, isNew: isNew}, nil
 	})
 	if err != nil {
 		return GameRow{}, false, err
@@ -312,17 +393,33 @@ func ratingDiffEqual(stored sql.NullInt64, payload *int) bool {
 	return stored.Valid && stored.Int64 == int64(*payload)
 }
 
+func nullableStringEqual(stored sql.NullString, payload *string) bool {
+	if payload == nil {
+		return !stored.Valid
+	}
+	return stored.Valid && stored.String == *payload
+}
+
 func scanGame(scanner gameScanner) (GameRow, error) {
 	var game GameRow
 	var moves string
 	var ratingDiff sql.NullInt64
+	var timeControl, speed sql.NullString
 	if err := scanner.Scan(&game.ID, &game.CreatedAt, &game.UpdatedAt, &game.UserColor,
-		&game.EloMaia, &game.EloUser, &game.Model, &moves, &game.Temperature, &game.Result, &game.OwnerID, &game.Source, &game.Opponent, &ratingDiff); err != nil {
+		&game.EloMaia, &game.EloUser, &game.Model, &moves, &game.Temperature, &game.Result, &game.OwnerID, &game.Source, &game.Opponent, &ratingDiff, &timeControl, &speed); err != nil {
 		return GameRow{}, err
 	}
 	if ratingDiff.Valid {
 		value := int(ratingDiff.Int64)
 		game.RatingDiff = &value
+	}
+	if timeControl.Valid {
+		value := timeControl.String
+		game.TimeControl = &value
+	}
+	if speed.Valid {
+		value := speed.String
+		game.Speed = &value
 	}
 	decoded, err := decodeMovesColumn(moves)
 	if err != nil {
@@ -337,7 +434,7 @@ func scanGame(scanner gameScanner) (GameRow, error) {
 var ErrOwnerMismatch = errors.New("game owned by another user")
 
 func (s *GameStore) Get(id string) (GameRow, error) {
-	game, err := scanGame(s.db.QueryRow(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent, rating_diff
+	game, err := scanGame(s.db.QueryRow(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent, rating_diff, time_control, speed
 		FROM games WHERE id = ?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return GameRow{}, sql.ErrNoRows
@@ -378,14 +475,14 @@ func (s *GameStore) ListForUser(limit int, ownerID string, offsets ...int) ([]Ga
 		if err != nil {
 			return nil, 0, err
 		}
-		rows, err = s.db.Query(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent, rating_diff
+		rows, err = s.db.Query(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent, rating_diff, time_control, speed
 			FROM games ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`, limit, offset)
 	} else {
 		total, err = countRows(s.db, `SELECT COUNT(*) FROM games WHERE owner_id = ?`, ownerID)
 		if err != nil {
 			return nil, 0, err
 		}
-		rows, err = s.db.Query(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent, rating_diff
+		rows, err = s.db.Query(`SELECT id, created_at, updated_at, user_color, elo_maia, elo_user, model, moves, temperature, result, owner_id, source, opponent, rating_diff, time_control, speed
 			FROM games WHERE owner_id = ? ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`, ownerID, limit, offset)
 	}
 	if err != nil {

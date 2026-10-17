@@ -213,6 +213,53 @@ func TestGameStoreRatingDiff(t *testing.T) {
 	}
 }
 
+func TestGameStoreTimeControl(t *testing.T) {
+	store := testStore(t)
+	payload := gameFixture("clock", "e2e4")
+	clock, speed := "600+5", "rapid"
+	payload.TimeControl = &clock
+	payload.Speed = &speed
+	saved, _, err := store.Save(payload)
+	if err != nil || saved.TimeControl == nil || *saved.TimeControl != "600+5" || saved.Speed == nil || *saved.Speed != "rapid" {
+		t.Fatalf("saved = %+v, err = %v", saved, err)
+	}
+	got, err := store.Get("clock")
+	if err != nil || got.TimeControl == nil || *got.TimeControl != "600+5" || got.Speed == nil || *got.Speed != "rapid" {
+		t.Fatalf("get = %+v, err = %v", got, err)
+	}
+	// Unchanged re-save must not churn recency when the clock matches.
+	again, _, err := store.Save(payload)
+	if err != nil || again.UpdatedAt != saved.UpdatedAt {
+		t.Fatalf("unchanged clock churned recency: %+v", again)
+	}
+	plain, _, err := store.Save(gameFixture("plain", "e2e4"))
+	if err != nil || plain.TimeControl != nil || plain.Speed != nil {
+		t.Fatalf("expected nil clock, got %+v", plain)
+	}
+	for _, raw := range []string{"10+0", "180+2", "3d", "-"} {
+		valid := gameFixture("ok-"+raw, "e2e4")
+		value := raw
+		valid.TimeControl = &value
+		if err := ValidateGamePayload(&valid); err != nil {
+			t.Fatalf("valid clock %q rejected: %v", raw, err)
+		}
+	}
+	for _, raw := range []string{"10", "+", "1/86400", "15d", "600+99999", ""} {
+		invalid := gameFixture("bad-clock", "e2e4")
+		value := raw
+		invalid.TimeControl = &value
+		if err := ValidateGamePayload(&invalid); err == nil || err.Code != "invalid_time_control" {
+			t.Fatalf("clock %q: expected invalid_time_control, got %v", raw, err)
+		}
+	}
+	badSpeed := gameFixture("bad-speed", "e2e4")
+	pool := "hyperbullet"
+	badSpeed.Speed = &pool
+	if err := ValidateGamePayload(&badSpeed); err == nil || err.Code != "invalid_speed" {
+		t.Fatalf("expected invalid_speed, got %v", err)
+	}
+}
+
 func TestGameStoreCurrentMarker(t *testing.T) {
 	store := testStore(t)
 	if id := store.CurrentID(); id != "" {

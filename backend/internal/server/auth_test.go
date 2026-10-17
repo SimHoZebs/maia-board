@@ -273,6 +273,41 @@ func TestImportDedupeAndStatus(t *testing.T) {
 	}
 }
 
+func TestImportTimeControl(t *testing.T) {
+	s := authedServer(t)
+	_, token := loginAs(t, s, "ClockImporter")
+	body := `{"provider":"lichess","username":"bob","games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"lichess:clk10001","time_control":"300+3","speed":"blitz"}]}`
+	w := authed(t, s, http.MethodPost, "/imports/games", body, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("clock import: %d %s", w.Code, w.Body)
+	}
+	var imported struct {
+		Saved []store.GameRow `json:"saved"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &imported); err != nil || len(imported.Saved) != 1 || imported.Saved[0].TimeControl == nil || *imported.Saved[0].TimeControl != "300+3" || imported.Saved[0].Speed == nil || *imported.Saved[0].Speed != "blitz" {
+		t.Fatalf("clock stamp: %s err=%v", w.Body, err)
+	}
+	// Correspondence days stamp, and re-imports backfill clocks.
+	corr := `{"provider":"lichess","username":"bob","games":[{"user_color":"black","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"lichess:clk10002","time_control":"3d","speed":"correspondence"}]}`
+	if w := authed(t, s, http.MethodPost, "/imports/games", corr, token); w.Code != http.StatusOK {
+		t.Fatalf("correspondence import: %d %s", w.Code, w.Body)
+	}
+	// Unknown pools are rejected before they reach the store.
+	bad := `{"provider":"lichess","games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"lichess:clk10003","speed":"hyperbullet"}]}`
+	if w := authed(t, s, http.MethodPost, "/imports/games", bad, token); w.Code != http.StatusBadRequest {
+		t.Fatalf("bad speed: %d %s", w.Code, w.Body)
+	}
+	// Single play saves stay untimed: client-sent clocks never stick.
+	w = authed(t, s, http.MethodPost, "/games", `{"user_color":"white","elo_maia":1600,"elo_user":1400,"model":"79m","moves":["e2e4"],"time_control":"300+3","speed":"blitz"}`, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("single save: %d %s", w.Code, w.Body)
+	}
+	var single store.GameRow
+	if err := json.Unmarshal(w.Body.Bytes(), &single); err != nil || single.TimeControl != nil || single.Speed != nil {
+		t.Fatalf("single save clock: %s err=%v", w.Body, err)
+	}
+}
+
 func TestReviewOwnership(t *testing.T) {
 	s := authedServer(t)
 	alice, aliceToken := loginAs(t, s, "Alice")
