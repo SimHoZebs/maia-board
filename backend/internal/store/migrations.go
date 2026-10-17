@@ -19,7 +19,10 @@ func migrateGameTimeColumns(db *sql.DB) error {
 	if err := ensureGameColumn(db, "time_control", "ALTER TABLE games ADD COLUMN time_control TEXT"); err != nil {
 		return err
 	}
-	return ensureGameColumn(db, "speed", "ALTER TABLE games ADD COLUMN speed TEXT")
+	if err := ensureGameColumn(db, "speed", "ALTER TABLE games ADD COLUMN speed TEXT"); err != nil {
+		return err
+	}
+	return ensureGameColumn(db, "clocks", "ALTER TABLE games ADD COLUMN clocks TEXT")
 }
 
 func ensureGameColumn(db *sql.DB, column, alter string) error {

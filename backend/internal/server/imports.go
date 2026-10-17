@@ -113,6 +113,7 @@ func (s *Server) serveBulkImport(w http.ResponseWriter, r *http.Request) {
 				_, _ = s.store.UpdateRatingDiffIfEmpty(ownerID, entry.Source, entry.RatingDiff)
 			}
 			_, _ = s.store.UpdateTimeControlIfEmpty(ownerID, entry.Source, entry.TimeControl, entry.Speed)
+			_, _ = s.store.UpdateClocksIfEmpty(ownerID, entry.Source, entry.Clocks)
 			skipped++
 			continue
 		}

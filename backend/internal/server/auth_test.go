@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -305,6 +306,45 @@ func TestImportTimeControl(t *testing.T) {
 	var single store.GameRow
 	if err := json.Unmarshal(w.Body.Bytes(), &single); err != nil || single.TimeControl != nil || single.Speed != nil {
 		t.Fatalf("single save clock: %s err=%v", w.Body, err)
+	}
+}
+
+func TestImportClocks(t *testing.T) {
+	s := authedServer(t)
+	_, token := loginAs(t, s, "ClockReader")
+	body := `{"provider":"lichess","games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4","e7e5"],"source":"lichess:clk20001","time_control":"180+2","speed":"blitz","clocks":[18000,17950]}]}`
+	w := authed(t, s, http.MethodPost, "/imports/games", body, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("readings import: %d %s", w.Code, w.Body)
+	}
+	var imported struct {
+		Saved []store.GameRow `json:"saved"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &imported); err != nil || len(imported.Saved) != 1 || !slices.Equal(imported.Saved[0].Clocks, []int{18000, 17950}) {
+		t.Fatalf("readings stamp: %s err=%v", w.Body, err)
+	}
+	// Re-imports backfill readings on rows saved before clocks existed.
+	w = authed(t, s, http.MethodPost, "/imports/games", `{"provider":"lichess","games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4","e7e5"],"source":"lichess:clk20001","clocks":[18000,17950]}]}`, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("readings backfill import: %d %s", w.Code, w.Body)
+	}
+	got, err := s.store.Get(imported.Saved[0].ID)
+	if err != nil || !slices.Equal(got.Clocks, []int{18000, 17950}) {
+		t.Fatalf("backfilled readings: %+v %v", got, err)
+	}
+	// Length must match the move list.
+	bad := `{"provider":"lichess","games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4","e7e5"],"source":"lichess:clk20002","clocks":[18000]}]}`
+	if w := authed(t, s, http.MethodPost, "/imports/games", bad, token); w.Code != http.StatusBadRequest {
+		t.Fatalf("short readings: %d %s", w.Code, w.Body)
+	}
+	// Single play saves stay reading-free.
+	w = authed(t, s, http.MethodPost, "/games", `{"user_color":"white","elo_maia":1600,"elo_user":1400,"model":"79m","moves":["e2e4","e7e5"],"clocks":[18000,17950]}`, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("single save: %d %s", w.Code, w.Body)
+	}
+	var single store.GameRow
+	if err := json.Unmarshal(w.Body.Bytes(), &single); err != nil || single.Clocks != nil {
+		t.Fatalf("single save readings: %s err=%v", w.Body, err)
 	}
 }
 

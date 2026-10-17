@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 )
@@ -115,6 +116,18 @@ func TestImportRunsAndSources(t *testing.T) {
 	updated, err = store.UpdateTimeControlIfEmpty(user.ID, "lichess:noname1", &otherClock, &otherPool)
 	if err != nil || updated {
 		t.Fatalf("clock overwrite protection: updated=%t err=%v", updated, err)
+	}
+	updated, err = store.UpdateClocksIfEmpty(user.ID, "lichess:noname1", []int{18000, 17950})
+	if err != nil || !updated {
+		t.Fatalf("readings backfill: updated=%t err=%v", updated, err)
+	}
+	got, err = store.Get("noname")
+	if err != nil || !slices.Equal(got.Clocks, []int{18000, 17950}) {
+		t.Fatalf("backfilled readings: %+v %v", got, err)
+	}
+	updated, err = store.UpdateClocksIfEmpty(user.ID, "lichess:noname1", []int{17000, 16950})
+	if err != nil || updated {
+		t.Fatalf("readings overwrite protection: updated=%t err=%v", updated, err)
 	}
 	known, err := store.ExistingSources(user.ID, []string{"lichess:zzz99999", "lichess:missing"})
 	if err != nil || !known["lichess:zzz99999"] || known["lichess:missing"] {

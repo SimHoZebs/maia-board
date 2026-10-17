@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -257,6 +258,44 @@ func TestGameStoreTimeControl(t *testing.T) {
 	badSpeed.Speed = &pool
 	if err := ValidateGamePayload(&badSpeed); err == nil || err.Code != "invalid_speed" {
 		t.Fatalf("expected invalid_speed, got %v", err)
+	}
+}
+
+func TestGameStoreClocks(t *testing.T) {
+	store := testStore(t)
+	payload := gameFixture("timed", "e2e4", "e7e5")
+	payload.Clocks = []int{18000, 17950}
+	saved, _, err := store.Save(payload)
+	if err != nil || !slices.Equal(saved.Clocks, []int{18000, 17950}) {
+		t.Fatalf("saved = %+v, err = %v", saved, err)
+	}
+	got, err := store.Get("timed")
+	if err != nil || !slices.Equal(got.Clocks, []int{18000, 17950}) {
+		t.Fatalf("get = %+v, %v", got, err)
+	}
+	// Unchanged re-save must not churn recency when the readings match.
+	again, _, err := store.Save(payload)
+	if err != nil || again.UpdatedAt != saved.UpdatedAt {
+		t.Fatalf("unchanged clocks churned recency: %+v", again)
+	}
+	plain, _, err := store.Save(gameFixture("plain", "e2e4"))
+	if err != nil || plain.Clocks != nil {
+		t.Fatalf("expected nil clocks, got %+v", plain)
+	}
+	short := gameFixture("short", "e2e4", "e7e5")
+	short.Clocks = []int{18000}
+	if err := ValidateGamePayload(&short); err == nil || err.Code != "invalid_clocks" {
+		t.Fatalf("length mismatch: expected invalid_clocks, got %v", err)
+	}
+	negative := gameFixture("negative", "e2e4")
+	negative.Clocks = []int{-5}
+	if err := ValidateGamePayload(&negative); err == nil || err.Code != "invalid_clocks" {
+		t.Fatalf("negative reading: expected invalid_clocks, got %v", err)
+	}
+	huge := gameFixture("huge", "e2e4")
+	huge.Clocks = []int{14*86400*100 + 1}
+	if err := ValidateGamePayload(&huge); err == nil || err.Code != "invalid_clocks" {
+		t.Fatalf("oversize reading: expected invalid_clocks, got %v", err)
 	}
 }
 

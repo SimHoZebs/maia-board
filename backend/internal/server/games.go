@@ -148,6 +148,7 @@ func (s *Server) handleGamesCreate(ctx context.Context, input *GamesCreateInput)
 	// server clears any client-sent clock rather than storing it.
 	payload.TimeControl = nil
 	payload.Speed = nil
+	payload.Clocks = nil
 	game, isNew, err := s.store.Save(payload)
 	if err != nil {
 		if errors.Is(err, store.ErrOwnerMismatch) {

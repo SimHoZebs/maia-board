@@ -326,6 +326,30 @@ func (s *GameStore) UpdateTimeControlIfEmpty(ownerID, source string, timeControl
 	return updated, nil
 }
 
+// UpdateClocksIfEmpty backfills missing per-ply readings on an imported
+// row (re-imports refresh readings for rows saved before clocks were
+// requested). Never touches updated_at: a readings refresh must not churn
+// recency.
+func (s *GameStore) UpdateClocksIfEmpty(ownerID, source string, clocks []int) (bool, error) {
+	if ownerID == "" || source == "" || clocks == nil {
+		return false, nil
+	}
+	encoded, err := encodeJSONColumn(clocks)
+	if err != nil {
+		return false, err
+	}
+	result, err := s.db.Exec(`UPDATE games SET clocks = ? WHERE owner_id = ? AND source = ? AND clocks IS NULL`,
+		encoded, ownerID, source)
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // AdoptLegacyGames claims every unowned (pre-user) game row for ownerID and
 // moves the legacy global current marker onto that user's marker when it
 // points at an adopted row. It is idempotent: a second caller adopts nothing.

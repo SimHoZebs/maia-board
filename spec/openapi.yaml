@@ -262,6 +262,13 @@ components:
           format: uri
           readOnly: true
           type: string
+        clocks:
+          items:
+            format: int64
+            type: integer
+          type:
+            - array
+            - "null"
         created_at:
           type: string
         current:
@@ -323,6 +330,13 @@ components:
           format: uri
           readOnly: true
           type: string
+        clocks:
+          items:
+            format: int64
+            type: integer
+          type:
+            - array
+            - "null"
         created_at:
           type: string
         elo_maia:
