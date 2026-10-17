@@ -301,7 +301,7 @@ test('offline boot falls back to cache and retry syncs later', async ({ page }) 
   // a played move saves locally and pends the upload the aborted flush
   // cannot clear. Retry then syncs exactly that game.
   await page.goto('http://maia.test/play');
-  await expect(page.locator('.turn-indicator')).toHaveText('To move');
+  await expect(page.locator('.player-strip.active')).toHaveCount(1);
   await clickSquare(page, 'g1');
   await clickSquare(page, 'f3');
   await expect

@@ -629,7 +629,7 @@ test('client sim: boot, play, review batch, scrub, hover, branch, history', asyn
         )
         .toBe(true);
       if (await page.locator('.game-result').count()) break;
-      await expect(page.locator('.turn-indicator')).toHaveText('To move', { timeout: 30_000 });
+      await expect(page.locator('.player-strip.active')).toHaveCount(1, { timeout: 30_000 });
       await settleFrames();
       const playStats = summarize(await commitSlice(commitsBefore));
       playCommits.push(playStats.root.count);

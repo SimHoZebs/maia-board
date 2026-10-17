@@ -399,17 +399,23 @@ export function PlayWorkspace({ state, dispatch }: Props) {
     const shownOver =
       (historic ? (position.terminal ?? null) : (playLine?.terminal ?? null)) !== null;
     const active = !resigned && toGroundColor(shownGame.turn()) === color && !shownOver;
+    const isActive = active && ready;
     const label = color === settings.userColor ? userLabel : botLabel;
     // Remaining time at the displayed ply for resumed imports (local games
     // carry no readings, so the span stays unmounted there).
     const left = remainingAt(state.play, displayedPly, color);
+    // Turn is shown by a green pill behind the active name; only async /
+    // historic states keep a text status (Thinking…, At this position).
+    const status = historic ? 'At this position' : request && active ? 'Thinking…' : null;
     return (
       <div
-        className={`player-strip${active && ready ? ' active' : ''}`}
-        aria-label={`${sideName(color)}: ${label}`}
+        className={`player-strip${isActive ? ' active' : ''}`}
+        aria-label={`${sideName(color)}: ${label}${isActive ? ', to move' : ''}`}
       >
-        <span className={`side-dot ${color}`} aria-hidden="true" />
-        <strong>{label}</strong>
+        <span className="player-identity">
+          <span className={`side-dot ${color}`} aria-hidden="true" />
+          <strong>{label}</strong>
+        </span>
         <MaterialSummary
           by={color}
           captures={playCaptures[color]}
@@ -418,9 +424,9 @@ export function PlayWorkspace({ state, dispatch }: Props) {
         {color !== settings.userColor && replyIdentity?.degraded && (
           <span role="status">Fallback model reply</span>
         )}
-        {active && ready && (
+        {status && isActive && (
           <span className="turn-indicator" role="status">
-            {historic ? 'At this position' : request ? 'Thinking…' : 'To move'}
+            {status}
           </span>
         )}
         {left !== undefined && (
@@ -749,27 +755,25 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   const strip = (color: 'white' | 'black') => {
     const shownOver = viewedOver;
     const active = toGroundColor(game.turn()) === color && !shownOver;
+    const isActive = active && ready;
     const label = analysisNames?.[color] ?? sideName(color);
     // Remaining time at the viewed ply for reviewed imports (ad-hoc lines
     // and local games carry no readings, so the span stays unmounted there).
     const left = remainingAt(sourceGame ?? state.play, ply, color);
     return (
       <div
-        className={`player-strip${active && ready ? ' active' : ''}`}
-        aria-label={`${sideName(color)}: ${label}`}
+        className={`player-strip${isActive ? ' active' : ''}`}
+        aria-label={`${sideName(color)}: ${label}${isActive ? ', to move' : ''}`}
       >
-        <span className={`side-dot ${color}`} aria-hidden="true" />
-        <strong>{label}</strong>
+        <span className="player-identity">
+          <span className={`side-dot ${color}`} aria-hidden="true" />
+          <strong>{label}</strong>
+        </span>
         <MaterialSummary
           by={color}
           captures={analysisCaptures[color]}
           lead={materialLeadFor(analysisDiff, color)}
         />
-        {active && ready && (
-          <span className="turn-indicator" role="status">
-            To move
-          </span>
-        )}
         {left !== undefined && (
           <span className={`clock-remaining${left < LOW_TIME_CENTISECONDS ? ' clock-low' : ''}`}>
             {formatClock(left)}

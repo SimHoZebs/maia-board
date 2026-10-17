@@ -242,6 +242,17 @@ p {
 .player-strip strong {
   font-weight: 600;
 }
+.player-strip .player-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  flex: none;
+  padding: 2px 8px 2px 6px;
+  border-radius: 999px;
+}
+.player-strip.active .player-identity {
+  background: rgba(184, 201, 152, 0.22);
+}
 .side-dot {
   width: 10px;
   height: 10px;

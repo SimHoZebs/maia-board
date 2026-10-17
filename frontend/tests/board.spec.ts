@@ -629,7 +629,7 @@ for (const color of ['white', 'black'] as const) {
     await expect.poll(() => app.requests.length).toBe(1);
     expect(app.requests[0].payload.moves.at(-1)).toBe(`e${rank}g${rank}`);
     await app.reply(0);
-    await expect(page.locator('.turn-indicator')).toHaveText('To move');
+    await expect(page.locator('.player-strip.active')).toHaveCount(1);
     expect(app.errors).toEqual([]);
   });
   test(`${color}: en passant removes captured pawn`, async ({ page }) => {
@@ -783,7 +783,7 @@ test('pending takeback/new game/mode/settings transitions reject obsolete replie
   await page.locator('#start-game').click();
   await app.reply(2, 'e7e5');
   await expect.poll(() => currentMoves(page)).toEqual([]);
-  await expect(page.locator('.turn-indicator')).toHaveText('To move');
+  await expect(page.locator('.player-strip.active')).toHaveCount(1);
   await piece(page, 'e7', 'black pawn');
   expect(app.errors).toEqual([]);
 });
@@ -799,11 +799,11 @@ test('busy retries are bounded, then manual retry recovers controls', async ({ p
     'Bot is busy. Wait a moment and try again.',
   );
   await expect(page.locator('#retry-request')).toBeVisible();
-  await expect(page.locator('.turn-indicator')).not.toHaveText('Thinking…');
+  await expect(page.locator('.turn-indicator')).toHaveCount(0);
   await page.locator('#retry-request').click();
   await expect.poll(() => app.requests.length).toBe(4);
   await app.reply(3, 'e7e5');
-  await expect(page.locator('.turn-indicator')).toHaveText('To move');
+  await expect(page.locator('.player-strip.active')).toHaveCount(1);
   expect(app.requests).toHaveLength(4);
   expect(app.errors).toEqual([]);
 });
@@ -858,7 +858,7 @@ test('single live Chessground binding survives React updates and StrictMode clea
   if (process.env.NODE_ENV === 'development') expect(initial).toEqual({ adds: 2, removes: 1 });
   await move(page, 'e2', 'e4');
   await app.reply(0, 'e7e5');
-  await expect(page.locator('.turn-indicator')).toHaveText('To move');
+  await expect(page.locator('.player-strip.active')).toHaveCount(1);
   await page.locator('#mode-analysis').click();
   await page.locator('#analysis-pgn').fill('1. d4 d5');
   await page.locator('#load-analysis').click();
