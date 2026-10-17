@@ -21,7 +21,7 @@ import {
   stockfishPolicy,
   type StockfishSettings,
 } from './stockfishSettings';
-import { clampBotElo } from '../board/BoardTools';
+import { ceilElo } from '../board/BoardTools';
 
 export type ReviewNode = TimelineRow & { timeline: Timeline; initialFen: string };
 // Rows are exposed directly as frozen plain objects. No wrapper class or
@@ -106,17 +106,17 @@ function prefixOf(node: ReviewNode): string[] {
 // Normalized split coordinates: explicit value Elos equal to policy Elos
 // collapse to omitted so 2400 display rows dedup with the grading lane and
 // legacy keys keep hitting. Mirrors the backend maiaIdentity normalization
-// (backend wire name, unchanged).
+// (backend wire name, unchanged). All Elos bucket up to the next hundred so
+// nearby analysis strengths share cache rows.
 export function splitValueElos(settings: ReviewSettings): {
   valueBotElo?: number;
   valueUserElo?: number;
 } {
-  const policyBot = clampBotElo(settings.botElo),
-    policyUser = clampBotElo(settings.userElo);
-  const valueBot =
-    settings.valueBotElo === undefined ? undefined : clampBotElo(settings.valueBotElo);
+  const policyBot = ceilElo(settings.botElo),
+    policyUser = ceilElo(settings.userElo);
+  const valueBot = settings.valueBotElo === undefined ? undefined : ceilElo(settings.valueBotElo);
   const valueUser =
-    settings.valueUserElo === undefined ? undefined : clampBotElo(settings.valueUserElo);
+    settings.valueUserElo === undefined ? undefined : ceilElo(settings.valueUserElo);
   return {
     ...(valueBot !== undefined && valueBot !== policyBot ? { valueBotElo: valueBot } : {}),
     ...(valueUser !== undefined && valueUser !== policyUser ? { valueUserElo: valueUser } : {}),
@@ -149,8 +149,8 @@ export function settingsHash(engine: Engine, settings: ReviewSettings): string {
   if (engine === 'sf') return stockfishPolicy(settings.stockfish);
   const split = splitValueElos(settings);
   return JSON.stringify([
-    clampBotElo(settings.botElo),
-    clampBotElo(settings.userElo),
+    ceilElo(settings.botElo),
+    ceilElo(settings.userElo),
     settings.model,
     ...(split.valueBotElo !== undefined || split.valueUserElo !== undefined
       ? [split.valueBotElo ?? null, split.valueUserElo ?? null]
@@ -195,8 +195,8 @@ export function evaluationRequest(engine: Engine, node: ReviewNode, settings: Re
     engine,
     ply: node.ply,
     fen: node.fen,
-    elo_maia: clampBotElo(settings.botElo),
-    elo_user: clampBotElo(settings.userElo),
+    elo_maia: ceilElo(settings.botElo),
+    elo_user: ceilElo(settings.userElo),
     model: settings.model,
     ...(split.valueBotElo !== undefined ? { value_elo_maia: split.valueBotElo } : {}),
     ...(split.valueUserElo !== undefined ? { value_elo_user: split.valueUserElo } : {}),

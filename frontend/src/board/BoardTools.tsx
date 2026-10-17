@@ -3,9 +3,15 @@ export const BOT_ELO_MIN = ELO_OPTIONS[0];
 export const BOT_ELO_MAX = ELO_OPTIONS[ELO_OPTIONS.length - 1];
 // Bot conditioning is only trained inside the offered range: a stored 400
 // (real player Elo) still requests, displays, and caches as 800.
-export function clampBotElo(elo: number): number {
+export function clampElo(elo: number): number {
   if (!Number.isFinite(elo)) return BOT_ELO_MIN;
   return Math.min(BOT_ELO_MAX, Math.max(BOT_ELO_MIN, Math.round(elo)));
+}
+// Analysis Elo bucket: retrospective analysis ceils both ratings to the next
+// hundred (1675 -> 1700, 800 stays 800) so nearby strengths share server
+// cache rows. Play replies keep exact Elos; only analysis buckets.
+export function ceilElo(elo: number): number {
+  return Math.ceil(clampElo(elo) / 100) * 100;
 }
 export function eloOptions(value: number): number[] {
   return [...new Set([...ELO_OPTIONS, value])].toSorted((a, b) => a - b);

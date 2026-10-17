@@ -754,6 +754,26 @@ describe('fast-then-refine', () => {
     await flush();
     expect(started).toContain('maia:2400:5');
   });
+  it('buckets foreground analysis Elos up to the next hundred', async () => {
+    const bodies: { elo_maia: number; elo_user: number }[] = [];
+    const fetcher = vi.fn<typeof fetch>(async (url, init) => {
+      const body = JSON.parse(requestBodyText(init));
+      if (url === '/move/analysis')
+        bodies.push({ elo_maia: body.elo_maia, elo_user: body.elo_user });
+      return jsonResponse(botFixture(body.fen, body.model));
+    });
+    const coordinator = new ReviewCoordinator(fetcher);
+    coordinator.ensure(
+      [nodes[3]],
+      { botElo: 1675, userElo: 1512, model: '79m' },
+      {
+        priority: true,
+        engines: ['maia'],
+      },
+    );
+    await flush();
+    expect(bodies).toEqual([{ elo_maia: 1700, elo_user: 1600 }]);
+  });
   it('fast failure never blocks the full refine and never surfaces', async () => {
     const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
       const body = JSON.parse(requestBodyText(init));

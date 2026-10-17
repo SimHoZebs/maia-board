@@ -1,11 +1,11 @@
 import {
   BotApiError,
-  requestBotAnalysis,
+  requestEngineAnalysis,
   requestMove,
   type MoveRequest,
   type MoveResponse,
 } from '../eval/api';
-import { clampBotElo } from '../board/BoardTools';
+import { ceilElo } from '../board/BoardTools';
 // Canonical terms: see spec/GLOSSARY.md.
 // transport = shared JSON-POST sender (evaluationTransport); coordinator =
 // foreground coordinator (this class, at most one live request per engine,
@@ -426,13 +426,13 @@ export class ReviewCoordinator {
     // Retrospective analysis rides the Focus lane (POST /move/analysis),
     // never the play lane — it fires alongside the live reply every move
     // and queues behind it instead of superseding it.
-    return requestBotAnalysis(
+    return requestEngineAnalysis(
       {
         fen: job.node.fen,
         moves: prefix,
         initial_fen: job.node.initialFen,
-        elo_maia: clampBotElo(job.settings.botElo),
-        elo_user: clampBotElo(job.settings.userElo),
+        elo_maia: ceilElo(job.settings.botElo),
+        elo_user: ceilElo(job.settings.userElo),
         ...valueElos,
         model: job.settings.model,
         maia_color: job.node.turn,
