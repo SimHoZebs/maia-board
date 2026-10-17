@@ -15,6 +15,31 @@ describe('playTransitionSound', () => {
     ).toBe('capture');
   });
 
+  it('replays a check as its underlying knock, like lichess', () => {
+    // Quiet check knocks like a move: 1.e4 e5 2.Qh5 Ke7?? 3.Qg5+.
+    expect(
+      playTransitionSound(
+        { id: 'a', ply: 4 },
+        'a',
+        5,
+        ['e2e4', 'e7e5', 'd1h5', 'e8e7', 'h5g5'],
+        false,
+        false,
+      ),
+    ).toBe('move');
+    // Checking capture knocks like a capture: 1.e4 e5 2.Qh5 Nf6 3.Qxf7+.
+    expect(
+      playTransitionSound(
+        { id: 'a', ply: 4 },
+        'a',
+        5,
+        ['e2e4', 'e7e5', 'd1h5', 'g8f6', 'h5f7'],
+        false,
+        false,
+      ),
+    ).toBe('capture');
+  });
+
   it('sounds checkmate at the tip', () => {
     expect(
       playTransitionSound(
@@ -74,6 +99,26 @@ describe('analysisTransitionSound', () => {
     );
     expect(analysisTransitionSound({ root, ply: 2 }, root, 1, START_FEN, ['e2e4'])).toBe('move');
     expect(analysisTransitionSound({ root, ply: 1 }, root, 0, START_FEN, [])).toBe('move');
+    // Quiet check replays the move knock.
+    expect(
+      analysisTransitionSound({ root, ply: 4 }, root, 5, START_FEN, [
+        'e2e4',
+        'e7e5',
+        'd1h5',
+        'e8e7',
+        'h5g5',
+      ]),
+    ).toBe('move');
+    // Checking capture replays the capture knock.
+    expect(
+      analysisTransitionSound({ root, ply: 4 }, root, 5, START_FEN, [
+        'e2e4',
+        'e7e5',
+        'd1h5',
+        'g8f6',
+        'h5f7',
+      ]),
+    ).toBe('capture');
     expect(
       analysisTransitionSound({ root, ply: 1 }, root, 3, START_FEN, ['e2e4', 'e7e5', 'g1f3']),
     ).toBeNull();

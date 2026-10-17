@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { classifyPlayTip, classifyTip } from './moveSound';
+import { classifyPlayTip, classifyTip, tipCaptured } from './moveSound';
+import { START_FEN } from '../shared/domain';
 
 describe('classifyTip', () => {
   it('stays silent on an empty prefix', () => {
@@ -40,5 +41,18 @@ describe('classifyTip', () => {
   it('stays silent on unparseable lines', () => {
     expect(classifyPlayTip(['e2e4', 'bogus'])).toBeNull();
     expect(classifyTip('not-a-fen', ['e2e4'])).toBeNull();
+  });
+});
+
+describe('tipCaptured', () => {
+  it('reports the tip move capture', () => {
+    expect(tipCaptured(START_FEN, ['e2e4'])).toBe(false);
+    expect(tipCaptured(START_FEN, ['e2e4', 'd7d5', 'e4d5'])).toBe(true);
+  });
+
+  it('stays silent on empty or unparseable lines', () => {
+    expect(tipCaptured(START_FEN, [])).toBeNull();
+    expect(tipCaptured(START_FEN, ['e2e4', 'bogus'])).toBeNull();
+    expect(tipCaptured('not-a-fen', ['e2e4'])).toBeNull();
   });
 });

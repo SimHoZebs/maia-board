@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { analysisLine, START_FEN } from '../shared/domain';
 import type { State } from '../state';
-import { classifyTip, type SoundKind } from './moveSound';
+import { classifyTip, tipCaptured, type SoundKind } from './moveSound';
 import { playSound } from './player';
 
 // Board sounds for committed and browsed moves. One instance mounts in the
@@ -19,6 +19,19 @@ export type AnalysisCursor = { root: string; ply: number };
 
 // Pure transition decisions (tested without React): null means silence.
 // Stepping back re-sounds the arrived-at position (generic knock at ply 0).
+
+// A checking move replays its underlying knock: quiet checks knock like
+// moves, checking captures like captures. This mirrors lichess, whose
+// standard set resolves `check` to silence on top of the move/capture knock.
+function resolveCheck(
+  kind: SoundKind | null,
+  initialFen: string,
+  landing: readonly string[],
+): SoundKind | null {
+  if (kind !== 'check') return kind;
+  return tipCaptured(initialFen, landing) ? 'capture' : 'move';
+}
+
 export function playTransitionSound(
   prev: PlayCursor | null,
   id: string,
@@ -29,8 +42,14 @@ export function playTransitionSound(
 ): SoundKind | null {
   if (!prev || prev.id !== id) return null;
   if (resigned && !wasResigned) return 'gameEnd';
-  if (ply === prev.ply + 1 && !resigned) return classifyTip(START_FEN, moves.slice(0, ply));
-  if (ply === prev.ply - 1) return classifyTip(START_FEN, moves.slice(0, ply)) ?? 'move';
+  if (ply === prev.ply + 1 && !resigned) {
+    const landing = moves.slice(0, ply);
+    return resolveCheck(classifyTip(START_FEN, landing), START_FEN, landing);
+  }
+  if (ply === prev.ply - 1) {
+    const landing = moves.slice(0, ply);
+    return resolveCheck(classifyTip(START_FEN, landing), START_FEN, landing) ?? 'move';
+  }
   return null;
 }
 
@@ -42,9 +61,13 @@ export function analysisTransitionSound(
   displayedMoves: readonly string[],
 ): SoundKind | null {
   if (!prev || prev.root !== root) return null;
-  if (ply === prev.ply + 1) return classifyTip(initialFen, displayedMoves);
+  if (ply === prev.ply + 1)
+    return resolveCheck(classifyTip(initialFen, displayedMoves), initialFen, displayedMoves);
   // Stepping back: displayedMoves is already the arrived-at prefix.
-  if (ply === prev.ply - 1) return classifyTip(initialFen, displayedMoves) ?? 'move';
+  if (ply === prev.ply - 1)
+    return (
+      resolveCheck(classifyTip(initialFen, displayedMoves), initialFen, displayedMoves) ?? 'move'
+    );
   return null;
 }
 
