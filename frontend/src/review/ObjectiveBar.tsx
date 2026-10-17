@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { DomainOutcome } from '../shared/domain';
-import { scoreValueText, whiteExpected, type Score } from './reviewMetrics';
+import { scoreValueText, whiteExpected, whiteWin, type Score } from './reviewMetrics';
 import { sourceLabel } from '../objective/index';
 
 export function SkeletonList({ label, rows = 3 }: { label: string; rows?: number }) {
@@ -96,6 +96,8 @@ export function ObjectiveBar({
   outcome,
   orientation,
   failed,
+  score = null,
+  label = 'Position evaluation',
 }: {
   turn: 'white' | 'black';
   expected?: number | null;
@@ -104,15 +106,24 @@ export function ObjectiveBar({
   outcome?: DomainOutcome | null;
   orientation: 'white' | 'black';
   failed?: boolean;
+  score?: Score | null;
+  label?: string;
 }) {
   // Objective reading: a Stockfish-seen forced mate outranks everything
   // (mate distance survives here and in the verdict), then terminal
-  // outcomes, then the objective expectation. The bar never shows
-  // centipawns: scores are White winning chances from human-like play.
+  // outcomes, then a Stockfish cp score (bar height from White winning
+  // chances, tags showing the cp value), then the objective expectation.
   // The WDL triple (bot lane) splits the bar into white/draw/black
   // segments with a percentage per side; without it (Stockfish lane) the
   // bar falls back to white/black only.
-  const display = objectiveReading(turn, expected, wdl ?? null, mate ?? null, outcome ?? null);
+  const display = objectiveReading(
+    turn,
+    expected,
+    wdl ?? null,
+    mate ?? null,
+    outcome ?? null,
+    score ?? null,
+  );
   // Retain the last settled reading while the next position loads: the bar
   // keeps showing the previous value (dimmed/pulsing via .loading) so the
   // tween runs previous -> current instead of previous -> 50 -> current.
@@ -166,7 +177,7 @@ export function ObjectiveBar({
   return (
     <section
       className={`eval-balance orientation-${orientation}${pending ? ' pending' : ''}${loading ? ' loading' : ''}`}
-      aria-label="Position evaluation"
+      aria-label={label}
       aria-busy={loading || undefined}
     >
       <div
@@ -215,6 +226,7 @@ function objectiveReading(
   wdl: { white: number; draw: number; black: number } | null,
   mate: Score | null,
   outcome: DomainOutcome | null,
+  score: Score | null,
 ) {
   if (outcome?.kind === 'checkmate') {
     const white = outcome.winner === 'white';
@@ -249,6 +261,32 @@ function objectiveReading(
       blackText: white ? null : text,
       drawText: null,
       description: `${text} · White perspective`,
+    };
+  }
+  if (score?.type === 'mate') {
+    const white = (score.winning_side ?? (score.value > 0 ? 'white' : 'black')) === 'white';
+    const text = scoreValueText(score);
+    const triple = white ? { white: 100, draw: 0, black: 0 } : { white: 0, draw: 0, black: 100 };
+    return {
+      percent: white ? 100 : 0,
+      wdl: triple,
+      whiteText: white ? text : null,
+      blackText: white ? null : text,
+      drawText: null,
+      description: `${text} · White perspective · Stockfish`,
+    };
+  }
+  if (score?.type === 'cp') {
+    const percent = whiteWin(score);
+    const text = scoreValueText(score);
+    const white = score.value >= 0;
+    return {
+      percent,
+      wdl: null,
+      whiteText: white ? text : null,
+      blackText: white ? null : text,
+      drawText: null,
+      description: `${text} · White perspective · Stockfish`,
     };
   }
   if (expected == null) return undefined;

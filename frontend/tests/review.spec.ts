@@ -434,9 +434,9 @@ test('whole game completes independently of viewing and updates the position bal
   // Book chips would occupy the badge boxes on this all-book line (see
   // badge-loading.spec.ts): the fixture names nothing so verdicts render.
   const app = await bootReview(page, '1. e4 e5 2. Nf3 Nc6', [20, 20, 200, -700, -680]);
-  await expect(page.locator('.balance-white-tag')).toHaveText('8%');
-  await expect(page.locator('.balance-black-tag')).toHaveText('92%');
-  await expect(page.locator('.balance-draw-tag')).toHaveCount(0);
+  await expect(page.locator('.eval-slot-left .balance-white-tag')).toHaveText('8%');
+  await expect(page.locator('.eval-slot-left .balance-black-tag')).toHaveText('92%');
+  await expect(page.locator('.eval-slot-left .balance-draw-tag')).toHaveCount(0);
   // The charts shell mounts pre-analysis (lines stay empty until verdicts
   // settle); only the hero must stay absent before the review runs.
   await expect(page.locator('.win-hero')).toHaveCount(0);
@@ -455,11 +455,15 @@ test('whole game completes independently of viewing and updates the position bal
   const inferred = () => app.requests.filter(request => request.engine === '/evaluate').length;
   await page.locator('.move-cell').nth(2).click();
   await expect(page.locator('#analysis-index')).toHaveText('Position 4 / 5');
-  await expect(page.locator('.balance-white-tag')).toHaveText('7%');
-  await expect(page.locator('.balance-black-tag')).toHaveText('93%');
-  await expect(page.locator('.balance-draw-tag')).toHaveCount(0);
-  await expect(page.locator('.balance-track')).toHaveAccessibleName(
+  await expect(page.locator('.eval-slot-left .balance-white-tag')).toHaveText('7%');
+  await expect(page.locator('.eval-slot-left .balance-black-tag')).toHaveText('93%');
+  await expect(page.locator('.eval-slot-left .balance-draw-tag')).toHaveCount(0);
+  await expect(page.locator('.eval-slot-left .balance-track')).toHaveAccessibleName(
     /White 7%.*Draw 0%.*Black 93%.*estimated White winning chance 7%/,
+  );
+  await expect(page.locator('.eval-slot-right .balance-black-tag')).toHaveText('-7.00');
+  await expect(page.locator('.eval-slot-right .balance-track')).toHaveAccessibleName(
+    /-7\.00.*Stockfish.*estimated White winning chance 7%/,
   );
   await page.locator('.insight-panel').evaluate(el => {
     el.scrollTop = 0;
@@ -547,9 +551,9 @@ test('move analysis summarizes the game below the engines and links mistakes fro
       .locator('#insight-content')
       .getByRole('button', { name: 'Explore Nf3 (played) from before this move', exact: true }),
   ).toBeVisible();
-  await expect(page.locator('.balance-white-tag')).toHaveText('7%');
-  await expect(page.locator('.balance-black-tag')).toHaveText('93%');
-  await expect(page.locator('.balance-draw-tag')).toHaveCount(0);
+  await expect(page.locator('.eval-slot-left .balance-white-tag')).toHaveText('7%');
+  await expect(page.locator('.eval-slot-left .balance-black-tag')).toHaveText('93%');
+  await expect(page.locator('.eval-slot-left .balance-draw-tag')).toHaveCount(0);
   expect(app.errors).toEqual([]);
 });
 
@@ -669,9 +673,9 @@ for (const width of [1440, 360])
     );
     await page.locator('.chart-point').nth(4).click();
     await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
-    await expect(page.locator('.balance-white-tag')).toHaveText('8%');
-    await expect(page.locator('.balance-black-tag')).toHaveText('92%');
-    await expect(page.locator('.balance-draw-tag')).toHaveCount(0);
+    await expect(page.locator('.eval-slot-left .balance-white-tag')).toHaveText('8%');
+    await expect(page.locator('.eval-slot-left .balance-black-tag')).toHaveText('92%');
+    await expect(page.locator('.eval-slot-left .balance-draw-tag')).toHaveCount(0);
     await expect(page.locator('.chart-point[aria-current="step"]')).toHaveAccessibleName(/2… Nc6/);
     expect(app.errors).toEqual([]);
   });
@@ -786,10 +790,13 @@ test('unlisted played moves appear as their own key row', async ({ page }) => {
 
 test('checkmate fills the bar for the winning side', async ({ page }) => {
   await bootReview(page, '1. f3 e5 2. g4 Qh4#');
-  await expect(page.locator('.balance-track')).toHaveAccessibleName(
+  await expect(page.locator('.eval-slot-left .balance-track')).toHaveAccessibleName(
     'Black wins · White 0% · Draw 0% · Black 100% · estimated White winning chance 0%',
   );
-  await expect(page.locator('.balance-white')).toHaveCSS('height', '0px');
+  await expect(page.locator('.eval-slot-left .balance-white')).toHaveCSS('height', '0px');
+  await expect(page.locator('.eval-slot-right .balance-track')).toHaveAccessibleName(
+    'Black wins · White 0% · Draw 0% · Black 100% · estimated White winning chance 0%',
+  );
 });
 
 test('blunder and mistake destinations carry board badges', async ({ page }) => {
@@ -942,9 +949,9 @@ test('mixed arrow sources retain their own endpoints', async ({ page }, info) =>
 });
 test('current position balance replaces the win-rate sections', async ({ page }) => {
   await bootReview(page);
-  await expect(page.locator('.balance-white-tag')).toHaveText('8%');
-  await expect(page.locator('.balance-black-tag')).toHaveText('92%');
-  await expect(page.locator('.balance-draw-tag')).toHaveCount(0);
+  await expect(page.locator('.eval-slot-left .balance-white-tag')).toHaveText('8%');
+  await expect(page.locator('.eval-slot-left .balance-black-tag')).toHaveText('92%');
+  await expect(page.locator('.eval-slot-left .balance-draw-tag')).toHaveCount(0);
   // The evaluation graph lives in Move analysis now, so the section
   // renders before any review — the foreground pair settles one segment
   // immediately (dot coverage is asserted in the gaps test below).
@@ -1082,14 +1089,18 @@ for (const viewport of [
     if (footerGeometry.analyzeTop - footerGeometry.actionsTop > 10) {
       expect(footerGeometry.analyzeTop).toBeGreaterThanOrEqual(footerGeometry.actionsTop);
     }
-    const bar = (await page.locator('.balance-track').boundingBox())!;
+    const bar = (await page.locator('.eval-slot-right .balance-track').boundingBox())!;
     expect(bar.height).toBeGreaterThan(bar.width * 5);
     const squares = (await page.locator('#board cg-board').boundingBox())!;
     expect(bar.x).toBeCloseTo(squares.x + squares.width, 0);
     expect(bar.y).toBeCloseTo(squares.y, 0);
     expect(bar.height).toBeCloseTo(squares.height, 0);
-    const white = (await page.locator('.balance-white').boundingBox())!;
+    const white = (await page.locator('.eval-slot-right .balance-white').boundingBox())!;
     expect(white.y + white.height).toBeCloseTo(bar.y + bar.height, 0);
+    const leftBar = (await page.locator('.eval-slot-left .balance-track').boundingBox())!;
+    expect(leftBar.x + leftBar.width).toBeCloseTo(squares.x, 0);
+    expect(leftBar.y).toBeCloseTo(squares.y, 0);
+    expect(leftBar.height).toBeCloseTo(squares.height, 0);
     // Analysis board defaults to auto orientation (reviewed side at bottom, white here) with no flip button.
     await expect(page.locator('#flip-board')).toHaveCount(0);
     await expect(page.locator('#board .cg-wrap')).toHaveClass(/orientation-white/);
@@ -1117,7 +1128,7 @@ test('evaluation bar follows rendered board dimensions on resize and fractional 
     await expect
       .poll(async () => {
         const board = (await page.locator('#board cg-board').boundingBox())!;
-        const bar = (await page.locator('.balance-track').boundingBox())!;
+        const bar = (await page.locator('.eval-slot-right .balance-track').boundingBox())!;
         return Math.max(
           Math.abs(bar.x - board.x - board.width),
           Math.abs(bar.y - board.y),
@@ -1132,7 +1143,7 @@ test('evaluation bar follows rendered board dimensions on resize and fractional 
 test('terminal repetition skips the bot and keeps the local draw result', async ({ page }) => {
   const full = ['g1f3', 'g8f6', 'f3g1', 'f6g8', 'g1f3', 'g8f6', 'f3g1', 'f6g8'];
   const app = await bootReview(page, '1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. Ng1 Ng8');
-  await expect(page.locator('.balance-track')).toHaveAccessibleName(
+  await expect(page.locator('.eval-slot-left .balance-track')).toHaveAccessibleName(
     'Draw · White 0% · Draw 100% · Black 0% · estimated White winning chance 50%',
   );
   await page.getByRole('button', { name: 'Analyze entire game' }).click();

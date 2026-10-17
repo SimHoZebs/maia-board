@@ -991,12 +991,12 @@ test('analysis candidate list, independent rating, branch replay and PGN copies'
   await expect(merged).toContainText('60%');
   await expect(merged).toContainText('40%');
   await expect(page.locator('.win-hero')).toHaveCount(0);
-  await expect(page.locator('.balance-track')).toHaveAccessibleName(
+  await expect(page.locator('.eval-slot-left .balance-track')).toHaveAccessibleName(
     /White 50%.*Draw 30%.*Black 20%.*estimated White winning chance 65%/,
   );
-  await expect(page.locator('.balance-white-tag')).toHaveText('50%');
-  await expect(page.locator('.balance-draw-tag')).toHaveText('30%');
-  await expect(page.locator('.balance-black-tag')).toHaveText('20%');
+  await expect(page.locator('.eval-slot-left .balance-white-tag')).toHaveText('50%');
+  await expect(page.locator('.eval-slot-left .balance-draw-tag')).toHaveText('30%');
+  await expect(page.locator('.eval-slot-left .balance-black-tag')).toHaveText('20%');
   await piece(page, 'c6', 'black knight');
   await expect(page.locator('#analysis-index')).toHaveText('Position 5 / 5');
   await expect(keyMoves.locator('.candidate-list')).toContainText('Nc6');

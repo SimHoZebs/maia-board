@@ -742,20 +742,41 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
             brushes={brushes}
             evalBar={
               ready ? (
-                <ObjectiveBar
-                  key={`${insightResetKey}|${review.tooLong ? 1 : 0}`}
-                  turn={position.turn}
-                  expected={review.objective[ply]?.expected ?? null}
-                  wdl={review.objective[ply]?.wdl ?? null}
-                  mate={
-                    review.current && review.current.score.type === 'mate'
-                      ? review.current.score
-                      : null
-                  }
-                  outcome={position.outcome}
-                  orientation={orientation}
-                  failed={!!review.objectiveError(position)}
-                />
+                <>
+                  <div className="eval-slot eval-slot-left">
+                    <ObjectiveBar
+                      key={`${insightResetKey}|wdl|${review.tooLong ? 1 : 0}`}
+                      label="Bot evaluation"
+                      turn={position.turn}
+                      expected={review.objective[ply]?.expected ?? null}
+                      wdl={review.objective[ply]?.wdl ?? null}
+                      mate={
+                        review.current && review.current.score.type === 'mate'
+                          ? review.current.score
+                          : null
+                      }
+                      outcome={position.outcome}
+                      orientation={orientation}
+                      failed={!!review.objectiveError(position)}
+                    />
+                  </div>
+                  <div className="eval-slot eval-slot-right">
+                    <ObjectiveBar
+                      key={`${insightResetKey}|sf|${review.tooLong ? 1 : 0}`}
+                      label="Stockfish evaluation"
+                      turn={position.turn}
+                      score={review.current?.score ?? null}
+                      mate={
+                        review.current && review.current.score.type === 'mate'
+                          ? review.current.score
+                          : null
+                      }
+                      outcome={position.outcome}
+                      orientation={orientation}
+                      failed={!!review.currentError}
+                    />
+                  </div>
+                </>
               ) : null
             }
             renderStrip={strip}

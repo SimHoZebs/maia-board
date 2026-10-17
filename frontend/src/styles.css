@@ -742,15 +742,25 @@ legend {
 }
 .board-frame.with-evaluation {
   position: relative;
-  width: calc(100% - 18px);
+  width: calc(100% - 36px);
+  margin-left: 18px;
   margin-right: 18px;
 }
-.eval-balance {
+.eval-slot {
   position: absolute;
   top: 0;
-  left: var(---cg-width);
   height: var(---cg-height);
   width: 18px;
+}
+.eval-slot-right {
+  left: var(---cg-width);
+}
+.eval-slot-left {
+  left: -18px;
+}
+.eval-balance {
+  height: 100%;
+  width: 100%;
 }
 .balance-track {
   position: relative;

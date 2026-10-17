@@ -92,3 +92,43 @@ it('keeps mate distance on the winning side and hides the zero side', () => {
   expect(html).not.toContain('balance-black-tag');
   expect(html).toContain('>+M5<');
 });
+
+it('shows the Stockfish cp value on the leading side', () => {
+  const html = renderToStaticMarkup(
+    createElement(ObjectiveBar, {
+      turn: 'white',
+      score: { type: 'cp', value: 200 },
+      orientation: 'white',
+      label: 'Stockfish evaluation',
+    }),
+  );
+  expect(html).toContain('aria-label="Stockfish evaluation"');
+  expect(html).toContain('>+2.00<');
+  expect(html).toContain('Stockfish');
+  expect(html).toContain('balance-white-tag');
+  expect(html).not.toContain('balance-black-tag');
+  const black = renderToStaticMarkup(
+    createElement(ObjectiveBar, {
+      turn: 'white',
+      score: { type: 'cp', value: -700 },
+      orientation: 'white',
+    }),
+  );
+  expect(black).toContain('>-7.00<');
+  expect(black).toContain('balance-black-tag');
+  expect(black).not.toContain('balance-white-tag');
+});
+
+it('renders the WDL triple without position knowledge', () => {
+  const html = renderToStaticMarkup(
+    createElement(ObjectiveBar, {
+      turn: 'white',
+      expected: 60,
+      wdl: { white: 45, draw: 30, black: 25 },
+      orientation: 'white',
+      label: 'Bot evaluation',
+    }),
+  );
+  expect(html).toContain('aria-label="Bot evaluation"');
+  expect(html).toContain('>45%<');
+});
