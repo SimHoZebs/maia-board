@@ -1,7 +1,5 @@
 import { type Dispatch, type ReactNode } from 'react';
 import type { Action, State } from '../state/index';
-import { useAccountName } from '../history/session';
-import { Rating } from '../board/BoardTools';
 import { Button, EngineSection, KeyMovesList } from '../components';
 import { Chess } from 'chess.js';
 import type { Review } from './useReview';
@@ -82,7 +80,6 @@ export function MoveAnalysis({
   // "(played)". At the root, candidates describe the current position.
   const focus = ply - 1;
   const hasMove = focus >= 0;
-  const you = useAccountName() ?? 'You';
   // Two candidate lists: the display Elo's human-population list on the
   // left, the objective source on the right. Each list judges the displayed
   // move with "(played)" marking from its before-position; at the root the
@@ -273,23 +270,7 @@ export function MoveAnalysis({
       ) : (
         verdictLoading && <SkeletonText label="Loading move verdict" />
       )}
-      <EngineSection
-        label="Key moves"
-        titleId="insight-title"
-        title={
-          <>
-            {you}:{' '}
-            <Rating
-              inline
-              id="analysis-rating"
-              label={review.botLocked ? 'Bot rating (game Elo)' : 'Bot rating'}
-              value={review.botLocked ? review.botElo : state.analysisSettings.botElo}
-              disabled={review.botLocked || review.progress?.running}
-              onChange={botElo => dispatch({ type: 'analysis-settings', settings: { botElo } })}
-            />
-          </>
-        }
-      >
+      <EngineSection label="Key moves" titleId="insight-title" title="Key moves">
         {response?.degraded && <p role="status">Bot fallback results.</p>}
         {candidates?.degraded && <p role="status">Bot 2400 fallback results.</p>}
         {review.botStale && (
