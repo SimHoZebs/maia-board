@@ -1,8 +1,11 @@
 import type { SoundKind } from './moveSound';
 
 // Synthesized board sounds. No audio assets: every kind is a short WebAudio
-// recipe (a woody "thock" for moves, a lower thud for captures, a bright
-// ping for check, a small fanfare for mate, a falling pair for drawn ends).
+// physical-modeling recipe for stone-against-wood: a hard, broadband stone
+// click (fast highpassed noise transient) striking a hollow wooden knock
+// (bandpassed noise body plus two fast-decaying low resonances). Check,
+// mate, and drawn ends reuse the same knock so the material stays constant
+// and add only short wooden ticks on top, never a synth ping.
 // The shared context is created lazily so construction never runs in tests
 // or before a user gesture; every entry point is guarded so audio can never
 // break the board.
@@ -34,22 +37,22 @@ export function unlockSounds(): void {
   }
 }
 
-function tone(
+function woodTone(
   ctx: AudioContext,
   at: number,
   freq: number,
   dur: number,
   vol: number,
-  type: OscillatorType,
-  freqEnd?: number,
+  type: OscillatorType = 'sine',
 ): void {
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
   osc.type = type;
-  osc.frequency.setValueAtTime(freq, at);
-  if (freqEnd !== undefined) osc.frequency.exponentialRampToValueAtTime(freqEnd, at + dur);
+  // Slight per-hit detune keeps repeated moves from sounding mechanical.
+  const jitter = 1 + (Math.random() - 0.5) * 0.06;
+  osc.frequency.setValueAtTime(Math.max(30, freq * jitter), at);
   gain.gain.setValueAtTime(0, at);
-  gain.gain.linearRampToValueAtTime(vol, at + 0.008);
+  gain.gain.linearRampToValueAtTime(vol, at + 0.002);
   gain.gain.exponentialRampToValueAtTime(0.0001, at + dur);
   osc.connect(gain);
   gain.connect(ctx.destination);
@@ -59,34 +62,114 @@ function tone(
 
 let noiseBuffer: AudioBuffer | null = null;
 
-function thock(ctx: AudioContext, at: number, dur: number, cutoff: number, vol: number): void {
+function ensureNoise(ctx: AudioContext): AudioBuffer | null {
   try {
     noiseBuffer ??= (() => {
       const buffer = ctx.createBuffer(
         1,
-        Math.max(1, Math.floor(ctx.sampleRate * 0.15)),
+        Math.max(1, Math.floor(ctx.sampleRate * 0.2)),
         ctx.sampleRate,
       );
       const data = buffer.getChannelData(0);
       for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
       return buffer;
     })();
+    return noiseBuffer;
   } catch {
-    return;
+    return null;
   }
+}
+
+// One filtered noise transient with a 1.5 ms stone-like attack and an
+// exponential fall. Type is highpass for the contact click, bandpass for
+// the wooden body.
+function burst(
+  ctx: AudioContext,
+  at: number,
+  dur: number,
+  vol: number,
+  type: BiquadFilterType,
+  freq: number,
+  q = 1,
+): void {
+  const buffer = ensureNoise(ctx);
+  if (!buffer) return;
+  const jitter = 1 + (Math.random() - 0.5) * 0.08;
   const src = ctx.createBufferSource();
-  src.buffer = noiseBuffer;
+  src.buffer = buffer;
+  src.playbackRate.value = 0.95 + Math.random() * 0.1;
   const filter = ctx.createBiquadFilter();
-  filter.type = 'lowpass';
-  filter.frequency.value = cutoff;
+  filter.type = type;
+  filter.frequency.value = Math.max(40, freq * jitter);
+  filter.Q.value = q;
   const gain = ctx.createGain();
-  gain.gain.setValueAtTime(vol, at);
+  gain.gain.setValueAtTime(0, at);
+  gain.gain.linearRampToValueAtTime(vol, at + 0.0015);
   gain.gain.exponentialRampToValueAtTime(0.0001, at + dur);
   src.connect(filter);
   filter.connect(gain);
   gain.connect(ctx.destination);
-  src.start(at);
+  src.start(at, Math.random() * 0.05);
   src.stop(at + dur + 0.02);
+}
+
+interface StoneHit {
+  clickHp: number;
+  clickVol: number;
+  clickDur: number;
+  bodyFreq: number;
+  bodyQ: number;
+  bodyVol: number;
+  bodyDur: number;
+  lowFreq: number;
+  lowVol: number;
+  lowDur: number;
+  midFreq: number;
+  midVol: number;
+  midDur: number;
+}
+
+const LIGHT_HIT: StoneHit = {
+  // Light stone tap on wood: sharp 4.2 kHz contact, hollow 1.6 kHz board.
+  clickHp: 4200,
+  clickVol: 0.5,
+  clickDur: 0.022,
+  bodyFreq: 1650,
+  bodyQ: 0.9,
+  bodyVol: 0.6,
+  bodyDur: 0.065,
+  lowFreq: 235,
+  lowVol: 0.32,
+  lowDur: 0.085,
+  midFreq: 560,
+  midVol: 0.11,
+  midDur: 0.05,
+};
+
+const HEAVY_HIT: StoneHit = {
+  // Heavier stone: duller click, lower board knock, stronger low thump.
+  clickHp: 3100,
+  clickVol: 0.65,
+  clickDur: 0.028,
+  bodyFreq: 950,
+  bodyQ: 1.1,
+  bodyVol: 0.75,
+  bodyDur: 0.095,
+  lowFreq: 140,
+  lowVol: 0.5,
+  lowDur: 0.11,
+  midFreq: 340,
+  midVol: 0.2,
+  midDur: 0.07,
+};
+
+// Stone-against-wood: highpassed contact click + bandpassed board body +
+// two fast low resonances. Never a sustained synth tone.
+function stoneHit(ctx: AudioContext, at: number, hit: StoneHit, gainScale = 1): void {
+  burst(ctx, at, hit.clickDur, hit.clickVol * gainScale, 'highpass', hit.clickHp);
+  burst(ctx, at, hit.bodyDur, hit.bodyVol * gainScale, 'bandpass', hit.bodyFreq, hit.bodyQ);
+  woodTone(ctx, at, hit.lowFreq, hit.lowDur, hit.lowVol * gainScale);
+  woodTone(ctx, at, hit.midFreq, hit.midDur, hit.midVol * gainScale);
 }
 
 export function playSound(kind: SoundKind): void {
@@ -97,28 +180,28 @@ export function playSound(kind: SoundKind): void {
     const at = ctx.currentTime;
     switch (kind) {
       case 'move':
-        thock(ctx, at, 0.07, 2200, 0.5);
-        tone(ctx, at, 320, 0.07, 0.2, 'triangle', 170);
+        stoneHit(ctx, at, LIGHT_HIT);
         break;
       case 'capture':
-        thock(ctx, at, 0.1, 900, 0.7);
-        tone(ctx, at, 190, 0.11, 0.45, 'sine', 85);
+        stoneHit(ctx, at, HEAVY_HIT);
         break;
       case 'check':
-        thock(ctx, at, 0.05, 2600, 0.25);
-        tone(ctx, at, 880, 0.09, 0.26, 'sine');
-        tone(ctx, at + 0.085, 1318.5, 0.14, 0.26, 'sine');
+        // Same stone tap, plus two short wooden ticks (not a synth ping).
+        stoneHit(ctx, at, LIGHT_HIT, 0.7);
+        woodTone(ctx, at + 0.005, 987.77, 0.07, 0.16);
+        woodTone(ctx, at + 0.08, 1318.5, 0.09, 0.16);
         break;
       case 'checkmate':
-        thock(ctx, at, 0.06, 2000, 0.35);
-        tone(ctx, at, 523.25, 0.12, 0.28, 'triangle');
-        tone(ctx, at + 0.11, 659.25, 0.12, 0.28, 'triangle');
-        tone(ctx, at + 0.22, 783.99, 0.12, 0.28, 'triangle');
-        tone(ctx, at + 0.33, 1046.5, 0.3, 0.3, 'triangle');
+        // Heavy stone, then three small wooden blocks ascending.
+        stoneHit(ctx, at, HEAVY_HIT);
+        woodTone(ctx, at + 0.02, 659.25, 0.08, 0.18);
+        woodTone(ctx, at + 0.12, 880, 0.08, 0.18);
+        woodTone(ctx, at + 0.22, 1174.66, 0.14, 0.2);
         break;
       case 'gameEnd':
-        tone(ctx, at, 392, 0.15, 0.26, 'sine');
-        tone(ctx, at + 0.14, 261.63, 0.25, 0.26, 'sine');
+        // Two soft stones settling: tap, then a lower tap a beat later.
+        stoneHit(ctx, at, LIGHT_HIT, 0.6);
+        stoneHit(ctx, at + 0.15, { ...LIGHT_HIT, lowFreq: 175, midFreq: 420 }, 0.55);
         break;
     }
   } catch {
