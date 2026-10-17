@@ -142,6 +142,8 @@ export type ImportPayload = {
   source?: string;
   opponent?: string;
   rating_diff?: number;
+  time_control?: string;
+  speed?: string;
 };
 
 export type ImportRun = {

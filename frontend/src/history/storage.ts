@@ -1,4 +1,11 @@
-import { normalizeSettings, replay, type Settings, type StoredGame } from '../shared/domain';
+import {
+  normalizeSettings,
+  normalizeSpeed,
+  normalizeTimeControl,
+  replay,
+  type Settings,
+  type StoredGame,
+} from '../shared/domain';
 import { isRecord, isStringArray } from '../shared/guards';
 
 export const KEYS = {
@@ -62,10 +69,24 @@ function toSettingsInput(value: unknown): Partial<Settings> | undefined {
 }
 export function restoreGame(value: unknown): StoredGame | undefined {
   if (!isRecord(value)) return;
-  const { id, moves, createdAt, settings, result, source, opponent, ratingDiff, rating_diff } =
-    value;
+  const {
+    id,
+    moves,
+    createdAt,
+    settings,
+    result,
+    source,
+    opponent,
+    ratingDiff,
+    rating_diff,
+    timeControl,
+    time_control,
+    speed,
+  } = value;
   if (typeof id !== 'string' || !isStringArray(moves)) return;
   const diff = ratingDiff ?? rating_diff;
+  const clock = normalizeTimeControl(timeControl ?? time_control);
+  const pool = normalizeSpeed(speed);
   try {
     replay(moves);
     return {
@@ -81,6 +102,8 @@ export function restoreGame(value: unknown): StoredGame | undefined {
       ...(typeof diff === 'number' && Number.isInteger(diff) && diff >= -1000 && diff <= 1000
         ? { ratingDiff: diff }
         : {}),
+      ...(clock !== undefined ? { timeControl: clock } : {}),
+      ...(pool !== undefined ? { speed: pool } : {}),
     };
   } catch {
     return;

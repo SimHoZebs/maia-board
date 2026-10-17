@@ -259,6 +259,11 @@ p {
   color: var(--muted);
   font-size: 12px;
 }
+.time-control {
+  color: var(--muted);
+  font-size: 12px;
+  flex: none;
+}
 .turn-indicator {
   margin-left: auto;
   color: var(--accent);

@@ -37,6 +37,12 @@ export type StoredGame = {
   source?: string;
   opponent?: string;
   ratingDiff?: number;
+  // Canonical clock (`600+5`, `180+0`, `3d` for correspondence days, `-`
+  // for untimed). Absent means unlimited: local engine games and rows
+  // saved before clocks were stamped.
+  timeControl?: string;
+  // Lichess speed pool (`blitz`, `rapid`, ...). Absent when unknown.
+  speed?: string;
 };
 export const defaultSettings: Settings = {
   userColor: 'white',
@@ -63,6 +69,74 @@ export function resolveBoardOrientation(
   return flipped ? oppositeColor(base) : base;
 }
 export const sideName = (color: SideColor) => (color === 'white' ? 'White' : 'Black');
+
+// Clock support: local engine games are untimed (no clock setting exists),
+// while Lichess imports carry the canonical time control (`600+5`, `180+0`,
+// `3d` for correspondence days, `-` for untimed) plus the speed pool.
+export const LICHESS_SPEEDS = [
+  'ultrabullet',
+  'bullet',
+  'blitz',
+  'rapid',
+  'classical',
+  'correspondence',
+  'unlimited',
+] as const;
+export type LichessSpeed = (typeof LICHESS_SPEEDS)[number];
+
+export function normalizeTimeControl(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value) return undefined;
+  if (value === '-') return value;
+  if (/^\d{1,2}d$/.test(value)) {
+    const days = Number.parseInt(value.slice(0, -1), 10);
+    if (days >= 1 && days <= 14) return value;
+    return undefined;
+  }
+  const parts = value.split('+');
+  if (parts.length !== 2) return undefined;
+  const initial = Number(parts[0]);
+  const increment = Number(parts[1]);
+  if (
+    !Number.isInteger(initial) ||
+    !Number.isInteger(increment) ||
+    initial < 0 ||
+    initial > 1209600 ||
+    increment < 0 ||
+    increment > 3600
+  )
+    return undefined;
+  return value;
+}
+
+export function normalizeSpeed(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value) return undefined;
+  return (LICHESS_SPEEDS as readonly string[]).includes(value) ? value : undefined;
+}
+
+// Static clock label for history and board strips (no ticking: finished
+// imports show their setting, local games show unlimited).
+export function formatTimeControl(game: Pick<StoredGame, 'timeControl' | 'speed'>): string {
+  const speed = game.speed;
+  const raw = game.timeControl;
+  if (raw !== undefined && /^\d{1,2}d$/.test(raw)) {
+    const days = Number.parseInt(raw.slice(0, -1), 10);
+    const label = `${days} day${days === 1 ? '' : 's'}/move`;
+    return speed && speed !== 'unlimited' ? `${label} • ${speed}` : label;
+  }
+  if (raw !== undefined && raw !== '-') {
+    const [initialRaw, incrementRaw] = raw.split('+');
+    const initial = Number(initialRaw);
+    const increment = Number(incrementRaw);
+    if (Number.isInteger(initial) && Number.isInteger(increment)) {
+      const base = initial % 60 === 0 ? String(initial / 60) : `${initial}s`;
+      const label = `${base}+${increment}`;
+      return speed && speed !== 'unlimited' ? `${label} • ${speed}` : label;
+    }
+  }
+  if (speed === 'correspondence') return 'Correspondence';
+  if (speed && speed !== 'unlimited') return `∞ • ${speed}`;
+  return '∞';
+}
 export const newId = () =>
   typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -206,9 +280,12 @@ export function loadLine(fen = '', pgn = ''): Analysis {
     ownGame: false,
   };
 }
-export function exportLine(analysis: Analysis): string {
+export function exportLine(analysis: Analysis, timeControl?: string): string {
   const game = replay(analysis.moves, analysis.initialFen);
   game.setHeader('Event', 'Maia Board');
+  if (timeControl !== undefined && normalizeTimeControl(timeControl) !== undefined) {
+    game.setHeader('TimeControl', timeControl);
+  }
   if (analysis.initialFen !== START_FEN) {
     game.setHeader('SetUp', '1');
     game.setHeader('FEN', analysis.initialFen);

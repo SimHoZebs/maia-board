@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   exportLine,
+  formatTimeControl,
   loadLine,
   lineRecord,
   oppositeColor,
@@ -202,6 +203,9 @@ export function SavedGames({
     const sign = game.ratingDiff > 0 ? '+' : '';
     return `${result} · ${sign}${game.ratingDiff}`;
   };
+  // Static clock label: imported Lichess games carry their time control,
+  // local engine games are untimed.
+  const timeOf = (game: StoredGame) => formatTimeControl(game);
   const syncPending = sync.pending;
   const historyTotal = sync.total;
   const visibleGames = useMemo(
@@ -229,8 +233,8 @@ export function SavedGames({
         }),
     [state.saved, resultSelection, sideSelection, sortOrder],
   );
-  const copyGame = (game: { id: string; moves: string[] }) =>
-    void copyText(exportLine(loadLine('', game.moves.join(' ')))).then(ok => {
+  const copyGame = (game: { id: string; moves: string[]; timeControl?: string }) =>
+    void copyText(exportLine(loadLine('', game.moves.join(' ')), game.timeControl)).then(ok => {
       if (!ok) return;
       flashCopied(game.id);
     });
@@ -298,7 +302,7 @@ export function SavedGames({
               <button
                 type="button"
                 className="saved-open"
-                aria-label={`Analyze game · ${resultOf(game, result)}`}
+                aria-label={`Analyze game · ${resultOf(game, result)} · ${timeOf(game)}`}
                 onClick={() => dispatch({ type: 'review', id: game.id })}
               >
                 <BoardThumbnail fen={position.fen} orientation={game.settings.userColor} />
@@ -313,7 +317,9 @@ export function SavedGames({
                     })}
                   </time>
                   <h2>{titleOf(game)}</h2>
-                  <p>{resultOf(game, result)}</p>
+                  <p>
+                    {resultOf(game, result)} · {timeOf(game)}
+                  </p>
                 </div>
               </button>
               <div className="actions saved-actions">

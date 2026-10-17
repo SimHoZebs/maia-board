@@ -3,9 +3,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   applyUci,
   buildTimeline,
+  exportLine,
+  formatTimeControl,
   kingSquare,
   lineRecord,
+  loadLine,
   normalizeBoardOrientation,
+  normalizeSpeed,
+  normalizeTimeControl,
   replay,
   resetTimelinesForTests,
   resolveBoardOrientation,
@@ -124,5 +129,34 @@ describe('losing-king square', () => {
     moved.move('e2e4');
     expect(kingSquare(moved.fen(), 'white')).toBe('e1');
     expect(kingSquare('junk', 'white')).toBeUndefined();
+  });
+});
+describe('time controls', () => {
+  it('normalizes canonical clocks and rejects the rest', () => {
+    expect(normalizeTimeControl('600+5')).toBe('600+5');
+    expect(normalizeTimeControl('3d')).toBe('3d');
+    expect(normalizeTimeControl('-')).toBe('-');
+    expect(normalizeTimeControl(undefined)).toBeUndefined();
+    expect(normalizeTimeControl('10')).toBeUndefined();
+    expect(normalizeTimeControl('15d')).toBeUndefined();
+    expect(normalizeTimeControl('hyper')).toBeUndefined();
+    expect(normalizeSpeed('blitz')).toBe('blitz');
+    expect(normalizeSpeed('hyperbullet')).toBeUndefined();
+    expect(normalizeSpeed(undefined)).toBeUndefined();
+  });
+  it('labels untimed games as unlimited and timed ones compactly', () => {
+    expect(formatTimeControl({})).toBe('∞');
+    expect(formatTimeControl({ timeControl: '180+0', speed: 'blitz' })).toBe('3+0 • blitz');
+    expect(formatTimeControl({ timeControl: '600+5' })).toBe('10+5');
+    expect(formatTimeControl({ timeControl: '3d', speed: 'correspondence' })).toBe(
+      '3 days/move • correspondence',
+    );
+    expect(formatTimeControl({ speed: 'correspondence' })).toBe('Correspondence');
+  });
+  it('round-trips the TimeControl header through PGN export', () => {
+    const line = loadLine('', '1. e4 e5');
+    expect(exportLine(line, '300+3')).toContain('[TimeControl "300+3"]');
+    expect(exportLine(line)).not.toContain('TimeControl');
+    expect(exportLine(line, 'junk')).not.toContain('TimeControl');
   });
 });

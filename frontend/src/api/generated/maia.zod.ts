@@ -112,7 +112,9 @@ export const GamesListResponse = zod.strictObject({
   "rating_diff": zod.int().optional(),
   "result": zod.string().optional(),
   "source": zod.string().optional(),
+  "speed": zod.string().optional(),
   "temperature": zod.number(),
+  "time_control": zod.string().optional(),
   "updated_at": zod.string(),
   "user_color": zod.string()
 }).optional(),
@@ -130,7 +132,9 @@ export const GamesListResponse = zod.strictObject({
   "rating_diff": zod.int().optional(),
   "result": zod.string().optional(),
   "source": zod.string().optional(),
+  "speed": zod.string().optional(),
   "temperature": zod.number(),
+  "time_control": zod.string().optional(),
   "updated_at": zod.string(),
   "user_color": zod.string()
 })).nullable(),
@@ -155,7 +159,9 @@ export const GamesCreateBody = zod.strictObject({
   "rating_diff": zod.int().optional(),
   "result": zod.string().optional(),
   "source": zod.string().optional(),
+  "speed": zod.string().optional(),
   "temperature": zod.number().optional(),
+  "time_control": zod.string().optional(),
   "user_color": zod.string()
 })
 
@@ -172,7 +178,9 @@ export const GamesCreateResponse = zod.strictObject({
   "rating_diff": zod.int().optional(),
   "result": zod.string().optional(),
   "source": zod.string().optional(),
+  "speed": zod.string().optional(),
   "temperature": zod.number(),
+  "time_control": zod.string().optional(),
   "updated_at": zod.string(),
   "user_color": zod.string()
 })
@@ -208,7 +216,9 @@ export const GamesGetResponse = zod.strictObject({
   "rating_diff": zod.int().optional(),
   "result": zod.string().optional(),
   "source": zod.string().optional(),
+  "speed": zod.string().optional(),
   "temperature": zod.number(),
+  "time_control": zod.string().optional(),
   "updated_at": zod.string(),
   "user_color": zod.string()
 })

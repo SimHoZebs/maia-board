@@ -11,6 +11,7 @@ import { InsightPanel, MoveNavBar, MovesPanel, ObjectiveBar } from './ReadPanels
 import { Dialog } from './Dialog';
 import {
   analysisLength,
+  formatTimeControl,
   gameResult,
   kingSquare,
   lineRecord,
@@ -406,6 +407,7 @@ export function PlayWorkspace({ state, dispatch }: Props) {
           <span role="status">Fallback model reply</span>
         )}
         <span className="player-side">{sideName(color)}</span>
+        <span className="time-control">{formatTimeControl(state.play)}</span>
         {active && ready && (
           <span className="turn-indicator" role="status">
             {historic ? 'At this position' : request ? 'Thinking…' : 'To move'}
@@ -700,6 +702,13 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   );
   const analysisCaptures = captureAt(analysisCapturePrefix, ply);
   const analysisDiff = materialFromFen(position.fen).diff;
+  // Static clock label: the reviewed saved game carries the imported time
+  // control; live reviews fall back to the current play game (untimed).
+  const analysisClock = formatTimeControl(
+    state.analysisSourceId
+      ? (state.saved.find(game => game.id === state.analysisSourceId) ?? state.play)
+      : state.play,
+  );
   const strip = (color: 'white' | 'black') => {
     const shownOver = viewedOver;
     const active = toGroundColor(game.turn()) === color && !shownOver;
@@ -713,6 +722,7 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
           lead={materialLeadFor(analysisDiff, color)}
         />
         <span className="player-side"></span>
+        <span className="time-control">{analysisClock}</span>
         {active && ready && (
           <span className="turn-indicator" role="status">
             To move

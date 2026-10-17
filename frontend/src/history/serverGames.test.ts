@@ -69,6 +69,19 @@ describe('server mapping', () => {
     expect(toStoredGame({ ...row('f', ['e2e4']), rating_diff: 5000 })?.ratingDiff).toBeUndefined();
     expect(toStoredGame(row('g', ['e2e4']))?.ratingDiff).toBeUndefined();
   });
+  it('round-trips time controls and drops unknown pools', () => {
+    expect(
+      toStoredGame({ ...row('t', ['e2e4']), time_control: '300+3', speed: 'blitz' }),
+    ).toMatchObject({ timeControl: '300+3', speed: 'blitz' });
+    const dropped = toStoredGame({
+      ...row('u', ['e2e4']),
+      time_control: 'junk',
+      speed: 'hyperbullet',
+    });
+    expect(dropped?.timeControl).toBeUndefined();
+    expect(dropped?.speed).toBeUndefined();
+    expect(toStoredGame(row('v', ['e2e4']))?.timeControl).toBeUndefined();
+  });
   it('fetches lists, saves, and deletes with server errors preserved', async () => {
     const list = {
       games: [row('a')],

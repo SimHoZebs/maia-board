@@ -356,11 +356,81 @@ export type LichessGame = {
   createdAt?: number;
   winner?: string;
   status?: string;
+  speed?: string;
+  perf?: string | { key?: string; name?: string };
+  clock?: { initial?: number; increment?: number };
+  daysPerTurn?: number;
+  timeControl?: string;
   players?: {
     white?: { rating?: number; ratingDiff?: number; user?: { id?: string } };
     black?: { rating?: number; ratingDiff?: number; user?: { id?: string } };
   };
 };
+
+// Canonical clock from a Lichess game row. Prefers the structured clock
+// (`clock.initial`/`clock.increment` seconds), falls back to the PGN
+// TimeControl header, then to correspondence days. Returns undefined for
+// untimed rows (local display reads that as unlimited).
+function clockOf(game: LichessGame): string | undefined {
+  const initial = game.clock?.initial;
+  const increment = game.clock?.increment;
+  if (
+    typeof initial === 'number' &&
+    Number.isInteger(initial) &&
+    initial >= 0 &&
+    initial <= 1209600 &&
+    typeof increment === 'number' &&
+    Number.isInteger(increment) &&
+    increment >= 0 &&
+    increment <= 3600
+  ) {
+    return `${initial}+${increment}`;
+  }
+  const header = game.pgn?.match(/\[TimeControl\s+"([^"]+)"\]/i)?.[1]?.trim();
+  if (header && header !== '?' && header !== '-') {
+    if (/^\d+\+\d+$/.test(header)) return header;
+    // Correspondence PGNs encode days-per-move as moves/seconds variants
+    // (e.g. `1/86400`); the day count below covers the common shape.
+    const daysMatch = header.match(/^1\/(\d+)$/);
+    if (daysMatch) {
+      const days = Math.round(Number(daysMatch[1]) / 86400);
+      if (days >= 1 && days <= 14) return `${days}d`;
+    }
+    return undefined;
+  }
+  if (header === '-') return '-';
+  if (
+    typeof game.daysPerTurn === 'number' &&
+    Number.isInteger(game.daysPerTurn) &&
+    game.daysPerTurn >= 1 &&
+    game.daysPerTurn <= 14
+  ) {
+    return `${game.daysPerTurn}d`;
+  }
+  return undefined;
+}
+
+function speedOf(game: LichessGame): string | undefined {
+  const candidates = [
+    game.speed,
+    typeof game.perf === 'string' ? game.perf : (game.perf?.key ?? game.perf?.name),
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string' || !candidate) continue;
+    const lowered = candidate.trim().toLowerCase();
+    if (
+      lowered === 'ultrabullet' ||
+      lowered === 'bullet' ||
+      lowered === 'blitz' ||
+      lowered === 'rapid' ||
+      lowered === 'classical' ||
+      lowered === 'correspondence'
+    ) {
+      return lowered;
+    }
+  }
+  return undefined;
+}
 
 export function toImportPayload(game: LichessGame, username: string): ImportPayload | undefined {
   if (!game.pgn) return undefined;
@@ -403,6 +473,8 @@ export function toImportPayload(game: LichessGame, username: string): ImportPayl
       ? (headerName('Black') ?? game.players?.black?.user?.id)
       : (headerName('White') ?? game.players?.white?.user?.id);
   const diff = clampDiff(ownDiff);
+  const clock = clockOf(game);
+  const pool = speedOf(game);
   return {
     user_color: userColor,
     elo_maia: clamp(foeRating, 1500),
@@ -418,6 +490,8 @@ export function toImportPayload(game: LichessGame, username: string): ImportPayl
       : {}),
     ...(foeName ? { opponent: foeName } : {}),
     ...(diff !== undefined ? { rating_diff: diff } : {}),
+    ...(clock !== undefined ? { time_control: clock } : {}),
+    ...(pool !== undefined ? { speed: pool } : {}),
   };
 }
 

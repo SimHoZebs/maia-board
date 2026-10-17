@@ -198,6 +198,55 @@ describe('game download mapping', () => {
     });
     expect(toImportPayload(JSON.parse(tagged), 'alice')).toMatchObject({ opponent: 'Bob Marley' });
   });
+  it('maps clocks, speeds, and correspondence days', () => {
+    const timed = JSON.stringify({
+      id: 'clk10001',
+      pgn: '[TimeControl "300+3"]\n\n1. e4 e5',
+      createdAt: 1_000_000,
+      speed: 'blitz',
+      clock: { initial: 180, increment: 2 },
+      players: {
+        white: { rating: 1800, user: { id: 'alice' } },
+        black: { rating: 1700, user: { id: 'bob' } },
+      },
+    });
+    expect(toImportPayload(JSON.parse(timed), 'alice')).toMatchObject({
+      time_control: '180+2',
+      speed: 'blitz',
+    });
+    const headerOnly = JSON.stringify({
+      id: 'clk10002',
+      pgn: '[TimeControl "600+5"]\n\n1. e4 e5',
+      createdAt: 1_000_000,
+      perf: 'rapid',
+      players: {
+        white: { rating: 1800, user: { id: 'alice' } },
+        black: { rating: 1700, user: { id: 'bob' } },
+      },
+    });
+    expect(toImportPayload(JSON.parse(headerOnly), 'alice')).toMatchObject({
+      time_control: '600+5',
+      speed: 'rapid',
+    });
+    const corr = JSON.stringify({
+      id: 'clk10003',
+      pgn: '1. e4 e5',
+      createdAt: 1_000_000,
+      speed: 'correspondence',
+      daysPerTurn: 3,
+      players: {
+        white: { rating: 1800, user: { id: 'alice' } },
+        black: { rating: 1700, user: { id: 'bob' } },
+      },
+    });
+    expect(toImportPayload(JSON.parse(corr), 'alice')).toMatchObject({
+      time_control: '3d',
+      speed: 'correspondence',
+    });
+    expect(
+      toImportPayload(JSON.parse(line('abcd1234', 'alice', 'bob')), 'alice'),
+    ).not.toHaveProperty('time_control');
+  });
   it('captures the mover ratingDiff for the user side only', () => {
     const withDiff = JSON.stringify({
       id: 'diff0001',
