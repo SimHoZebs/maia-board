@@ -101,19 +101,32 @@ func (s *Server) serveBulkImport(w http.ResponseWriter, r *http.Request) {
 	}
 	saved := make([]store.GameRow, 0, len(body.Games))
 	errs := make(map[string]string)
-	skipped, isNew := 0, 0
+	skipped, isNew, refreshed := 0, 0, 0
 	for index := range body.Games {
 		entry := body.Games[index]
 		if entry.Source != "" && known[entry.Source] {
-			// Re-imports refresh names/diffs on rows saved before they existed.
+			// Re-imports refresh fields on rows saved before they existed;
+			// refreshed counts rows that actually gained a field.
+			touched := false
 			if entry.Opponent != "" {
-				_, _ = s.store.UpdateOpponentIfEmpty(ownerID, entry.Source, entry.Opponent)
+				if ok, _ := s.store.UpdateOpponentIfEmpty(ownerID, entry.Source, entry.Opponent); ok {
+					touched = true
+				}
 			}
 			if entry.RatingDiff != nil {
-				_, _ = s.store.UpdateRatingDiffIfEmpty(ownerID, entry.Source, entry.RatingDiff)
+				if ok, _ := s.store.UpdateRatingDiffIfEmpty(ownerID, entry.Source, entry.RatingDiff); ok {
+					touched = true
+				}
 			}
-			_, _ = s.store.UpdateTimeControlIfEmpty(ownerID, entry.Source, entry.TimeControl, entry.Speed)
-			_, _ = s.store.UpdateClocksIfEmpty(ownerID, entry.Source, entry.Clocks)
+			if ok, _ := s.store.UpdateTimeControlIfEmpty(ownerID, entry.Source, entry.TimeControl, entry.Speed); ok {
+				touched = true
+			}
+			if ok, _ := s.store.UpdateClocksIfEmpty(ownerID, entry.Source, entry.Clocks); ok {
+				touched = true
+			}
+			if touched {
+				refreshed++
+			}
 			skipped++
 			continue
 		}
@@ -152,10 +165,10 @@ func (s *Server) serveBulkImport(w http.ResponseWriter, r *http.Request) {
 	if len(saved) == 0 && len(errs) > 0 {
 		status = http.StatusBadRequest
 	}
-	log.Printf("import-save status=%d user=%s saved=%d failed=%d skipped=%d new=%d duration_ms=%d", status, ownerID, len(saved), len(errs), skipped, isNew, time.Since(started).Milliseconds())
+	log.Printf("import-save status=%d user=%s saved=%d failed=%d skipped=%d new=%d refreshed=%d duration_ms=%d", status, ownerID, len(saved), len(errs), skipped, isNew, refreshed, time.Since(started).Milliseconds())
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{"saved": saved, "errors": errs, "skipped": skipped})
+	_ = json.NewEncoder(w).Encode(map[string]any{"saved": saved, "errors": errs, "skipped": skipped, "refreshed": refreshed})
 }
 
 // serveImportStatus summarizes the account's history lifecycle: the newest

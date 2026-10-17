@@ -45,10 +45,12 @@ export function LichessSyncControl({ username, rating }: { username: string; rat
   }, []);
 
   // Reports only what the persistent lines cannot: failures, and how many
-  // games arrived. A clean sync with nothing new reports nothing.
+  // games arrived or gained missing details. A clean sync with nothing new
+  // reports nothing.
   const syncAll = async (since?: string): Promise<string | null> => {
     const problems: string[] = [];
     let added = 0;
+    let refreshed = 0;
     try {
       await syncLichessElo(username);
     } catch (error) {
@@ -60,6 +62,7 @@ export function LichessSyncControl({ username, rating }: { username: string; rat
         const result = await bulkImport(payloads, { provider: 'lichess', username });
         const failed = Object.keys(result.errors).length;
         added = result.saved.length;
+        refreshed = result.refreshed;
         if (failed) problems.push(`${failed} game${failed === 1 ? '' : 's'} failed to save.`);
       } else if (!since) {
         return 'No importable games found.';
@@ -69,7 +72,11 @@ export function LichessSyncControl({ username, rating }: { username: string; rat
     }
     await refreshStatus();
     if (problems.length) return problems.join(' ');
-    return added ? `+${added} new game${added === 1 ? '' : 's'}.` : null;
+    const parts: string[] = [];
+    if (added) parts.push(`+${added} new game${added === 1 ? '' : 's'}.`);
+    if (refreshed)
+      parts.push(`filled missing details on ${refreshed} game${refreshed === 1 ? '' : 's'}.`);
+    return parts.length ? parts.join(' ') : null;
   };
 
   const doSync = async (since?: string) => {
@@ -159,16 +166,27 @@ export function LichessSyncControl({ username, rating }: { username: string; rat
           ))}
         </select>
         {last ? (
-          <Button
-            variant="primary"
-            className="sync-button"
-            onClick={() => doSync(last.created_at)}
-            disabled={busy}
-            aria-label="Sync now"
-            title="Sync now"
-          >
-            <RefreshCw size={16} aria-hidden="true" />
-          </Button>
+          <>
+            <Button
+              variant="primary"
+              className="sync-button"
+              onClick={() => doSync(last.created_at)}
+              disabled={busy}
+              aria-label="Sync now"
+              title="Sync now"
+            >
+              <RefreshCw size={16} aria-hidden="true" />
+            </Button>
+            <Button
+              variant="quiet"
+              onClick={() => doSync()}
+              disabled={busy}
+              aria-label="Backfill details"
+              title="Re-download your full Lichess history to fill missing details (opponent, rating change, time control, clock readings) on already-imported games"
+            >
+              Backfill details
+            </Button>
+          </>
         ) : (
           <Button variant="primary" onClick={() => doSync()} disabled={busy}>
             {busy ? 'Importing…' : 'Import games + rating'}

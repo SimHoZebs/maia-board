@@ -198,6 +198,13 @@ func TestImportDedupeAndStatus(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("backfill import: %d %s", w.Code, w.Body)
 	}
+	var backfilled struct {
+		Skipped   int `json:"skipped"`
+		Refreshed int `json:"refreshed"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &backfilled); err != nil || backfilled.Skipped != 1 || backfilled.Refreshed != 1 {
+		t.Fatalf("backfill counts: %s err=%v", w.Body, err)
+	}
 	got, err := s.store.Get(first.Saved[1].ID)
 	if err != nil || got.Opponent != "foe-two" {
 		t.Fatalf("backfilled row: %+v %v", got, err)
@@ -229,13 +236,14 @@ func TestImportDedupeAndStatus(t *testing.T) {
 	}
 	w = authed(t, s, http.MethodPost, "/imports/games", body, token)
 	var second struct {
-		Saved   []store.GameRow `json:"saved"`
-		Skipped int             `json:"skipped"`
+		Saved     []store.GameRow `json:"saved"`
+		Skipped   int             `json:"skipped"`
+		Refreshed int             `json:"refreshed"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &second); err != nil {
 		t.Fatal(err)
 	}
-	if w.Code != http.StatusOK || len(second.Saved) != 0 || second.Skipped != 2 {
+	if w.Code != http.StatusOK || len(second.Saved) != 0 || second.Skipped != 2 || second.Refreshed != 0 {
 		t.Fatalf("re-import: status %d body %s", w.Code, w.Body)
 	}
 	w = authed(t, s, http.MethodPost, "/imports/games", `{"provider":"lichess","games":[`+entry("bogus")+`]}`, token)

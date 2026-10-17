@@ -121,4 +121,16 @@ describe('account client', () => {
     expect(result.skipped).toBe(2);
     expect(seen[0]).toMatchObject({ provider: 'lichess', username: 'bob' });
   });
+
+  it('sums refreshed backfills across chunks', async () => {
+    const fetchImpl = (async () =>
+      jsonResponse({ saved: [], errors: {}, skipped: 100, refreshed: 3 })) as typeof fetch;
+    const result = await bulkImport(
+      [{ user_color: 'white', elo_maia: 1, elo_user: 1, model: '79m', moves: [] }],
+      { provider: 'lichess', username: 'bob' },
+      fetchImpl,
+    );
+    expect(result.skipped).toBe(100);
+    expect(result.refreshed).toBe(3);
+  });
 });

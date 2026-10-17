@@ -255,7 +255,7 @@ Bulk history append into the caller's owned store (at most 100 entries,
   "model": "79m", "moves": ["e2e4"], "created_at": "2024-01-01T00:00:00Z",
   "source": "lichess:abc123xy", "opponent": "foe", "rating_diff": 12}]}
  // response 200 (400 when nothing saved and real errors exist)
-{"saved": [{...}], "errors": {"3": "invalid_move"}, "skipped": 5}
+{"saved": [{...}], "errors": {"3": "invalid_move"}, "skipped": 5, "refreshed": 2}
 ```
 
 - Entries validate exactly like `POST /games`; ownership is forced from
@@ -265,7 +265,10 @@ Bulk history append into the caller's owned store (at most 100 entries,
   characters (`400 invalid_opponent` otherwise) and backfills rows saved
   before names existed. `rating_diff` accepts -1000..1000
   (`400 invalid_rating_diff` otherwise) and backfills rows saved before
-  diffs existed. An all-skipped run is `200`
+  diffs existed. `time_control`, `speed`, and `clocks` backfill the same
+  way. `refreshed` counts skipped rows that actually gained a field, so a
+  full re-download (the Settings "Backfill details" button) reports how
+  many older games were topped up. An all-skipped run is `200`
   ("already up to date"). Errors: `400 invalid_request` (empty or >100
   entries, unknown provider), `401 unauthenticated`, per-index codes in
   `errors`.

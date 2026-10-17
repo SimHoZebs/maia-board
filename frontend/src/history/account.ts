@@ -180,10 +180,16 @@ export async function bulkImport(
   games: ImportPayload[],
   opts?: { provider?: string; username?: string },
   fetchImpl: FetchLike = fetch,
-): Promise<{ saved: StoredGame[]; errors: Record<string, string>; skipped: number }> {
+): Promise<{
+  saved: StoredGame[];
+  errors: Record<string, string>;
+  skipped: number;
+  refreshed: number;
+}> {
   const saved: StoredGame[] = [];
   const errors: Record<string, string> = {};
   let skipped = 0;
+  let refreshed = 0;
   for (let at = 0; at < games.length; at += 100) {
     const chunk = games.slice(at, at + 100);
     let response: Response;
@@ -204,18 +210,20 @@ export async function bulkImport(
       saved?: unknown;
       errors?: unknown;
       skipped?: unknown;
+      refreshed?: unknown;
     };
     if (!response.ok && response.status !== 400)
       throw new AccountError('unknown', 'Import failed.', response.status);
     const rows = Array.isArray(body.saved) ? (body.saved as StoredGame[]) : [];
     for (const row of rows) saved.push(row);
     if (typeof body.skipped === 'number') skipped += body.skipped;
+    if (typeof body.refreshed === 'number') refreshed += body.refreshed;
     const errs = (body.errors ?? {}) as Record<string, string>;
     for (const [key, code] of Object.entries(errs)) errors[String(Number(key) + at)] = code;
     if (!response.ok && saved.length === 0)
       throw new AccountError('unknown', 'Import failed.', response.status);
   }
-  return { saved, errors, skipped };
+  return { saved, errors, skipped, refreshed };
 }
 
 export async function adoptLegacyGames(fetchImpl: FetchLike = fetch): Promise<number> {
