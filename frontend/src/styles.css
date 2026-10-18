@@ -1675,9 +1675,6 @@ summary {
   .insight-panel > .analysis-section.analysis-footer-section {
     padding-bottom: 0;
   }
-  .insight-panel .engine-card h2 {
-    font-size: 13px;
-  }
   .win-hero strong {
     font-size: 18px;
   }
@@ -1970,12 +1967,6 @@ summary {
 .win-hero span {
   font-size: 12px;
   color: var(--muted);
-}
-.insight-panel .engine-card h2 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
 }
 @media (max-width: 760px) {
   .insight-panel {

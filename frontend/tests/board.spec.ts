@@ -707,8 +707,6 @@ test('analysis load, navigation, copy, request history, stale reply and mode reu
     }
   }
   await expect(page.locator('#insight-content')).toBeVisible();
-  await expect(page.locator('section[aria-label="Key moves"] h2 #analysis-rating')).toBeVisible();
-  await expect(page.locator('#analysis-rating')).toHaveValue('1600');
   await page.locator('#mode-play').click();
   await expect(page.locator('#takeback')).toBeVisible();
   await move(page, 'd2', 'd4');
@@ -1068,9 +1066,6 @@ test('analysis candidate list, independent rating, branch replay and PGN copies'
       .filter(i => i >= 0)
       .at(-1)!,
   );
-  // The key-moves card follows the reference Elo.
-  await expect(page.locator('section[aria-label="Key moves"] h2 #analysis-rating')).toBeVisible();
-  await expect(page.locator('#analysis-rating')).toHaveValue('2000');
   expect(app.requests.some(r => r.payload.elo_maia === 2000 && r.payload.elo_user === 2000)).toBe(
     true,
   );
@@ -1493,8 +1488,6 @@ for (const width of [320, 390]) {
       expect(box.width).toBe(40);
       expect(box.height).toBe(40);
     }
-    await expect(page.locator('#insight-title #analysis-rating')).toBeVisible();
-    await expect(page.locator('#analysis-rating')).toHaveAccessibleName('Bot rating');
     await expect(page.locator('.insight-panel summary')).toHaveCount(0);
     await expect(page.getByText('Original', { exact: true })).toHaveCount(0);
     await expect(page.getByText('Exploring', { exact: true })).toHaveCount(0);
@@ -1525,8 +1518,6 @@ for (const width of [320, 390]) {
       0,
     );
     expect(footerGeometry.analyzeTop).toBeGreaterThanOrEqual(footerGeometry.actionsTop);
-    const ratingBox = (await page.locator('#analysis-rating').boundingBox())!;
-    expect(ratingBox.height).toBeLessThanOrEqual(32);
     // Settle the branch-tip card before measuring against it: unlike the old
     // two-list shell, the key-moves header only exists once content lands.
     await expect(page.locator('#insight-content')).toBeVisible();

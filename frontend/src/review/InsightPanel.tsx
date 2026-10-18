@@ -1,6 +1,6 @@
 import { type Dispatch, type ReactNode } from 'react';
 import type { Action, State } from '../state/index';
-import { Button, EngineSection, KeyMovesList } from '../components';
+import { Button, KeyMovesList } from '../components';
 import { Chess } from 'chess.js';
 import type { Review } from './useReview';
 import { describeMove } from './reviewMetrics';
@@ -270,7 +270,7 @@ export function MoveAnalysis({
       ) : (
         verdictLoading && <SkeletonText label="Loading move verdict" />
       )}
-      <EngineSection label="Key moves" titleId="insight-title" title="Key moves">
+      <section aria-label="Key moves" className="engine-card">
         {response?.degraded && <p role="status">Bot fallback results.</p>}
         {candidates?.degraded && <p role="status">Bot 2400 fallback results.</p>}
         {review.botStale && (
@@ -304,7 +304,7 @@ export function MoveAnalysis({
         ) : (
           <p className="empty-copy">No analysis yet.</p>
         )}
-      </EngineSection>
+      </section>
     </>
   );
 }
