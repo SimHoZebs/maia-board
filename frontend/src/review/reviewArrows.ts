@@ -1,6 +1,7 @@
 import type { DrawShape } from '@lichess-org/chessground/draw';
 import type { Key } from '@lichess-org/chessground/types';
-import { parseKey } from '../shared/domain';
+import type { SideColor } from '../eval/api';
+import { kingSquare, parseKey } from '../shared/domain';
 import {
   buildReviewBrushes,
   defaultArrowSettings,
@@ -73,4 +74,25 @@ function badgeFill(glyph: SquareBadge['glyph']): string {
   if (glyph === '??') return '#e5484d';
   if (glyph === '?') return '#f5a524';
   return '#111827';
+}
+
+// Losing-king flag shared by play (resignation/checkmate) and analysis
+// (mated king): identical square lookup plus badge construction, so a new
+// game (loser null) clears the same badge it set. Analysis merges the badge
+// with its quality badge (flag leads); play renders it standalone.
+export function losingKingBadge(fen: string, loser: SideColor | null): SquareBadge | null {
+  if (!loser) return null;
+  const square = kingSquare(fen, loser);
+  return square ? { square, glyph: '⚑' } : null;
+}
+
+// Standalone flag shapes for the play board (no arrows, no quality badge).
+export function losingKingShapes(fen: string, loser: SideColor | null): DrawShape[] {
+  const badge = losingKingBadge(fen, loser);
+  if (!badge) return [];
+  return reviewShapes(
+    { actual: null, bot: null, objective: null, stockfish: null, next: null },
+    { actual: true, bot: true, objective: true, stockfish: true, next: true },
+    badge,
+  );
 }

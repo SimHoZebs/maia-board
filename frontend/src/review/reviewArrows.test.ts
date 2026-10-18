@@ -1,5 +1,13 @@
 import { expect, it } from 'vitest';
-import { reviewBrushes, reviewShapes, type SquareBadge } from './reviewArrows';
+import { Chess } from 'chess.js';
+import {
+  losingKingBadge,
+  losingKingShapes,
+  reviewBrushes,
+  reviewShapes,
+  type SquareBadge,
+} from './reviewArrows';
+import { START_FEN } from '../shared/domain';
 const allToggles = {
   actual: true,
   next: true,
@@ -85,4 +93,29 @@ it('marks the losing king with a flag badge that outranks quality badges', () =>
   ]);
   expect(both.map(shape => shape.orig)).toEqual(['e8', 'f3']);
   expect(both[0]).toMatchObject({ label: { text: '⚑' } });
+});
+it('shares one losing-king badge between resign and checkmate', () => {
+  // Null loser (new game) clears through the same path it set.
+  expect(losingKingBadge(START_FEN, null)).toBeNull();
+  expect(losingKingShapes(START_FEN, null)).toEqual([]);
+  // Resign and checkmate construct the identical badge: same square lookup,
+  // same glyph, same fill.
+  const resignBadge = losingKingBadge(START_FEN, 'white');
+  expect(resignBadge).toMatchObject({ square: 'e1', glyph: '⚑' });
+  const checkmated = new Chess(START_FEN);
+  checkmated.move('f2f3');
+  checkmated.move('e7e5');
+  checkmated.move('g2g4');
+  checkmated.move('d8h4');
+  const mateBadge = losingKingBadge(checkmated.fen(), 'white');
+  expect(mateBadge).toMatchObject({ square: 'e1', glyph: '⚑' });
+  const resignShapes = losingKingShapes(START_FEN, 'white');
+  const mateShapes = losingKingShapes(checkmated.fen(), 'white');
+  for (const shapes of [resignShapes, mateShapes]) {
+    expect(shapes).toHaveLength(1);
+    expect(shapes[0]).toMatchObject({ orig: 'e1', label: { text: '⚑', fill: '#111827' } });
+  }
+  // Invalid FEN yields no badge rather than a wrong one.
+  expect(losingKingBadge('junk', 'white')).toBeNull();
+  expect(losingKingShapes('junk', 'white')).toEqual([]);
 });

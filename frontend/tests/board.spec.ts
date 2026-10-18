@@ -1825,3 +1825,19 @@ test('resign flag clears on new game', async ({ page }) => {
   await expect(flag).toHaveCount(0);
   expect(app.errors).toEqual([]);
 });
+test('checkmate flag clears on new game', async ({ page }) => {
+  const app = await boot(page);
+  await move(page, 'f2', 'f3');
+  await app.reply(0, 'e7e5');
+  await move(page, 'g2', 'g4');
+  await app.reply(1, 'd8h4');
+  await expect(page.locator('.game-result')).toContainText('Black wins');
+  const flag = page.locator('#board svg text', { hasText: '⚑' });
+  await expect(flag).toHaveCount(1);
+  await page.locator('#new-game-again').click();
+  await page.locator('#start-game').click();
+  await expect(page.locator('.game-result')).toHaveCount(0);
+  await expect(page.locator('#board piece:not(.ghost)')).toHaveCount(32);
+  await expect(flag).toHaveCount(0);
+  expect(app.errors).toEqual([]);
+});

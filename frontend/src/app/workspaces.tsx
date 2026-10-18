@@ -13,7 +13,6 @@ import {
   analysisLength,
   formatClock,
   gameResult,
-  kingSquare,
   lineRecord,
   LOW_TIME_CENTISECONDS,
   oppositeColor,
@@ -33,7 +32,13 @@ import { currentPosition } from '../state/index';
 import { usePlayFeedback } from '../play/usePlayFeedback';
 import { useAccountName } from '../history/session';
 import { useReview } from '../review/useReview';
-import { reviewBrushes, reviewShapes, type SquareBadge } from '../review/reviewArrows';
+import {
+  losingKingBadge,
+  losingKingShapes,
+  reviewBrushes,
+  reviewShapes,
+  type SquareBadge,
+} from '../review/reviewArrows';
 import { buildReviewBrushes } from '../settings/arrowSettings';
 import { ErrorBoundary, PanelError } from './ErrorBoundary';
 import { destinations } from './BoardRouter';
@@ -472,21 +477,10 @@ export function PlayWorkspace({ state, dispatch }: Props) {
     }
     return null;
   }, [resigned, historic, settings.userColor, ready, position.fen]);
-  const loserSquare = useMemo(
-    () => (loser ? kingSquare(position.fen, loser) : undefined),
-    [loser, position.fen],
-  );
-  const playShapes = useMemo(
-    () =>
-      loserSquare
-        ? reviewShapes(
-            { actual: null, bot: null, objective: null, stockfish: null, next: null },
-            { actual: true, bot: true, objective: true, stockfish: true, next: true },
-            { square: loserSquare, glyph: '⚑' },
-          )
-        : [],
-    [loserSquare],
-  );
+  // Standalone play flag via the shared losing-king helper: identical badge
+  // construction as the analysis mated-king flag, so resign and checkmate
+  // clear through the same path on new game.
+  const playShapes = useMemo(() => losingKingShapes(position.fen, loser), [position.fen, loser]);
   const mobileBar = useMobileBar();
   const tools = (
     <>
@@ -702,11 +696,15 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
       : null;
   // Flag on the mated king when the displayed analysis position is checkmate.
   // Drawn-outcome positions and quiet middlegames show no flag. The flag leads
-  // so it outranks a quality badge landing on the same square.
+  // so it outranks a quality badge landing on the same square. Badge
+  // construction is the shared losing-king helper, identical to the play
+  // resign/checkmate flag.
   const matedLoser =
     position.outcome?.kind === 'checkmate' ? oppositeColor(position.outcome.winner) : null;
-  const matedSquare = matedLoser ? kingSquare(position.fen, matedLoser) : undefined;
-  const flagBadge: SquareBadge | null = matedSquare ? { square: matedSquare, glyph: '⚑' } : null;
+  const flagBadge: SquareBadge | null = useMemo(
+    () => losingKingBadge(position.fen, matedLoser),
+    [position.fen, matedLoser],
+  );
   const badges = flagBadge && badge ? [flagBadge, badge] : (flagBadge ?? badge);
   const shapes = ready
     ? reviewShapes(
