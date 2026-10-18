@@ -404,12 +404,12 @@ export function PlayWorkspace({ state, dispatch }: Props) {
     // Remaining time at the displayed ply for resumed imports (local games
     // carry no readings, so the span stays unmounted there).
     const left = remainingAt(state.play, displayedPly, color);
-    // Turn is shown by a green pill behind the active name; only async /
-    // historic states keep a text status (Thinking…, At this position).
-    const status = historic ? 'At this position' : request && active ? 'Thinking…' : null;
+    // Turn is shown by a green pill behind the active name; while the bot
+    // is thinking that pill slowly pulses instead of showing text.
+    const thinking = !!request && isActive;
     return (
       <div
-        className={`player-strip${isActive ? ' active' : ''}`}
+        className={`player-strip${isActive ? ' active' : ''}${thinking ? ' thinking' : ''}`}
         aria-label={`${sideName(color)}: ${label}${isActive ? ', to move' : ''}`}
       >
         <span className="player-identity">
@@ -424,9 +424,9 @@ export function PlayWorkspace({ state, dispatch }: Props) {
         {color !== settings.userColor && replyIdentity?.degraded && (
           <span role="status">Fallback model reply</span>
         )}
-        {status && isActive && (
-          <span className="turn-indicator" role="status">
-            {status}
+        {thinking && (
+          <span className="visually-hidden" role="status">
+            Thinking…
           </span>
         )}
         {left !== undefined && (
@@ -457,21 +457,36 @@ export function PlayWorkspace({ state, dispatch }: Props) {
   // tip; checkmate marks the side to move in the displayed position. Historic
   // views show no flag so browsing earlier plies never flags a king that had
   // not yet lost.
-  let loser: 'white' | 'black' | null = null;
-  try {
-    if (resigned && !historic) loser = settings.userColor;
-    else if (ready && game.isCheckmate()) loser = toGroundColor(game.turn());
-  } catch {
-    loser = null;
-  }
-  const loserSquare = loser ? kingSquare(position.fen, loser) : undefined;
-  const playShapes = loserSquare
-    ? reviewShapes(
-        { actual: null, bot: null, objective: null, stockfish: null, next: null },
-        { actual: true, bot: true, objective: true, stockfish: true, next: true },
-        { square: loserSquare, glyph: '⚑' },
-      )
-    : [];
+  // Reactive derivation: the trigger (resigned/result, viewed position, and
+  // checkmate state) is explicitly established with its output via useMemo,
+  // so starting a new game (result cleared, fen reset to startpos) always
+  // recomputes to no flag instead of holding a stale badge.
+  const loser = useMemo<'white' | 'black' | null>(() => {
+    if (resigned && !historic) return settings.userColor;
+    if (!ready) return null;
+    try {
+      const g = new Chess(position.fen);
+      if (g.isCheckmate()) return toGroundColor(g.turn());
+    } catch {
+      return null;
+    }
+    return null;
+  }, [resigned, historic, settings.userColor, ready, position.fen]);
+  const loserSquare = useMemo(
+    () => (loser ? kingSquare(position.fen, loser) : undefined),
+    [loser, position.fen],
+  );
+  const playShapes = useMemo(
+    () =>
+      loserSquare
+        ? reviewShapes(
+            { actual: null, bot: null, objective: null, stockfish: null, next: null },
+            { actual: true, bot: true, objective: true, stockfish: true, next: true },
+            { square: loserSquare, glyph: '⚑' },
+          )
+        : [],
+    [loserSquare],
+  );
   const mobileBar = useMobileBar();
   const tools = (
     <>

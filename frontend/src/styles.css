@@ -253,6 +253,22 @@ p {
 .player-strip.active .player-identity {
   background: rgba(184, 201, 152, 0.22);
 }
+/* Bot-thinking pulse: the active pill breathes while a reply is in flight
+   instead of showing text. Off under reduced motion. */
+@keyframes turn-pulse {
+  0%,
+  100% {
+    background: rgba(184, 201, 152, 0.22);
+  }
+  50% {
+    background: rgba(184, 201, 152, 0.4);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .player-strip.active.thinking .player-identity {
+    animation: turn-pulse 2.4s ease-in-out infinite;
+  }
+}
 .side-dot {
   width: 10px;
   height: 10px;
@@ -280,14 +296,9 @@ p {
 .clock-remaining.clock-low {
   color: #e8a04c;
 }
-.turn-indicator {
-  color: var(--accent);
-  font-size: 12px;
-}
 .player-strip strong,
 .player-strip .side-dot,
-.player-strip .player-side,
-.player-strip .turn-indicator {
+.player-strip .player-side {
   flex: none;
 }
 .material-summary {

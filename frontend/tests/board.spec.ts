@@ -84,6 +84,12 @@ async function boot(
   if (extraInit) await page.addInitScript(extraInit);
   await page.route('http://maia.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
+    if (path === '/me') {
+      await route.fulfill({
+        json: { id: 'test-user', created_at: '2026-01-01T00:00:00Z', display_name: 'Tester' },
+      });
+      return;
+    }
     if (await cache.lookup(route)) return;
     if (path === '/openings') {
       const moves = route.request().postDataJSON()?.moves;
@@ -771,7 +777,7 @@ test('pending takeback/new game/mode/settings transitions reject obsolete replie
   await page.locator('#mode-play').click();
   await expect.poll(() => app.requests.length).toBe(3);
   await app.reply(1, 'e7e5');
-  await expect(page.locator('.turn-indicator')).toHaveText('Thinking…');
+  await expect(page.locator('.player-strip.active.thinking')).toHaveCount(1);
   await page.locator('#new-game').click();
   await page.locator('#bot-elo').selectOption('1800');
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -797,7 +803,7 @@ test('busy retries are bounded, then manual retry recovers controls', async ({ p
     'Bot is busy. Wait a moment and try again.',
   );
   await expect(page.locator('#retry-request')).toBeVisible();
-  await expect(page.locator('.turn-indicator')).toHaveCount(0);
+  await expect(page.locator('.player-strip.active.thinking')).toHaveCount(0);
   await page.locator('#retry-request').click();
   await expect.poll(() => app.requests.length).toBe(4);
   await app.reply(3, 'e7e5');
@@ -1800,5 +1806,22 @@ test('resign ends the game, persists, and hides resume', async ({ page }) => {
   await expect(page.locator('.saved-game').first()).toContainText('Black wins · resignation');
   await page.locator('#mode-play').click();
   await expect(page.locator('.game-result')).toContainText('Black wins · resignation');
+  expect(app.errors).toEqual([]);
+});
+
+test('resign flag clears on new game', async ({ page }) => {
+  const app = await boot(page);
+  await move(page, 'e2', 'e4');
+  await app.reply(0, 'e7e5');
+  await page.locator('#resign').click();
+  await page.locator('#confirm-resign').click();
+  await expect(page.locator('.game-result')).toContainText('resignation');
+  const flag = page.locator('#board svg text', { hasText: '⚑' });
+  await expect(flag).toHaveCount(1);
+  await page.locator('#new-game-again').click();
+  await page.locator('#start-game').click();
+  await expect(page.locator('.game-result')).toHaveCount(0);
+  await expect(page.locator('#board piece:not(.ghost)')).toHaveCount(32);
+  await expect(flag).toHaveCount(0);
   expect(app.errors).toEqual([]);
 });
