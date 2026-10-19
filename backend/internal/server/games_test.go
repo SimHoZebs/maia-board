@@ -40,7 +40,7 @@ func normalizeJSON(t *testing.T, document string) string {
 
 func gameFixture(id string, moves ...string) store.GamePayload {
 	maia, user := 1600, 1400
-	return store.GamePayload{ID: id, UserColor: "white", EloMaia: &maia, EloUser: &user, Model: "79m", Moves: moves}
+	return store.GamePayload{ID: id, UserColor: "white", EloMaia: &maia, EloUser: &user, Model: "79m", Moves: moves, Source: "local", Opponent: "Maia 1600"}
 }
 func TestGamesPersistenceBudget(t *testing.T) {
 	s := &Server{store: testStore(t)}

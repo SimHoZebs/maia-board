@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
@@ -163,8 +164,16 @@ func (s *Server) serveLocalLogin(w http.ResponseWriter, r *http.Request) {
 		DisplayName string `json:"display_name"`
 	}
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&body)
+	if err := store.ValidateDisplayName(body.DisplayName); err != nil {
+		writeHumaError(w, http.StatusBadRequest, "invalid_display_name", "display_name must be 1-40 printable characters")
+		return
+	}
 	user, err := s.auth.store.CreateLocalUser(body.DisplayName)
 	if err != nil {
+		if errors.Is(err, store.ErrInvalidDisplayName) {
+			writeHumaError(w, http.StatusBadRequest, "invalid_display_name", "display_name must be 1-40 printable characters")
+			return
+		}
 		writeHumaError(w, http.StatusBadGateway, "engine_unavailable", "account store is unavailable")
 		return
 	}

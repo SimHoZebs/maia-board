@@ -95,7 +95,7 @@ func TestAuthGatesAndOwnership(t *testing.T) {
 	if w := authed(t, s, http.MethodDelete, "/games/"+saved.ID, "", bobToken); w.Code != http.StatusNotFound {
 		t.Fatalf("cross-owner delete: %d %s", w.Code, w.Body)
 	}
-	importBody := `{"games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"created_at":"2024-01-01T00:00:00Z"},{"user_color":"black","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4","e7e5"]}]}`
+	importBody := `{"games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"created_at":"2024-01-01T00:00:00Z","source":"lichess:imp00001","opponent":"foe-a"},{"user_color":"black","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4","e7e5"],"source":"lichess:imp00002","opponent":"foe-b"}]}`
 	w = authed(t, s, http.MethodPost, "/imports/games", importBody, bobToken)
 	if w.Code != http.StatusOK {
 		t.Fatalf("bulk import: %d %s", w.Code, w.Body)
@@ -136,7 +136,7 @@ func TestAdoptEndpoint(t *testing.T) {
 	}
 	// Legacy row written before auth existed (direct store save, no owner).
 	maia, user := 1600, 1400
-	if _, _, err := s.store.Save(store.GamePayload{ID: "legacy", UserColor: "white", EloMaia: &maia, EloUser: &user, Model: "79m", Moves: []string{"e2e4"}}); err != nil {
+	if _, _, err := s.store.Save(store.GamePayload{ID: "legacy", UserColor: "white", EloMaia: &maia, EloUser: &user, Model: "79m", Moves: []string{"e2e4"}, Source: "local", Opponent: "Maia 1600"}); err != nil {
 		t.Fatal(err)
 	}
 	alice, aliceToken := loginAs(t, s, "Alice")
@@ -173,7 +173,7 @@ func TestImportDedupeAndStatus(t *testing.T) {
 	s := authedServer(t)
 	_, token := loginAs(t, s, "Importer")
 	entry := func(source string) string {
-		return `{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"` + source + `"}`
+		return `{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"` + source + `","opponent":"foe-x"}`
 	}
 	entryNamed := func(source, opponent string) string {
 		return `{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"` + source + `","opponent":"` + opponent + `"}`
@@ -193,7 +193,9 @@ func TestImportDedupeAndStatus(t *testing.T) {
 	if first.Saved[0].Opponent != "foe-one" || first.Saved[0].Source != "lichess:aaa11111" {
 		t.Fatalf("opponent not stamped: %+v", first.Saved[0])
 	}
-	// Re-import backfills the name on the row saved before names existed.
+	// Re-importing a fully-named row is a clean skip (opponent backfill
+	// only fires for legacy rows predating names; strict imports always
+	// carry a name, so there is nothing to refresh here).
 	w = authed(t, s, http.MethodPost, "/imports/games", `{"provider":"lichess","username":"bob","games":[`+entryNamed("lichess:bbb22222", "foe-two")+`]}`, token)
 	if w.Code != http.StatusOK {
 		t.Fatalf("backfill import: %d %s", w.Code, w.Body)
@@ -202,16 +204,16 @@ func TestImportDedupeAndStatus(t *testing.T) {
 		Skipped   int `json:"skipped"`
 		Refreshed int `json:"refreshed"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &backfilled); err != nil || backfilled.Skipped != 1 || backfilled.Refreshed != 1 {
+	if err := json.Unmarshal(w.Body.Bytes(), &backfilled); err != nil || backfilled.Skipped != 1 || backfilled.Refreshed != 0 {
 		t.Fatalf("backfill counts: %s err=%v", w.Body, err)
 	}
 	got, err := s.store.Get(first.Saved[1].ID)
-	if err != nil || got.Opponent != "foe-two" {
-		t.Fatalf("backfilled row: %+v %v", got, err)
+	if err != nil || got.Opponent != "foe-x" {
+		t.Fatalf("named row preserved: %+v %v", got, err)
 	}
 	// Rating diffs stamp on import, backfill on re-import, and clear on
 	// single play saves (server-owned like opponent/source).
-	diffBody := `{"provider":"lichess","username":"bob","games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"lichess:diff0001","rating_diff":14}]}`
+	diffBody := `{"provider":"lichess","username":"bob","games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"lichess:diff0001","opponent":"foe-diff","rating_diff":14}]}`
 	w = authed(t, s, http.MethodPost, "/imports/games", diffBody, token)
 	if w.Code != http.StatusOK {
 		t.Fatalf("diff import: %d %s", w.Code, w.Body)
@@ -230,7 +232,7 @@ func TestImportDedupeAndStatus(t *testing.T) {
 	if err != nil || got.RatingDiff == nil || *got.RatingDiff != -3 {
 		t.Fatalf("backfilled diff: %+v %v", got, err)
 	}
-	w = authed(t, s, http.MethodPost, "/imports/games", `{"provider":"lichess","games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"lichess:bad99999","rating_diff":5000}]}`, token)
+	w = authed(t, s, http.MethodPost, "/imports/games", `{"provider":"lichess","games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"lichess:bad99999","opponent":"foe-bad","rating_diff":5000}]}`, token)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("bad diff: %d %s", w.Code, w.Body)
 	}
@@ -263,7 +265,7 @@ func TestImportDedupeAndStatus(t *testing.T) {
 		t.Fatalf("single save: %d %s", w.Code, w.Body)
 	}
 	var single store.GameRow
-	if err := json.Unmarshal(w.Body.Bytes(), &single); err != nil || single.Opponent != "Maia 1600" || single.Source != "" || single.RatingDiff != nil {
+	if err := json.Unmarshal(w.Body.Bytes(), &single); err != nil || single.Opponent != "Maia 1600" || single.Source != "local" || single.RatingDiff != nil {
 		t.Fatalf("single save stamp: %s err=%v", w.Body, err)
 	}
 	w = authed(t, s, http.MethodGet, "/imports/status", "", token)
@@ -285,7 +287,7 @@ func TestImportDedupeAndStatus(t *testing.T) {
 func TestImportTimeControl(t *testing.T) {
 	s := authedServer(t)
 	_, token := loginAs(t, s, "ClockImporter")
-	body := `{"provider":"lichess","username":"bob","games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"lichess:clk10001","time_control":"300+3","speed":"blitz"}]}`
+	body := `{"provider":"lichess","username":"bob","games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"lichess:clk10001","opponent":"foe-clock","time_control":"300+3","speed":"blitz"}]}`
 	w := authed(t, s, http.MethodPost, "/imports/games", body, token)
 	if w.Code != http.StatusOK {
 		t.Fatalf("clock import: %d %s", w.Code, w.Body)
@@ -297,7 +299,7 @@ func TestImportTimeControl(t *testing.T) {
 		t.Fatalf("clock stamp: %s err=%v", w.Body, err)
 	}
 	// Correspondence days stamp, and re-imports backfill clocks.
-	corr := `{"provider":"lichess","username":"bob","games":[{"user_color":"black","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"lichess:clk10002","time_control":"3d","speed":"correspondence"}]}`
+	corr := `{"provider":"lichess","username":"bob","games":[{"user_color":"black","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4"],"source":"lichess:clk10002","opponent":"foe-corr","time_control":"3d","speed":"correspondence"}]}`
 	if w := authed(t, s, http.MethodPost, "/imports/games", corr, token); w.Code != http.StatusOK {
 		t.Fatalf("correspondence import: %d %s", w.Code, w.Body)
 	}
@@ -320,7 +322,7 @@ func TestImportTimeControl(t *testing.T) {
 func TestImportClocks(t *testing.T) {
 	s := authedServer(t)
 	_, token := loginAs(t, s, "ClockReader")
-	body := `{"provider":"lichess","games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4","e7e5"],"source":"lichess:clk20001","time_control":"180+2","speed":"blitz","clocks":[18000,17950]}]}`
+	body := `{"provider":"lichess","games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4","e7e5"],"source":"lichess:clk20001","opponent":"foe-read","time_control":"180+2","speed":"blitz","clocks":[18000,17950]}]}`
 	w := authed(t, s, http.MethodPost, "/imports/games", body, token)
 	if w.Code != http.StatusOK {
 		t.Fatalf("readings import: %d %s", w.Code, w.Body)
@@ -341,7 +343,7 @@ func TestImportClocks(t *testing.T) {
 		t.Fatalf("backfilled readings: %+v %v", got, err)
 	}
 	// Length must match the move list.
-	bad := `{"provider":"lichess","games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4","e7e5"],"source":"lichess:clk20002","clocks":[18000]}]}`
+	bad := `{"provider":"lichess","games":[{"user_color":"white","elo_maia":1500,"elo_user":1300,"model":"79m","moves":["e2e4","e7e5"],"source":"lichess:clk20002","opponent":"foe-bad","clocks":[18000]}]}`
 	if w := authed(t, s, http.MethodPost, "/imports/games", bad, token); w.Code != http.StatusBadRequest {
 		t.Fatalf("short readings: %d %s", w.Code, w.Body)
 	}

@@ -178,7 +178,7 @@ Errors: `404 not_found`, `405 method_not_allowed`.
   `moves` at most 4096 plies UCI, `result` empty or `resigned`,
   `temperature` 0–2, `created_at` RFC3339 when supplied.
   `opponent`/`source`/`rating_diff` are server-owned: single saves stamp
-  `Maia <elo>`/empty/nil and ignore client values.
+  `Maia <elo>`/`local`/nil and ignore client values.
 - Errors: `400 invalid_request | invalid_user_color | missing_elo | invalid_elo | invalid_model | history_too_long | invalid_move | invalid_result | invalid_created_at | invalid_rating_diff`, `502 engine_unavailable` (store down), `405 method_not_allowed`.
 
 ## GET /games/:id, DELETE /games/:id

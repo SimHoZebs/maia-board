@@ -140,9 +140,10 @@ func (s *Server) handleGamesCreate(ctx context.Context, input *GamesCreateInput)
 		return nil, apiError(status, err.Code, err.Message)
 	}
 	// Play is always against the engine: the opponent name is server-owned,
-	// stamped from the bot Elo, never taken from the client.
+	// stamped from the bot Elo, never taken from the client. Local games
+	// carry the explicit `local` source so the column never holds `''`.
 	payload.Opponent = "Maia " + strconv.Itoa(*payload.EloMaia)
-	payload.Source = ""
+	payload.Source = "local"
 	payload.RatingDiff = nil
 	// Local play is untimed: no user-facing clock setting exists, so the
 	// server clears any client-sent clock rather than storing it.

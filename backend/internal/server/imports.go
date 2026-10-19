@@ -78,7 +78,8 @@ func (s *Server) serveBulkImport(w http.ResponseWriter, r *http.Request) {
 	for index := range body.Games {
 		source := body.Games[index].Source
 		if source == "" {
-			continue
+			writeHumaError(w, http.StatusBadRequest, "invalid_source", "game source is required (lichess:<gameId>)")
+			return
 		}
 		if !importSourcePattern.MatchString(source) {
 			writeHumaError(w, http.StatusBadRequest, "invalid_source", "game source must be lichess:<gameId>")
@@ -132,6 +133,12 @@ func (s *Server) serveBulkImport(w http.ResponseWriter, r *http.Request) {
 		}
 		entry.OwnerID = ownerID
 		entry.Current = false
+		// New imports must name the other side; re-imports refreshing a
+		// known source may carry only the field being backfilled.
+		if !known[entry.Source] && entry.Opponent == "" {
+			errs[strconv.Itoa(index)] = "invalid_opponent"
+			continue
+		}
 		if err := store.ValidateGamePayload(&entry); err != nil {
 			errs[strconv.Itoa(index)] = err.Code
 			continue
