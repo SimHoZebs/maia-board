@@ -350,9 +350,9 @@ func (s *GameStore) UpdateClocksIfEmpty(ownerID, source string, clocks []int) (b
 	return count > 0, nil
 }
 
-// AdoptLegacyGames claims every unowned (pre-user) game row for ownerID and
-// moves the legacy global current marker onto that user's marker when it
-// points at an adopted row. It is idempotent: a second caller adopts nothing.
+// AdoptLegacyGames claims every unowned (pre-user) game row for ownerID.
+// It is idempotent: a second caller adopts nothing. No current-game marker
+// is carried: unscoped saves never set one.
 func (s *GameStore) AdoptLegacyGames(ownerID string) (adopted int, err error) {
 	if ownerID == "" {
 		return 0, nil
@@ -365,16 +365,6 @@ func (s *GameStore) AdoptLegacyGames(ownerID string) (adopted int, err error) {
 		count, err := result.RowsAffected()
 		if err != nil {
 			return 0, err
-		}
-		var legacy string
-		if err := tx.QueryRow(`SELECT value FROM meta WHERE key = 'current_game_id'`).Scan(&legacy); err == nil && legacy != "" {
-			var owner string
-			if err := tx.QueryRow(`SELECT owner_id FROM games WHERE id = ?`, legacy).Scan(&owner); err == nil && owner == ownerID {
-				if _, err := tx.Exec(`INSERT INTO user_current (user_id, game_id) VALUES (?, ?)
-					ON CONFLICT (user_id) DO NOTHING`, ownerID, legacy); err != nil {
-					return 0, err
-				}
-			}
 		}
 		return int(count), nil
 	})

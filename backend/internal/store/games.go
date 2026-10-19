@@ -156,7 +156,6 @@ func NewGameStore(path string) (*GameStore, error) {
 		moves TEXT NOT NULL DEFAULT '[]',
 		result TEXT NOT NULL DEFAULT ''
 	);
-	CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 	CREATE INDEX IF NOT EXISTS idx_games_updated ON games(updated_at DESC);`
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
@@ -165,6 +164,12 @@ func NewGameStore(path string) (*GameStore, error) {
 	// The legacy evaluations table is disposable cache, not user data: drop
 	// it once on open. Misses recompute through the engine endpoints.
 	if _, err := db.Exec(`DROP TABLE IF EXISTS evaluations`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	// The legacy meta KV table held the pre-user global current-game marker.
+	// Per-user markers live in user_current now; drop it once on open.
+	if _, err := db.Exec(`DROP TABLE IF EXISTS meta`); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -312,8 +317,8 @@ func ValidateGamePayload(payload *GamePayload) *apierror.RequestError {
 }
 
 // Save inserts or updates a game. created_at is immutable once set; updated_at
-// always becomes now. When current is true the current-game marker moves too
-// (per-user when OwnerID is set, legacy global meta otherwise).
+// always becomes now. When current is true the per-user current-game marker
+// moves too (only when OwnerID is set; unscoped saves track no marker).
 // It reports isNew=true when the id was absent (a genuinely new game row),
 // false for updates and unchanged re-saves.
 func (s *GameStore) Save(payload GamePayload) (GameRow, bool, error) {
@@ -419,13 +424,11 @@ func (s *GameStore) Save(payload GamePayload) (GameRow, bool, error) {
 }
 
 func setCurrentTx(tx *sql.Tx, ownerID, gameID string) error {
-	if ownerID != "" {
-		_, err := tx.Exec(`INSERT INTO user_current (user_id, game_id) VALUES (?, ?)
-			ON CONFLICT (user_id) DO UPDATE SET game_id = excluded.game_id`, ownerID, gameID)
-		return err
+	if ownerID == "" {
+		return nil
 	}
-	_, err := tx.Exec(`INSERT INTO meta (key, value) VALUES ('current_game_id', ?)
-		ON CONFLICT (key) DO UPDATE SET value = excluded.value`, gameID)
+	_, err := tx.Exec(`INSERT INTO user_current (user_id, game_id) VALUES (?, ?)
+		ON CONFLICT (user_id) DO UPDATE SET game_id = excluded.game_id`, ownerID, gameID)
 	return err
 }
 
@@ -571,21 +574,13 @@ func (s *GameStore) ListForUser(limit int, ownerID string, offsets ...int) ([]Ga
 	return games, total, rows.Err()
 }
 
-func (s *GameStore) CurrentID() string {
-	var id string
-	if err := s.db.QueryRow(`SELECT value FROM meta WHERE key = 'current_game_id'`).Scan(&id); err != nil {
+// CurrentIDForUser reads one user's current-game marker ("" when unset).
+// Unscoped saves never set a marker, so "" always reads "".
+func (s *GameStore) CurrentIDForUser(ownerID string) string {
+	if ownerID == "" {
 		return ""
 	}
-	return id
-}
-
-// CurrentIDForUser reads the per-user marker, falling back to the legacy
-// global marker only for the unscoped (”) owner.
-func (s *GameStore) CurrentIDForUser(ownerID string) string {
-	if ownerID != "" {
-		return s.GetUserCurrent(ownerID)
-	}
-	return s.CurrentID()
+	return s.GetUserCurrent(ownerID)
 }
 
 // Delete removes a game and clears the current-game marker when it points there.
@@ -596,14 +591,11 @@ func (s *GameStore) Delete(id string) error {
 
 // DeleteForUser deletes only when the row belongs to ownerID. Unknown ids
 // and cross-owner ids both succeed silently at the store layer (handlers
-// decide 404 vs 403); the per-user and legacy markers clear when matched.
+// decide 404 vs 403); the per-user marker clears when matched.
 func (s *GameStore) DeleteForUser(id, ownerID string) error {
 	_, err := withTx(s.db, func(tx *sql.Tx) (struct{}, error) {
 		if ownerID == "" {
 			if _, err := tx.Exec(`DELETE FROM games WHERE id = ?`, id); err != nil {
-				return struct{}{}, err
-			}
-			if _, err := tx.Exec(`DELETE FROM meta WHERE key = 'current_game_id' AND value = ?`, id); err != nil {
 				return struct{}{}, err
 			}
 			return struct{}{}, nil
