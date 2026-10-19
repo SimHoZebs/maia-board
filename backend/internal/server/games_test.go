@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -67,20 +68,24 @@ func TestGamesPersistenceBudget(t *testing.T) {
 	}
 }
 func TestGamesPagesIncludeCurrentOutsidePage(t *testing.T) {
-	gameStore := testStore(t)
-	current := gameFixture("old", "e2e4")
-	current.Current = true
-	if _, _, err := gameStore.Save(current); err != nil {
-		t.Fatal(err)
-	}
-	for _, id := range []string{"middle", "new"} {
-		if _, _, err := gameStore.Save(gameFixture(id)); err != nil {
-			t.Fatal(err)
+	s := authedServer(t)
+	_, token := loginAs(t, s, "Alice")
+	post := func(id string, current bool) {
+		t.Helper()
+		payload := gameFixture(id, "e2e4")
+		payload.Current = current
+		body, _ := json.Marshal(payload)
+		w := authed(t, s, http.MethodPost, "/games", string(body), token)
+		if w.Code != http.StatusOK {
+			t.Fatalf("save %s: %d %s", id, w.Code, w.Body)
 		}
 	}
-	s := &Server{store: gameStore}
+	post("old", true)
+	for _, id := range []string{"middle", "new"} {
+		post(id, false)
+	}
 	for offset, id := range []string{"new", "middle", "old"} {
-		w := serve(s, "GET", fmt.Sprintf("/games?limit=1&offset=%d", offset), "")
+		w := authed(t, s, http.MethodGet, fmt.Sprintf("/games?limit=1&offset=%d", offset), "", token)
 		var page struct {
 			Games   []store.GameRow `json:"games"`
 			Current *store.GameRow  `json:"current_game"`
@@ -98,29 +103,30 @@ func TestGamesPagesIncludeCurrentOutsidePage(t *testing.T) {
 		}
 	}
 	for _, offset := range []string{"-1", "junk"} {
-		w := serve(s, "GET", "/games?offset="+offset, "")
-		if w.Code != 400 {
+		w := authed(t, s, http.MethodGet, "/games?offset="+offset, "", token)
+		if w.Code != http.StatusBadRequest {
 			t.Fatalf("invalid offset accepted: %s", offset)
 		}
 	}
 }
 func TestGamesListOrphanMarkerReadsNull(t *testing.T) {
-	gameStore := testStore(t)
-	current := gameFixture("old", "e2e4")
-	current.Current = true
-	if _, _, err := gameStore.Save(current); err != nil {
-		t.Fatal(err)
+	s := authedServer(t)
+	_, token := loginAs(t, s, "Alice")
+	w := authed(t, s, http.MethodPost, "/games",
+		`{"user_color":"white","elo_maia":1600,"elo_user":1400,"model":"79m","moves":["e2e4"],"current":true}`, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("save status %d: %s", w.Code, w.Body)
+	}
+	var saved store.GameRow
+	if err := json.Unmarshal(w.Body.Bytes(), &saved); err != nil || saved.ID == "" {
+		t.Fatalf("save body: %s, err = %v", w.Body, err)
 	}
 	// Bypass Delete's marker cleanup to simulate a marker/game race.
-	if err := gameStore.DeleteGameRowForTest("old"); err != nil {
+	if err := s.store.DeleteGameRowForTest(saved.ID); err != nil {
 		t.Fatal(err)
 	}
-	if id := gameStore.CurrentID(); id != "old" {
-		t.Fatalf("marker setup failed: %q", id)
-	}
-	s := &Server{store: gameStore}
-	w := serve(s, "GET", "/games?limit=200&offset=0", "")
-	if w.Code != 200 {
+	w = authed(t, s, http.MethodGet, "/games?limit=200&offset=0", "", token)
+	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 	var page struct {
@@ -184,7 +190,7 @@ func TestGamesHTTP(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if listed.Total != 1 || len(listed.Games) != 1 || listed.CurrentID == nil || *listed.CurrentID != saved.ID {
+	if listed.Total != 1 || len(listed.Games) != 1 || listed.CurrentID != nil {
 		t.Fatalf("list body: %s", w.Body)
 	}
 

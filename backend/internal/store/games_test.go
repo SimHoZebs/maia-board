@@ -135,8 +135,8 @@ func TestGameStoreUnchangedSavePreservesOrder(t *testing.T) {
 	if resaved.UpdatedAt != games[1].UpdatedAt {
 		t.Fatalf("resave rewrote timestamp: %+v", resaved)
 	}
-	if id := store.CurrentID(); id != "a" {
-		t.Fatalf("marker not set on unchanged save: %q", id)
+	if id := store.CurrentIDForUser(""); id != "" {
+		t.Fatalf("unscoped save tracked a marker: %q", id)
 	}
 	changed := gameFixture("a", "e2e4", "e7e5")
 	if _, _, err := store.Save(changed); err != nil {
@@ -301,30 +301,38 @@ func TestGameStoreClocks(t *testing.T) {
 
 func TestGameStoreCurrentMarker(t *testing.T) {
 	store := testStore(t)
-	if id := store.CurrentID(); id != "" {
+	user, err := store.CreateLocalUser("Player")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned := func(id string, current bool) GamePayload {
+		payload := gameFixture(id)
+		payload.OwnerID = user.ID
+		payload.Current = current
+		return payload
+	}
+	if id := store.CurrentIDForUser(user.ID); id != "" {
 		t.Fatalf("expected empty marker, got %q", id)
 	}
-	payload := gameFixture("a")
-	payload.Current = true
-	if _, _, err := store.Save(payload); err != nil {
+	if _, _, err := store.Save(owned("a", true)); err != nil {
 		t.Fatal(err)
 	}
-	if id := store.CurrentID(); id != "a" {
+	if id := store.CurrentIDForUser(user.ID); id != "a" {
 		t.Fatalf("marker = %q", id)
 	}
-	if _, _, err := store.Save(gameFixture("b")); err != nil {
+	if _, _, err := store.Save(owned("b", false)); err != nil {
 		t.Fatal(err)
 	}
-	if id := store.CurrentID(); id != "a" {
+	if id := store.CurrentIDForUser(user.ID); id != "a" {
 		t.Fatalf("plain save moved marker to %q", id)
 	}
-	if err := store.Delete("a"); err != nil {
+	if err := store.DeleteForUser("a", user.ID); err != nil {
 		t.Fatal(err)
 	}
-	if id := store.CurrentID(); id != "" {
+	if id := store.CurrentIDForUser(user.ID); id != "" {
 		t.Fatalf("delete did not clear marker: %q", id)
 	}
-	if err := store.Delete("missing"); err != nil {
+	if err := store.DeleteForUser("missing", user.ID); err != nil {
 		t.Fatalf("delete of unknown id must succeed: %v", err)
 	}
 }

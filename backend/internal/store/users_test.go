@@ -167,8 +167,8 @@ func TestAdoptLegacyGames(t *testing.T) {
 	if _, err := store.GetForUser("legacy", alice.ID); err != nil {
 		t.Fatalf("adopted row unreadable: %v", err)
 	}
-	if id := store.CurrentIDForUser(alice.ID); id != "current" {
-		t.Fatalf("marker not carried: %q", id)
+	if id := store.CurrentIDForUser(alice.ID); id != "" {
+		t.Fatalf("unscoped marker leaked into adoption: %q", id)
 	}
 	if unowned, err := store.CountUnowned(); err != nil || unowned != 0 {
 		t.Fatalf("unowned=%d err=%v", unowned, err)
@@ -203,8 +203,8 @@ func TestGameOwnership(t *testing.T) {
 	if id := store.CurrentIDForUser(alice.ID); id != "owned" {
 		t.Fatalf("per-user marker = %q", id)
 	}
-	if id := store.CurrentID(); id != "" {
-		t.Fatalf("legacy marker polluted: %q", id)
+	if id := store.CurrentIDForUser(bob.ID); id != "" {
+		t.Fatalf("owned save touched another user's marker: %q", id)
 	}
 	games, total, err := store.ListForUser(100, alice.ID)
 	if err != nil || total != 1 || len(games) != 1 {
