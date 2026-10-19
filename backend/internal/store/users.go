@@ -95,6 +95,14 @@ func ensureGameOwnerColumn(db *sql.DB) error {
 	// External imports dedupe per owner: re-running the same Lichess import
 	// skips rows instead of duplicating them. Only `lichess:<id>` rows
 	// participate; local games carry `local` and never collide.
+	// DROP first: pre-strict DBs already have this name with the old
+	// `WHERE source <> ''` predicate, and CREATE IF NOT EXISTS would keep
+	// the stale index live — then backfilling 26x (owner, local) collides
+	// and NewGameStore fails open. The drop runs before backfill via
+	// NewGameStore order (ensureUserSchema -> ensureStrictConstraints).
+	if _, err := db.Exec(`DROP INDEX IF EXISTS idx_games_owner_source`); err != nil {
+		return err
+	}
 	_, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_games_owner_source ON games(owner_id, source) WHERE source LIKE 'lichess:%'`)
 	return err
 }
