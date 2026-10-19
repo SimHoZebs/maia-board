@@ -291,7 +291,9 @@ function BoardShell({
     <section className={`board-stage${over ? ' game-over' : ''}`} aria-label="Chess workspace">
       {toolbar}
       {renderStrip(oppositeColor(orientation))}
-      <div className={`board-frame${withEvaluation ? ' with-evaluation' : ''}`}>
+      <div
+        className={`board-frame${withEvaluation ? ' with-evaluation' : ''}${state.coordinatesOnSquares ? '' : ' coords-outside'}`}
+      >
         <ErrorBoundary
           label="board"
           resetKey={boardResetKey}

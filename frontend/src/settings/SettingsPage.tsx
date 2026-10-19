@@ -195,7 +195,10 @@ export function SettingsPage({ state, dispatch }: Props) {
             </label>
           </div>
         </div>
-        <p>Inside stays aligned at any size. Outside is the classic look.</p>
+        <p>
+          Full labels on every edge square, or single-axis corners chess.com-style. Both stay
+          aligned at any board size.
+        </p>
       </div>
       <div className="settings-control">
         <label className="toggle-card" htmlFor="sound-enabled">

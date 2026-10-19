@@ -19,9 +19,8 @@ export function normalizeBadgeLoading(stored: unknown): BadgeLoading {
   return stored === 'shimmer' || stored === 'placeholder' ? stored : 'reel';
 }
 
-// Inside-squares coordinates are the default: outside labels use fixed-px
-// offsets that drift against fluid square sizes, while on-squares labels are
-// proportional and stay aligned at any viewport.
+// Inside-squares coordinates are the default. Outside labels sit in the square
+// corners with %-anchored cells (see styles.css), so both stay aligned.
 export function normalizeCoordinatesOnSquares(stored: unknown): boolean {
   return stored !== false;
 }

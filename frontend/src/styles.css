@@ -789,6 +789,53 @@ legend {
 .eval-slot-left {
   left: -18px;
 }
+/* Outside coordinates (classic single-axis look): rank-only down the left
+   squares, file-only across the bottom squares, tucked in the square corners
+   chess.com-style. Cells stay %-anchored to the grid (each rank cell is 1/8
+   of board height, each file cell 1/8 of board width) so labels sit on their
+   squares at any board size; font and corner padding scale with the board.
+   This replaces chessground's fixed-px outside offsets (top -20px, left
+   24px), which shift against fluid square sizes and clip under .board's
+   overflow. */
+.board-frame.coords-outside .cg-wrap coords {
+  font-size: max(8px, calc(var(---cg-width, 600px) / 56));
+}
+.board-frame.coords-outside .cg-wrap coords.ranks {
+  left: 0;
+  top: 0;
+  width: 12.5%;
+  height: 100%;
+}
+.board-frame.coords-outside .cg-wrap coords.files {
+  left: 0;
+  bottom: 0;
+  top: auto;
+  width: 100%;
+  height: 12.5%;
+}
+.board-frame.coords-outside .cg-wrap coords coord {
+  transform: none;
+  display: flex;
+  padding: 0;
+}
+.board-frame.coords-outside .cg-wrap coords.ranks coord {
+  justify-content: flex-end;
+  align-items: flex-start;
+  padding: 0.25em 0 0 0.35em;
+}
+.board-frame.coords-outside .cg-wrap coords.files coord {
+  justify-content: flex-end;
+  align-items: flex-end;
+  padding: 0 0.35em 0.25em 0;
+}
+/* Black orientation reverses the strip flows, so the corner sides flip back
+   to the same top-left / bottom-right corners. */
+.board-frame.coords-outside .cg-wrap.orientation-black coords.ranks coord {
+  justify-content: flex-start;
+}
+.board-frame.coords-outside .cg-wrap.orientation-black coords.files coord {
+  justify-content: flex-start;
+}
 .eval-balance {
   height: 100%;
   width: 100%;

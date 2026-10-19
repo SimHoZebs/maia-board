@@ -1841,3 +1841,116 @@ test('checkmate flag clears on new game', async ({ page }) => {
   await expect(flag).toHaveCount(0);
   expect(app.errors).toEqual([]);
 });
+
+test('outside coordinates sit in their square corners at desktop and mobile sizes', async ({
+  page,
+}) => {
+  const app = await boot(page, { [KEYS.coordinatesOnSquares]: false }, false, '/analyze');
+  await page.locator('#analysis-pgn').fill('1. e4 e5');
+  await page.locator('#load-analysis').click();
+  await expect(page.locator('#board cg-board')).toBeVisible();
+  await expect(page.locator('.eval-slot-left')).toBeVisible();
+  await expect(page.locator('.eval-slot-right')).toBeVisible();
+  // Worst distance in px of any label center outside its expected square
+  // quadrant (rank labels: top-left of the left-column square of their rank;
+  // file labels: bottom-right of the bottom-row square of their file), plus
+  // strip and eval-bar placement. Zero when every label sits in its corner.
+  const misalignment = () =>
+    page.evaluate(() => {
+      const board = document.querySelector('#board cg-board')!.getBoundingClientRect();
+      const black = document
+        .querySelector('#board .cg-wrap')!
+        .classList.contains('orientation-black');
+      const square = (file: number, rank: number) => {
+        const col = black ? 7 - file : file;
+        const row = black ? rank : 7 - rank;
+        return {
+          x: board.x + (col * board.width) / 8,
+          y: board.y + (row * board.height) / 8,
+          size: board.width / 8,
+        };
+      };
+      let worst = 0;
+      const outside = (value: number, low: number, high: number) =>
+        Math.max(0, low - value, value - high);
+      const labels = [...document.querySelectorAll('#board coords coord')];
+      const label = (text: string) =>
+        labels.find(node => node.textContent?.toLowerCase() === text)!.getBoundingClientRect();
+      // Rank labels overlay the left-column squares (h-file when flipped).
+      const leftFile = black ? 7 : 0;
+      for (let rank = 0; rank < 8; rank++) {
+        const rect = label(String(rank + 1));
+        const box = square(leftFile, rank);
+        const cx = rect.x + rect.width / 2;
+        const cy = rect.y + rect.height / 2;
+        worst = Math.max(
+          worst,
+          Math.max(0, box.x - rect.x, rect.right - (box.x + box.size)),
+          Math.max(0, box.y - rect.y, rect.bottom - (box.y + box.size)),
+          outside(cx, box.x, box.x + box.size / 2),
+          outside(cy, box.y, box.y + box.size / 2),
+        );
+      }
+      // File labels overlay the bottom-row squares (rank 8 when flipped).
+      const bottomRank = black ? 7 : 0;
+      for (let file = 0; file < 8; file++) {
+        const rect = label('abcdefgh'[file]);
+        const box = square(file, bottomRank);
+        const cx = rect.x + rect.width / 2;
+        const cy = rect.y + rect.height / 2;
+        worst = Math.max(
+          worst,
+          Math.max(0, box.x - rect.x, rect.right - (box.x + box.size)),
+          Math.max(0, box.y - rect.y, rect.bottom - (box.y + box.size)),
+          outside(cx, box.x + box.size / 2, box.x + box.size),
+          outside(cy, box.y + box.size / 2, box.y + box.size),
+        );
+      }
+      // Strips overlay the edge bands: ranks the left column, files the bottom row.
+      const ranks = document.querySelector('#board coords.ranks')!.getBoundingClientRect();
+      const files = document.querySelector('#board coords.files')!.getBoundingClientRect();
+      worst = Math.max(
+        worst,
+        Math.abs(ranks.x - board.x),
+        Math.abs(ranks.width - board.width / 8),
+        Math.abs(ranks.y - board.y),
+        Math.abs(ranks.height - board.height),
+        Math.abs(files.x - board.x),
+        Math.abs(files.width - board.width),
+        Math.abs(files.bottom - board.bottom),
+        Math.abs(files.height - board.height / 8),
+      );
+      // Eval bars keep their stock flush placement against the grid (analysis only).
+      const leftEl = document.querySelector('.eval-slot-left');
+      const rightEl = document.querySelector('.eval-slot-right');
+      if (leftEl && rightEl) {
+        const left = leftEl.getBoundingClientRect();
+        const right = rightEl.getBoundingClientRect();
+        worst = Math.max(
+          worst,
+          Math.abs(left.right - board.x),
+          Math.abs(left.y - board.y),
+          Math.abs(left.height - board.height),
+          Math.abs(right.x - (board.x + board.width)),
+          Math.abs(right.y - board.y),
+          Math.abs(right.height - board.height),
+        );
+      }
+      return worst;
+    });
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    // Cells are %-anchored to the grid, so alignment settles with layout;
+    // poll past the resize plus chessground's re-measure.
+    await expect.poll(misalignment).toBeLessThan(1.5);
+  }
+  // Flipped board: the corner sides flip back to top-left / bottom-right.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.locator('#mode-play').click();
+  await page.locator('#start-game').click();
+  await expect(page.locator('#board cg-board')).toBeVisible();
+  await page.locator('#flip-board').click();
+  await expect(page.locator('#board .cg-wrap.orientation-black')).toBeVisible();
+  await expect.poll(misalignment).toBeLessThan(1.5);
+  expect(app.errors).toEqual([]);
+});
