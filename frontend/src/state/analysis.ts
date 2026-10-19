@@ -127,6 +127,31 @@ export function reduceAnalysis(state: State, action: Action): State | undefined 
       }
       const origin = analysis.index;
       if (analysis.branchFromPly === null) {
+        // A PV already on the timeline is navigation, not exploration: a
+        // fully-matching prefix steps forward instead of forking a duplicate
+        // branch, and a partially-matching PV branches only its divergent tail.
+        let matched = 0;
+        while (
+          matched < canonical.length &&
+          origin + matched < analysis.moves.length &&
+          analysis.moves[origin + matched] === canonical[matched]
+        )
+          matched++;
+        if (matched === canonical.length)
+          return transition(state, { analysis: { ...analysis, index: origin + 1 } }, false);
+        if (matched > 0)
+          return transition(
+            state,
+            {
+              analysis: {
+                ...analysis,
+                branchFromPly: origin + matched,
+                branchMoves: canonical.slice(matched),
+                index: origin + matched + 1,
+              },
+            },
+            false,
+          );
         return transition(
           state,
           {
@@ -139,6 +164,38 @@ export function reduceAnalysis(state: State, action: Action): State | undefined 
           },
           false,
         );
+      }
+      // At the fork, a PV following the mainline (not the explored branch)
+      // drops the branch instead of forking a duplicate of the original line.
+      if (origin === analysis.branchFromPly && analysis.branchMoves[0] !== canonical[0]) {
+        let matchedMain = 0;
+        while (
+          matchedMain < canonical.length &&
+          origin + matchedMain < analysis.moves.length &&
+          analysis.moves[origin + matchedMain] === canonical[matchedMain]
+        )
+          matchedMain++;
+        if (matchedMain === canonical.length)
+          return transition(
+            state,
+            {
+              analysis: { ...analysis, branchFromPly: null, branchMoves: [], index: origin + 1 },
+            },
+            false,
+          );
+        if (matchedMain > 0)
+          return transition(
+            state,
+            {
+              analysis: {
+                ...analysis,
+                branchFromPly: origin + matchedMain,
+                branchMoves: canonical.slice(matchedMain),
+                index: origin + matchedMain + 1,
+              },
+            },
+            false,
+          );
       }
       const prefix = analysis.branchMoves.slice(0, Math.max(0, origin - analysis.branchFromPly));
       return transition(

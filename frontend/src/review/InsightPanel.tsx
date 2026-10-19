@@ -191,7 +191,13 @@ export function MoveAnalysis({
   };
   // Exploring a candidate means playing it instead of x, so step back to
   // x's before-position first: the reducer branches from the viewed position.
+  // Replaying the already-played move is timeline navigation, not
+  // exploration: land back on x without forking a duplicate branch.
   const exploreFromFocus = (uci: string) => {
+    if (hasMove && uci === played) {
+      dispatch({ type: 'view', ply });
+      return;
+    }
     if (hasMove) dispatch({ type: 'view', ply: focus });
     dispatch({ type: 'explore', uci });
   };

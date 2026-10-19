@@ -109,10 +109,44 @@ export function commitMove(state: State, from: Square, to: Square, promotion?: s
         };
       const game = new Chess(currentPosition(state).fen);
       const move = game.move({ from, to, ...(promotion ? { promotion } : {}) });
+      const canonical = `${move.from}${move.to}${move.promotion ?? ''}`;
+      // Replaying a move already on the timeline is navigation, not
+      // exploration: stepping onto the same UCI must advance the cursor
+      // without forking a duplicate branch.
+      if (analysis.branchFromPly === null) {
+        if (analysis.index < analysis.moves.length && analysis.moves[analysis.index] === canonical)
+          return transition(state, { analysis: { ...analysis, index: analysis.index + 1 } }, false);
+      } else {
+        const currentLine = [
+          ...analysis.moves.slice(0, analysis.branchFromPly),
+          ...analysis.branchMoves,
+        ];
+        if (analysis.index < currentLine.length && currentLine[analysis.index] === canonical)
+          return transition(state, { analysis: { ...analysis, index: analysis.index + 1 } }, false);
+        // At the fork, replaying the mainline continuation drops the explored
+        // branch and steps back onto the original line (same as Next).
+        if (
+          analysis.index === analysis.branchFromPly &&
+          analysis.branchFromPly < analysis.moves.length &&
+          analysis.moves[analysis.branchFromPly] === canonical
+        )
+          return transition(
+            state,
+            {
+              analysis: {
+                ...analysis,
+                branchFromPly: null,
+                branchMoves: [],
+                index: analysis.branchFromPly + 1,
+              },
+            },
+            false,
+          );
+      }
       const branchFromPly = analysis.branchFromPly ?? analysis.index;
       const branchMoves = [
         ...analysis.branchMoves.slice(0, analysis.index - branchFromPly),
-        `${move.from}${move.to}${move.promotion ?? ''}`,
+        canonical,
       ];
       return transition(
         state,

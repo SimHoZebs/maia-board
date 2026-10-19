@@ -243,6 +243,55 @@ describe('task lifecycles', () => {
     );
     expect(analysisLine(replayed.analysis).moves).toEqual(['e2e4', 'e7e5', 'g1f3', 'g8f6']);
   });
+  it('replays an already-made move without branching, like stepping forward', () => {
+    const load = () => {
+      let state = reducer(started(), { type: 'mode', mode: 'analysis' });
+      state = reducer(state, { type: 'inputs', inputs: { pgn: '1. e4 e5 2. Nf3' } });
+      return reducer(state, { type: 'load' });
+    };
+    // From the root, the next mainline move steps forward onto the line.
+    let state = reducer(load(), { type: 'view', ply: 0 });
+    state = reducer(state, { type: 'explore', uci: 'e2e4' });
+    expect(state.analysis.branchFromPly).toBeNull();
+    expect(state.analysis.branchMoves).toEqual([]);
+    expect(state.analysis.index).toBe(1);
+    // From the before-position, replaying the displayed move returns to it.
+    state = reducer(state, { type: 'view', ply: 1 });
+    state = reducer(state, { type: 'explore', uci: 'e7e5' });
+    expect(state.analysis.branchFromPly).toBeNull();
+    expect(state.analysis.index).toBe(2);
+    // Board drags take the same path: no promotion dialog, no branch.
+    state = reducer(state, { type: 'view', ply: 2 });
+    state = reducer(state, { type: 'move', from: 'g1', to: 'f3' });
+    expect(state.analysis.branchFromPly).toBeNull();
+    expect(state.analysis.index).toBe(3);
+    // Inside a branch, replaying the branch move steps forward in place.
+    state = reducer(state, { type: 'view', ply: 1 });
+    state = reducer(state, { type: 'explore', uci: 'c7c5' });
+    expect(state.analysis.branchFromPly).toBe(1);
+    state = reducer(state, { type: 'view', ply: 1 });
+    state = reducer(state, { type: 'explore', uci: 'c7c5' });
+    expect(state.analysis.branchFromPly).toBe(1);
+    expect(state.analysis.branchMoves).toEqual(['c7c5']);
+    expect(state.analysis.index).toBe(2);
+    // At the fork, replaying the mainline continuation drops the branch.
+    state = reducer(state, { type: 'view', ply: 1 });
+    state = reducer(state, { type: 'explore', uci: 'e7e5' });
+    expect(state.analysis.branchFromPly).toBeNull();
+    expect(state.analysis.branchMoves).toEqual([]);
+    expect(state.analysis.index).toBe(2);
+    expect(analysisLine(state.analysis).moves).toEqual(['e2e4', 'e7e5']);
+  });
+  it('replays a PV already on the timeline without branching', () => {
+    let state = reducer(started(), { type: 'mode', mode: 'analysis' });
+    state = reducer(state, { type: 'inputs', inputs: { pgn: '1. e4 e5 2. Nf3' } });
+    state = reducer(state, { type: 'load' });
+    state = reducer(state, { type: 'view', ply: 1 });
+    state = reducer(state, { type: 'explore-line', ucis: ['e7e5', 'g1f3'] });
+    expect(state.analysis.branchFromPly).toBeNull();
+    expect(state.analysis.index).toBe(2);
+    expect(analysisLine(state.analysis).moves).toEqual(['e2e4', 'e7e5']);
+  });
   it('spawns a PV branch from the verdict line and lands on its first move', () => {
     let state = reducer(started(), { type: 'mode', mode: 'analysis' });
     state = reducer(state, { type: 'inputs', inputs: { pgn: '1. e4 e5 2. Nf3' } });
