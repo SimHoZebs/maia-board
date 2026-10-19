@@ -22,8 +22,15 @@ func sfFixture(settings *engine.StockfishSettings, score int) engine.EvaluationR
 	}
 	moves := []string{"e2e4", "d2d4", "g1f3", "c2c4", "b1c3"}
 	value := engine.EvaluationResponse{Engine: "Stockfish 19", SearchPolicy: settings.Policy(), Depth: 8, Score: engine.EvaluationScore{Type: "cp", Value: score}, BestMove: &moves[0], Lines: []engine.EvaluationLine{}}
-	for _, move := range moves[:count] {
-		value.Lines = append(value.Lines, engine.EvaluationLine{Move: move, Score: value.Score, Depth: 8})
+	for i, move := range moves[:count] {
+		line := engine.EvaluationLine{Move: move, Score: value.Score, Depth: 8}
+		// Rank-1 carries a PV (PV[0] == Move); lower ranks must omit it.
+		// Fixtures without a PV now read as a cache miss (PV backfill),
+		// so seed the current shape here.
+		if i == 0 {
+			line.PV = []string{move}
+		}
+		value.Lines = append(value.Lines, line)
 	}
 	return value
 }

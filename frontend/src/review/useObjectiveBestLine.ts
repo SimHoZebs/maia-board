@@ -5,10 +5,14 @@
 // line deepens one verified step per settle like the true-delta children.
 // Rooms gate `enabled` on their own Mistake/Blunder + cp-vs-cp facts — the
 // hook never decides when a line is wanted, only what it contains.
+// Window growth fetches deeper only on a miss: once the current walk already
+// proves a material note, frontiers go null so a wider window costs no extra
+// traffic.
 import { useEffect, useMemo } from 'react';
 import { buildTimeline } from '../shared/domain';
 import { laneError, lanePoints, laneRows } from '../objective/index';
 import { walkObjectiveLine } from '../objective/bestLine';
+import { bestLineMaterialNote, type CapturedPiece } from '../theory/material';
 import {
   reviewNodes,
   type ReviewCoordinator,
@@ -29,6 +33,13 @@ export function useObjectiveBestLine(args: {
   ensureFrontier: (maia: ReviewNode | null, sf: ReviewNode | null) => void;
   // Coordinator snapshot: recompute as rows (and failures) land.
   version: unknown;
+  // Miss-gating for window growth: the after-position, mover, and the played
+  // move's capture (null when unknown). When the current walk already proves
+  // a material note, deeper frontiers stay null. Null afterFen/mover means
+  // the note cannot be computed, so the walk keeps fetching (a miss).
+  afterFen: string | null;
+  mover: 'white' | 'black' | null;
+  playedTake?: CapturedPiece | null;
 }): string[] {
   const {
     coordinator,
@@ -40,6 +51,9 @@ export function useObjectiveBestLine(args: {
     sfSettingsFor,
     ensureFrontier,
     version,
+    afterFen,
+    mover,
+    playedTake,
   } = args;
   const baseKey = useMemo(
     () => JSON.stringify(lineMoves.slice(0, Math.max(0, reviewedPly))),
@@ -60,7 +74,7 @@ export function useObjectiveBestLine(args: {
         return null;
       }
     };
-    return walkObjectiveLine({
+    const walked = walkObjectiveLine({
       initialFen,
       baseMoves,
       maxPlies: window,
@@ -86,8 +100,16 @@ export function useObjectiveBestLine(args: {
         return { kind: 'score' as const, score: found.score };
       },
     });
+    // Miss-gated growth: when the walk so far already proves a material
+    // note, deeper plies add cost without new wording, so drop the
+    // frontiers. Only a miss (no note yet) keeps fetching deeper.
+    if (afterFen && mover) {
+      const note = bestLineMaterialNote(afterFen, walked.ucis, mover, window, playedTake ?? null);
+      if (note) return { ...walked, maiaFrontier: null, sfFrontier: null };
+    }
+    return walked;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [coordinator, initialFen, baseKey, window, enabled, version]);
+  }, [coordinator, initialFen, baseKey, window, enabled, version, afterFen, mover, playedTake]);
   const frontierKey = useMemo(
     () => JSON.stringify([walk.maiaFrontier, walk.sfFrontier]),
     [walk.maiaFrontier, walk.sfFrontier],

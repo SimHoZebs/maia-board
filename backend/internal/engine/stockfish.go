@@ -44,7 +44,9 @@ type EvaluationLine struct {
 	Score EvaluationScore `json:"score"`
 	Depth int             `json:"depth"`
 	// Optional rank-1 PV (up to 5 UCI, first == Move) rooted at the evaluated
-	// position. Old rows omit it and remain valid; they yield no material note.
+	// position. Rows stored before the PV feature have no PV; the server
+	// treats those as a cache miss (see lookupSFCandidateFrom) so one live
+	// re-search backfills them. Frontend rows without a PV stay silent.
 	PV []string `json:"pv,omitempty"`
 }
 

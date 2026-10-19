@@ -53,6 +53,7 @@ import { selectBotDisplay, type BotDisplayEntry } from '../eval/botDisplay';
 import { keyHeads, keyRowOrder } from './keyMoves';
 import { useObjectiveBestLine } from './useObjectiveBestLine';
 import { shouldWalkMaia } from '../theory/bestLineSource';
+import { playedCapture } from '../theory/material';
 
 // Configuration expressing room differences, not architecture. One pipeline
 // owns coordinator + scope + restore + grading + translation for both rooms;
@@ -894,6 +895,14 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     sfSettingsFor: settingsForNode,
     ensureFrontier: ensureWalkFrontier,
     version,
+    // Miss-gating inputs: the hook drops deeper frontiers once the walk so
+    // far already proves a material note.
+    afterFen: nodes[currentPly]?.fen ?? null,
+    mover: focusPly >= 0 ? (nodes[focusPly]?.turn ?? null) : null,
+    playedTake:
+      focusPly >= 0
+        ? playedCapture(nodes[focusPly]?.fen ?? '', timeline.moves[focusPly] ?? '')
+        : null,
   });
   // Mainline display qualities for the original-line continuation rendered
   // under an explored branch. MovesPanel draws that continuation from the
@@ -1537,6 +1546,14 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     sfSettingsFor: playSfSettingsFor,
     ensureFrontier: ensurePlayWalkFrontier,
     version,
+    // Miss-gating inputs: the hook drops deeper frontiers once the walk so
+    // far already proves a material note.
+    afterFen: fullNodes[viewedPly]?.fen ?? null,
+    mover: viewFocus >= 0 ? (fullNodes[viewFocus]?.turn ?? null) : null,
+    playedTake:
+      viewFocus >= 0
+        ? playedCapture(fullNodes[viewFocus]?.fen ?? '', timeline.moves[viewFocus] ?? '')
+        : null,
   });
   // Play queues no whole-line work and owns no batch job: the foreground
   // pair above plus the bulk restore are the only evaluation traffic, so

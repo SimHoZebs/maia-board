@@ -120,6 +120,13 @@ func (s *Server) lookupSFCandidateFrom(src cacheSource, candidate engine.Evaluat
 	if !ok || !engine.ValidEvaluationValue(value, candidate.Settings) {
 		return nil, false
 	}
+	// PV backfill: rows stored before the rank-1 PV feature carry no PV.
+	// They stay shape-valid but cannot feed the verdict's material line, so
+	// treat them as a miss to force one live re-search (which stores a PV
+	// row over the same key). Terminal rows have no lines and still hit.
+	if len(value.Lines) > 0 && len(value.Lines[0].PV) == 0 {
+		return nil, false
+	}
 	value.ActualSettings = candidate.Settings
 	if want != nil && len(value.Lines) > want.Lines {
 		value.Lines = value.Lines[:want.Lines]
