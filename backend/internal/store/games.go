@@ -38,12 +38,13 @@ type GameRow struct {
 	Model       string   `json:"model"`
 	Moves       []string `json:"moves"`
 	Result      string   `json:"result,omitempty"`
-	// Source names an external origin (`lichess:<gameId>`) for idempotent
-	// re-imports. Empty means a local game. Server-trusted: bulk import sets
-	// it, single saves leave it empty.
+	// Source names the origin: `local` for engine games, `lichess:<gameId>`
+	// for idempotent re-imports. Never empty: single saves stamp `local`,
+	// bulk import stamps `lichess:<gameId>` and rejects empties.
 	Source string `json:"source,omitempty"`
 	// Opponent names the other side: a Lichess username for imports, Maia
-	// plus Elo for engine games. Empty on legacy rows (UI falls back).
+	// plus Elo for engine games. Never empty on rows written after the
+	// strict-source migration (legacy rows were backfilled).
 	Opponent string `json:"opponent,omitempty"`
 	// RatingDiff is the user's Lichess rating change for this game
 	// (players.<color>.ratingDiff). Nil when unknown: local games and
@@ -83,7 +84,7 @@ type GamePayload struct {
 	Result      string   `json:"result,omitempty"`
 	Current     bool     `json:"current,omitempty"`
 	// Source is server-owned like OwnerID: bulk import stamps
-	// `lichess:<gameId>` for dedupe; single saves must leave it empty.
+	// `lichess:<gameId>` for dedupe; single saves stamp `local`.
 	Source string `json:"source,omitempty"`
 	// Opponent is server-owned: bulk import stamps the Lichess username,
 	// single saves stamp `Maia <elo>`; clients cannot set either.
@@ -146,15 +147,16 @@ func NewGameStore(path string) (*GameStore, error) {
 	db.SetMaxOpenConns(8)
 	schema := `
 	CREATE TABLE IF NOT EXISTS games (
-		id TEXT PRIMARY KEY,
-		created_at TEXT NOT NULL,
-		updated_at TEXT NOT NULL,
+		id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 128),
+		created_at TEXT NOT NULL CHECK (length(created_at) BETWEEN 1 AND 64),
+		updated_at TEXT NOT NULL CHECK (length(updated_at) BETWEEN 1 AND 64 AND updated_at >= created_at),
 		user_color TEXT NOT NULL CHECK (user_color IN ('white', 'black')),
-		elo_maia INTEGER NOT NULL,
-		elo_user INTEGER NOT NULL,
-		model TEXT NOT NULL,
-		moves TEXT NOT NULL DEFAULT '[]',
-		result TEXT NOT NULL DEFAULT ''
+		elo_maia INTEGER NOT NULL CHECK (elo_maia BETWEEN 0 AND 5000),
+		elo_user INTEGER NOT NULL CHECK (elo_user BETWEEN 0 AND 5000),
+		model TEXT NOT NULL CHECK (model IN ('79m', '5m')),
+		moves TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(moves)),
+		result TEXT NOT NULL DEFAULT '' CHECK (result IN ('', 'resigned')),
+		temperature REAL NOT NULL DEFAULT 0 CHECK (temperature BETWEEN 0 AND 2)
 	);
 	CREATE INDEX IF NOT EXISTS idx_games_updated ON games(updated_at DESC);`
 	if _, err := db.Exec(schema); err != nil {
@@ -182,6 +184,10 @@ func NewGameStore(path string) (*GameStore, error) {
 		return nil, err
 	}
 	if err := ensureUserSchema(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := ensureStrictConstraints(db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -268,6 +274,52 @@ func ValidateClocks(value []int) *apierror.RequestError {
 	return nil
 }
 
+// ValidateSource checks the server-owned origin stamp when present.
+// Empty is allowed here because single saves stamp after validation;
+// the import handler rejects empties before they reach the store, and the
+// DB trigger rejects any empty that slips through.
+func ValidateSource(value string) *apierror.RequestError {
+	if value == "" {
+		return nil
+	}
+	if value == "local" {
+		return nil
+	}
+	if len(value) > 32 {
+		return &apierror.RequestError{Code: "invalid_source", Message: "game source must be local or lichess:<gameId>"}
+	}
+	if len(value) < 12 || len(value) > 24 || !strings.HasPrefix(value, "lichess:") {
+		return &apierror.RequestError{Code: "invalid_source", Message: "game source must be local or lichess:<gameId>"}
+	}
+	gameID := strings.TrimPrefix(value, "lichess:")
+	if len(gameID) < 4 || len(gameID) > 16 {
+		return &apierror.RequestError{Code: "invalid_source", Message: "game source must be local or lichess:<gameId>"}
+	}
+	for _, c := range gameID {
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9') {
+			return &apierror.RequestError{Code: "invalid_source", Message: "game source must be local or lichess:<gameId>"}
+		}
+	}
+	return nil
+}
+
+// ValidateOpponent checks the server-owned opponent name when present.
+// Empty is allowed here for the same stamping reason as ValidateSource.
+func ValidateOpponent(value string) *apierror.RequestError {
+	if value == "" {
+		return nil
+	}
+	if len(value) < 1 || len(value) > 64 {
+		return &apierror.RequestError{Code: "invalid_opponent", Message: "game opponent must be 1-64 printable characters"}
+	}
+	for _, c := range value {
+		if c < 0x20 || c == 0x7f {
+			return &apierror.RequestError{Code: "invalid_opponent", Message: "game opponent must be 1-64 printable characters"}
+		}
+	}
+	return nil
+}
+
 func ValidateGamePayload(payload *GamePayload) *apierror.RequestError {
 	if !chess.ValidTemperature(payload.Temperature) {
 		return &apierror.RequestError{Code: "invalid_request", Message: "temperature must be between 0 and 2"}
@@ -291,6 +343,12 @@ func ValidateGamePayload(payload *GamePayload) *apierror.RequestError {
 		return err
 	}
 	if err := ValidateClocks(payload.Clocks); err != nil {
+		return err
+	}
+	if err := ValidateSource(payload.Source); err != nil {
+		return err
+	}
+	if err := ValidateOpponent(payload.Opponent); err != nil {
 		return err
 	}
 	if payload.Model != "79m" && payload.Model != "5m" {

@@ -78,16 +78,28 @@ func TestImportRunsAndSources(t *testing.T) {
 	nameless := gameFixture("noname", "e2e4")
 	nameless.OwnerID = user.ID
 	nameless.Source = "lichess:noname1"
+	nameless.Opponent = "temp-name"
 	if _, _, err := store.Save(nameless); err != nil {
 		t.Fatal(err)
 	}
+	// Strict schema: opponent is required at write time, so empty saves
+	// fail clearly instead of silently storing ''.
+	empty := gameFixture("empty-opp", "e2e4")
+	empty.OwnerID = user.ID
+	empty.Source = "lichess:empty001"
+	empty.Opponent = ""
+	if _, _, err := store.Save(empty); err == nil {
+		t.Fatal("expected empty opponent to fail")
+	}
+	// Backfill is a no-op safety for already-named rows (legacy empties
+	// are fixed once on open by backfillLegacyRows).
 	updated, err = store.UpdateOpponentIfEmpty(user.ID, "lichess:noname1", "found-foe")
-	if err != nil || !updated {
-		t.Fatalf("backfill: updated=%t err=%v", updated, err)
+	if err != nil || updated {
+		t.Fatalf("overwrite protection: updated=%t err=%v", updated, err)
 	}
 	got, err = store.Get("noname")
-	if err != nil || got.Opponent != "found-foe" {
-		t.Fatalf("backfilled opponent: %+v %v", got, err)
+	if err != nil || got.Opponent != "temp-name" {
+		t.Fatalf("opponent preserved: %+v %v", got, err)
 	}
 	diff := 9
 	updated, err = store.UpdateRatingDiffIfEmpty(user.ID, "lichess:noname1", &diff)

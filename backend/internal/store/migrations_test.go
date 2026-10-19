@@ -30,8 +30,11 @@ func TestTemperatureMigrationAndRoundtrip(t *testing.T) {
 	if err != nil || old.Temperature != 0 || old.Result != "" || old.RatingDiff != nil {
 		t.Fatalf("old game: %+v %v", old, err)
 	}
+	if old.Source != "local" || old.Opponent != "Maia 1600" {
+		t.Fatalf("legacy backfill: %+v", old)
+	}
 	elo := 1600
-	payload := GamePayload{ID: "new", UserColor: "white", EloMaia: &elo, EloUser: &elo, Model: "79m", Moves: []string{}, Temperature: .7}
+	payload := GamePayload{ID: "new", UserColor: "white", EloMaia: &elo, EloUser: &elo, Model: "79m", Moves: []string{}, Temperature: .7, Source: "local", Opponent: "Maia 1600"}
 	saved, _, err := store.Save(payload)
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +47,7 @@ func TestTemperatureMigrationAndRoundtrip(t *testing.T) {
 	if err != nil || again.UpdatedAt != saved.UpdatedAt {
 		t.Fatal("unchanged save changed recency", err)
 	}
-	resigned := GamePayload{ID: "old", UserColor: "white", EloMaia: &elo, EloUser: &elo, Model: "79m", Moves: []string{"e2e4"}, Result: "resigned"}
+	resigned := GamePayload{ID: "old", UserColor: "white", EloMaia: &elo, EloUser: &elo, Model: "79m", Moves: []string{"e2e4"}, Result: "resigned", Source: "local", Opponent: "Maia 1600"}
 	if _, _, err := store.Save(resigned); err != nil {
 		t.Fatal(err)
 	}

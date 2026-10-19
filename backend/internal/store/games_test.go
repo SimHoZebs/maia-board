@@ -54,7 +54,7 @@ func TestGameStoreDSNPragmas(t *testing.T) {
 
 func gameFixture(id string, moves ...string) GamePayload {
 	maia, user := 1600, 1400
-	return GamePayload{ID: id, UserColor: "white", EloMaia: &maia, EloUser: &user, Model: "79m", Moves: moves}
+	return GamePayload{ID: id, UserColor: "white", EloMaia: &maia, EloUser: &user, Model: "79m", Moves: moves, Source: "local", Opponent: "Maia 1600"}
 }
 
 func TestGameStoreSaveGetList(t *testing.T) {

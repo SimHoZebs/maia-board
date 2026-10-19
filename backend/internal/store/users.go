@@ -3,8 +3,13 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
+
+// ErrInvalidDisplayName signals a display name outside 1-40 printable chars.
+// Handlers map it to 400; the DB trigger enforces the same bound.
+var ErrInvalidDisplayName = errors.New("display_name must be 1-40 printable characters")
 
 // User is the account primitive. Games, current markers, review jobs, and
 // engine calls scope to User.ID. Lichess linkage is optional: local users
@@ -38,31 +43,33 @@ type OAuthState struct {
 func ensureUserSchema(db *sql.DB) error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS users (
-		id TEXT PRIMARY KEY,
-		created_at TEXT NOT NULL,
-		display_name TEXT NOT NULL DEFAULT '',
-		lichess_username TEXT UNIQUE,
-		lichess_id TEXT UNIQUE
+		id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 128),
+		created_at TEXT NOT NULL CHECK (length(created_at) BETWEEN 1 AND 64),
+		display_name TEXT NOT NULL DEFAULT 'Player' CHECK (length(display_name) BETWEEN 1 AND 40),
+		lichess_username TEXT UNIQUE CHECK (lichess_username IS NULL OR (length(lichess_username) BETWEEN 1 AND 64 AND lichess_username = lower(lichess_username))),
+		lichess_id TEXT UNIQUE CHECK (lichess_id IS NULL OR length(lichess_id) BETWEEN 1 AND 128),
+		CHECK ((lichess_username IS NULL) = (lichess_id IS NULL))
 	);
 	CREATE TABLE IF NOT EXISTS sessions (
-		id TEXT PRIMARY KEY,
-		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-		created_at TEXT NOT NULL,
-		expires_at TEXT NOT NULL
+		id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 128),
+		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK (length(user_id) BETWEEN 1 AND 128),
+		created_at TEXT NOT NULL CHECK (length(created_at) BETWEEN 1 AND 64),
+		expires_at TEXT NOT NULL CHECK (length(expires_at) BETWEEN 1 AND 64)
 	);
 	CREATE TABLE IF NOT EXISTS user_current (
-		user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-		game_id TEXT NOT NULL
+		user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE CHECK (length(user_id) BETWEEN 1 AND 128),
+		game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE CHECK (length(game_id) BETWEEN 1 AND 128)
 	);
 	CREATE TABLE IF NOT EXISTS oauth_state (
-		state TEXT PRIMARY KEY,
-		verifier TEXT NOT NULL,
-		redirect_uri TEXT NOT NULL,
-		created_at TEXT NOT NULL,
-		expires_at TEXT NOT NULL
+		state TEXT PRIMARY KEY CHECK (length(state) BETWEEN 1 AND 128),
+		verifier TEXT NOT NULL CHECK (length(verifier) BETWEEN 1 AND 256),
+		redirect_uri TEXT NOT NULL CHECK (length(redirect_uri) BETWEEN 1 AND 512),
+		created_at TEXT NOT NULL CHECK (length(created_at) BETWEEN 1 AND 64),
+		expires_at TEXT NOT NULL CHECK (length(expires_at) BETWEEN 1 AND 64)
 	);
 	CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
-	CREATE INDEX IF NOT EXISTS idx_users_lichess ON users(lichess_username);`
+	CREATE INDEX IF NOT EXISTS idx_users_lichess ON users(lichess_username);
+	CREATE INDEX IF NOT EXISTS idx_users_lichess_id ON users(lichess_id);`
 	if _, err := db.Exec(schema); err != nil {
 		return err
 	}
@@ -79,16 +86,16 @@ func ensureGameOwnerColumn(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_games_owner ON games(owner_id, updated_at DESC)`); err != nil {
 		return err
 	}
-	if err := ensureGameColumn(db, "source", "ALTER TABLE games ADD COLUMN source TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := ensureGameColumn(db, "source", "ALTER TABLE games ADD COLUMN source TEXT NOT NULL DEFAULT 'local' CHECK (length(source) BETWEEN 1 AND 32 AND (source = 'local' OR source LIKE 'lichess:%'))"); err != nil {
 		return err
 	}
-	if err := ensureGameColumn(db, "opponent", "ALTER TABLE games ADD COLUMN opponent TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := ensureGameColumn(db, "opponent", "ALTER TABLE games ADD COLUMN opponent TEXT NOT NULL DEFAULT 'Unknown' CHECK (length(opponent) BETWEEN 1 AND 64)"); err != nil {
 		return err
 	}
 	// External imports dedupe per owner: re-running the same Lichess import
-	// skips rows instead of duplicating them. Legacy and local games carry
-	// source '' and never collide.
-	_, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_games_owner_source ON games(owner_id, source) WHERE source <> ''`)
+	// skips rows instead of duplicating them. Only `lichess:<id>` rows
+	// participate; local games carry `local` and never collide.
+	_, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_games_owner_source ON games(owner_id, source) WHERE source LIKE 'lichess:%'`)
 	return err
 }
 
@@ -108,19 +115,25 @@ func scanUser(scanner gameScanner) (User, error) {
 }
 
 // CreateLocalUser mints a display-named user with no Lichess link.
+// Empty names fall back to the documented `Player` default; over-long or
+// control-char names fail clearly instead of reaching the DB trigger.
 func (s *GameStore) CreateLocalUser(displayName string) (User, error) {
 	id, err := NewHexID()
 	if err != nil {
 		return User{}, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if displayName == "" {
-		displayName = "Player"
+	trimmed := strings.TrimSpace(displayName)
+	if trimmed == "" {
+		trimmed = "Player"
 	}
-	if _, err := s.db.Exec(`INSERT INTO users (id, created_at, display_name) VALUES (?, ?, ?)`, id, now, displayName); err != nil {
+	if err := ValidateDisplayName(trimmed); err != nil {
 		return User{}, err
 	}
-	return User{ID: id, CreatedAt: now, DisplayName: displayName}, nil
+	if _, err := s.db.Exec(`INSERT INTO users (id, created_at, display_name) VALUES (?, ?, ?)`, id, now, trimmed); err != nil {
+		return User{}, err
+	}
+	return User{ID: id, CreatedAt: now, DisplayName: trimmed}, nil
 }
 
 // GetUser fetches one user by id.
@@ -132,9 +145,11 @@ func (s *GameStore) GetUser(id string) (User, error) {
 	return user, err
 }
 
-// GetUserByLichessName finds a user by linked Lichess username (case-sensitive store; callers normalize).
+// GetUserByLichessName finds a user by linked Lichess username.
+// Names are canonical lowercase in storage; lookups normalize the same way.
 func (s *GameStore) GetUserByLichessName(username string) (User, error) {
-	user, err := scanUser(s.db.QueryRow(`SELECT id, created_at, display_name, lichess_username, lichess_id FROM users WHERE lichess_username = ?`, username))
+	canonical := normalizeLichessUsername(username)
+	user, err := scanUser(s.db.QueryRow(`SELECT id, created_at, display_name, lichess_username, lichess_id FROM users WHERE lichess_username = ?`, canonical))
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, sql.ErrNoRows
 	}
@@ -142,13 +157,19 @@ func (s *GameStore) GetUserByLichessName(username string) (User, error) {
 }
 
 // UpsertLichessUser creates or refreshes the user for a verified Lichess identity.
+// The linkage column stores the canonical lowercase name; display_name keeps
+// the provider's display case for the UI.
 func (s *GameStore) UpsertLichessUser(lichessID, username string) (User, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	canonical := normalizeLichessUsername(username)
+	if canonical == "" {
+		return User{}, ErrInvalidDisplayName
+	}
 	if existing, err := scanUser(s.db.QueryRow(`SELECT id, created_at, display_name, lichess_username, lichess_id FROM users WHERE lichess_id = ?`, lichessID)); err == nil {
-		if _, err := s.db.Exec(`UPDATE users SET lichess_username = ? WHERE id = ?`, username, existing.ID); err != nil {
+		if _, err := s.db.Exec(`UPDATE users SET lichess_username = ? WHERE id = ?`, canonical, existing.ID); err != nil {
 			return User{}, err
 		}
-		existing.LichessUsername = username
+		existing.LichessUsername = canonical
 		existing.LichessID = lichessID
 		return existing, nil
 	}
@@ -157,19 +178,20 @@ func (s *GameStore) UpsertLichessUser(lichessID, username string) (User, error) 
 		return User{}, err
 	}
 	if _, err := s.db.Exec(`INSERT INTO users (id, created_at, display_name, lichess_username, lichess_id) VALUES (?, ?, ?, ?, ?)`,
-		id, now, username, username, lichessID); err != nil {
+		id, now, username, canonical, lichessID); err != nil {
 		// A racing link for the same username resolves to the winner.
-		if existing, err2 := s.GetUserByLichessName(username); err2 == nil {
+		if existing, err2 := s.GetUserByLichessName(canonical); err2 == nil {
 			return existing, nil
 		}
 		return User{}, err
 	}
-	return User{ID: id, CreatedAt: now, DisplayName: username, LichessUsername: username, LichessID: lichessID}, nil
+	return User{ID: id, CreatedAt: now, DisplayName: username, LichessUsername: canonical, LichessID: lichessID}, nil
 }
 
 // LinkLichess attaches a verified Lichess identity to an existing user.
 func (s *GameStore) LinkLichess(userID, lichessID, username string) (User, error) {
-	if _, err := s.db.Exec(`UPDATE users SET lichess_username = ?, lichess_id = ? WHERE id = ?`, username, lichessID, userID); err != nil {
+	canonical := normalizeLichessUsername(username)
+	if _, err := s.db.Exec(`UPDATE users SET lichess_username = ?, lichess_id = ? WHERE id = ?`, canonical, lichessID, userID); err != nil {
 		return User{}, err
 	}
 	return s.GetUser(userID)
@@ -254,13 +276,14 @@ func (s *GameStore) CountUnowned() (int, error) {
 }
 
 // UpdateOpponentIfEmpty backfills a missing opponent name on an imported row
-// (re-imports refresh names for rows saved before names were stamped).
+// (legacy safety for rows saved before names were stamped; strict imports
+// always carry a name, so this is normally a no-op overwrite guard).
 // Never touches updated_at: a name refresh must not churn recency order.
 func (s *GameStore) UpdateOpponentIfEmpty(ownerID, source, opponent string) (bool, error) {
 	if ownerID == "" || source == "" || opponent == "" {
 		return false, nil
 	}
-	result, err := s.db.Exec(`UPDATE games SET opponent = ? WHERE owner_id = ? AND source = ? AND (opponent IS NULL OR opponent = '')`,
+	result, err := s.db.Exec(`UPDATE games SET opponent = ? WHERE owner_id = ? AND source = ? AND (opponent IS NULL OR opponent = '' OR opponent = 'Unknown')`,
 		opponent, ownerID, source)
 	if err != nil {
 		return false, err
