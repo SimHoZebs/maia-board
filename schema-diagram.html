@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>maia-board — Database Schema</title>
+<style>
+:root{
+  --bg:#0b1220; --panel:#111c2e; --panel2:#0e1727; --line:#22344f;
+  --ink:#dbe7f5; --muted:#8fa6c2; --accent:#60a5fa; --fk:#34d399;
+  --badge:#1d2f47; --mark:#fbbf24; --pulse:#60a5fa;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.88em}
+/* ---------- sticky toolbar ---------- */
+.toolbar{position:sticky;top:0;z-index:50;background:rgba(11,18,32,.96);
+  border-bottom:1px solid var(--line);padding:10px 16px;
+  display:flex;gap:12px;align-items:center;flex-wrap:wrap;backdrop-filter:blur(6px)}
+.toolbar b{font-size:15px;white-space:nowrap}
+.toolbar .count{color:var(--muted);font-size:13px;white-space:nowrap}
+#filter{flex:1;min-width:180px;max-width:520px;background:var(--panel2);
+  border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:8px 12px;font-size:14px}
+#filter:focus{outline:2px solid var(--accent);border-color:var(--accent)}
+.legend{font-size:12px;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap}
+.sw{display:inline-block;width:22px;height:3px;vertical-align:middle;border-radius:2px}
+.sw.fk{background:var(--fk)} .sw.log{background:var(--accent)}
+.sw.dash{background:transparent;border:1.5px dashed var(--muted);height:0;width:20px}
+/* ---------- layout ---------- */
+.wrap{max-width:1080px;margin:0 auto;padding:20px 16px 60px}
+header.hero{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin:18px 0}
+header.hero h1{margin:0 0 4px;font-size:24px}
+header.hero .sub{color:var(--muted);font-size:13px;margin-bottom:12px}
+.stats{margin:0;padding:0;list-style:none}
+.stats li{padding:5px 0;border-top:1px dashed var(--line);font-size:14px}
+.stats li:first-child{border-top:0}
+.stats .k{color:var(--accent);font-weight:600}
+h2.sec{font-size:19px;margin:34px 0 6px;padding-top:8px}
+p.secsub{color:var(--muted);font-size:13px;margin:0 0 14px}
+/* ---------- ER diagram ---------- */
+.erbox{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;overflow:hidden}
+.erbox svg{width:100%;height:auto;display:block}
+g.ernode{cursor:pointer}
+g.ernode rect.body{fill:#13233a;stroke:#3b587e;stroke-width:1.6}
+g.ernode.dashed rect.body{stroke-dasharray:7 5;stroke:#5b7290}
+g.ernode:hover rect.body,g.ernode:focus rect.body{stroke:var(--accent);stroke-width:2.6}
+g.ernode text{fill:var(--ink)}
+/* ---------- relationship cards ---------- */
+.rels{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}
+.rel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13.5px}
+.rel .rule{margin-bottom:6px;line-height:1.7}
+.rel .sem{color:var(--muted)}
+.rel .tag{font-size:11px;border:1px solid var(--line);border-radius:20px;padding:1px 8px;margin-right:6px;color:var(--muted);white-space:nowrap}
+.rel .tag.fkc{color:var(--fk);border-color:var(--fk)}
+.rel .tag.logc{color:var(--accent);border-color:var(--accent)}
+button.ref{background:none;border:0;padding:0;color:var(--accent);font:inherit;cursor:pointer;text-align:left}
+button.ref:hover{text-decoration:underline}
+/* ---------- table cards ---------- */
+.tcard{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  margin:0 0 18px;overflow:hidden;scroll-margin-top:130px}
+.tcard header{padding:12px 16px;border-bottom:1px solid var(--line);
+  display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;background:var(--panel2)}
+.tcard header h3{margin:0;font-size:17px}
+.tcard header .tbl{color:var(--muted);font-size:12.5px}
+.tcard .idx{padding:8px 16px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--muted)}
+.tcard table{width:100%;border-collapse:collapse;table-layout:fixed}
+.tcard col.c1{width:22%} .tcard col.c2{width:16%} .tcard col.c3{width:26%} .tcard col.c4{width:36%}
+.tcard th,.tcard td{padding:8px 10px;border-bottom:1px solid var(--line);
+  vertical-align:top;overflow-wrap:anywhere;word-break:break-word}
+.tcard th{background:rgba(96,165,250,.07);text-align:left;font-size:12px;
+  text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.tcard tr:last-child td{border-bottom:0}
+.badge{display:inline-block;font-size:11px;font-weight:700;border-radius:5px;
+  padding:1px 7px;margin:1px 3px 1px 0;border:1px solid;white-space:nowrap}
+.badge.pk{color:#fbbf24;border-color:#fbbf24}
+.badge.nn{color:#93c5fd;border-color:#3b587e}
+.badge.uq{color:#c4b5fd;border-color:#7c6bc4}
+button.badge.fk{color:#06281c;background:var(--fk);border-color:var(--fk);cursor:pointer;font:inherit;font-size:11px;font-weight:700}
+button.badge.fk:hover{filter:brightness(1.15)}
+.none{color:#54687f}
+/* glow pulse ~1.5s */
+@keyframes pulseGlow{0%{box-shadow:0 0 0 0 rgba(96,165,250,.85)}
+  100%{box-shadow:0 0 0 22px rgba(96,165,250,0)}}
+.tcard.pulse{animation:pulseGlow 1.5s ease-out 1;border-color:var(--pulse)}
+mark{background:var(--mark);color:#111;border-radius:3px;padding:0 1px}
+footer{margin-top:36px;border-top:1px solid var(--line);padding-top:14px;color:var(--muted);font-size:13px}
+footer ul{margin:6px 0;padding-left:20px}
+@media (max-width:640px){
+  body{font-size:14px}
+  .tcard col.c1{width:26%} .tcard col.c2{width:20%} .tcard col.c3{width:26%} .tcard col.c4{width:28%}
+  .tcard th,.tcard td{padding:6px 6px}
+}
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <b>maia-board · schema</b>
+  <input id="filter" type="search" placeholder="Filter tables… (e.g. owner, cache, lichess)" aria-label="Filter table cards">
+  <span class="count" id="count">showing 7 / 7 tables</span>
+  <span class="legend">
+    <span><span class="sw fk"></span> FK</span>
+    <span><span class="sw log"></span> logical / registry</span>
+    <span><span class="sw dash"></span> singleton / infra</span>
+  </span>
+</div>
+<div class="wrap">
+
+<header class="hero">
+  <h1>maia-board — SQLite schema</h1>
+  <div class="sub">Schema version: code-managed DDL, no numbered migrations
+    (<span class="mono">CREATE TABLE IF NOT EXISTS</span> + <span class="mono">ensure*</span> at store open; cache identity <span class="mono">v2</span>) · <b>7 tables</b> · single SQLite file (WAL, FK pragma on)</div>
+  <ul class="stats">
+    <li><span class="k">Ownership:</span> <span class="mono">games.owner_id</span> logically scopes rows to <span class="mono">users.id</span>; <span class="mono">''</span> means legacy pre-user rows, claimed on login.</li>
+    <li><span class="k">Cache bounds:</span> <span class="mono">evaluations_v2</span> capped at 25,000 rows · keys ≤ 4 KiB · values ≤ 64 KiB · oldest-rowid-first eviction; games never evict.</li>
+    <li><span class="k">Singletons:</span> one <span class="mono">user_current</span> row per user (resume marker); no global state tables remain.</li>
+    <li><span class="k">Dedupe:</span> partial <span class="mono">UNIQUE(owner_id, source) WHERE source &lt;&gt; ''</span> — per-owner Lichess re-imports skip instead of duplicating.</li>
+    <li><span class="k">Memory only:</span> batch review jobs live in server RAM; only finished plies persist into <span class="mono">evaluations_v2</span>.</li>
+  </ul>
+</header>
+
+<h2 class="sec">ER diagram</h2>
+<p class="secsub">Green arrows = declared SQLite foreign keys (<span class="mono">ON DELETE CASCADE</span>). Blue arrows = logical / registry links enforced by application code. Dashed boxes = singleton or infrastructure tables. Click any box to jump to its card.</p>
+<div class="erbox">
+<svg viewBox="0 0 1000 740" role="img" aria-label="Entity relationship diagram">
+  <defs>
+    <marker id="mfk" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#34d399"></path>
+    </marker>
+    <marker id="mlog" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#60a5fa"></path>
+    </marker>
+  </defs>
+  <!-- edges drawn first so opaque boxes cover mid-line crossings -->
+  <g stroke-width="2.5" fill="none">
+    <line x1="540" y1="95"  x2="466" y2="95"  stroke="#34d399" marker-end="url(#mfk)"/>
+    <line x1="540" y1="235" x2="466" y2="185" stroke="#34d399" marker-end="url(#mfk)"/>
+    <line x1="540" y1="410" x2="466" y2="205" stroke="#34d399" marker-end="url(#mfk)"/>
+    <line x1="300" y1="244" x2="300" y2="216" stroke="#60a5fa" marker-end="url(#mlog)"/>
+    <line x1="540" y1="305" x2="466" y2="360" stroke="#60a5fa" marker-end="url(#mlog)"/>
+    <line x1="538" y1="490" x2="466" y2="490" stroke="#60a5fa" marker-end="url(#mlog)"/>
+  </g>
+  <g font-size="11" fill="#8fa6c2">
+    <text x="492" y="88">FK</text>
+    <text x="492" y="200">FK</text>
+    <text x="470" y="330">FK</text>
+    <text x="308" y="232">owns</text>
+    <text x="470" y="352">marker</text>
+    <text x="472" y="482">imports</text>
+  </g>
+  <!-- ===== nodes (opaque fill hides line crossings) ===== -->
+  <g class="ernode" data-goto="card-users" tabindex="0" role="link" aria-label="users table card">
+    <rect class="body" x="20" y="20" width="440" height="190" rx="10"/>
+    <text x="38" y="50" font-size="16" font-weight="700">users</text>
+    <text x="38" y="76" class="mono" font-size="12.5">id ★ PK</text>
+    <text x="38" y="98" class="mono" font-size="12.5">display_name</text>
+    <text x="38" y="120" class="mono" font-size="12.5">lichess_username UNIQUE</text>
+    <text x="38" y="142" class="mono" font-size="12.5">lichess_id UNIQUE</text>
+    <text x="38" y="164" class="mono" font-size="12.5">← sessions · user_current · import_runs</text>
+    <text x="38" y="186" class="mono" font-size="12.5">← games.owner_id (logical)</text>
+  </g>
+  <g class="ernode" data-goto="card-games" tabindex="0" role="link" aria-label="games table card">
+    <rect class="body" x="20" y="244" width="440" height="264" rx="10"/>
+    <text x="38" y="274" font-size="16" font-weight="700">games</text>
+    <text x="38" y="300" class="mono" font-size="12.5">id ★ PK</text>
+    <text x="38" y="322" class="mono" font-size="12.5">owner_id → users.id (logical)</text>
+    <text x="38" y="344" class="mono" font-size="12.5">source · opponent</text>
+    <text x="38" y="366" class="mono" font-size="12.5">UNIQUE (owner_id, source) ⧉ partial</text>
+    <text x="38" y="388" class="mono" font-size="12.5">moves JSON · model · elos</text>
+    <text x="38" y="410" class="mono" font-size="12.5">result · temperature</text>
+    <text x="38" y="432" class="mono" font-size="12.5">rating_diff · time_control · speed · clocks</text>
+    <text x="38" y="454" class="mono" font-size="12.5">created_at · updated_at</text>
+    <text x="38" y="476" class="mono" font-size="12.5">← user_current.game_id (logical)</text>
+  </g>
+  <g class="ernode dashed" data-goto="card-evaluations_v2" tabindex="0" role="link" aria-label="evaluations_v2 table card">
+    <rect class="body" x="20" y="532" width="440" height="190" rx="10"/>
+    <text x="38" y="562" font-size="16" font-weight="700">evaluations_v2 ♻ cache</text>
+    <text x="38" y="588" class="mono" font-size="12.5">key_hash ★ PK (sha256)</text>
+    <text x="38" y="610" class="mono" font-size="12.5">engine sf | maia</text>
+    <text x="38" y="632" class="mono" font-size="12.5">cache_key ≤ 4 KiB</text>
+    <text x="38" y="654" class="mono" font-size="12.5">value JSON ≤ 64 KiB</text>
+    <text x="38" y="676" class="mono" font-size="12.5">no FKs · ≤25k rows · rowid eviction</text>
+  </g>
+  <g class="ernode" data-goto="card-sessions" tabindex="0" role="link" aria-label="sessions table card">
+    <rect class="body" x="540" y="20" width="440" height="150" rx="10"/>
+    <text x="558" y="50" font-size="16" font-weight="700">sessions</text>
+    <text x="558" y="76" class="mono" font-size="12.5">id ★ PK (bearer token)</text>
+    <text x="558" y="98" class="mono" font-size="12.5">user_id FK → users.id CASCADE</text>
+    <text x="558" y="120" class="mono" font-size="12.5">created_at · expires_at</text>
+  </g>
+  <g class="ernode dashed" data-goto="card-user_current" tabindex="0" role="link" aria-label="user_current table card">
+    <rect class="body" x="540" y="194" width="440" height="150" rx="10"/>
+    <text x="558" y="224" font-size="16" font-weight="700">user_current ◇ per-user marker</text>
+    <text x="558" y="250" class="mono" font-size="12.5">user_id ★ PK · FK → users.id</text>
+    <text x="558" y="272" class="mono" font-size="12.5">game_id → games.id (logical)</text>
+    <text x="558" y="294" class="mono" font-size="12.5">one row per user</text>
+  </g>
+  <g class="ernode" data-goto="card-import_runs" tabindex="0" role="link" aria-label="import_runs table card">
+    <rect class="body" x="540" y="368" width="440" height="180" rx="10"/>
+    <text x="558" y="398" font-size="16" font-weight="700">import_runs</text>
+    <text x="558" y="424" class="mono" font-size="12.5">id ★ PK</text>
+    <text x="558" y="446" class="mono" font-size="12.5">user_id FK → users.id CASCADE</text>
+    <text x="558" y="468" class="mono" font-size="12.5">provider · username</text>
+    <text x="558" y="490" class="mono" font-size="12.5">requested · saved · skipped</text>
+    <text x="558" y="512" class="mono" font-size="12.5">summarizes games rows (registry)</text>
+  </g>
+  <g class="ernode dashed" data-goto="card-oauth_state" tabindex="0" role="link" aria-label="oauth_state table card">
+    <rect class="body" x="540" y="572" width="440" height="140" rx="10"/>
+    <text x="558" y="602" font-size="16" font-weight="700">oauth_state ◇ ephemeral</text>
+    <text x="558" y="628" class="mono" font-size="12.5">state ★ PK</text>
+    <text x="558" y="650" class="mono" font-size="12.5">verifier · redirect_uri</text>
+    <text x="558" y="672" class="mono" font-size="12.5">created_at · expires_at (10 min)</text>
+  </g>
+</svg>
+</div>
+
+<h2 class="sec">Relationships</h2>
+<p class="secsub">One card per declared FK or logical / registry link. Click any endpoint to jump to that table.</p>
+<div class="rels">
+  <div class="rel"><span class="tag fkc">FK · CASCADE</span><div class="rule"><button class="ref" data-goto="card-sessions">sessions.user_id</button> → <button class="ref" data-goto="card-users">users.id</button></div><div class="sem">Deleting a user drops every session: logout everywhere.</div></div>
+  <div class="rel"><span class="tag fkc">PK+FK · CASCADE</span><div class="rule"><button class="ref" data-goto="card-user_current">user_current.user_id</button> → <button class="ref" data-goto="card-users">users.id</button></div><div class="sem">Marker row lives and dies with its user; exactly one row per user.</div></div>
+  <div class="rel"><span class="tag fkc">FK · CASCADE</span><div class="rule"><button class="ref" data-goto="card-import_runs">import_runs.user_id</button> → <button class="ref" data-goto="card-users">users.id</button></div><div class="sem">Import history vanishes with the user; game rows are owner-scoped separately.</div></div>
+  <div class="rel"><span class="tag logc">logical · ownership</span><div class="rule"><button class="ref" data-goto="card-games">games.owner_id</button> → <button class="ref" data-goto="card-users">users.id</button></div><div class="sem"><span class="mono">''</span> means legacy pre-user; a mismatch aborts the save, and login adoption claims <span class="mono">''</span> rows.</div></div>
+  <div class="rel"><span class="tag logc">logical · marker</span><div class="rule"><button class="ref" data-goto="card-user_current">user_current.game_id</button> → <button class="ref" data-goto="card-games">games.id</button></div><div class="sem">No FK: may dangle transiently; deleting the game clears matching markers.</div></div>
+  <div class="rel"><span class="tag logc">partial UNIQUE</span><div class="rule"><button class="ref" data-goto="card-games">games.(owner_id, source)</button> → <button class="ref" data-goto="card-games">games.(owner_id, source)</button></div><div class="sem">Per-owner Lichess dedupe where <span class="mono">source &lt;&gt; ''</span>; local rows never collide and re-imports skip.</div></div>
+  <div class="rel"><span class="tag logc">registry · provenance</span><div class="rule"><button class="ref" data-goto="card-import_runs">import_runs</button> ⇢ <button class="ref" data-goto="card-games">games</button> via <span class="mono">source='lichess:…'</span></div><div class="sem">Bulk import stamps server-owned fields; single saves must leave them empty; known sources are skipped, not rewritten.</div></div>
+</div>
+
+<h2 class="sec">Tables</h2>
+<p class="secsub">Full-width cards. Notes carry only facts not already shown in Column / Type / Constraints. Click an <span class="badge fk" style="cursor:default">FK</span> badge to jump to the parent table.</p>
+
+<!-- ================= GAMES ================= -->
+<section class="tcard" id="card-games">
+<header><h3>games</h3><span class="tbl">user game history · update-in-place · never evicted</span></header>
+<div class="idx">Indexes: <span class="mono">idx_games_updated(updated_at DESC)</span> · <span class="mono">idx_games_owner(owner_id, updated_at DESC)</span> · partial <span class="mono">UNIQUE idx_games_owner_source(owner_id, source) WHERE source &lt;&gt; ''</span></div>
+<table><colgroup><col class="c1"><col class="c2"><col class="c3"><col class="c4"></colgroup>
+<tr><th>Column</th><th>Type</th><th>Constraints</th><th>Notes</th></tr>
+<tr><td><span class="mono">id</span></td><td><span class="mono">TEXT</span></td><td><span class="badge pk">PK</span></td><td>32-hex; minted server-side when a save omits it</td></tr>
+<tr><td><span class="mono">created_at</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span></td><td>RFC3339Nano; immutable once set, even on overwrite</td></tr>
+<tr><td><span class="mono">updated_at</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span></td><td>Drives history order; name/diff backfills deliberately skip it</td></tr>
+<tr><td><span class="mono">user_color</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span> CHECK</td><td>Side the user played; other endings derive from replaying moves</td></tr>
+<tr><td><span class="mono">elo_maia</span></td><td><span class="mono">INTEGER</span></td><td><span class="badge nn">NOT NULL</span></td><td>Engine Elo stamped with each save</td></tr>
+<tr><td><span class="mono">elo_user</span></td><td><span class="mono">INTEGER</span></td><td><span class="badge nn">NOT NULL</span></td><td>User Elo stamped with each save</td></tr>
+<tr><td><span class="mono">model</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span></td><td>Lowercase engine size label only</td></tr>
+<tr><td><span class="mono">moves</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span> DEFAULT <span class="mono">'[]'</span></td><td>JSON UCI array from the standard position; unchanged re-saves skip the write</td></tr>
+<tr><td><span class="mono">result</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span> DEFAULT <span class="mono">''</span></td><td>Terminal resignation marker; empty means ongoing or decided on board</td></tr>
+<tr><td><span class="mono">temperature</span></td><td><span class="mono">REAL</span></td><td><span class="badge nn">NOT NULL</span> DEFAULT <span class="mono">0</span></td><td>Sampling temperature 0–2; added by post-create migration</td></tr>
+<tr><td><span class="mono">rating_diff</span></td><td><span class="mono">INTEGER</span></td><td><span class="none">—</span></td><td>Lichess rating change; import-stamped, range-checked ±1000</td></tr>
+<tr><td><span class="mono">time_control</span></td><td><span class="mono">TEXT</span></td><td><span class="none">—</span></td><td>Canonical clock form; correspondence uses day counts, untimed a dash</td></tr>
+<tr><td><span class="mono">speed</span></td><td><span class="mono">TEXT</span></td><td><span class="none">—</span></td><td>Lichess pool label; local engine games stay unknown</td></tr>
+<tr><td><span class="mono">clocks</span></td><td><span class="mono">TEXT</span></td><td><span class="none">—</span></td><td>JSON per-ply remaining centiseconds, one entry per move</td></tr>
+<tr><td><span class="mono">owner_id</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span> DEFAULT <span class="mono">''</span> <button class="badge fk" data-goto="card-users">FK → users.id</button></td><td>Logical ownership, no SQLite FK; cross-owner id reuse is rejected, never overwritten</td></tr>
+<tr><td><span class="mono">source</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span> DEFAULT <span class="mono">''</span></td><td>External origin tag; empty for local games; conflicts never rewrite the row</td></tr>
+<tr><td><span class="mono">opponent</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span> DEFAULT <span class="mono">''</span></td><td>Remote username, or engine label with Elo, for imports</td></tr>
+</table></section>
+
+<!-- ================= USERS ================= -->
+<section class="tcard" id="card-users">
+<header><h3>users</h3><span class="tbl">account primitive · everything user-scoped hangs off this</span></header>
+<div class="idx">Index: <span class="mono">idx_users_lichess(lichess_username)</span></div>
+<table><colgroup><col class="c1"><col class="c2"><col class="c3"><col class="c4"></colgroup>
+<tr><th>Column</th><th>Type</th><th>Constraints</th><th>Notes</th></tr>
+<tr><td><span class="mono">id</span></td><td><span class="mono">TEXT</span></td><td><span class="badge pk">PK</span></td><td>32-hex; local users exist first, Lichess links later</td></tr>
+<tr><td><span class="mono">created_at</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span></td><td>RFC3339Nano account mint time</td></tr>
+<tr><td><span class="mono">display_name</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span> DEFAULT <span class="mono">''</span></td><td>Falls back to “Player”; mirrors the Lichess name once linked</td></tr>
+<tr><td><span class="mono">lichess_username</span></td><td><span class="mono">TEXT</span></td><td><span class="badge uq">UNIQUE</span></td><td>Nullable; callers normalize case before lookup; racing links resolve to the winner</td></tr>
+<tr><td><span class="mono">lichess_id</span></td><td><span class="mono">TEXT</span></td><td><span class="badge uq">UNIQUE</span></td><td>Nullable stable remote account id; re-login refreshes the stored username</td></tr>
+</table></section>
+
+<!-- ================= SESSIONS ================= -->
+<section class="tcard" id="card-sessions">
+<header><h3>sessions</h3><span class="tbl">bearer tokens · cookie transport</span></header>
+<div class="idx">Index: <span class="mono">idx_sessions_user(user_id)</span></div>
+<table><colgroup><col class="c1"><col class="c2"><col class="c3"><col class="c4"></colgroup>
+<tr><th>Column</th><th>Type</th><th>Constraints</th><th>Notes</th></tr>
+<tr><td><span class="mono">id</span></td><td><span class="mono">TEXT</span></td><td><span class="badge pk">PK</span></td><td>32-hex bearer token carried in an HttpOnly SameSite=Lax cookie</td></tr>
+<tr><td><span class="mono">user_id</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span> <button class="badge fk" data-goto="card-users">FK → users.id</button></td><td>ON DELETE CASCADE: user removal revokes every token at once</td></tr>
+<tr><td><span class="mono">created_at</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span></td><td>RFC3339Nano mint time</td></tr>
+<tr><td><span class="mono">expires_at</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span></td><td>Lazy expiry: a read past this timestamp deletes the row and reports a miss</td></tr>
+</table></section>
+
+<!-- ================= USER_CURRENT ================= -->
+<section class="tcard" id="card-user_current">
+<header><h3>user_current</h3><span class="tbl">per-user resume marker · singleton-per-user</span></header>
+<table><colgroup><col class="c1"><col class="c2"><col class="c3"><col class="c4"></colgroup>
+<tr><th>Column</th><th>Type</th><th>Constraints</th><th>Notes</th></tr>
+<tr><td><span class="mono">user_id</span></td><td><span class="mono">TEXT</span></td><td><span class="badge pk">PK</span> <button class="badge fk" data-goto="card-users">FK → users.id</button></td><td>ON DELETE CASCADE; upserted on every save flagged current</td></tr>
+<tr><td><span class="mono">game_id</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span> <button class="badge fk" data-goto="card-games">FK → games.id</button></td><td>Logical reference, no SQLite FK; game deletes clear matching rows everywhere</td></tr>
+</table></section>
+
+<!-- ================= OAUTH_STATE ================= -->
+<section class="tcard" id="card-oauth_state">
+<header><h3>oauth_state</h3><span class="tbl">pending Lichess PKCE flows · ephemeral infra</span></header>
+<table><colgroup><col class="c1"><col class="c2"><col class="c3"><col class="c4"></colgroup>
+<tr><th>Column</th><th>Type</th><th>Constraints</th><th>Notes</th></tr>
+<tr><td><span class="mono">state</span></td><td><span class="mono">TEXT</span></td><td><span class="badge pk">PK</span></td><td>CSRF key bridging the provider start and callback calls</td></tr>
+<tr><td><span class="mono">verifier</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span></td><td>PKCE secret; single-use, deleted on consume</td></tr>
+<tr><td><span class="mono">redirect_uri</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span></td><td>Callback target the flow returns to</td></tr>
+<tr><td><span class="mono">created_at</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span></td><td>RFC3339Nano flow start</td></tr>
+<tr><td><span class="mono">expires_at</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span></td><td>Short TTL enforced by callers; expired consumes are rejected as misses</td></tr>
+</table></section>
+
+<!-- ================= EVALUATIONS_V2 ================= -->
+<section class="tcard" id="card-evaluations_v2">
+<header><h3>evaluations_v2</h3><span class="tbl">disposable engine-result cache · infra</span></header>
+<table><colgroup><col class="c1"><col class="c2"><col class="c3"><col class="c4"></colgroup>
+<tr><th>Column</th><th>Type</th><th>Constraints</th><th>Notes</th></tr>
+<tr><td><span class="mono">key_hash</span></td><td><span class="mono">TEXT</span></td><td><span class="badge pk">PK</span></td><td>Hex digest of the canonical identity; v1 identities miss by key instead of failing</td></tr>
+<tr><td><span class="mono">engine</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span></td><td>Two engines share the table; stale revisions miss by key</td></tr>
+<tr><td><span class="mono">cache_key</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span></td><td>Canonical JSON identity (board + full reconstruction + settings); oversize keys are never filed nor served</td></tr>
+<tr><td><span class="mono">value</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span></td><td>Raw engine JSON threaded verbatim; corrupt rows read as misses, never served</td></tr>
+<tr><td><span class="mono">created_at</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span></td><td>Write time only; eviction rank comes from rowid, reads never re-rank</td></tr>
+</table></section>
+
+<!-- ================= IMPORT_RUNS ================= -->
+<section class="tcard" id="card-import_runs">
+<header><h3>import_runs</h3><span class="tbl">bulk-history append log · per user+provider</span></header>
+<div class="idx">Index: <span class="mono">idx_import_runs_user(user_id, provider, created_at DESC)</span></div>
+<table><colgroup><col class="c1"><col class="c2"><col class="c3"><col class="c4"></colgroup>
+<tr><th>Column</th><th>Type</th><th>Constraints</th><th>Notes</th></tr>
+<tr><td><span class="mono">id</span></td><td><span class="mono">TEXT</span></td><td><span class="badge pk">PK</span></td><td>32-hex run identifier</td></tr>
+<tr><td><span class="mono">user_id</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span> <button class="badge fk" data-goto="card-users">FK → users.id</button></td><td>ON DELETE CASCADE: history summary goes with the user</td></tr>
+<tr><td><span class="mono">provider</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span></td><td>Remote source label; newest run per user+provider answers “last checked”</td></tr>
+<tr><td><span class="mono">username</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span> DEFAULT <span class="mono">''</span></td><td>Remote account name at import time, for the UI summary line</td></tr>
+<tr><td><span class="mono">requested</span></td><td><span class="mono">INTEGER</span></td><td><span class="badge nn">NOT NULL</span></td><td>Games asked from the provider, including already-known ones</td></tr>
+<tr><td><span class="mono">saved</span></td><td><span class="mono">INTEGER</span></td><td><span class="badge nn">NOT NULL</span></td><td>Rows actually appended to <span class="mono">games</span></td></tr>
+<tr><td><span class="mono">skipped</span></td><td><span class="mono">INTEGER</span></td><td><span class="badge nn">NOT NULL</span></td><td>Known sources skipped via the per-owner dedupe window</td></tr>
+<tr><td><span class="mono">created_at</span></td><td><span class="mono">TEXT</span></td><td><span class="badge nn">NOT NULL</span></td><td>Zero-request bookkeeping runs are still filed to refresh the date</td></tr>
+</table></section>
+
+<footer>
+  Generated from the store package (sole DDL source of truth) — no guesses, no migrations directory:
+  <ul class="mono">
+    <li>backend/internal/store/games.go (games DDL, GameRow/GamePayload)</li>
+    <li>backend/internal/store/users.go (users, sessions, user_current, oauth_state DDL)</li>
+    <li>backend/internal/store/cache.go (evaluations_v2 DDL + eviction)</li>
+    <li>backend/internal/store/imports.go (import_runs DDL, ImportRun)</li>
+    <li>backend/internal/store/migrations.go + tx.go (ensure* columns, shared tx helpers)</li>
+    <li>backend/internal/evalcache/evalcache.go (MaxRows 25000, MaxKeyBytes 4096, MaxValueBytes 65536, v2 identity)</li>
+  </ul>
+  Intentionally not tables: batch review jobs (<span class="mono">backend/internal/server/reviews.go</span>) are in-memory only.
+</footer>
+</div>
+
+<script>
+(function(){
+  var input=document.getElementById('filter'),count=document.getElementById('count');
+  var cards=Array.prototype.slice.call(document.querySelectorAll('.tcard'));
+  var cells=Array.prototype.slice.call(document.querySelectorAll('.tcard td,.tcard th'));
+  cells.forEach(function(c){c.dataset.orig=c.innerHTML;});
+  function esc(s){return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}
+  input.addEventListener('input',function(){
+    var q=input.value.trim().toLowerCase(),shown=0;
+    cards.forEach(function(card){
+      var text=card.textContent.toLowerCase();
+      var hit=!q||text.indexOf(q)>-1;
+      card.style.display=hit?'':'none';
+      if(hit)shown++;
+    });
+    cells.forEach(function(c){
+      c.innerHTML=c.dataset.orig;
+      if(q&&c.closest('.tcard').style.display!=='none'){
+        var t=c.textContent;
+        if(t.toLowerCase().indexOf(q)>-1){
+          c.innerHTML=c.dataset.orig.replace(new RegExp('('+esc(q)+')','gi'),'<mark>$1</mark>');
+        }
+      }
+    });
+    count.textContent='showing '+shown+' / '+cards.length+' tables';
+  });
+  function go(id){
+    var t=document.getElementById(id);
+    if(!t)return;
+    t.scrollIntoView({behavior:'smooth',block:'start'});
+    t.classList.remove('pulse');
+    void t.offsetWidth;
+    t.classList.add('pulse');
+    setTimeout(function(){t.classList.remove('pulse');},1600);
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('[data-goto]'),function(el){
+    el.addEventListener('click',function(){go(el.getAttribute('data-goto'));});
+    if(el.tagName==='G'){
+      el.addEventListener('keydown',function(e){
+        if(e.key==='Enter'||e.key===' '){e.preventDefault();go(el.getAttribute('data-goto'));}
+      });
+    }
+  });
+})();
+</script>
+</body>
+</html>

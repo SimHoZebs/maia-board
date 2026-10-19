@@ -293,7 +293,7 @@ History lifecycle summary for the panel: newest Lichess run plus owned total.
 ## POST /imports/adopt
 
 One-time migration for pre-user history: every unowned game row becomes the
-caller's, and the legacy global current marker moves onto their marker.
+caller's. No current-game marker is carried: only owned saves set one.
 Idempotent — a second account adopts nothing.
 
 ```json
