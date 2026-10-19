@@ -177,8 +177,10 @@ waiter path, `dedup-by-key` = key policy (empty key never joins).
 - `theory` — board-computable facts, no engine (terminals, mates, draws,
   en passant, promotion, escape, parry).
 - `material` — material + tactic wording over the best-line window
-  (`TACTIC_VALUES` owned by `moveFacts.ts`). The window reads the
-  grading-lane walk (bot-2400 tops, Stockfish-vetoed), never the engine PV.
+  (`TACTIC_VALUES` owned by `moveFacts.ts`). The window reads the source
+  selected by `theory/bestLineSource.ts` (`BEST_LINE_SOURCE`, default
+  Stockfish rank-1 PV; `maia` reselects the grading-lane walk of bot-2400
+  tops with Stockfish veto).
 - `openings` — named book from the server (`OpeningMatch` wire,
   `OpeningRef` display, `NoveltyRef` prior-book reference).
 - `rarity` — bot sociology (`botRarity` bands 0.6/⅓, tiny <5%).

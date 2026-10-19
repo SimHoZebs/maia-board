@@ -103,11 +103,11 @@ describe('PlayVerdict', () => {
     expect(html).toContain('Loading move verdict');
   });
 
-  it('suggests the grading-lane walk, never the Stockfish PV', () => {
-    // Regression test for the Nh4 report: 12. Nh4 blundered, Stockfish's
-    // rank-1 reply was 12... Nxc4 (itself a Maia mistake), and the verdict
-    // quoted the Stockfish line. The suggestion must come from the
-    // grading-lane walk instead, even when a Stockfish PV is present.
+  it('suggests the Stockfish PV, not the grading-lane walk', () => {
+    // Nh4 report, post-switch: 12. Nh4 blundered and the verdict reads the
+    // after-position's Stockfish rank-1 PV (Nxc4 Nxc4 Rxe4), even though the
+    // Maia walk (Nxe4, winning a pawn) is also present. Source selection
+    // lives in theory/bestLineSource.ts; this locks the Stockfish default.
     const moves = [
       'e2e4',
       'e7e5',
@@ -136,7 +136,7 @@ describe('PlayVerdict', () => {
     const timeline = buildTimeline(START_FEN, moves);
     const nodes = reviewNodes(timeline);
     const evaluations = nodes.map(node => sfFixture(node.fen));
-    // Stockfish distractor: the old source would read bishop+pawn for knight.
+    // Stockfish source: the verdict reads bishop+pawn for knight off this PV.
     evaluations[23] = {
       ...evaluations[23],
       best_move: 'a5c4',
@@ -171,7 +171,8 @@ describe('PlayVerdict', () => {
         { top: 'f6e4', expected: 80 },
       ],
       engineGrades: [],
-      // Grading-lane walk: Black's 2400 reply Nxe4 takes the e-pawn.
+      // Maia walk, present but unselected while the source is stockfish:
+      // Black's 2400 reply Nxe4 takes the e-pawn.
       objectiveBestLine: ['f6e4'],
       settings: { botElo: 1600, userElo: 1600, model: '79m', stockfish: defaultStockfishSettings },
     };
@@ -186,7 +187,7 @@ describe('PlayVerdict', () => {
     };
     const html = renderToStaticMarkup(createElement(PlayVerdict, { state, feedback }));
     expect(html).toContain('An unlisted blunder.');
-    expect(html).toContain('This line wins a pawn for Black.');
-    expect(html).not.toContain('loses a bishop');
+    expect(html).toContain('This line loses a bishop and a pawn for a knight.');
+    expect(html).not.toContain('This line wins a pawn for Black.');
   });
 });

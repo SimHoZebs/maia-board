@@ -7,6 +7,11 @@ import { describeMove } from './reviewMetrics';
 import { deltaBaseline, deltaColumnTitle } from '../objective/winrate';
 import { buildKeyMoves } from './keyMoves';
 import { bestLinePreview, playedCapture } from '../theory/material';
+import {
+  BEST_LINE_SOURCE,
+  resolveBestLineUcis,
+  stockfishBestLineUcis,
+} from '../theory/bestLineSource';
 import { verdictInputsForPly } from '../theory/theory';
 import { useLineOpenings } from '../theory/openings';
 import { ReviewIssues, ReviewSummary } from './ReviewOverview';
@@ -104,9 +109,8 @@ export function MoveAnalysis({
   const exactOpening = lineOpening?.isExact
     ? { eco: lineOpening.eco, name: lineOpening.name }
     : null;
-  // Material consequence: the grading-lane walk rooted at the after-FEN
-  // (bot-2400 tops, Stockfish-vetoed — never the Stockfish rank-1 PV, whose
-  // first move the badge can grade as a mistake). Only cp-vs-cp
+  // Material consequence: the Stockfish rank-1 PV rooted at the after-FEN
+  // (see theory/bestLineSource.ts for the provider switch). Only cp-vs-cp
   // Mistake/Blunder render it (describeMove gates the labels; mate scores
   // stay silent so a forced mate is never reduced to a pawn note).
   // The preview bundles the note with its clickable SAN line so "This line"
@@ -124,7 +128,11 @@ export function MoveAnalysis({
     !afterEvaluation.terminal
       ? bestLinePreview(
           review.nodes[ply].fen,
-          review.objectiveBestLine.length ? review.objectiveBestLine : undefined,
+          resolveBestLineUcis({
+            source: BEST_LINE_SOURCE,
+            stockfishUcis: stockfishBestLineUcis(afterEvaluation, state.bestLineWindow),
+            maiaUcis: review.objectiveBestLine.length ? review.objectiveBestLine : undefined,
+          }),
           review.nodes[focus].turn === 'white' ? 'white' : 'black',
           state.bestLineWindow,
           playedCapture(review.nodes[focus].fen, played),

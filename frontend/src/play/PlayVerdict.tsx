@@ -1,6 +1,11 @@
 import type { State } from '../state/index';
 import { START_FEN } from '../shared/domain';
 import { bestLinePreview, playedCapture } from '../theory/material';
+import {
+  BEST_LINE_SOURCE,
+  resolveBestLineUcis,
+  stockfishBestLineUcis,
+} from '../theory/bestLineSource';
 import { useLineOpenings } from '../theory/openings';
 import { describeMove, botRarity } from '../review/reviewMetrics';
 import { verdictInputsForPly } from '../theory/theory';
@@ -56,10 +61,10 @@ export function PlayVerdict({ state, feedback }: { state: State; feedback: PlayF
   const exactOpening = lineOpening?.isExact
     ? { eco: lineOpening.eco, name: lineOpening.name }
     : null;
-  // Grading-lane walk (bot-2400 tops, Stockfish-vetoed) instead of the
-  // Stockfish rank-1 PV, so the suggestion never starts with a move the
-  // badge grades as a mistake. PlayVerdict renders the note only (no
-  // explore button); the walk converges as frontier rows land.
+  // Stockfish rank-1 PV (see theory/bestLineSource.ts) instead of the
+  // grading-lane walk. PlayVerdict renders the note only (no explore
+  // button); no frontier fetch is needed — the PV rides the already-fetched
+  // after-position evaluation.
   const materialNote =
     quality &&
     played &&
@@ -71,7 +76,11 @@ export function PlayVerdict({ state, feedback }: { state: State; feedback: PlayF
     !afterEvaluation.terminal
       ? (bestLinePreview(
           afterNode.fen,
-          feedback.objectiveBestLine.length ? feedback.objectiveBestLine : undefined,
+          resolveBestLineUcis({
+            source: BEST_LINE_SOURCE,
+            stockfishUcis: stockfishBestLineUcis(afterEvaluation, state.bestLineWindow),
+            maiaUcis: feedback.objectiveBestLine.length ? feedback.objectiveBestLine : undefined,
+          }),
           mover,
           state.bestLineWindow,
           playedCapture(beforeNode.fen, played),

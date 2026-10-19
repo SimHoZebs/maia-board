@@ -52,6 +52,7 @@ import {
 import { selectBotDisplay, type BotDisplayEntry } from '../eval/botDisplay';
 import { keyHeads, keyRowOrder } from './keyMoves';
 import { useObjectiveBestLine } from './useObjectiveBestLine';
+import { shouldWalkMaia } from '../theory/bestLineSource';
 
 // Configuration expressing room differences, not architecture. One pipeline
 // owns coordinator + scope + restore + grading + translation for both rooms;
@@ -159,8 +160,9 @@ export type PlayFeedback = {
   objectivePoints: (ObjectivePoint | undefined)[];
   engineGrades: (EngineGrade | undefined)[];
   settings: ReviewSettings;
-  // Objective best-line UCIs for the viewed move (grading-lane walk with
-  // Stockfish veto): PlayVerdict renders them through bestLinePreview.
+  // Objective best-line UCIs for the viewed move (Maia source, kept for
+  // the bestLineSource switch-back): PlayVerdict renders the selected source
+  // through bestLinePreview.
   objectiveBestLine: string[];
 };
 export type PlayQualitiesMemo = UnifiedMemo;
@@ -853,15 +855,16 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
       }),
     [timeline, evaluations, objectivePoints, botResults],
   );
-  // Objective best line for the viewed move: the suggestion walks the
-  // grading lane (bot-2400 tops, reply by reply) with Stockfish as veto
-  // only — never the Stockfish rank-1 PV, whose first move the badge can
-  // grade as a mistake. Gated exactly like the material note (minus the
-  // book hit, which InsightPanel owns); the walk deepens as frontier rows
-  // land through ensureWalkFrontier below.
+  // Objective best line for the viewed move (Maia-walk source only — see
+  // theory/bestLineSource.ts). The Stockfish source needs no walk: the PV
+  // rides the already-fetched after-position evaluation, so the walk stands
+  // down to save Maia/SF frontier fetches. Gated exactly like the material
+  // note (minus the book hit, which InsightPanel owns); the walk deepens as
+  // frontier rows land through ensureWalkFrontier below.
   const walkQuality = focusPly >= 0 ? qualities[focusPly] : undefined;
   const walkEnabled =
     active &&
+    shouldWalkMaia() &&
     !tooLong &&
     focusPly >= 0 &&
     (walkQuality?.label === 'Mistake' || walkQuality?.label === 'Blunder') &&
@@ -1064,9 +1067,9 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     bestRarities,
     mainlineQualities,
     coverage,
-    // Objective best-line UCIs for the viewed move (grading-lane walk, see
-    // above): InsightPanel renders them through bestLinePreview instead of
-    // the Stockfish rank-1 PV.
+    // Objective best-line UCIs for the viewed move (Maia source, see
+    // bestLineSource.ts): InsightPanel renders the selected source through
+    // bestLinePreview.
     objectiveBestLine,
     // Objective lane (provider points per position): the bar, graphs, and
     // score copy read this; move grades already derive from it. The
@@ -1489,12 +1492,12 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     return result;
   }, [active, gameId, timeline, userColor, settings, lane, version, coordinator]);
   /* oxlint-enable exhaustive-deps */
-  // Objective best line for the viewed user move: same grading-lane walk
-  // as the analysis room, so the suggestion never starts with a move the
-  // badge grades as a mistake. Play issues no speculative whole-line work:
-  // the walk extends only through rows the pair fetch, restore, and retry
-  // sweeps already settle, and the frontier fetch below covers one viewed
-  // mistake at a time.
+  // Objective best line for the viewed user move (Maia-walk source only —
+  // see theory/bestLineSource.ts). On the Stockfish source the PV rides the
+  // pair fetch, so no walk or frontier fetch runs. Play issues no speculative
+  // whole-line work: the walk extends only through rows the pair fetch,
+  // restore, and retry sweeps already settle, and the frontier fetch below
+  // covers one viewed mistake at a time.
   const viewedPly = Math.max(
     0,
     Math.min(state.viewedPly ?? timeline.moves.length, timeline.moves.length),
@@ -1503,6 +1506,7 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   const playWalkGrade = viewFocus >= 0 ? computed?.qualities[viewFocus] : undefined;
   const playWalkEnabled =
     active &&
+    shouldWalkMaia() &&
     !tooLong &&
     viewFocus >= 0 &&
     (playWalkGrade?.label === 'Mistake' || playWalkGrade?.label === 'Blunder') &&

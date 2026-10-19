@@ -1,7 +1,7 @@
-// Objective best-line walk: the suggestion line for a Mistake/Blunder speaks
-// the grading lane (bot-2400 tops), never Stockfish's rank-1 PV. A line that
-// starts with a move the badge grades as a mistake is the inconsistency this
-// removes: grade and suggestion share one voice.
+// Objective best-line walk (Maia source for the material verdict — see
+// theory/bestLineSource.ts BEST_LINE_SOURCE). The suggestion line speaks the
+// grading lane (bot-2400 tops); grade and suggestion share one voice, so a
+// line never starts with a move the badge grades as a mistake.
 //
 // Stockfish still referees: a walked step that runs into a cached forced
 // mate for the opponent is vetoed (excluded), and the walk stops extending
@@ -34,7 +34,8 @@ export type WalkStop =
 export type ObjectiveWalk = {
   // Reply UCIs rooted at the after-position, longest-verified first.
   // Empty exactly when there is nothing consistent to suggest — callers
-  // must never fall back to the Stockfish PV here; that was the bug.
+  // resolve the empty case through bestLineSource (Stockfish fallback lives
+  // there when the source selects it, never inside the walk).
   ucis: string[];
   stop: WalkStop;
   // Move prefixes (from the walk's initialFen) whose rows would extend or
