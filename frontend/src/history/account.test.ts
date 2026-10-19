@@ -45,6 +45,8 @@ describe('account client', () => {
       elo_user: 1300,
       model: '79m',
       moves: ['e2e4'],
+      source: `lichess:test${String(index).padStart(4, '0')}`,
+      opponent: 'foe-test',
       created_at: `2024-01-${String((index % 28) + 1).padStart(2, '0')}T00:00:00Z`,
     }));
     const result = await bulkImport(games, undefined, fetchImpl);
@@ -114,7 +116,17 @@ describe('account client', () => {
       return jsonResponse({ saved: [], errors: {}, skipped: 2 });
     }) as typeof fetch;
     const result = await bulkImport(
-      [{ user_color: 'white', elo_maia: 1, elo_user: 1, model: '79m', moves: [] }],
+      [
+        {
+          user_color: 'white',
+          elo_maia: 1,
+          elo_user: 1,
+          model: '79m',
+          moves: [],
+          source: 'lichess:test0001',
+          opponent: 'foe-test',
+        },
+      ],
       { provider: 'lichess', username: 'bob' },
       fetchImpl,
     );
@@ -126,7 +138,17 @@ describe('account client', () => {
     const fetchImpl = (async () =>
       jsonResponse({ saved: [], errors: {}, skipped: 100, refreshed: 3 })) as typeof fetch;
     const result = await bulkImport(
-      [{ user_color: 'white', elo_maia: 1, elo_user: 1, model: '79m', moves: [] }],
+      [
+        {
+          user_color: 'white',
+          elo_maia: 1,
+          elo_user: 1,
+          model: '79m',
+          moves: [],
+          source: 'lichess:test0002',
+          opponent: 'foe-test',
+        },
+      ],
       { provider: 'lichess', username: 'bob' },
       fetchImpl,
     );

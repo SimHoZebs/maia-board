@@ -182,9 +182,9 @@ export function SavedGames({
   // "Syncing…" indicator never re-renders the board through game state.
   const sync = useSyncStore();
   useSyncSnapshot(sync);
-  // Row identity: the signed-in name for your side, Maia + Elo for engine
-  // games, Lichess for imports. Falls back to the old color-first labels
-  // before login and in unit tests.
+  // Row identity: strict rows always carry opponent/source (`Maia <elo>`
+  // for engine games, Lichess names for imports). The fallback stays for
+  // legacy caches predating the strict migration.
   const you = useAccountName() ?? 'You';
   const opponentOf = (game: StoredGame) =>
     game.opponent ||

@@ -80,6 +80,13 @@ export function toStoredGame(row: ServerGame): StoredGame | undefined {
   const clock = normalizeTimeControl(row.time_control);
   const pool = normalizeSpeed(row.speed);
   const readings = normalizeClocks(row.clocks);
+  // Strict rows always carry source/opponent; legacy caches may not, so
+  // default to the local sentinel rather than dropping the fields.
+  const source = typeof row.source === 'string' && row.source.length > 0 ? row.source : 'local';
+  const opponent =
+    typeof row.opponent === 'string' && row.opponent.length > 0
+      ? row.opponent
+      : `Maia ${row.elo_maia}`;
   const base = restoreGame({
     id: row.id,
     createdAt: row.created_at,
@@ -92,10 +99,8 @@ export function toStoredGame(row: ServerGame): StoredGame | undefined {
       temperature: row.temperature,
     },
     ...(row.result === 'resigned' ? { result: 'resigned' } : {}),
-    ...(typeof row.source === 'string' && row.source.length > 0 ? { source: row.source } : {}),
-    ...(typeof row.opponent === 'string' && row.opponent.length > 0
-      ? { opponent: row.opponent }
-      : {}),
+    source,
+    opponent,
     ...(typeof diff === 'number' && Number.isInteger(diff) && diff >= -1000 && diff <= 1000
       ? { ratingDiff: diff }
       : {}),

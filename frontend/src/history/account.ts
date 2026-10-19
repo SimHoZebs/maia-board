@@ -139,8 +139,8 @@ export type ImportPayload = {
   moves: string[];
   created_at?: string;
   result?: string;
-  source?: string;
-  opponent?: string;
+  source: string;
+  opponent: string;
   rating_diff?: number;
   time_control?: string;
   speed?: string;

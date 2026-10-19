@@ -61,7 +61,8 @@ describe('server mapping', () => {
       id: 'l',
       source: 'lichess:abcd1234',
     });
-    expect(toStoredGame(row('n', ['e2e4']))?.source).toBeUndefined();
+    expect(toStoredGame(row('n', ['e2e4']))).toMatchObject({ source: 'local' });
+    expect(toStoredGame(row('n', ['e2e4']))).toMatchObject({ opponent: 'Maia 1600' });
   });
   it('round-trips lichess rating diffs and drops out-of-range values', () => {
     expect(toStoredGame({ ...row('d', ['e2e4']), rating_diff: 12 })?.ratingDiff).toBe(12);

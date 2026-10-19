@@ -505,6 +505,14 @@ export function toImportPayload(game: LichessGame, username: string): ImportPayl
     userColor === 'white'
       ? (headerName('Black') ?? game.players?.black?.user?.id)
       : (headerName('White') ?? game.players?.white?.user?.id);
+  // Strict imports: source and opponent are always stamped. A Lichess row
+  // without an id or a foe name is skipped (counted, never sent as '') so
+  // the server's required-field rejection never fires on our own payloads.
+  const gameId =
+    typeof game.id === 'string' && /^[A-Za-z0-9]{4,16}$/.test(game.id)
+      ? `lichess:${game.id}`
+      : undefined;
+  if (!gameId || !foeName) return undefined;
   const diff = clampDiff(ownDiff);
   const clock = clockOf(game);
   const pool = speedOf(game);
@@ -519,10 +527,8 @@ export function toImportPayload(game: LichessGame, username: string): ImportPayl
       ? { created_at: new Date(game.createdAt).toISOString() }
       : {}),
     ...(resigned ? { result: 'resigned' } : {}),
-    ...(typeof game.id === 'string' && /^[A-Za-z0-9]{4,16}$/.test(game.id)
-      ? { source: `lichess:${game.id}` }
-      : {}),
-    ...(foeName ? { opponent: foeName } : {}),
+    source: gameId,
+    opponent: foeName,
     ...(diff !== undefined ? { rating_diff: diff } : {}),
     ...(clock !== undefined ? { time_control: clock } : {}),
     ...(pool !== undefined ? { speed: pool } : {}),

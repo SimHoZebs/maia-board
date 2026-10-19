@@ -90,7 +90,7 @@ export function opponentElo(game: Pick<StoredGame, 'settings'>): number {
 
 // Lichess imports carry their rating inside the synced baseline (see
 // lichessSync.ts): replaying them here as vs-bot games would double-count.
-// Local games have no source; only `lichess:<gameId>` rows are skipped.
+// Local games carry `local`; only `lichess:<gameId>` rows are skipped.
 export function isLichessGame(game: { source?: unknown }): boolean {
   return typeof game.source === 'string' && game.source.startsWith('lichess:');
 }
