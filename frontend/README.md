@@ -20,10 +20,15 @@ npm run typecheck
 npm run build:bundle
 ```
 
+Full gate (incl. `--frontend-only`): `scripts/verify.sh` — command list lives
+in the [root README](../README.md#checks).
+
 `npm run build` = typecheck + bundle. `npm run dev` starts Vite;
 `npm run preview` serves a built bundle. Set `MAIA_API_TARGET` to a backend
-URL to proxy `/move`, `/move/analysis`, `/evaluate`, `/evaluations/lookup`,
-`/reviews`, `/reviews/:id`, `/games`, `/openings`. `MAIA_BUILD_DIR`
+URL to proxy `/move`, `/move/analysis`, `/evaluate`, `/evaluations`
+(covers `/evaluations/lookup`), `/reviews` (covers `/reviews/:id`),
+`/games`, `/openings`. `/imports`, `/auth`, `/me`, `/healthz` are not
+proxied; point the browser at the backend for those. `MAIA_BUILD_DIR`
 overrides the build destination (default `dist`).
 
 ## State boundaries

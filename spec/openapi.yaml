@@ -762,6 +762,25 @@ info:
   title: Maia Board
   version: 1.0.0
 openapi: 3.1.0
+x-plain-chi:
+  note: Plain-Chi routes are not generated from Huma. Contracts live in backend/API.md.
+  routes:
+    - path: /auth/local
+      anchor: backend/API.md#post-authlocal-post-authlogout-get-me
+    - path: /auth/logout
+      anchor: backend/API.md#post-authlocal-post-authlogout-get-me
+    - path: /me
+      anchor: backend/API.md#post-authlocal-post-authlogout-get-me
+    - path: /auth/lichess/start
+      anchor: backend/API.md#get-authlichessstart-getpost-authlichesscallback
+    - path: /auth/lichess/callback
+      anchor: backend/API.md#get-authlichessstart-getpost-authlichesscallback
+    - path: /imports/games
+      anchor: backend/API.md#post-importsgames
+    - path: /imports/status
+      anchor: backend/API.md#get-importsstatus
+    - path: /reviews/{id}/events
+      anchor: backend/API.md
 paths:
   /evaluate:
     post:

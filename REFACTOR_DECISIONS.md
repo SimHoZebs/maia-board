@@ -18,26 +18,17 @@ Status: `Pending` | `Accepted` | `Rejected` | `Needs-doc`.
 - [ ] 11. Single timeline selector / FEN-scan fan-out (active; proposal below)
 - [x] 12. Persistence writes behind repository only (Accepted)
 - [x] 13. Verdict priority tables in one module (Accepted)
-- [ ] 14. One opening subscription per workspace (no proposal yet)
+- [ ] 14. One opening subscription per workspace (active; scope:
+  `frontend/src/theory/openings.ts` — one fetch per `lineKey`)
 - [x] 15. Dissolve `state.ts` god reducer (Accepted — split into slices)
-- [ ] 16. Tests / scripts / docs trim (active)
+- [ ] 16. Tests / scripts / docs trim (active; scope: mirror tests that pin
+  literals, `frontend/core.*` dumps, per-area check docs)
 
-## Settled architecture (REFACTOR_PLAN, 2026-09-15)
+## Settled architecture (pointers, not contracts)
 
-LAN-first: Play vs Maia + Analyze (Maia + Stockfish) + History. Single
-container. Server owns ordering, identity, persistence.
-
-1. Scheduler: endpoint-implied lanes, slots per lane, Play > Focus > Batch,
-   dedup-by-key per scheduler.
-2. Abort scopes `{lineKey, gameId?}`: line change/unmount aborts foreground; game delete cancels restore, keeps settled cache.
-3. Persistence: versioned outbox + pending-wins + compare-swap + recovery/export.
-4. Cache: superset reuse + `initialFen`; validate once on write, shape-check on read.
-5. Executor: one `resolve() + execute()`; `lookup` read-only; forgiving-live vs strict-batch flag.
-6. Timeline: `posId`/`reviewKey` content keys with prefix-sharing LRU.
-7. Grades: one `computeQualities` call site; single `reviewState` drives the button.
-8. Tests/docs: `go test` + pure-logic vitest + 1 Playwright smoke.
-
-Retired specs (removed 2026-09-22; in git history): `CANCEL_REMOVAL_SPEC.md`, `JOBLESS_BATCH_SPEC.md`, `MECHANISM_AUDIT.md`, `USEEFFECT_CLEANUP_NOTES.md`, `REFACTOR_PLAN.md`.
+Normative facts live in [spec/GLOSSARY.md](spec/GLOSSARY.md) (lanes, cache,
+limits, terms) and [backend/API.md](backend/API.md) (routes, errors). History
+stays here; the queue above tracks what is still open.
 
 ## Accepted (one line each)
 
@@ -60,3 +51,6 @@ Retired specs (removed 2026-09-22; in git history): `CANCEL_REMOVAL_SPEC.md`, `J
 Panels re-derive board facts per render with no shared selector layer.
 Build the timeline once per line change; expose memoized selectors
 (row-at-ply, tip, move labels, incremental material) for all panels.
+Anchors: `posId`/`lineKeyFor` in `frontend/src/shared/domain.ts:622-628`,
+`TIMELINE_CACHE_LIMIT = 64` in `frontend/src/shared/domain.ts:525`,
+`EvaluationStore` cap in `frontend/src/eval/evaluationStore.ts:441`.

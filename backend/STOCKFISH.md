@@ -38,7 +38,10 @@ Optional `settings`:
 required when settings supplied. Depth 0 has no depth target. Explicit
 search stops at the first reached time/depth limit. Policy id is
 `sf19-ms{time_ms}-mpv{lines}-d{depth}-t4-h128-v3`. Omitting settings keeps
-the default policy below.
+the default policy below. The two forms differ by one segment: nil settings
+resolve to the default `SearchPolicy` (with `n100k`), explicit settings to
+`Policy()` (without it). Canonical limits live in
+[spec/GLOSSARY.md](../spec/GLOSSARY.md#limits).
 
 Settings page stores Stockfish prefs in this browser (initially 750 ms, 2
 lines, depth 0). Prefs join position-cache and completed-analysis identity.
@@ -54,7 +57,7 @@ approximate.
 ```json
 {
   "engine": "Stockfish 19",
-  "search_policy": "sf19-n100k-ms750-mpv2-t2-h128-v3",
+  "search_policy": "sf19-n100k-ms750-mpv2-t4-h128-v3",
   "depth": 15,
   "terminal": null,
   "best_move": "e2e4",

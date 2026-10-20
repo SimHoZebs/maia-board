@@ -105,6 +105,9 @@ for the scenario list and `--scenarios` for a subset.
 
 ## Local verification
 
+Backend-local checks. Full gate (incl. `--backend-only`): `scripts/verify.sh`
+— command list lives in the [root README](../README.md#checks).
+
 From `backend/`:
 
 ```sh

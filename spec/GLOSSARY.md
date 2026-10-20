@@ -201,10 +201,11 @@ per-request `MaiaRequest`/`MaiaResult`/`MaiaCandidate`, `maiaInflight` op)
 | --------------------------------------------------------------------------- | ------------ |
 | Backend engine request plies (`/move`, `/move/analysis`, `/evaluate`)       | 256          |
 | Backend history/line plies (`/lookup`, `/reviews`, `/games`, `/openings`)   | 4096         |
-| Backend request body (`/move`, `/evaluate`, `/games`, `/openings`)          | 64 KiB       |
+| Backend request body (`/move`, `/move/analysis`, `/evaluate`, `/games`, `/openings`) | 64 KiB |
 | Backend bulk body (`/reviews`, `/lookup`)                                   | 4 MiB        |
 | Backend lookup chunk                                                        | 1024 entries |
 | Backend batch entries (`POST /reviews`)                                     | 768          |
+| Backend bulk import (`POST /imports/games`)                               | 100 entries, 4 MiB |
 | Backend unfinished batch jobs (admission cap; cf. retained `maxKeptJobs=8`) | 8            |
 | Frontend in-memory settled results (both engines)                           | 4096         |
 | Frontend timelines retained                                                 | 64           |

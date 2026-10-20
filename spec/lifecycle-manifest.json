@@ -72,6 +72,55 @@
       "server_anchor": "Path:\\s*\"/healthz\"",
       "lane": null,
       "viz": []
+    },
+    {
+      "id": "auth-local",
+      "covers": ["/auth/local"],
+      "server_anchor": "\"/auth/local\"",
+      "lane": {"file": "backend/internal/server/auth.go", "patterns": ["func \\(s \\*Server\\) serveLocalLogin"]},
+      "viz": []
+    },
+    {
+      "id": "auth-logout",
+      "covers": ["/auth/logout"],
+      "server_anchor": "\"/auth/logout\"",
+      "lane": {"file": "backend/internal/server/auth.go", "patterns": ["func \\(s \\*Server\\) serveLogout"]},
+      "viz": []
+    },
+    {
+      "id": "me",
+      "covers": ["/me"],
+      "server_anchor": "\"/me\"",
+      "lane": {"file": "backend/internal/server/auth.go", "patterns": ["func \\(s \\*Server\\) serveMe"]},
+      "viz": []
+    },
+    {
+      "id": "lichess-start",
+      "covers": ["/auth/lichess/start"],
+      "server_anchor": "\"/auth/lichess/start\"",
+      "lane": {"file": "backend/internal/server/auth.go", "patterns": ["func \\(s \\*Server\\) serveLichessStart"]},
+      "viz": []
+    },
+    {
+      "id": "lichess-callback",
+      "covers": ["/auth/lichess/callback"],
+      "server_anchor": "\"/auth/lichess/callback\"",
+      "lane": {"file": "backend/internal/server/auth.go", "patterns": ["func \\(s \\*Server\\) serveLichessCallback"]},
+      "viz": []
+    },
+    {
+      "id": "imports-games",
+      "covers": ["/imports/games"],
+      "server_anchor": "\"/imports/games\"",
+      "lane": {"file": "backend/internal/server/imports.go", "patterns": ["func \\(s \\*Server\\) serveBulkImport"]},
+      "viz": []
+    },
+    {
+      "id": "imports-status",
+      "covers": ["/imports/status"],
+      "server_anchor": "\"/imports/status\"",
+      "lane": {"file": "backend/internal/server/imports.go", "patterns": ["func \\(s \\*Server\\) serveImportStatus"]},
+      "viz": []
     }
   ],
   "frontend": [
@@ -156,6 +205,8 @@
     {"id": "batch-finish", "code": {"file": "backend/internal/server/reviews.go", "patterns": ["review-batch finish job="]}, "agents": "review-batch finish", "viz": ["review-batch finish"]},
     {"id": "batch-busy", "code": {"file": "backend/internal/server/reviews.go", "patterns": ["review-batch busy unfinished="]}, "agents": "review-batch busy", "viz": ["review-batch busy"]},
     {"id": "openings", "code": {"file": "backend/internal/server/openings.go", "patterns": ["openings status=%d"]}, "agents": "openings", "viz": ["openings status="]},
+    {"id": "auth", "code": {"file": "backend/internal/server/auth.go", "patterns": ["auth status=%d"]}, "agents": "auth", "viz": ["auth status="]},
+    {"id": "import-save", "code": {"file": "backend/internal/server/imports.go", "patterns": ["import-save status=%d"]}, "agents": "import-save", "viz": ["import-save status="]},
     {"id": "eval-cache-header", "code": {"file": "backend/internal/server/move.go", "patterns": ["header:\"X-Eval-Cache\""]}, "agents": "X-Eval-Cache", "viz": ["X-Eval-Cache"]}
   ],
   "limits": [
@@ -165,6 +216,7 @@
     {"id": "bulk-4m", "code": {"file": "backend/internal/server/api.go", "patterns": ["4 \\* 1024 \\* 1024"]}, "viz": ["4MiB"]},
     {"id": "lookup-1024", "code": {"file": "backend/internal/server/identity.go", "patterns": ["at most 1024 entries"]}, "viz": ["1024/chunk"]},
     {"id": "batch-768", "code": {"file": "backend/internal/server/reviews.go", "patterns": ["maxBatchRequests = 768"]}, "viz": ["768 entries"]},
+    {"id": "imports-100", "code": {"file": "backend/internal/server/imports.go", "patterns": ["maxImportGames = 100"]}, "viz": ["100 entries"]},
     {"id": "jobs-8", "code": {"file": "backend/internal/server/reviews.go", "patterns": ["maxUnfinishedJobs = 8"]}, "viz": ["8 jobs"]},
     {"id": "rows-25k", "code": {"file": "backend/internal/evalcache/evalcache.go", "patterns": ["MaxRows = 25000"]}, "viz": ["25k"]},
     {"id": "fe-4096", "code": {"file": "frontend/src/eval/evaluationStore.ts", "patterns": ["cache\\.size > 4096"]}, "viz": ["4096 rows"]},
@@ -172,7 +224,7 @@
   ],
   "reverse": {
     "routes_file": "backend/internal/server/api.go",
-    "route_pattern": "\"(/(move|evaluate|evaluations|reviews|games|openings|healthz)[^\"]*)\"",
+    "route_pattern": "\"(/(move|evaluate|evaluations|reviews|games|openings|healthz|auth|imports|me)[^\"]*)\"",
     "ignore_paths": ["/"],
     "ignore_reason": "SPA fallback (no path literal), intentionally not visualized",
     "workers_dir": "backend/workers",

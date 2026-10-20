@@ -162,7 +162,7 @@ Errors: `404 not_found`, `405 method_not_allowed`.
  "model": "79m", "moves": ["e2e4"], "result": "", "current": true}
 ```
 
-- List default `limit` 200, max 500; `offset` non-negative;
+- List default `limit` 200, clamped to 500 (over-limit returns 200 with ≤500 rows); `offset` non-negative;
   `next_offset: null` ends pagination. `current_game` present only when a
   current game exists. Row:
   `{id, created_at, updated_at, user_color, elo_maia, elo_user,

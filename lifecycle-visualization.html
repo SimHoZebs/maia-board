@@ -163,7 +163,7 @@
       <div style="display:flex;gap:12px;color:var(--mut)">totals: <b id="sReq" style="color:#fff">0</b> hits <b id="sHit" style="color:var(--hit)">0</b> miss <b id="sMiss" style="color:var(--focus)">0</b> <b id="sErr" style="color:var(--bad)">0 err</b></div>
     </div>
     <div id="log"></div>
-    <div id="signals">signals honored here: <code>game-save status=</code> · <code>game-delete status=</code> · <code>move status=</code> · <code>evaluate status=</code> · <code>eval-content engine=maia</code> · <code>eval-content engine=sf</code> · <code>review-batch submit</code> · <code>review-batch entry</code> · <code>review-batch finish</code> · <code>review-batch busy</code> · <code>openings status=</code> · <code>X-Eval-Cache</code> · caps <code>8 jobs</code> · <code>768 entries</code> · <code>1024/chunk</code> · <code>25k rows</code> · <code>64 timelines</code> — contract: <code>spec/lifecycle-manifest.json</code></div>
+    <div id="signals">signals honored here: <code>game-save status=</code> · <code>game-delete status=</code> · <code>move status=</code> · <code>evaluate status=</code> · <code>eval-content engine=maia</code> · <code>eval-content engine=sf</code> · <code>review-batch submit</code> · <code>review-batch entry</code> · <code>review-batch finish</code> · <code>review-batch busy</code> · <code>auth status=</code> · <code>import-save status=</code> · <code>openings status=</code> · <code>X-Eval-Cache</code> · caps <code>8 jobs</code> · <code>768 entries</code> · <code>100 entries</code> · <code>1024/chunk</code> · <code>25k rows</code> · <code>64 timelines</code> — contract: <code>spec/lifecycle-manifest.json</code></div>
   </div>
 </div>
 <script>
@@ -175,7 +175,7 @@ const NODES=[
  {id:'coord',c:1,y:212, kind:'front',fill:'#241a4d',stroke:'#8b7bff',ico:'🎛',t:'ReviewCoordinator',s:'1 live/eng · latest-wins',d:'ensure/pump/execute. Leaving workspace cancels flights, keeps shared rows. playMove = single tracked flight.'},
  {id:'transport',c:1,y:306, kind:'front',fill:'#0b3540',stroke:'#4de3d1',ico:'📡',t:'Transport+gameClient',s:'postJson · SSE · games',d:'Shared POST sender + gameClient + SSE batch stream (optimization; GET status = truth). Sets X-Eval-Cache.'},
  {id:'batchfe',c:1,y:400, kind:'front',fill:'#3a1c4d',stroke:'#c792ea',ico:'📦',t:'Batch/openings FE',s:'POST /reviews · /openings',d:'Bulk lookup first (hits settle at intake), submit misses ≤768. Openings once per lineKey.'},
- {id:'api',c:2,y:24, kind:'gate',fill:'#4d2a0e',stroke:'#ff9f43',ico:'🚪',t:'Go HTTP API',s:'validate → admit',d:'/move→Play, /move/analysis+/evaluate→Focus, /reviews→Batch. ≤256 plies engine, ≤4096 history, 64KiB/4MiB. Unknown fields 400.'},
+ {id:'api',c:2,y:24, kind:'gate',fill:'#4d2a0e',stroke:'#ff9f43',ico:'🚪',t:'Go HTTP API',s:'validate → admit',d:'/move→Play, /move/analysis+/evaluate→Focus, /reviews→Batch. ≤256 plies engine, ≤4096 history, 64KiB/4MiB. Unknown fields 422.'},
  {id:'sched',c:2,y:118, kind:'gate',fill:'#4d0f1f',stroke:'#ff6b6b',ico:'🚦',t:'Scheduler lanes',s:'Play>Focus>Batch',d:'Play/Focus depth-1 latest-wins (409 superseded). Batch FIFO + rotation. Sync ≤100ms else 503. Batch caps → 429.'},
  {id:'evalcache',c:2,y:212, kind:'cache',fill:'#0e3a2a',stroke:'#3ddc84',ico:'💾',t:'EvalCache·SQLite',s:'evaluations_v2 · 25k',d:'v2:JSON(engine,fen,initial,moves,cfg,rev). Deterministic-only writes. Lookup never infers. SF compatible-reuse: same time+depth, more lines.'},
  {id:'games',c:2,y:306, kind:'cache',fill:'#07333a',stroke:'#4de3d1',ico:'📚',t:'Games store',s:'games+marker',d:'POST /games ≤4096 plies; GET pages 200/500; DELETE idempotent. Independent of eval eviction. Browser opVersion ack.'},
@@ -375,7 +375,7 @@ const EDGE_WORK={
  'sched>evalcache':'identity=v2:JSON(eng,fen,init,moves,cfg,rev) · probe',
  'sched>user':'backs off on 429/503 · honors Retry-After',
  'sched>sfbatch':'FIFO drain · role=grade/display · per-index errors map',
- 'evalcache>maia79':'MISS → infer: SelfElo/OppoElo, temp, MultiPV+WDL',
+ 'evalcache>maia79':'MISS → infer: SelfElo/OppoElo, temp, candidate-count+WDL',
  'evalcache>sf':'search time_ms/lines/depth · keeps search_policy',
  'evalcache>games':'games live apart from eval-row eviction',
  'evalcache>sfbatch':'misses queue into batch scheduler',
