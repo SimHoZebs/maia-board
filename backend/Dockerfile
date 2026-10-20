@@ -1,3 +1,7 @@
+# Global build arg: must precede the first FROM to be visible in every
+# stage (an ARG declared after a FROM is scoped to that stage only).
+ARG GO_IMAGE=golang:1.27-bookworm@sha256:648f440f42a0958804efb24df176f806f9d353b41f1c0627f666428e40310f6b
+
 FROM node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS frontend-build
 
 WORKDIR /frontend
@@ -5,8 +9,6 @@ COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
 RUN npm run build
-
-ARG GO_IMAGE=golang:1.27-bookworm@sha256:648f440f42a0958804efb24df176f806f9d353b41f1c0627f666428e40310f6b
 
 FROM ${GO_IMAGE} AS build
 
