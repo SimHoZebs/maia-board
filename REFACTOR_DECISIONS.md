@@ -27,8 +27,9 @@ Status: `Pending` | `Accepted` | `Rejected` | `Needs-doc`.
 LAN-first: Play vs Maia + Analyze (Maia + Stockfish) + History. Single
 container. Server owns ordering, identity, persistence.
 
-1. Scheduler: endpoint-implied lanes, one slot per engine, Play > Focus > Batch, dedup-by-hash per scheduler.
-2. Abort scopes `{lineKey, gameId?}`: line change/unmount aborts foreground; game delete cancels hydration, keeps settled cache.
+1. Scheduler: endpoint-implied lanes, slots per lane, Play > Focus > Batch,
+   dedup-by-key per scheduler.
+2. Abort scopes `{lineKey, gameId?}`: line change/unmount aborts foreground; game delete cancels restore, keeps settled cache.
 3. Persistence: versioned outbox + pending-wins + compare-swap + recovery/export.
 4. Cache: superset reuse + `initialFen`; validate once on write, shape-check on read.
 5. Executor: one `resolve() + execute()`; `lookup` read-only; forgiving-live vs strict-batch flag.
@@ -46,7 +47,7 @@ Retired specs (removed 2026-09-22; in git history): `CANCEL_REMOVAL_SPEC.md`, `J
 - 4. Shared `withTx`/JSON helpers; game vs cache write strategies stay separate.
 - 5. One strict-decode entry with merged null + WDL walk.
 - 6. Rotation + dual caps + 429 wait-once.
-- 7. One `store.restore` with visible-pair-first; two Maia lanes (findability + 2400 truth); Stockfish mate + rank-1 PV for material preview.
+- 7. One `store.restore` with visible-pair-first; two bot roles (findability + 2400 truth); Stockfish mate + rank-1 PV for material preview.
 - 8. One `useLookupRestore`; EventSource ticks, status endpoint ground truth.
 - 9. One `useReviewPipeline` with room config.
 - 10. One sender; play rides coordinator with tighter params; per-endpoint codes kept.

@@ -122,8 +122,8 @@ fetchJsonWithBusyRetry`). One shape for play/eval/batch. Worker stdio
 Endpoint-implied, backend-owned: `POST /move → Play`, `POST /move/analysis →
 Focus`, `POST /evaluate → Focus`, `POST /reviews → Batch`. Frontend
 `analysis` mode rides Focus; `lane` (scheduler) vs `mode` (UI) is the scoped
-spelling. Maia: one scheduler; Stockfish: two (interactive + batch, dedup
-per-scheduler). Non-preemptive, grant order `Play > Focus > Batch`. Batch
+spelling. Maia: one scheduler per model pool; Stockfish: two (interactive +
+batch, dedup per-scheduler). Non-preemptive, grant order `Play > Focus > Batch`. Batch
 shares by rotation with dual caps (429 on excess). Batch entries carry
 `engine` (slot routing) + `role` (`grade` for grading-2400 rows, `display`
 otherwise); runners stay engine-keyed, grading reads the role. Frontend
@@ -142,12 +142,15 @@ otherwise); runners stay engine-keyed, grading reads the role. Frontend
 - `HistorySyncStore.snapshot()` — revision counter. `GameRepository.snapshot()`
   is the full document. `renderKey` / `restoredSession` / `getSnapshot` are
   not snapshots.
-- Backend (no aliases): `Worker.workerStatus()`, `batchJob.progress()`,
-  `capTallies()`, `intakeRows`, SSE `initialProgress`.
-- SSE `initialStatus` ("snapshot" in docs) — first status event for
+- Backend (no aliases): `Worker.workerStatus()`,
+  `batchJob.progress()`/`progressLocked()` (the SSE opener sends one
+  `progressLocked()` snapshot first), `capTallies()` (admission counts).
+  Bulk-read rows have no intake name — they come from the lookup resolve
+  path.
+- SSE first event ("snapshot" in docs) — one `progressLocked()` result for
   reconnect. Not board state.
-- `capSample` ("snapshot" in batch admission) — point-in-time cap counts.
-  Not board state.
+- Admission "snapshot counts" (reviews.go) — point-in-time cap counts from
+  `capTallies()`. Not board state.
 
 ## Verdict inputs
 
@@ -183,12 +186,14 @@ otherwise); runners stay engine-keyed, grading reads the role. Frontend
 
 ## Workers (backend topology)
 
-5 processes, 3 schedulers + 1 mutex: 2×Maia (`MaiaRequest/MaiaResult/
-MaiaCandidate`, `EnginePool` fallback, `maiaInflight` op) + 2×SF slots
-(interactive + batch) + 1×openings (`OpeningsLookup`, mutex, no scheduler).
-`helper` = Python binary, `worker` = Go owner. `slot` = admission slot;
-`Grant/ticket` = mechanism. Verbs: `predict` (Maia) vs `run` (SF) vs
-`query` (openings).
+Schedulers: one per Maia pool + SF interactive + SF batch (4 default, 3 in
+single-model fallback-off servers). 2×Maia pools (`EnginePool` fallback;
+per-request `MaiaRequest`/`MaiaResult`/`MaiaCandidate`, `maiaInflight` op)
+
+- 2×SF slots (interactive + batch helpers) + 1×openings (`OpeningsLookup`,
+  mutex, no scheduler). Reserve `helper` = Python binary, `worker` = Go owner.
+  `slot` = admission slot; `Grant`/`ticket` = mechanism. Verbs are intentional:
+  `predict` (Maia, with fallback) vs `run` (SF) vs `query` (openings).
 
 ## Limits
 

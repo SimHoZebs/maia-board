@@ -32,7 +32,7 @@ overrides the build destination (default `dist`).
   Analysis URLs carry UCI moves + optional custom initial FEN. The reducer
   mirrors the destination as execution context before request effects run.
   URL restores analysis content on Back/Forward.
-- `state.ts` + `useBotBoard.ts` coordinate game actions and the session.
+- `state/` slices + `useBotBoard.ts` coordinate game actions and the session.
   Historical Play positions are read-only; returning to the tip resumes live
   play.
 - `domain.ts`: chess-domain data/rules. Full history needed for repetition;
@@ -47,13 +47,12 @@ overrides the build destination (default `dist`).
 - `reviewMetrics.ts` derives move grades from objective points (best move +
   mover-relative expected score), not engine responses directly.
   `src/objective/grader.ts` is the grading role (best + expected per
-  position, currently bot 2400); `graderStockfish.ts` implements the same
-  surface and wires in with a one-line change. `src/objective/winrate.ts`
+  position, currently bot 2400); `src/objective/winrate.ts`
   owns candidate-display math. Candidates and previous-move grading refer to
   different positions.
-- Two bot lanes: game-level bot (findability at game settings; feeds rarity
-  - candidate lists) and grading bot 2400 (objective truth). Stockfish keeps
-    mate scores + rank-1 PV for material preview.
+- Two bot roles: game-level bot (findability + candidate lists at game
+  settings) and grading bot 2400 (objective truth). Stockfish keeps
+  mate scores + rank-1 PV for material preview.
 
 ### Chess timeline and evaluation
 

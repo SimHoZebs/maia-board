@@ -94,7 +94,7 @@ Legacy policy: 4 threads, 128 MiB hash, `MultiPV=2`, `Limit(nodes=100000,
 time=0.75)`. Position validation adds time beyond the search clock. Depth is
 observed, never a target. Wall-clock limit means results vary under load.
 
-Two admission slots (interactive Focus + Batch reviews) so Focus never queues
+Two admission slots (interactive Focus + Batch) so Focus never queues
 behind an in-flight Batch search. Helper spawns its engine once per slot
 (version-checked, configured at startup); 128 MiB hash persists per slot.
 Concurrent evaluations on one slot get `503 engine_busy` + `Retry-After: 1`;
