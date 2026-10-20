@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { GameRepository } from './gameRepository';
 import { defaultSettings, type StoredGame } from '../shared/domain';
-import { KEYS } from './storage';
+import { REPOSITORY_KEY } from './gameRepository';
 
 const game = (moves: string[] = []): StoredGame => ({
   id: 'a',
@@ -20,6 +20,11 @@ const row = (moves: string[] = []) => ({
   moves,
   temperature: 0,
 });
+const seedV2 = (games: unknown[], currentId: string | null = null) =>
+  localStorage.setItem(
+    REPOSITORY_KEY,
+    JSON.stringify({ schema: 2, games, pending: [], currentId, recovery: [] }),
+  );
 const deferred = <T>() => {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>(r => {
@@ -234,7 +239,7 @@ it('preserves an acknowledged delete over a GET started while that delete was pe
     .fn()
     .mockReturnValueOnce(heldDelete.promise)
     .mockReturnValueOnce(heldGet.promise);
-  localStorage.setItem(KEYS.saved, JSON.stringify([game()]));
+  seedV2([game()]);
   const repo = new GameRepository(fetcher);
   repo.delete('a');
   const flushing = repo.flush();
@@ -257,8 +262,6 @@ it('preserves an acknowledged delete over a GET started while that delete was pe
   expect(repo.snapshot().pending).toEqual([]);
 });
 
-// The v1 outbox/marker one-time import is documented in serverGames.ts and no
-// longer read here, so the legacy-pending migration tests were deleted with it.
 it('coalesces saves per game id with last-save-wins and retains the current marker', () => {
   const repo = new GameRepository();
   repo.save(game(), true);
@@ -417,8 +420,7 @@ it('detects another tab changing the document during repository construction', a
 });
 
 it('transmits a seeded delete and settles it on reload', async () => {
-  localStorage.setItem(KEYS.saved, JSON.stringify([game()]));
-  localStorage.setItem(KEYS.current, JSON.stringify(game()));
+  seedV2([game()], game().id);
   const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
   const repo = new GameRepository(fetcher);
   expect(repo.snapshot().games).toHaveLength(1);
@@ -431,7 +433,7 @@ it('transmits a seeded delete and settles it on reload', async () => {
 });
 
 it('normalizes seeded games before exposing or uploading them', async () => {
-  localStorage.setItem(KEYS.saved, JSON.stringify([{ id: 'a', moves: ['e2e4'] }]));
+  seedV2([{ id: 'a', moves: ['e2e4'] }]);
   const fetcher = vi.fn().mockResolvedValue(Response.json(row(['e2e4'])));
   const repo = new GameRepository(fetcher);
   expect(repo.snapshot().games[0].settings).toMatchObject({

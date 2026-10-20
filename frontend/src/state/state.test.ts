@@ -93,7 +93,10 @@ describe('request ownership', () => {
         moves: ['e2e4'],
         settings: defaultSettings,
       };
-      localStorage.setItem(KEYS.current, JSON.stringify(game));
+      localStorage.setItem(
+        'maia-board.games.v2',
+        JSON.stringify({ schema: 2, games: [game], pending: [], currentId: game.id, recovery: [] }),
+      );
       const state = initialState(mode);
       expect(state.mode).toBe(mode);
       expect(state.play).toEqual(game);
@@ -105,8 +108,16 @@ describe('request ownership', () => {
   );
   it('rejects success and failure from another game at the same position', () => {
     const a = { id: 'a', createdAt: '2026-09-10', moves: ['e2e4'], settings: defaultSettings };
-    localStorage.setItem(KEYS.current, JSON.stringify(a));
-    localStorage.setItem(KEYS.saved, JSON.stringify([a, { ...a, id: 'b' }]));
+    localStorage.setItem(
+      'maia-board.games.v2',
+      JSON.stringify({
+        schema: 2,
+        games: [a, { ...a, id: 'b' }],
+        pending: [],
+        currentId: a.id,
+        recovery: [],
+      }),
+    );
     const old = initialState();
     const next = reducer(old, { type: 'saved', id: 'b' });
     expect(next.request!.payload.fen).toBe(old.request!.payload.fen);
@@ -429,8 +440,14 @@ describe('task lifecycles', () => {
   it('ends a repetition draw using full game history', () => {
     const moves = ['g1f3', 'g8f6', 'f3g1', 'f6g8', 'g1f3', 'g8f6', 'f3g1', 'f6g8'];
     localStorage.setItem(
-      KEYS.current,
-      JSON.stringify({ id: 'draw', createdAt: 'today', moves, settings: defaultSettings }),
+      'maia-board.games.v2',
+      JSON.stringify({
+        schema: 2,
+        games: [{ id: 'draw', createdAt: 'today', moves, settings: defaultSettings }],
+        pending: [],
+        currentId: 'draw',
+        recovery: [],
+      }),
     );
     const state = initialState();
     expect(replay(moves).isThreefoldRepetition()).toBe(true);
@@ -474,12 +491,18 @@ describe('task lifecycles', () => {
   });
 });
 
-describe('legacy storage and analysis', () => {
+describe('stored games and analysis', () => {
   it('restores all four v1 formats including non-menu Elo values', () => {
     const settings = { ...defaultSettings, botElo: 1701, userElo: 1512, model: '5m' };
     localStorage.setItem(
-      KEYS.current,
-      JSON.stringify({ id: 'old', createdAt: '2026-01-01', moves: ['d2d4', 'd7d5'], settings }),
+      'maia-board.games.v2',
+      JSON.stringify({
+        schema: 2,
+        games: [{ id: 'old', createdAt: '2026-01-01', moves: ['d2d4', 'd7d5'], settings }],
+        pending: [],
+        currentId: 'old',
+        recovery: [],
+      }),
     );
     localStorage.setItem(KEYS.settings, JSON.stringify(settings));
     localStorage.setItem(KEYS.analysis, JSON.stringify({ fen: '', pgn: '1. e4 e5' }));
@@ -490,8 +513,11 @@ describe('legacy storage and analysis', () => {
     expect(state.analysis.moves).toEqual(['e2e4', 'e7e5']);
   });
   it('handles corrupt storage without losing access to the board', () => {
-    localStorage.setItem(KEYS.current, JSON.stringify({ id: 'bad', moves: ['e2e8'] }));
-    localStorage.setItem(KEYS.saved, '{}');
+    localStorage.setItem(
+      'maia-board.current-game.v1',
+      JSON.stringify({ id: 'bad', moves: ['e2e8'] }),
+    );
+    localStorage.setItem('maia-board.saved-games.v1', '{}');
     localStorage.setItem(KEYS.analysis, JSON.stringify({ fen: 'invalid', pgn: '' }));
     const state = initialState();
     expect(state.play.moves).toEqual([]);
@@ -613,7 +639,10 @@ describe('server sync', () => {
       moves: ['e2e4'],
       settings: defaultSettings,
     };
-    localStorage.setItem(KEYS.current, JSON.stringify(game));
+    localStorage.setItem(
+      'maia-board.games.v2',
+      JSON.stringify({ schema: 2, games: [game], pending: [], currentId: game.id, recovery: [] }),
+    );
     const state = reducer(initialState(), {
       type: 'sync',
       saved: [],
@@ -657,7 +686,10 @@ describe('resign', () => {
       moves: ['f2f3', 'e7e5', 'g2g4', 'd8h4'],
       settings: defaultSettings,
     };
-    localStorage.setItem(KEYS.current, JSON.stringify(mate));
+    localStorage.setItem(
+      'maia-board.games.v2',
+      JSON.stringify({ schema: 2, games: [mate], pending: [], currentId: mate.id, recovery: [] }),
+    );
     const over = initialState();
     expect(replay(over.play.moves).isCheckmate()).toBe(true);
     expect(reducer(over, { type: 'resign' })).toBe(over);

@@ -43,7 +43,7 @@ overrides the build destination (default `dist`).
   Browser document `maia-board.games.v2` holds records, current marker, and
   pending ops. Ack removes its op version, preserving newer work.
   `serverGames.ts` sends requests (gameClient); `storage.ts` supplies
-  storage + legacy readers. Preferences and analysis inputs are browser-local.
+  storage + pre-rename readers. Preferences and analysis inputs are browser-local.
 - `reviewMetrics.ts` derives move grades from objective points (best move +
   mover-relative expected score), not engine responses directly.
   `src/objective/grader.ts` is the grading role (best + expected per
@@ -89,8 +89,8 @@ provenance. Bot fallback rows keep `model_used`/`degraded`.
 
 ### Game durability and recovery
 
-Repository imports legacy games + pending ops, keeping ids and the legacy
-outbox. Still uses `maia-board.games.v2` key. Page sync merges server
+Repository loads the `maia-board.games.v2` document (game records, current
+marker, pending ops), keeping ids. Page sync merges server
 records with pending local changes; creates no ops. Older pages merge in;
 an incomplete page is never the full collection.
 

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { defaultSettings, normalizeSettings, START_FEN } from '../shared/domain';
+import { defaultSettings, normalizeSettings, START_FEN, type Settings } from '../shared/domain';
 import { initialState, reducer } from '../state/index';
 import {
   defaultStockfishSettings,
@@ -15,7 +15,7 @@ import {
 } from '../review/reviewCoordinator';
 import { evaluationRequest } from './evaluationStore';
 import { toStoredGame } from '../history/serverGames';
-import { KEYS, parseStoredGame } from '../history/storage';
+import { parseStoredGame } from '../history/storage';
 import { requestBodyText, testNodes } from '../shared/testUtils';
 beforeEach(() => {
   const values = new Map<string, string>();
@@ -26,16 +26,24 @@ beforeEach(() => {
   });
 });
 
-it('defaults new games to 1 while preserving legacy and saved-game temperatures', () => {
+it('defaults new games to 1 while preserving old and saved-game temperatures', () => {
   expect(initialState().setup?.temperature).toBe(1);
   for (const temperature of [undefined, 0, 0.7]) {
     localStorage.setItem(
-      KEYS.current,
+      'maia-board.games.v2',
       JSON.stringify({
-        id: 'saved',
-        createdAt: '2026-09-11T00:00:00Z',
-        moves: ['e2e4'],
-        settings: { ...defaultSettings, temperature },
+        schema: 2,
+        games: [
+          {
+            id: 'saved',
+            createdAt: '2026-09-11T00:00:00Z',
+            moves: ['e2e4'],
+            settings: { ...defaultSettings, temperature },
+          },
+        ],
+        pending: [],
+        currentId: 'saved',
+        recovery: [],
       }),
     );
     let state = initialState();
@@ -73,7 +81,7 @@ it('commits temperature per game, leaves analysis deterministic, and preserves p
   expect(state.request).toBeNull();
 });
 
-it('restores and validates browser settings and legacy temperature', () => {
+it('restores and validates browser settings and stored games', () => {
   localStorage.setItem(
     STOCKFISH_STORAGE_KEY,
     JSON.stringify({ time_ms: 4000, lines: 5, depth: 20 }),
@@ -84,19 +92,20 @@ it('restores and validates browser settings and legacy temperature', () => {
   );
   expect(normalizeSettings({ temperature: NaN }).temperature).toBe(0);
   expect(normalizeSettings({ temperature: 2 }).temperature).toBe(2);
-  // Pre-rename stored keys migrate read-only; new keys win when both exist.
-  expect(normalizeSettings({ eloMaia: 1800, eloUser: 1700 }).botElo).toBe(1800);
-  expect(normalizeSettings({ eloMaia: 1800, eloUser: 1700 }).userElo).toBe(1700);
-  expect(normalizeSettings({ botElo: 1400, eloMaia: 1800 }).botElo).toBe(1400);
-  // Saved games stored under the old keys restore with their ratings intact.
-  const legacy = parseStoredGame({
-    id: 'legacy',
+  // Removed keys are ignored; ratings fall back to defaults.
+  const removedKeys = { eloMaia: 1800, eloUser: 1700 } as unknown as Partial<Settings>;
+  expect(normalizeSettings({ ...removedKeys }).botElo).toBe(1600);
+  expect(normalizeSettings({ ...removedKeys }).userElo).toBe(400);
+  expect(normalizeSettings({ botElo: 1400, ...removedKeys }).botElo).toBe(1400);
+  // Saved games stored without ratings fall back to defaults.
+  const oldKeys = parseStoredGame({
+    id: 'old-keys',
     createdAt: '2026-09-11T00:00:00Z',
     moves: [],
     settings: { userColor: 'black', eloMaia: 1800, eloUser: 1700, model: '79m' },
   });
-  expect(legacy?.settings.botElo).toBe(1800);
-  expect(legacy?.settings.userElo).toBe(1700);
+  expect(oldKeys?.settings.botElo).toBe(1600);
+  expect(oldKeys?.settings.userElo).toBe(400);
   const row = {
     id: 'a',
     created_at: '2026-09-11T00:00:00Z',

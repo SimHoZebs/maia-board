@@ -635,9 +635,9 @@ describe('identity and provenance', () => {
   it('keeps the omitted-settings node-budget policy distinct from timed default settings', () => {
     const timed = sfFixture(START_FEN);
     expect(() => parseEvaluation(timed)).toThrow('incompatible');
-    const legacy = { ...timed, search_policy: stockfishPolicy(undefined) };
-    expect(parseEvaluation(legacy).actual_settings).toBeUndefined();
-    expect(() => parseEvaluation(legacy, defaultStockfishSettings)).toThrow('incompatible');
+    const defPolicy = { ...timed, search_policy: stockfishPolicy(undefined) };
+    expect(parseEvaluation(defPolicy).actual_settings).toBeUndefined();
+    expect(() => parseEvaluation(defPolicy, defaultStockfishSettings)).toThrow('incompatible');
   });
   it('rejects non-record evaluation bodies without reading fields', () => {
     // Locks the isRecord-first narrowing in parseEvaluation: primitives and

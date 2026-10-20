@@ -35,7 +35,7 @@ export function reducePlay(state: State, action: Action): State | undefined {
       if (draft.userColor === 'random' && !action.resolvedColor) return state;
       // The user's rating rides along for engine conditioning and game
       // history: callers pass the computed adaptive Elo (anchor replay);
-      // legacy callers without it fall back to the bot strength.
+      // older callers without it fall back to the bot strength.
       const userElo =
         typeof action.userElo === 'number' && Number.isFinite(action.userElo)
           ? Math.min(5000, Math.max(0, Math.round(action.userElo)))

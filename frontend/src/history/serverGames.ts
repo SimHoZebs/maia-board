@@ -80,7 +80,7 @@ export function toStoredGame(row: ServerGame): StoredGame | undefined {
   const clock = normalizeTimeControl(row.time_control);
   const pool = normalizeSpeed(row.speed);
   const readings = normalizeClocks(row.clocks);
-  // Strict rows always carry source/opponent; legacy caches may not, so
+  // Strict rows always carry source/opponent; pre-strict caches may not, so
   // default to the local sentinel rather than dropping the fields.
   const source = typeof row.source === 'string' && row.source.length > 0 ? row.source : 'local';
   const opponent =
@@ -284,26 +284,7 @@ export type OutboxOp =
   | { op: 'save'; game: StoredGame; current: boolean }
   | { op: 'delete'; id: string };
 
-// Historical one-time v1 migration (removed from live code; kept here as the
-// documented script). Pre-database browsers kept games under
-// 'maia-board.saved-games.v1' / 'maia-board.current-game.v1', pending ops
-// under 'maia-board.outbox.v1', and marker 'maia-board.migrated-games.v1'.
-// The one-time import ran oldest-first so the server's updated_at order
-// preserved recency, with the live game last carrying the current marker,
-// idempotent by preserved ids:
-//
-//   for (const game of [...saved].reverse()) {
-//     if (current && game.id === current.id) continue;
-//     if (seen.has(game.id)) continue;
-//     seen.add(game.id);
-//     ops.push({ op: 'save', game, current: false });
-//   }
-//   if (current && !seen.has(current.id)) ops.push({ op: 'save', game: current, current: true });
-//
-// Legacy outbox entries were validated with decodeOutboxOp and enqueued ahead
-// of those imports. The live repository no longer reads any of those keys;
-// v2 documents carry their own pending queue.
-
+// Decodes one pending outbox op from the v2 document.
 export function decodeOutboxOp(value: unknown): OutboxOp | undefined {
   if (!isRecord(value)) return;
   const op = value;

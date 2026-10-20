@@ -39,7 +39,7 @@ export type ReviewSettings = {
   stockfish?: StockfishSettings;
   // Split evaluation: policy ordering at (botElo, userElo), candidate WDL
   // values at (valueBotElo, valueUserElo). Omitted (or equal to policy)
-  // means legacy symmetric evaluation. The analysis display lane sets both
+  // means default symmetric evaluation. The analysis display lane sets both
   // to 2400 so low-Elo move lists carry 2400-vs-2400 winrates.
   valueBotElo?: number;
   valueUserElo?: number;
@@ -98,7 +98,7 @@ function prefixOf(node: ReviewNode): string[] {
 }
 // Normalized split coordinates: explicit value Elos equal to policy Elos
 // collapse to omitted so 2400 display rows dedup with the grading lane and
-// legacy keys keep hitting. Mirrors the backend maiaIdentity normalization
+// existing cache rows keep hitting. Mirrors the backend maiaIdentity normalization
 // (backend wire name, unchanged). All Elos bucket up to the next hundred so
 // nearby analysis strengths share cache rows.
 export function splitValueElos(settings: ReviewSettings): {

@@ -11,8 +11,6 @@ import { isRecord, isStringArray } from '../shared/guards';
 
 export const KEYS = {
   settings: 'maia-board.settings.v1',
-  current: 'maia-board.current-game.v1',
-  saved: 'maia-board.saved-games.v1',
   analysis: 'maia-board.analysis.v1',
   snapshot: 'maia-board.analysis-snapshot.v1',
   feedback: 'maia-board.feedback.v1',
@@ -53,18 +51,14 @@ export function writeStorage(key: string, value: unknown): Error | undefined {
 // Narrows unvalidated storage JSON to normalizeSettings' input without
 // asserting: only values normalizeSettings can distinguish pass through (its
 // own per-field fallbacks decide the rest), so behavior is unchanged.
-// Legacy pre-rename keys (eloMaia/eloUser) map to their successors here so
-// saved games keep their ratings; new keys win when both are present.
 function toSettingsInput(value: unknown): Partial<Settings> | undefined {
   if (!isRecord(value)) return undefined;
   const input: Partial<Settings> = {};
-  const { userColor, model, botElo, userElo, eloMaia, eloUser, temperature } = value;
+  const { userColor, model, botElo, userElo, temperature } = value;
   if (userColor === 'black' || userColor === 'white') input.userColor = userColor;
   if (model === '5m' || model === '79m') input.model = model;
   if (typeof botElo === 'number') input.botElo = botElo;
-  else if (typeof eloMaia === 'number') input.botElo = eloMaia;
   if (typeof userElo === 'number') input.userElo = userElo;
-  else if (typeof eloUser === 'number') input.userElo = eloUser;
   if (typeof temperature === 'number') input.temperature = temperature;
   return input;
 }
@@ -112,12 +106,6 @@ export function parseStoredGame(value: unknown): StoredGame | undefined {
   } catch {
     return;
   }
-}
-export function loadSaved(): StoredGame[] {
-  const raw = readStorage<unknown>(KEYS.saved);
-  return Array.isArray(raw)
-    ? raw.map(parseStoredGame).filter((game): game is StoredGame => !!game)
-    : [];
 }
 export function loadSettings(): Settings {
   return normalizeSettings(readStorage<Partial<Settings>>(KEYS.settings));

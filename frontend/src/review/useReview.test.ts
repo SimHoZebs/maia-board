@@ -204,6 +204,6 @@ it('grades badges from Stockfish with 2400 footnotes and holds the spinner while
   expect(laneKey(nodes[0], () => settings)).toBe(gradingBotKey(nodes[0]));
   expect(waiting.grades[0]?.label).toBe('Unreviewed');
   expect(waiting.grades[1]?.label).toBe('Top');
-  // Same miss without pending: legacy SF fallback (flat pair -> Holds).
+  // Same miss without pending: default SF fallback (flat pair -> Holds).
   expect(run([undefined, gradingBot[1], gradingBot[2]], new Set()).grades[0]?.label).toBe('Holds');
 });

@@ -11,7 +11,7 @@ import {
   type FetchLike,
   type OutboxOp,
 } from './serverGames';
-import { KEYS, loadSaved, readStorage, parseStoredGame, writeStorage } from './storage';
+import { parseStoredGame, writeStorage } from './storage';
 
 export const REPOSITORY_KEY = 'maia-board.games.v2';
 // Single lock name for repository writes and history sync. Cooperating tabs
@@ -55,9 +55,6 @@ export function subscribeGameDeletes(listener: GameDeleteListener): () => void {
 }
 
 // The v2 document atomically stores records, marker and write-ahead operations.
-// Browsers without a v2 document seed read-only from the pre-database game
-// keys; the v1 outbox/marker one-time import lives only as the documented
-// script in serverGames.ts and is no longer read here.
 export function readGameRepository(repositoryRaw?: string | null): DurableGames {
   const recovery: RecoveryItem[] = [];
   const recover = (value: unknown) => recovery.push({ version: version(), value });
@@ -113,14 +110,7 @@ export function readGameRepository(repositoryRaw?: string | null): DurableGames 
     };
   }
   if (stored !== undefined) recover(stored);
-  const games = loadSaved();
-  const current = parseStoredGame(readStorage(KEYS.current)) ?? null;
-  const merged = mergeSync(
-    current ? [current, ...games.filter(g => g.id !== current.id)] : games,
-    current?.id ?? null,
-    [],
-  );
-  return { schema: 2, games: merged.saved, currentId: merged.currentId, pending: [], recovery };
+  return { schema: 2, games: [], pending: [], currentId: null, recovery };
 }
 
 export class GameRepository {

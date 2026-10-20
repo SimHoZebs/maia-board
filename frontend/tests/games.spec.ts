@@ -1,7 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { KEYS } from '../src/history/storage';
 import { defaultSettings } from '../src/shared/domain';
 
 type Row = {
@@ -148,7 +147,7 @@ async function clickSquare(page: Page, key: string) {
 }
 
 test('live play shows a fallback notice when the worker degrades', async ({ page }) => {
-  const app = await bootGames(page, { 'maia-board.migrated-games.v1': true });
+  const app = await bootGames(page);
   let requestedModel: unknown;
   await page.route('http://maia.test/move*', async route => {
     requestedModel = route.request().postDataJSON().model;
@@ -175,11 +174,19 @@ test('live play shows a fallback notice when the worker degrades', async ({ page
   expect(app.errors).toEqual([]);
 });
 
-test('legacy games seed read-only display without uploading', async ({ page }) => {
-  // The v1 migration was deleted: pre-database keys seed local display but
-  // never create upload ops, so the server stays untouched.
+test('local games display read-only without uploading', async ({ page }) => {
+  // Seeded local games display read-only and never create upload ops, so the
+  // server stays untouched.
   const game = stored('local-1', ['e2e4', 'e7e5']);
-  const app = await bootGames(page, { [KEYS.current]: game, [KEYS.saved]: [game] });
+  const app = await bootGames(page, {
+    'maia-board.games.v2': {
+      schema: 2,
+      games: [game],
+      pending: [],
+      currentId: game.id,
+      recovery: [],
+    },
+  });
   await page.goto('http://maia.test/history');
   await expect(page.locator('.saved-game')).toHaveCount(1);
   await expect(page.locator('.saved-game').first()).toContainText('White · Bot 1600');
@@ -235,8 +242,8 @@ test('history loads older pages while keeping the current game independent', asy
 test('invalid pending data is exportable and discarded only after confirmation', async ({
   page,
 }) => {
-  // The v1 outbox is no longer read; invalid entries reach recovery through
-  // a v2 document instead.
+  // Invalid pending entries reach recovery through the v2 document instead
+  // of breaking the load.
   await bootGames(page, {
     'maia-board.games.v2': {
       schema: 2,
@@ -289,15 +296,20 @@ test('offline boot falls back to cache and retry syncs later', async ({ page }) 
   const app = await bootGames(
     page,
     {
-      [KEYS.current]: game,
-      [KEYS.saved]: [game],
+      'maia-board.games.v2': {
+        schema: 2,
+        games: [game],
+        pending: [],
+        currentId: game.id,
+        recovery: [],
+      },
     },
     true,
   );
   await page.goto('http://maia.test/history');
   await expect(page.locator('.saved-game')).toHaveCount(1);
   await expect(page.locator('.sync-banner')).toBeVisible();
-  // Legacy seeds carry no upload ops, so queue v2-native work while offline:
+  // Seeded games carry no upload ops, so queue v2-native work while offline:
   // a played move saves locally and pends the upload the aborted flush
   // cannot clear. Retry then syncs exactly that game.
   await page.goto('http://maia.test/play');
@@ -325,7 +337,7 @@ test('offline boot falls back to cache and retry syncs later', async ({ page }) 
 });
 
 test('played moves persist and deletes stay deleted after reload', async ({ page }) => {
-  const app = await bootGames(page, { 'maia-board.migrated-games.v1': true });
+  const app = await bootGames(page);
   await page.goto('http://maia.test/play');
   await page.locator('#start-game').click();
   await expect(page.locator('#play-controls')).toHaveCount(0);

@@ -216,13 +216,7 @@ export const newId = () =>
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-// Pre-rename stored keys. Read-only migration source: new keys win, legacy
-// fills only when absent. Never written — values persist under the new keys
-// on the next save.
-type LegacySettingsKeys = { eloMaia?: unknown; eloUser?: unknown };
-export function normalizeSettings(
-  stored?: (Partial<Settings> & LegacySettingsKeys) | null,
-): Settings {
+export function normalizeSettings(stored?: Partial<Settings> | null): Settings {
   const elo = (value: unknown, fallback: number) =>
     typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 5000
       ? value
@@ -231,15 +225,15 @@ export function normalizeSettings(
   // 400 still conditions, displays, and caches as 800); the player's own
   // identity stays raw for the coming global-Elo pass.
   const botElo = (value: unknown, fallback: number) => clampElo(elo(value, fallback));
-  const storedBotElo = stored?.botElo ?? stored?.eloMaia;
+  const storedBotElo = stored?.botElo;
   // The player's own rating defaults to the 400 anchor (see userElo.ts),
   // never to the bot strength: mirroring botElo guesses the user is a 1600
-  // player. Legacy saves keep their stored userElo.
+  // player. Pre-rename saves keep their stored userElo.
   return {
     userColor: stored?.userColor === 'black' ? 'black' : 'white',
     model: stored?.model === '5m' ? '5m' : '79m',
     botElo: botElo(storedBotElo, 1600),
-    userElo: elo(stored?.userElo ?? stored?.eloUser, 400),
+    userElo: elo(stored?.userElo, 400),
     temperature:
       typeof stored?.temperature === 'number' &&
       Number.isFinite(stored.temperature) &&

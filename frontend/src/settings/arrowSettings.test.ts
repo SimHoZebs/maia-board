@@ -22,7 +22,7 @@ beforeEach(() => {
 });
 
 describe('arrow settings', () => {
-  it('keeps defaults aligned with the legacy brushes and e2e expectations', () => {
+  it('keeps defaults aligned with the old brushes and e2e expectations', () => {
     expect(defaultArrowSettings).toEqual({
       actual: { color: '#ffffff', width: 12 },
       bot: { color: '#ef4444', width: 8 },
@@ -67,35 +67,18 @@ describe('arrow settings', () => {
       defaultArrowSettings.next,
     );
   });
-  it('migrates the legacy stockfish key to the objective slot', () => {
-    expect(
-      normalizeArrowSettings({ stockfish: { color: '#00ff00', width: 64 } }).objective,
-    ).toEqual({ color: '#00ff00', width: 64 });
-  });
-  it('keeps a legacy lone stockfish value off the Stockfish-best arrow', () => {
-    // Old storage keyed the blue objective arrow 'stockfish' with no
-    // objective sibling; that value migrates to objective only, leaving the
-    // Stockfish-best arrow at its default until the user sets it.
-    const migrated = normalizeArrowSettings({ stockfish: { color: '#00ff00', width: 64 } });
-    expect(migrated.stockfish).toBe(defaultArrowSettings.stockfish);
+  it('reads each arrow slot from its own key', () => {
     const current = normalizeArrowSettings({
       objective: { color: '#3b82f6', width: 4 },
       stockfish: { color: '#00ff00', width: 64 },
     });
     expect(current.stockfish).toEqual({ color: '#00ff00', width: 64 });
-    expect(current.objective).toBe(defaultArrowSettings.objective);
+    expect(current.objective).toEqual({ color: '#3b82f6', width: 4 });
   });
-  it('migrates the legacy maia key to the bot slot, preferring the new key', () => {
-    expect(normalizeArrowSettings({ maia: { color: '#00ff00', width: 64 } }).bot).toEqual({
-      color: '#00ff00',
-      width: 64,
-    });
-    expect(
-      normalizeArrowSettings({
-        bot: { color: '#0000ff', width: 16 },
-        maia: { color: '#00ff00', width: 64 },
-      }).bot,
-    ).toEqual({ color: '#0000ff', width: 16 });
+  it('ignores removed keys', () => {
+    expect(normalizeArrowSettings({ maia: { color: '#00ff00', width: 64 } }).bot).toBe(
+      defaultArrowSettings.bot,
+    );
   });
   it('accepts the full cell-width ceiling and canonicalizes hex case', () => {
     const settings = normalizeArrowSettings({
@@ -158,7 +141,7 @@ describe('arrow settings', () => {
       'objective',
     ]);
     expect(JSON.stringify(base)).not.toBe(JSON.stringify(custom));
-    // Back-compat: omitting settings keeps the legacy signature working.
+    // Back-compat: omitting settings keeps the old signature working.
     expect(reviewShapes({ ...moves }, { ...toggles }).map(shape => shape.brush)).toEqual([
       'actual',
       'next',
@@ -206,7 +189,8 @@ describe('arrow settings', () => {
       KEYS.arrows,
       JSON.stringify({ stockfish: { color: '#00ff00', width: 32 } }),
     );
-    expect(initialState().arrows.objective).toEqual({ color: '#00ff00', width: 32 });
+    expect(initialState().arrows.stockfish).toEqual({ color: '#00ff00', width: 32 });
+    expect(initialState().arrows.objective).toEqual(defaultArrowSettings.objective);
     localStorage.setItem(KEYS.arrows, JSON.stringify('wide'));
     expect(initialState().arrows).toBe(defaultArrowSettings);
   });

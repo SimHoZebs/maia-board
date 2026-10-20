@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../components';
-import { adoptLegacyGames, startLichessLogin, unownedGamesCount } from '../history/account';
+import { startLichessLogin } from '../history/account';
 import { useSessionSnapshot, useSessionStore } from '../history/session';
 
 export function AccountPanel() {
@@ -10,8 +10,6 @@ export function AccountPanel() {
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [adoptState, setAdoptState] = useState<string | null>(null);
-  const [unowned, setUnowned] = useState<number | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -20,21 +18,6 @@ export function AccountPanel() {
       void sessionStore.refresh();
     }
   }, [sessionStore]);
-
-  useEffect(() => {
-    if (!account) return;
-    let live = true;
-    unownedGamesCount()
-      .then(count => {
-        if (live) setUnowned(count);
-      })
-      .catch(() => {
-        if (live) setUnowned(null);
-      });
-    return () => {
-      live = false;
-    };
-  }, [account]);
 
   const doLogin = async () => {
     setBusy(true);
@@ -53,8 +36,6 @@ export function AccountPanel() {
     setBusy(true);
     try {
       await sessionStore.logout();
-      setAdoptState(null);
-      setUnowned(null);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Logout failed.');
     } finally {
@@ -69,24 +50,6 @@ export function AccountPanel() {
       await startLichessLogin();
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Lichess login failed to start.');
-      setBusy(false);
-    }
-  };
-
-  const doAdopt = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const adopted = await adoptLegacyGames();
-      setUnowned(0);
-      setAdoptState(
-        adopted === 0
-          ? 'Nothing to claim: every saved game already belongs to an account.'
-          : `Claimed ${adopted} existing game${adopted === 1 ? '' : 's'} into your account. See History.`,
-      );
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'Adoption failed.');
-    } finally {
       setBusy(false);
     }
   };
@@ -156,21 +119,6 @@ export function AccountPanel() {
           </Button>
         </div>
       )}
-      {(unowned !== 0 || adoptState) && (
-        <div className="account-row">
-          <p className="account-note">
-            Games saved before accounts existed belong to nobody. Claim them into your account.
-          </p>
-          {unowned !== 0 && (
-            <div className="account-actions">
-              <Button onClick={doAdopt} disabled={busy}>
-                Claim existing games
-              </Button>
-            </div>
-          )}
-        </div>
-      )}
-      {adoptState && <p className="account-note">{adoptState}</p>}
     </section>
   );
 }

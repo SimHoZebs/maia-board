@@ -46,19 +46,11 @@ const normalizeStyle = (value: unknown, fallback: ArrowStyle): ArrowStyle => {
 export function normalizeArrowSettings(value: unknown): ArrowSettings {
   if (typeof value !== 'object' || value === null) return defaultArrowSettings;
   const record = value as Record<string, unknown>;
-  // Legacy migration: the blue arrow was keyed 'stockfish' before the
-  // objective (bot 2400) lane took over that slot; the red arrow was keyed
-  // 'maia' before the role rename. New keys win when both are present.
-  // A stored stockfish value with no objective sibling is that legacy blue,
-  // not the Stockfish-best arrow (persisted objects always carry objective
-  // now), so the Stockfish arrow only reads stockfish alongside objective.
-  const objectiveRaw = record.objective ?? record.stockfish;
-  const stockfishRaw = record.objective === undefined ? undefined : record.stockfish;
   const next: ArrowSettings = {
     actual: normalizeStyle(record.actual, defaultArrowSettings.actual),
-    bot: normalizeStyle(record.bot ?? record.maia, defaultArrowSettings.bot),
-    objective: normalizeStyle(objectiveRaw, defaultArrowSettings.objective),
-    stockfish: normalizeStyle(stockfishRaw, defaultArrowSettings.stockfish),
+    bot: normalizeStyle(record.bot, defaultArrowSettings.bot),
+    objective: normalizeStyle(record.objective, defaultArrowSettings.objective),
+    stockfish: normalizeStyle(record.stockfish, defaultArrowSettings.stockfish),
     next: normalizeStyle(record.next, defaultArrowSettings.next),
   };
   return next.actual === defaultArrowSettings.actual &&

@@ -184,7 +184,7 @@ export function SavedGames({
   useSyncSnapshot(sync);
   // Row identity: strict rows always carry opponent/source (`Maia <elo>`
   // for engine games, Lichess names for imports). The fallback stays for
-  // legacy caches predating the strict migration.
+  // pre-strict caches predating the strict migration.
   const you = useAccountName() ?? 'You';
   const opponentOf = (game: StoredGame) =>
     game.opponent ||

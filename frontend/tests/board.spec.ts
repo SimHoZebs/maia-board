@@ -18,6 +18,9 @@ const record = (
   moves,
   settings: { ...defaultSettings, userColor: color },
 });
+const v2doc = (games: StoredGame[], currentId: string | null = null) => ({
+  'maia-board.games.v2': { schema: 2, games, pending: [], currentId, recovery: [] },
+});
 
 // Capture clipboard writes: the fixtures serve plain HTTP, where the async
 // clipboard API is unavailable, so the app would take its execCommand
@@ -228,12 +231,16 @@ async function boot(
   const destination = page.getByRole('navigation', { name: 'Destination' });
   if ((page.viewportSize()?.width ?? 1440) <= 760) await expect(destination).toBeHidden();
   else await expect(destination).toBeVisible();
+  const seededDoc = storage['maia-board.games.v2'] as
+    | { games?: StoredGame[]; currentId?: string | null }
+    | undefined;
+  const seededCurrent = seededDoc?.games?.find(game => game.id === seededDoc.currentId);
   if (path === '/' || path === '/play') {
-    if (start && !storage[KEYS.current]) await page.locator('#start-game').click();
+    if (start && !seededCurrent) await page.locator('#start-game').click();
     if (expectBoard) {
       await expect(page.locator('#board cg-board')).toHaveCount(1);
       await expect(page.locator('#board piece:not(.ghost)')).toHaveCount(
-        32 - (storage[KEYS.current] ? countCaptures(storage[KEYS.current] as StoredGame) : 0),
+        32 - (seededCurrent ? countCaptures(seededCurrent) : 0),
       );
     }
   }
@@ -318,7 +325,7 @@ for (const width of [390, 640, 1440]) {
 for (const path of ['/analyze', '/history']) {
   test(`direct ${path} and refresh never start restored play inference`, async ({ page }) => {
     const game = record(['e2e4']);
-    const app = await boot(page, { [KEYS.current]: game, [KEYS.saved]: [game] }, false, path);
+    const app = await boot(page, v2doc([game], game.id), false, path);
     const destination = page.getByRole('link', {
       name: path === '/analyze' ? 'Analyze' : 'History',
       exact: true,
@@ -343,7 +350,7 @@ for (const path of ['/analyze', '/history']) {
 test('direct play resumes once; Back/Forward preserves game viewing and analysis exploration', async ({
   page,
 }) => {
-  const app = await boot(page, { [KEYS.current]: record(['e2e4']) }, false, '/play');
+  const app = await boot(page, v2doc([record(['e2e4'])], 'fixture'), false, '/play');
   await app.reply(0, 'e7e5');
   await page.locator('#analysis-first').click();
   await page.locator('#flip-board').click();
@@ -388,7 +395,7 @@ test('direct play resumes once; Back/Forward preserves game viewing and analysis
 test('Back retires pending analysis; remounts refetch retired rows once and never resume play twice', async ({
   page,
 }) => {
-  const app = await boot(page, { [KEYS.current]: record(['e2e4']) }, false, '/analyze');
+  const app = await boot(page, v2doc([record(['e2e4'])], 'fixture'), false, '/analyze');
   await page.locator('#mode-play').click();
   await expect.poll(() => app.requests.length).toBe(1);
   await page.goBack();
@@ -423,7 +430,7 @@ test('Back retires pending analysis; remounts refetch retired rows once and neve
 });
 
 test('/ redirects and resumes restored bot turn exactly once', async ({ page }) => {
-  const app = await boot(page, { [KEYS.current]: record(['e2e4']) }, false, '/');
+  const app = await boot(page, v2doc([record(['e2e4'])], 'fixture'), false, '/');
   await expect(page).toHaveURL('http://maia.test/play');
   await expect.poll(() => app.requests.length).toBe(1);
   expect(app.requests[0].payload.moves).toEqual(['e2e4']);
@@ -459,7 +466,7 @@ test('/unknown/destination renders not-found with destinations', async ({ page }
 });
 test('Analyze current game keeps the importer behind its analysis URL', async ({ page }) => {
   const game = record(['e2e4', 'e7e5']);
-  const app = await boot(page, { [KEYS.current]: game }, false, '/history');
+  const app = await boot(page, v2doc([game], game.id), false, '/history');
   await page.locator('#mode-analysis').click();
   await page.getByRole('button', { name: 'History', exact: true }).click();
   await page.getByRole('button', { name: 'Analyze current game', exact: true }).click();
@@ -626,7 +633,7 @@ const special = {
 };
 for (const color of ['white', 'black'] as const) {
   test(`${color}: castling reconciles rook`, async ({ page }) => {
-    const app = await boot(page, { [KEYS.current]: record(special.castle[color], color) });
+    const app = await boot(page, v2doc([record(special.castle[color], color)], 'fixture'));
     const rank = color === 'white' ? '1' : '8';
     await move(page, `e${rank}`, `g${rank}`, color === 'black');
     await piece(page, `g${rank}`, `${color} king`);
@@ -639,7 +646,7 @@ for (const color of ['white', 'black'] as const) {
     expect(app.errors).toEqual([]);
   });
   test(`${color}: en passant removes captured pawn`, async ({ page }) => {
-    const app = await boot(page, { [KEYS.current]: record(special.ep[color], color) });
+    const app = await boot(page, v2doc([record(special.ep[color], color)], 'fixture'));
     const from = color === 'white' ? 'e5' : 'e4',
       to = color === 'white' ? 'd6' : 'd3';
     await move(page, from, to, color === 'white');
@@ -649,7 +656,7 @@ for (const color of ['white', 'black'] as const) {
     expect(app.requests[0].payload.moves.at(-1)).toBe(from + to);
   });
   test(`${color}: promotion restores board, cancels and underpromotes`, async ({ page }) => {
-    const app = await boot(page, { [KEYS.current]: record(special.promotion[color], color) });
+    const app = await boot(page, v2doc([record(special.promotion[color], color)], 'fixture'));
     const from = color === 'white' ? 'b7' : 'g2',
       to = color === 'white' ? 'a8' : 'h1';
     await move(page, from, to);
@@ -738,7 +745,7 @@ test('saved switching at identical FEN retires pending reply and persists select
 }) => {
   const a = record(['e2e4'], 'white', 'a'),
     b = record(['e2e4'], 'white', 'b');
-  const app = await boot(page, { [KEYS.current]: a, [KEYS.saved]: [a, b] });
+  const app = await boot(page, v2doc([a, b], a.id));
   await expect.poll(() => app.requests.length).toBe(1);
   await page.locator('#mode-history').click();
   await page.locator('[data-game-id="b"]').click();
@@ -820,7 +827,7 @@ test('board crashes stay inside the board panel, rest of app unaffected', async 
   // fallback persists until the scoped retry instead of auto-clearing.
   const app = await boot(
     page,
-    { [KEYS.current]: record([], 'white', 'crash-game') },
+    v2doc([record([], 'white', 'crash-game')], 'crash-game'),
     true,
     '/play',
     () => {
@@ -1096,7 +1103,7 @@ test('history review, resume, copy, delete, and just-finished game review', asyn
   await stubClipboard(page);
   const mate = record(['f2f3', 'e7e5', 'g2g4', 'd8h4'], 'white', 'mate');
   const unfinished = record(['e2e4', 'e7e5'], 'white', 'unfinished');
-  const app = await boot(page, { [KEYS.current]: mate, [KEYS.saved]: [mate, unfinished] });
+  const app = await boot(page, v2doc([mate, unfinished], mate.id));
   await expect(page.locator('.game-result')).toContainText('Black wins');
   await expect(page.locator('.board-stage.game-over .game-result .side-dot.black')).toHaveCount(1);
   await expect(page.locator('.board-stage.game-over')).toHaveCount(1);
@@ -1132,7 +1139,7 @@ test('history review, resume, copy, delete, and just-finished game review', asyn
 });
 
 test('analysis entry sources and input keyboard isolation', async ({ page }) => {
-  const app = await boot(page, { [KEYS.saved]: [record(['d2d4', 'd7d5'])] }, false);
+  const app = await boot(page, v2doc([record(['d2d4', 'd7d5'])]), false);
   await page.locator('#mode-analysis').click();
   await page.getByRole('button', { name: 'History', exact: true }).last().click();
   await page.locator('.saved-game .saved-open').click();
@@ -1185,7 +1192,7 @@ test('analysis entry sources and input keyboard isolation', async ({ page }) => 
 });
 
 test('tapping a history game opens its analysis', async ({ page }) => {
-  const app = await boot(page, { [KEYS.saved]: [record(['e2e4', 'e7e5'], 'white', 'g1')] }, false);
+  const app = await boot(page, v2doc([record(['e2e4', 'e7e5'], 'white', 'g1')]), false);
   await page.locator('#mode-history').click();
   await expect(page.locator('.saved-game')).toHaveCount(1);
   await page.locator('.saved-game .saved-open').click();
@@ -1229,12 +1236,7 @@ test('mobile bottom bar pins to the viewport without clipping trailing content',
   const many = Array.from({ length: 12 }, (_, index) =>
     record(['e2e4', 'e7e5'], 'white', `g${index}`),
   );
-  await boot(
-    page,
-    { [KEYS.current]: game, [KEYS.saved]: [game, mate, ...many] },
-    false,
-    '/history',
-  );
+  await boot(page, v2doc([game, mate, ...many], game.id), false, '/history');
   // Menu-only bar on a list page: pinned to the viewport bottom …
   const pagebar = page.locator('.mobile-pagebar');
   await expect(pagebar).toBeVisible();
@@ -1269,7 +1271,7 @@ test('mobile board stage stays fixed while the insight panel scrolls', async ({ 
   await page.setViewportSize({ width: 390, height: 844 });
   await boot(
     page,
-    { [KEYS.current]: record(['e2e4', 'e7e5', 'g1f3', 'g8f6', 'f1c4', 'f8c5']) },
+    v2doc([record(['e2e4', 'e7e5', 'g1f3', 'g8f6', 'f1c4', 'f8c5'])], 'fixture'),
     false,
     '/analyze?moves=e2e4,e7e5,g1f3,g8f6,f1c4,f8c5',
   );
@@ -1297,7 +1299,7 @@ test('bottom bar swaps mounts across the mobile breakpoint without duplicating',
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await boot(page, { [KEYS.current]: record(['e2e4', 'e7e5']) });
+  await boot(page, v2doc([record(['e2e4', 'e7e5'])], 'fixture'));
   // Mobile: footer mount only, IDs unique, menu works from the footer.
   await expect(page.locator('.mobile-footer .move-navigation')).toBeVisible();
   await expect(page.locator('.board-stage .move-navigation')).toHaveCount(0);
@@ -1328,7 +1330,7 @@ for (const viewport of [
   }, testInfo) => {
     await page.setViewportSize(viewport);
     const long = Array.from({ length: 18 }, () => ['g1f3', 'g8f6', 'f3g1', 'f6g8']).flat();
-    await boot(page, { [KEYS.current]: record(long) });
+    await boot(page, v2doc([record(long)], 'fixture'));
     const board = await page.locator('#board').boundingBox();
     expect(board!.width).toBeGreaterThan(viewport.width < 760 ? 300 : 380);
     expect(Math.abs(board!.width - board!.height)).toBeLessThan(1);
@@ -1385,10 +1387,13 @@ for (const viewport of [
     await page.locator('#analysis-last').click();
     await expect(page.locator('.move-cell[aria-current]')).toBeInViewport();
     await expect(page.locator('.game-result')).toBeInViewport();
-    await page.evaluate(({ key, game }) => localStorage.setItem(key, JSON.stringify(game)), {
-      key: KEYS.current,
-      game: record(['e2e4', 'e7e5']),
-    });
+    await page.evaluate(
+      game => {
+        const doc = { schema: 2, games: [game], pending: [], currentId: game.id, recovery: [] };
+        localStorage.setItem('maia-board.games.v2', JSON.stringify(doc));
+      },
+      record(['e2e4', 'e7e5']),
+    );
     await page.reload();
     const controls = (await page.locator('.board-actions').boundingBox())!;
     expect(controls.y + controls.height).toBeLessThanOrEqual(viewport.height);
@@ -1412,7 +1417,7 @@ for (const width of [320, 360, 390]) {
     page,
   }) => {
     await page.setViewportSize({ width, height: 844 });
-    const app = await boot(page, { [KEYS.current]: record(['e2e4', 'e7e5']) });
+    const app = await boot(page, v2doc([record(['e2e4', 'e7e5'])], 'fixture'));
     const menu = page.locator('#mobile-menu');
     await expect(menu).toBeVisible();
     await expect(menu).toHaveAttribute('aria-expanded', 'false');
@@ -1735,7 +1740,7 @@ test('desktop analysis branches downward, next rejoins original', async ({ page 
 test('complete game navigation keeps board size stable', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const mate = record(['f2f3', 'e7e5', 'g2g4', 'd8h4'], 'white', 'mate');
-  await boot(page, { [KEYS.current]: mate, [KEYS.saved]: [mate] });
+  await boot(page, v2doc([mate], mate.id));
   await expect(page.locator('.game-result')).toBeVisible();
   const size = () =>
     page.locator('#board').evaluate(el => {

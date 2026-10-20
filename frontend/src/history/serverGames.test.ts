@@ -39,7 +39,7 @@ describe('server mapping', () => {
   it('round-trips stored games and rejects invalid rows', () => {
     expect(toStoredGame(row('a', ['e2e4']))).toMatchObject({ id: 'a', moves: ['e2e4'] });
     expect(toStoredGame({ ...row('b'), moves: ['e9'] })).toBeUndefined();
-    // Unknown colors coerce like other legacy settings; the server never sends them.
+    // Unknown colors coerce like other old-format settings; the server never sends them.
     expect(toStoredGame({ ...row('c'), user_color: 'green' })).toMatchObject({
       settings: { userColor: 'white' },
     });
@@ -170,7 +170,3 @@ describe('mergeSync', () => {
     });
   });
 });
-
-// The v1 outbox/marker one-time import was deleted with the live migration
-// branch; its documented script lives on the OutboxOp declaration in
-// serverGames.ts.
