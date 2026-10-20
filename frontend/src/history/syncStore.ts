@@ -15,29 +15,45 @@ export type SyncDisplay = {
 };
 
 // Direct selector over the repository snapshot: sync indicators derive from
-// this one function instead of a hand-kept field mirror.
+// this one function instead of a hand-kept field mirror. A null repo is the
+// explicit detached state (store created but no snapshot pushed yet) — never
+// silently defaulted per-field via `?.` + `??`.
 export function selectSyncDisplay(
   repo: RepositorySnapshot | null,
   preference: string,
 ): SyncDisplay {
-  const pending = (repo?.pending.length ?? 0) + (repo?.recovery.length ?? 0);
+  if (repo === null) {
+    return {
+      pending: 0,
+      total: null,
+      error: preference,
+      durabilityError: '',
+      hasMore: false,
+      loading: false,
+      pendingOperations: [],
+      recoveryItems: [],
+      failedVersion: null,
+      conflict: false,
+    };
+  }
+  const pending = repo.pending.length + repo.recovery.length;
   const recoveryMsg =
-    (repo?.recovery.length ?? 0)
-      ? `${repo!.recovery.length} stored item(s) need recovery. Export pending work before discarding them.`
+    repo.recovery.length > 0
+      ? `${repo.recovery.length} stored item(s) need recovery. Export pending work before discarding them.`
       : '';
-  const combined = [repo?.error ?? '', recoveryMsg].filter(Boolean).join(' ');
-  const error = [repo?.durabilityError ?? '', preference, combined].filter(Boolean).join(' ');
+  const repoParts = [repo.error, recoveryMsg].filter(part => part !== '');
+  const parts = [repo.durabilityError, preference, repoParts.join(' ')].filter(part => part !== '');
   return {
     pending,
-    total: repo?.total ?? null,
-    error,
-    durabilityError: repo?.durabilityError ?? '',
-    hasMore: (repo?.nextOffset ?? null) !== null,
-    loading: repo?.loading ?? false,
-    pendingOperations: repo?.pending ?? [],
-    recoveryItems: repo?.recovery ?? [],
-    failedVersion: repo?.failedVersion ?? null,
-    conflict: repo?.conflict ?? false,
+    total: repo.total,
+    error: parts.join(' '),
+    durabilityError: repo.durabilityError,
+    hasMore: repo.nextOffset !== null,
+    loading: repo.loading,
+    pendingOperations: repo.pending,
+    recoveryItems: repo.recovery,
+    failedVersion: repo.failedVersion,
+    conflict: repo.conflict,
   };
 }
 

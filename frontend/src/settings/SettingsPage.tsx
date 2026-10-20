@@ -73,7 +73,7 @@ export function SettingsPage({ state, dispatch }: Props) {
   // resubscribe so the field shows the fresh baseline instead of a stale edit.
   useEffect(() => subscribeLichessElo(() => setAnchor(loadUserEloAnchor())), []);
   const session = useSessionSnapshot(useSessionStore());
-  const linked = session.account?.lichess_username ?? '';
+  const linked = session.status === 'signed-in' ? (session.account.lichess_username ?? '') : '';
   const elo = computeUserElo(anchor, state.saved);
   // The field shows the current rating until edited; Save activates only
   // on a real change and stamps today as the new baseline date.

@@ -1,6 +1,6 @@
 import { ArrowUpRight, BookOpen } from 'lucide-react';
 import { sideName } from '../shared/domain';
-import { useAccountName } from '../history/session';
+import { accountDisplayName, useAccountName } from '../history/session';
 import { countLabels, summarizeReview, type ReviewSide } from './reviewSummary';
 import type { Review } from './useReview';
 import './review-overview.css';
@@ -16,13 +16,13 @@ export function ReviewSummary({
 }: {
   review: Review;
   ply: number;
-  userSide?: ReviewSide;
+  userSide: ReviewSide | null;
   branch: boolean;
   onGraphView: (ply: number) => void;
 }) {
   const summary = summarizeReview(review.nodes, review.qualities, userSide);
   const complete = summary.reviewed === summary.total;
-  const you = useAccountName() ?? 'You';
+  const you = accountDisplayName(useAccountName());
   // Opening identity of the viewed position: deepest named ancestor, so the
   // family persists after the line leaves book.
   const { opening } = useLineOpenings(review.timeline.moves, review.timeline.initialFen, ply);
@@ -101,13 +101,13 @@ export function ReviewIssues({
   onInspect,
 }: {
   review: Review;
-  userSide?: ReviewSide;
+  userSide: ReviewSide | null;
   branch: boolean;
   onInspect: (beforePly: number) => void;
 }) {
   const summary = summarizeReview(review.nodes, review.qualities, userSide);
   const complete = summary.reviewed === summary.total;
-  const you = useAccountName() ?? 'You';
+  const you = accountDisplayName(useAccountName());
   const sideLabel = (color: ReviewSide) =>
     `${sideName(color)}${userSide === color ? ` · ${you}` : ''}`;
   return (
@@ -178,7 +178,7 @@ export function ReviewOverview({
 }: {
   review: Review;
   ply: number;
-  userSide?: ReviewSide;
+  userSide: ReviewSide | null;
   branch: boolean;
   onInspect: (beforePly: number) => void;
   onGraphView: (ply: number) => void;

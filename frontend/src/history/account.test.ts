@@ -13,9 +13,13 @@ function jsonResponse(body: unknown, status = 200, cookies: string[] = []) {
 }
 
 describe('account client', () => {
-  it('returns null when logged out or disabled', async () => {
-    await expect(fetchMe(async () => jsonResponse({}, 401))).resolves.toBeNull();
-    await expect(fetchMe(async () => jsonResponse({}, 503))).resolves.toBeNull();
+  it('returns signed-out when logged out and throws when unavailable', async () => {
+    await expect(fetchMe(async () => jsonResponse({}, 401))).resolves.toEqual({
+      kind: 'signed-out',
+    });
+    await expect(fetchMe(async () => jsonResponse({}, 503))).rejects.toThrow(
+      'The game server is unavailable.',
+    );
   });
 
   it('logs in and chunks bulk imports', async () => {
@@ -70,6 +74,33 @@ describe('account client', () => {
       expect(assigned).toEqual(['https://lichess.org/oauth?x=1']);
       const failing = (async () => jsonResponse({}, 501)) as typeof fetch;
       await expect(startLichessLogin(failing)).rejects.toThrow('not configured');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('rejects foreign authorization urls without navigating', async () => {
+    const assigned: string[] = [];
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'https://x.test',
+        assign: (url: string) => {
+          assigned.push(url);
+        },
+      },
+    });
+    try {
+      const evil = (async () =>
+        jsonResponse({
+          authorization_url: 'https://evil.example/oauth?x=1',
+          state: 's',
+        })) as typeof fetch;
+      await expect(startLichessLogin(evil)).rejects.toThrow('Lichess login failed to start.');
+      expect(assigned).toEqual([]);
+      const malformed = (async () =>
+        jsonResponse({ authorization_url: '/relative/path', state: 's' })) as typeof fetch;
+      await expect(startLichessLogin(malformed)).rejects.toThrow('Lichess login failed to start.');
+      expect(assigned).toEqual([]);
     } finally {
       vi.unstubAllGlobals();
     }

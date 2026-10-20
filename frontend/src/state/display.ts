@@ -1,5 +1,5 @@
 import { normalizeBoardOrientation } from '../shared/domain';
-import { KEYS, readStorage } from '../history/storage';
+import { KEYS, readPreference } from '../history/storage';
 import { normalizeStockfishSettings, STOCKFISH_STORAGE_KEY } from '../eval/stockfishSettings';
 import {
   defaultArrowSettings,
@@ -48,18 +48,16 @@ export type DisplayState = Pick<
 
 export function initialDisplayState(): DisplayState {
   return {
-    stockfish: normalizeStockfishSettings(readStorage(STOCKFISH_STORAGE_KEY)),
-    feedback: readStorage<boolean>(KEYS.feedback) === true,
-    playVerdict: readStorage<boolean>(KEYS.playVerdict) === true,
-    badgeLoading: normalizeBadgeLoading(readStorage<unknown>(KEYS.badgeLoading)),
-    coordinatesOnSquares: normalizeCoordinatesOnSquares(
-      readStorage<unknown>(KEYS.coordinatesOnSquares),
-    ),
-    soundEnabled: normalizeSoundEnabled(readStorage<unknown>(KEYS.sound)),
-    boardOrientation: normalizeBoardOrientation(readStorage<unknown>(KEYS.boardOrientation)),
-    bestLineWindow: normalizeBestLineWindow(readStorage<unknown>(KEYS.bestLineWindow)),
-    arrows: normalizeArrowSettings(readStorage<unknown>(KEYS.arrows)),
-    arrowBasis: normalizeArrowBasis(readStorage<unknown>(KEYS.arrowBasis)),
+    stockfish: normalizeStockfishSettings(readPreference(STOCKFISH_STORAGE_KEY)),
+    feedback: readPreference(KEYS.feedback) === true,
+    playVerdict: readPreference(KEYS.playVerdict) === true,
+    badgeLoading: normalizeBadgeLoading(readPreference(KEYS.badgeLoading)),
+    coordinatesOnSquares: normalizeCoordinatesOnSquares(readPreference(KEYS.coordinatesOnSquares)),
+    soundEnabled: normalizeSoundEnabled(readPreference(KEYS.sound)),
+    boardOrientation: normalizeBoardOrientation(readPreference(KEYS.boardOrientation)),
+    bestLineWindow: normalizeBestLineWindow(readPreference(KEYS.bestLineWindow)),
+    arrows: normalizeArrowSettings(readPreference(KEYS.arrows)),
+    arrowBasis: normalizeArrowBasis(readPreference(KEYS.arrowBasis)),
     flipped: false,
   };
 }

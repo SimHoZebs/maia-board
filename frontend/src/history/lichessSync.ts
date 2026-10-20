@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { loadLine } from '../shared/domain';
 import { isRecord } from '../shared/guards';
-import { KEYS, readStorage, writeStorage } from './storage';
+import { KEYS, readPreference, writeStorage } from './storage';
 import { normalizeUserElo, saveUserEloAnchor } from './userElo';
 import type { ImportPayload } from './account';
 
@@ -76,7 +76,7 @@ export function normalizeLichessEloBasis(value: unknown): LichessEloBasis {
 }
 
 export function loadLichessEloBasis(): LichessEloBasis {
-  return normalizeLichessEloBasis(readStorage<unknown>(LICHESS_BASIS_KEY));
+  return normalizeLichessEloBasis(readPreference(LICHESS_BASIS_KEY));
 }
 
 export function saveLichessEloBasis(basis: LichessEloBasis): void {
@@ -184,7 +184,7 @@ function isCacheRecord(value: unknown): value is LichessEloCache {
 }
 
 export function loadLichessEloCache(): LichessEloCache | null {
-  const raw = readStorage<unknown>(LICHESS_SYNC_KEY);
+  const raw = readPreference(LICHESS_SYNC_KEY);
   if (!isCacheRecord(raw)) return null;
   const username = normalizeLichessUsername(raw.username);
   if (!username) return null;

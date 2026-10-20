@@ -2,13 +2,15 @@ import { Chess } from 'chess.js';
 import {
   analysisLength,
   applyUci,
+  buildTimeline,
   loadLine,
   normalizeLinePlayers,
   parseSquare,
+  rowAt,
   uciFromMove,
 } from '../shared/domain';
 import { sameLine } from '../app/analysisUrl';
-import { KEYS, readStorage } from '../history/storage';
+import { KEYS, readStorage, StorageError } from '../history/storage';
 import { currentPosition, commitMove, transition } from './shared';
 import { clampElo } from '../board/BoardTools';
 import type { Action, AnalysisSnapshot, State } from './types';
@@ -18,7 +20,16 @@ import type { Action, AnalysisSnapshot, State } from './types';
 // independently of the import-form inputs: the snapshot is the board, the
 // inputs are the importer's text.
 export function readSnapshot(): { analysis: State['analysis']; gameId?: string } | undefined {
-  const stored = readStorage<Partial<AnalysisSnapshot>>(KEYS.snapshot);
+  let stored: Partial<AnalysisSnapshot> | undefined;
+  try {
+    stored = readStorage<Partial<AnalysisSnapshot>>(KEYS.snapshot);
+  } catch (error) {
+    if (error instanceof StorageError) {
+      console.warn(`maia-board: corrupt snapshot for ${error.key}; starting empty.`);
+      return undefined;
+    }
+    throw error;
+  }
   if (
     !stored ||
     typeof stored.initialFen !== 'string' ||
@@ -82,7 +93,24 @@ export function reduceAnalysis(state: State, action: Action): State | undefined 
     case 'explore': {
       if (state.mode !== 'analysis' || !state.analysisLoaded || state.promotion) return state;
       if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(action.uci)) return state;
-      if (new Chess(currentPosition(state).fen).isGameOver()) return state;
+      // History-aware terminality from the cached timeline row (repetition
+      // needs full history; FEN parses miss it).
+      const lineMoves =
+        state.analysis.branchFromPly === null
+          ? state.analysis.moves
+          : [
+              ...state.analysis.moves.slice(0, state.analysis.branchFromPly),
+              ...state.analysis.branchMoves,
+            ];
+      try {
+        if (
+          rowAt(buildTimeline(state.analysis.initialFen, lineMoves), state.analysis.index)
+            .outcome !== null
+        )
+          return state;
+      } catch {
+        return state;
+      }
       const from = parseSquare(action.uci.slice(0, 2));
       const to = parseSquare(action.uci.slice(2, 4));
       if (from === undefined || to === undefined) return state;
@@ -107,7 +135,12 @@ export function reduceAnalysis(state: State, action: Action): State | undefined 
       let originFen: string;
       try {
         originFen = currentPosition(state).fen;
-        if (new Chess(originFen).isGameOver()) return state;
+        const originLine =
+          analysis.branchFromPly === null
+            ? analysis.moves
+            : [...analysis.moves.slice(0, analysis.branchFromPly), ...analysis.branchMoves];
+        if (rowAt(buildTimeline(analysis.initialFen, originLine), analysis.index).outcome !== null)
+          return state;
       } catch {
         return state;
       }

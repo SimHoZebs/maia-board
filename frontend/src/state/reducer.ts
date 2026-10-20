@@ -10,7 +10,7 @@ import {
   type Settings,
 } from '../shared/domain';
 import { sameLine, type UrlLine } from '../app/analysisUrl';
-import { KEYS, loadSettings, readStorage } from '../history/storage';
+import { KEYS, loadSettings, readPreference } from '../history/storage';
 import { mergeSync } from '../history/serverGames';
 import { readGameRepository } from '../history/gameRepository';
 import { currentPosition, commitMove, botTurn, queueRequest, transition } from './shared';
@@ -35,11 +35,23 @@ export function initialState(
   repository = readGameRepository(),
 ): State {
   const restored = repository.games.find(game => game.id === repository.currentId);
-  const settings = restored?.settings ?? loadSettings();
-  const stored = readStorage<Partial<State['inputs']>>(KEYS.analysis);
+  const settings = restored !== undefined ? restored.settings : loadSettings();
+  const stored = readPreference(KEYS.analysis);
   const inputs = {
-    fen: typeof stored?.fen === 'string' ? stored.fen : '',
-    pgn: typeof stored?.pgn === 'string' ? stored.pgn : '',
+    fen:
+      typeof stored === 'object' &&
+      stored !== null &&
+      'fen' in stored &&
+      typeof (stored as { fen?: unknown }).fen === 'string'
+        ? (stored as { fen: string }).fen
+        : '',
+    pgn:
+      typeof stored === 'object' &&
+      stored !== null &&
+      'pgn' in stored &&
+      typeof (stored as { pgn?: unknown }).pgn === 'string'
+        ? (stored as { pgn: string }).pgn
+        : '',
   };
   const restoredSession = readSnapshot();
   let analysis = loadLine();

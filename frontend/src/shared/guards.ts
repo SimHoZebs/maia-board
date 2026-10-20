@@ -8,7 +8,7 @@
 import type { StockfishSettings } from '../eval/stockfishSettings';
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export function isStringArray(value: unknown): value is string[] {

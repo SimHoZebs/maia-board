@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { BotApiError } from '../eval/api';
 import { ReviewCoordinator } from '../review/reviewCoordinator';
 import { initialState, reducer, snapshotOf, type Action, type State } from '../state/index';
-import { KEYS, readStorage, writeStorage } from '../history/storage';
+import { KEYS, readStorage, StorageError, writeStorage } from '../history/storage';
 import { GameRepository } from '../history/gameRepository';
 import { HistorySyncStore } from '../history/syncStore';
 import type { Mode } from '../shared/domain';
@@ -89,10 +89,21 @@ export function useBotBoard(mode: Mode, urlLine?: UrlLine) {
       // replayable reducer/render lifecycle. Boot reads have no mutation command.
       if (action.type === 'delete') {
         repository.delete(action.id);
-        const storedSnapshot = readStorage<{ gameId?: string }>(KEYS.snapshot);
+        let storedSnapshot: { gameId?: string } | undefined;
+        try {
+          storedSnapshot = readStorage<{ gameId?: string }>(KEYS.snapshot);
+        } catch (error) {
+          if (error instanceof StorageError) {
+            console.warn(`maia-board: corrupt snapshot for ${error.key}; skipping clear.`);
+            storedSnapshot = undefined;
+          } else throw error;
+        }
         if (storedSnapshot?.gameId === action.id) {
-          const error = writeStorage(KEYS.snapshot, null);
-          if (error) sync.setPreferenceError(error.message);
+          try {
+            writeStorage(KEYS.snapshot, null);
+          } catch (error) {
+            sync.setPreferenceError(error instanceof Error ? error.message : String(error));
+          }
         }
       } else if (
         action.type !== 'sync' &&
@@ -195,9 +206,12 @@ export function useBotBoard(mode: Mode, urlLine?: UrlLine) {
         continue;
       }
       if (lastPersisted.current.get(key) === serialized) continue;
-      const error = writeStorage(key, value);
-      if (error) errorMessage = error.message;
-      else lastPersisted.current.set(key, serialized);
+      try {
+        writeStorage(key, value);
+        lastPersisted.current.set(key, serialized);
+      } catch (error) {
+        errorMessage = error instanceof Error ? error.message : String(error);
+      }
     }
     sync.setPreferenceError(errorMessage);
   }, [

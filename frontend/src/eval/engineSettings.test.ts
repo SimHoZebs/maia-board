@@ -104,8 +104,9 @@ it('restores and validates browser settings and stored games', () => {
     moves: [],
     settings: { userColor: 'black', eloMaia: 1800, eloUser: 1700, model: '79m' },
   });
-  expect(oldKeys?.settings.botElo).toBe(1600);
-  expect(oldKeys?.settings.userElo).toBe(400);
+  if (!oldKeys.ok) throw new Error(`expected old-keys to parse: ${oldKeys.reason}`);
+  expect(oldKeys.game.settings.botElo).toBe(1600);
+  expect(oldKeys.game.settings.userElo).toBe(400);
   const row = {
     id: 'a',
     created_at: '2026-09-11T00:00:00Z',
@@ -117,7 +118,9 @@ it('restores and validates browser settings and stored games', () => {
     moves: [],
     temperature: 0.7,
   };
-  expect(toStoredGame(row)?.settings.temperature).toBe(0.7);
+  const stored = toStoredGame(row);
+  if (stored === undefined) throw new Error('expected row to convert');
+  expect(stored.settings.temperature).toBe(0.7);
 });
 
 it('separates Stockfish cache identity while retaining bot cache identity', () => {

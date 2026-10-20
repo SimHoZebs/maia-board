@@ -6,7 +6,6 @@ import { useSessionSnapshot, useSessionStore } from '../history/session';
 export function AccountPanel() {
   const sessionStore = useSessionStore();
   const session = useSessionSnapshot(sessionStore);
-  const account = session.account;
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -62,12 +61,12 @@ export function AccountPanel() {
       </section>
     );
 
-  if (account === null)
+  if (session.status === 'signed-out')
     return (
       <section aria-label="Account" className="settings-control">
         <h2>Account</h2>
         {error && <p role="alert">{error}</p>}
-        {session.error && <p role="alert">{session.error}</p>}
+        {session.message && <p role="alert">{session.message}</p>}
         <p>Log in to own your games. History, reviews, and engine calls scope to your account.</p>
         <div className="account-actions">
           <Button variant="primary" onClick={doConnect} disabled={busy}>
@@ -89,6 +88,7 @@ export function AccountPanel() {
       </section>
     );
 
+  const account = session.account;
   const initial = (account.display_name.trim()[0] ?? '?').toUpperCase();
   return (
     <section aria-label="Account" className="settings-control">
@@ -111,7 +111,6 @@ export function AccountPanel() {
         </div>
       </div>
       {error && <p role="alert">{error}</p>}
-      {session.error && <p role="alert">{session.error}</p>}
       {!account.lichess_username && (
         <div className="account-actions">
           <Button variant="primary" onClick={doConnect} disabled={busy}>

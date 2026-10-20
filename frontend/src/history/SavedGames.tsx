@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { BoardThumbnail } from '../board/BoardThumbnail';
 import { useSyncSnapshot, useSyncStore } from './syncStore';
-import { useAccountName } from './session';
+import { accountDisplayName, useAccountName } from './session';
 import { useFlash } from '../app/useFlash';
 
 // Result from the player's perspective: a resignation is always the player's
@@ -185,7 +185,7 @@ export function SavedGames({
   // Row identity: strict rows always carry opponent/source (`Maia <elo>`
   // for engine games, Lichess names for imports). The fallback stays for
   // pre-strict caches predating the strict migration.
-  const you = useAccountName() ?? 'You';
+  const you = accountDisplayName(useAccountName());
   const opponentOf = (game: StoredGame) =>
     game.opponent ||
     (game.source?.startsWith('lichess:') ? 'Lichess' : `Maia ${game.settings.botElo}`);

@@ -1,4 +1,5 @@
 import type { StoredGame } from '../shared/domain';
+import { isStringMap } from '../shared/guards';
 
 // Account client: session shapes (Chi JSON, not Orval) plus the bulk-import
 // path that appends external history into the caller's owned store.
@@ -45,7 +46,9 @@ function isAccount(value: unknown): value is Account {
   );
 }
 
-export async function fetchMe(fetchImpl: FetchLike = fetch): Promise<Account | null> {
+export type MeResult = { kind: 'signed-in'; account: Account } | { kind: 'signed-out' };
+
+export async function fetchMe(fetchImpl: FetchLike = fetch): Promise<MeResult> {
   let response: Response;
   try {
     response = await fetchImpl('/me', {
@@ -56,7 +59,9 @@ export async function fetchMe(fetchImpl: FetchLike = fetch): Promise<Account | n
   } catch {
     throw new AccountError('server_unreachable', 'The game server could not be reached.');
   }
-  if (response.status === 401 || response.status === 503) return null;
+  if (response.status === 401) return { kind: 'signed-out' };
+  if (response.status === 503)
+    throw new AccountError('unavailable', 'The game server is unavailable.', response.status);
   if (!response.ok) throw new AccountError('unknown', 'Account lookup failed.', response.status);
   const body = await readJson(response);
   if (!isAccount(body))
@@ -65,7 +70,7 @@ export async function fetchMe(fetchImpl: FetchLike = fetch): Promise<Account | n
       'The account server returned an incomplete account.',
       response.status,
     );
-  return body;
+  return { kind: 'signed-in', account: body };
 }
 
 export async function loginLocal(
@@ -128,6 +133,15 @@ export async function startLichessLogin(fetchImpl: FetchLike = fetch): Promise<v
       response.status,
     );
   }
+  let target: URL;
+  try {
+    target = new URL(body.authorization_url);
+  } catch {
+    throw new AccountError('unknown', 'Lichess login failed to start.', response.status);
+  }
+  if (target.origin !== 'https://lichess.org') {
+    throw new AccountError('unknown', 'Lichess login failed to start.', response.status);
+  }
   window.location.assign(body.authorization_url);
 }
 
@@ -160,6 +174,21 @@ export type ImportRun = {
 
 export type ImportStatus = { last: ImportRun | null; total: number };
 
+function isImportRun(value: unknown): value is ImportRun {
+  if (typeof value !== 'object' || value === null) return false;
+  const row = value as Record<string, unknown>;
+  return (
+    typeof row.id === 'string' &&
+    typeof row.user_id === 'string' &&
+    typeof row.provider === 'string' &&
+    typeof row.username === 'string' &&
+    typeof row.requested === 'number' &&
+    typeof row.saved === 'number' &&
+    typeof row.skipped === 'number' &&
+    typeof row.created_at === 'string'
+  );
+}
+
 export async function importStatus(fetchImpl: FetchLike = fetch): Promise<ImportStatus> {
   let response: Response;
   try {
@@ -170,10 +199,19 @@ export async function importStatus(fetchImpl: FetchLike = fetch): Promise<Import
   const body = (await readJson(response)) as { last?: unknown; total?: unknown };
   if (!response.ok) throw new AccountError('unknown', 'Import status failed.', response.status);
   const last = body.last;
-  return {
-    last: last && typeof last === 'object' ? (last as ImportRun) : null,
-    total: typeof body.total === 'number' ? body.total : 0,
-  };
+  if (last !== undefined && last !== null && !isImportRun(last))
+    throw new AccountError(
+      'unknown',
+      'The account server returned an incomplete import status.',
+      response.status,
+    );
+  if (typeof body.total !== 'number')
+    throw new AccountError(
+      'unknown',
+      'The account server returned an incomplete import status.',
+      response.status,
+    );
+  return { last: last === undefined || last === null ? null : last, total: body.total };
 }
 
 export async function bulkImport(
@@ -193,6 +231,11 @@ export async function bulkImport(
   for (let at = 0; at < games.length; at += 100) {
     const chunk = games.slice(at, at + 100);
     let response: Response;
+    // Provider imports require an explicit username — never silently default
+    // a missing name to `''` and send it.
+    if (opts?.provider !== undefined && (opts.username === undefined || opts.username === '')) {
+      throw new AccountError('invalid_request', 'Import provider requires a username.');
+    }
     try {
       response = await fetchImpl('/imports/games', {
         method: 'POST',
@@ -200,7 +243,9 @@ export async function bulkImport(
         credentials: 'include',
         body: JSON.stringify({
           games: chunk,
-          ...(opts?.provider ? { provider: opts.provider, username: opts?.username ?? '' } : {}),
+          ...(opts?.provider !== undefined
+            ? { provider: opts.provider, username: opts.username as string }
+            : {}),
         }),
       });
     } catch {
@@ -218,7 +263,9 @@ export async function bulkImport(
     for (const row of rows) saved.push(row);
     if (typeof body.skipped === 'number') skipped += body.skipped;
     if (typeof body.refreshed === 'number') refreshed += body.refreshed;
-    const errs = (body.errors ?? {}) as Record<string, string>;
+    if (body.errors !== undefined && !isStringMap(body.errors))
+      throw new AccountError('unknown', 'Import failed.', response.status);
+    const errs = body.errors !== undefined ? body.errors : {};
     for (const [key, code] of Object.entries(errs)) errors[String(Number(key) + at)] = code;
     if (!response.ok && saved.length === 0)
       throw new AccountError('unknown', 'Import failed.', response.status);

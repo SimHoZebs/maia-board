@@ -87,7 +87,7 @@ export function toStoredGame(row: ServerGame): StoredGame | undefined {
     typeof row.opponent === 'string' && row.opponent.length > 0
       ? row.opponent
       : `Maia ${row.elo_maia}`;
-  const base = parseStoredGame({
+  const parsed = parseStoredGame({
     id: row.id,
     createdAt: row.created_at,
     moves: row.moves,
@@ -108,7 +108,8 @@ export function toStoredGame(row: ServerGame): StoredGame | undefined {
     ...(pool !== undefined ? { speed: pool } : {}),
     ...(readings !== undefined ? { clocks: readings } : {}),
   });
-  return base;
+  if (!parsed.ok) return undefined;
+  return parsed.game;
 }
 
 function toPayload(game: StoredGame, current: boolean) {
@@ -284,15 +285,17 @@ export type OutboxOp =
   | { op: 'save'; game: StoredGame; current: boolean }
   | { op: 'delete'; id: string };
 
-// Decodes one pending outbox op from the v2 document.
+// Decodes one pending outbox op from the v2 document. Rejects carry no game:
+// the caller routes them into recovery with an explicit reason.
 export function decodeOutboxOp(value: unknown): OutboxOp | undefined {
-  if (!isRecord(value)) return;
+  if (!isRecord(value)) return undefined;
   const op = value;
   if (op.op === 'delete' && typeof op.id === 'string') return { op: 'delete', id: op.id };
   if (op.op === 'save' && typeof op.current === 'boolean') {
-    const game = parseStoredGame(op.game);
-    if (game) return { op: 'save', game, current: op.current };
+    const parsed = parseStoredGame(op.game);
+    if (parsed.ok) return { op: 'save', game: parsed.game, current: op.current };
   }
+  return undefined;
 }
 
 // Merges server rows with pending local ops. Pending ops always win; the last

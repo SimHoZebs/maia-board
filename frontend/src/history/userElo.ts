@@ -1,9 +1,8 @@
-import { Chess } from 'chess.js';
 import { clampElo } from '../board/BoardTools';
 import type { StoredGame } from '../shared/domain';
-import { replay } from '../shared/domain';
+import { buildTimeline, START_FEN, tipRow } from '../shared/domain';
 import { isRecord } from '../shared/guards';
-import { KEYS, readStorage, writeStorage } from './storage';
+import { KEYS, readPreference, writeStorage } from './storage';
 
 // Adaptive user rating: a dated anchor plus standard Elo replay.
 // The user sets a baseline (default 400) in Settings; every finished game
@@ -46,11 +45,11 @@ export function normalizeAnchor(value: unknown): UserEloAnchor {
 }
 
 export function loadUserEloAnchor(): UserEloAnchor {
-  return normalizeAnchor(readStorage<unknown>(KEYS.userEloAnchor));
+  return normalizeAnchor(readPreference(KEYS.userEloAnchor));
 }
 
-export function saveUserEloAnchor(anchor: UserEloAnchor): Error | undefined {
-  return writeStorage(KEYS.userEloAnchor, anchor);
+export function saveUserEloAnchor(anchor: UserEloAnchor): void {
+  writeStorage(KEYS.userEloAnchor, anchor);
 }
 
 export function expectedScore(user: number, opp: number): number {
@@ -61,27 +60,27 @@ export function updateUserElo(user: number, opp: number, score: UserEloScore): n
   return normalizeUserElo(user + USER_ELO_K * (score - expectedScore(user, opp)));
 }
 
-// Finished games only: checkmate and resignation decide, any other
-// game-over from the board (stalemate, repetition, 50-move, insufficient
-// material) is a draw. Unfinished lines return null and never move Elo.
-// Resignation always means the user resigned (the app has no bot-resign),
-// so it scores 0 for the user.
+// Finished games only: checkmate decides, any other history-aware terminal
+// (stalemate, repetition, 50-move, insufficient material) is a draw.
+// Unfinished lines return null and never move Elo. Resignation always means
+// the user resigned (the app has no bot-resign), so it scores 0.
 export function scoreForGame(
   game: Pick<StoredGame, 'moves' | 'settings' | 'result'>,
 ): UserEloScore | null {
   if (game.result === 'resigned') return 0;
-  let board: Chess;
+  // History-aware tip outcome: a FEN-parsed isGameOver() misses threefold
+  // repetition, which must count as a draw here.
+  let outcome: ReturnType<typeof tipRow>['outcome'];
   try {
-    board = replay(game.moves);
+    outcome = tipRow(buildTimeline(START_FEN, game.moves)).outcome;
   } catch {
     return null;
   }
-  if (board.isCheckmate()) {
-    const winner = board.turn() === 'w' ? 'black' : 'white';
-    return winner === game.settings.userColor ? 1 : 0;
+  if (!outcome) return null;
+  if (outcome.kind === 'checkmate') {
+    return outcome.winner === game.settings.userColor ? 1 : 0;
   }
-  if (board.isGameOver()) return 0.5;
-  return null;
+  return 0.5;
 }
 
 export function opponentElo(game: Pick<StoredGame, 'settings'>): number {

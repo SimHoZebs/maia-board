@@ -45,7 +45,7 @@ export function LoginGate({
         Play, analyze, and keep your games on your own server. Log in first — your history belongs
         to your account.
       </p>
-      {session.error && <p role="alert">{session.error}</p>}
+      {session.status === 'signed-out' && session.message && <p role="alert">{session.message}</p>}
       {error && <p role="alert">{error}</p>}
       <div className="account-actions">
         <Button variant="primary" onClick={startLichess} disabled={busy}>

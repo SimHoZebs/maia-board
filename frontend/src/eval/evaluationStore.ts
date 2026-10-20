@@ -467,8 +467,10 @@ export class EvaluationStore {
     settings: ReviewSettings,
   ): EvaluationResult | MoveResponse | undefined {
     const key = reviewKey(engine, node, settings);
-    if (engine === 'sf' && node.outcome && !this.cache.has(key))
-      this.retain(key, outcomeEvaluation(node.outcome, settings.stockfish)!);
+    if (engine === 'sf' && node.outcome && !this.cache.has(key)) {
+      const terminal = outcomeEvaluation(node.outcome, settings.stockfish);
+      if (terminal !== null) this.retain(key, terminal);
+    }
     const found = this.cache.get(key);
     if (found === undefined) return undefined;
     // Keys embed the engine, so a mismatch is unreachable; drop it rather

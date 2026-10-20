@@ -17,10 +17,14 @@ describe('session store', () => {
   it('maps me to signed-in and 401 to signed-out', async () => {
     const store = new SessionStore(async () => jsonResponse(alice));
     await store.refresh();
-    expect(store.snapshot()).toEqual({ status: 'signed-in', account: alice, error: '' });
+    expect(store.snapshot()).toEqual({ status: 'signed-in', account: alice });
     const loggedOut = new SessionStore(async () => jsonResponse({}, 401));
     await loggedOut.refresh();
-    expect(loggedOut.snapshot().status).toBe('signed-out');
+    expect(loggedOut.snapshot()).toEqual({
+      status: 'signed-out',
+      reason: 'anonymous',
+      message: null,
+    });
   });
 
   it('broadcasts unauthorized observations to subscribers', async () => {
@@ -49,7 +53,7 @@ describe('login gate', () => {
   it('leads with Lichess and offers a local name', () => {
     const html = renderToString(
       <LoginGate
-        session={{ status: 'signed-out', account: null, error: '' }}
+        session={{ status: 'signed-out', reason: 'anonymous', message: null }}
         onLogin={async () => undefined}
       />,
     );

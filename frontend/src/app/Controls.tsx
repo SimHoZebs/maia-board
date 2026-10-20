@@ -42,7 +42,10 @@ export function PlayControls({ state, dispatch }: Props) {
   if (!state.setup || state.mode !== 'play') return null;
   const setup = state.setup;
   const temperature = setup.temperature ?? 0;
-  const synced = matchingLichessCache(lichessCache, session.account?.lichess_username);
+  const synced = matchingLichessCache(
+    lichessCache,
+    session.status === 'signed-in' ? session.account.lichess_username : undefined,
+  );
   const userElo = computeUserElo(loadUserEloAnchor(), state.saved);
   const content = (
     <section id="play-controls" className="setup panel play-setup" aria-label="Game setup">

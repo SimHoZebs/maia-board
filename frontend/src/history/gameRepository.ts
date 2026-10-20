@@ -19,7 +19,6 @@ export const REPOSITORY_KEY = 'maia-board.games.v2';
 // one Web Lock, so a second tab never overwrites the document or uploads
 // ahead of the tab holding it.
 export type PendingGameOperation = OutboxOp & { version: string };
-export type RecoveryItem = { version: string; value: unknown };
 type DurableGames = {
   schema: 2;
   games: StoredGame[];
@@ -55,10 +54,14 @@ export function subscribeGameDeletes(listener: GameDeleteListener): () => void {
 }
 
 // The v2 document atomically stores records, marker and write-ahead operations.
+// Recovery entries carry the reject reason so corrupt rows never collapse
+// into the missing state: every skip names its cause.
+export type RecoveryItem = { version: string; value: unknown; reason: string };
 export function readGameRepository(repositoryRaw?: string | null): DurableGames {
   const recovery: RecoveryItem[] = [];
-  const recover = (value: unknown) => recovery.push({ version: version(), value });
-  const read = (key: string): unknown => {
+  const recover = (value: unknown, reason: string) =>
+    recovery.push({ version: version(), value, reason });
+  const read = (key: string): { state: 'missing' } | { state: 'ok'; value: unknown } => {
     let raw: string | null;
     try {
       raw =
@@ -66,17 +69,18 @@ export function readGameRepository(repositoryRaw?: string | null): DurableGames 
           ? repositoryRaw
           : localStorage.getItem(key);
     } catch {
-      return undefined;
+      return { state: 'missing' };
     }
-    if (raw === null) return undefined;
+    if (raw === null) return { state: 'missing' };
     try {
-      return JSON.parse(raw);
+      return { state: 'ok', value: JSON.parse(raw) };
     } catch {
-      recover({ storageKey: key, raw });
-      return undefined;
+      recover({ storageKey: key, raw }, 'corrupt-json');
+      return { state: 'missing' };
     }
   };
-  const stored: unknown = read(REPOSITORY_KEY);
+  const readResult = read(REPOSITORY_KEY);
+  const stored: unknown = readResult.state === 'ok' ? readResult.value : undefined;
   if (
     isRecord(stored) &&
     stored.schema === 2 &&
@@ -84,16 +88,16 @@ export function readGameRepository(repositoryRaw?: string | null): DurableGames 
     Array.isArray(stored.pending)
   ) {
     const games = stored.games.flatMap(value => {
-      const game = parseStoredGame(value);
-      if (game) return [game];
-      recover(value);
+      const parsed = parseStoredGame(value);
+      if (parsed.ok) return [parsed.game];
+      recover(value, `rejected-game:${parsed.reason}`);
       return [];
     });
     const pending = stored.pending.flatMap(value => {
       const op = decodeOutboxOp(value);
       if (op && isRecord(value) && typeof value.version === 'string')
         return [{ ...op, version: value.version }];
-      recover(value);
+      recover(value, 'rejected-op');
       return [];
     });
     const merged = mergeSync(
@@ -101,15 +105,27 @@ export function readGameRepository(repositoryRaw?: string | null): DurableGames 
       typeof stored.currentId === 'string' ? stored.currentId : null,
       pending,
     );
+    const priorRecovery: RecoveryItem[] = Array.isArray(stored.recovery)
+      ? stored.recovery.flatMap((entry): RecoveryItem[] => {
+          if (!isRecord(entry) || typeof entry.version !== 'string') return [];
+          return [
+            {
+              version: entry.version,
+              value: entry.value,
+              reason: typeof entry.reason === 'string' ? entry.reason : 'legacy-recovery',
+            },
+          ];
+        })
+      : [];
     return {
       schema: 2,
       games: merged.saved,
       pending,
       currentId: merged.currentId,
-      recovery: [...(Array.isArray(stored.recovery) ? stored.recovery : []), ...recovery],
+      recovery: [...priorRecovery, ...recovery],
     };
   }
-  if (stored !== undefined) recover(stored);
+  if (stored !== undefined) recover(stored, 'rejected-document');
   return { schema: 2, games: [], pending: [], currentId: null, recovery };
 }
 
@@ -182,8 +198,7 @@ export class GameRepository {
           'Game history changed in another tab. Export this tab’s pending work before reloading.',
         );
       }
-      const error = writeStorage(REPOSITORY_KEY, document);
-      if (error) throw error;
+      writeStorage(REPOSITORY_KEY, document);
       this.expectedRaw = JSON.stringify(document);
       if (this.value.durabilityError) this.update({ durabilityError: '' });
     } catch (error) {

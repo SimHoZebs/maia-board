@@ -1,8 +1,13 @@
 import { createContext, useContext, useSyncExternalStore } from 'react';
 import { fetchMe, loginLocal, logout, type Account, type FetchLike } from './account';
 
-export type SessionStatus = 'checking' | 'signed-in' | 'signed-out';
-export type SessionSnapshot = { status: SessionStatus; account: Account | null; error: string };
+// Explicit session machine: no `account: null` + `error: ''` sentinels.
+// Each status carries exactly its own data — illegal combinations
+// (signed-in with no account, signed-out with an account) do not typecheck.
+export type SessionSnapshot =
+  | { status: 'checking' }
+  | { status: 'signed-in'; account: Account }
+  | { status: 'signed-out'; reason: 'anonymous' | 'unavailable'; message: string | null };
 
 // Cross-layer 401 broadcast: any sender (gameClient, engine transport) that
 // observes an Unauthorized response announces it here instead of handling
@@ -10,6 +15,7 @@ export type SessionSnapshot = { status: SessionStatus; account: Account | null; 
 // signed-out only when the session is really gone, so one expired tab does
 // not log out a fresh login racing it.
 const unauthorizedListeners = new Set<() => void>();
+let notifiedListenerError = false;
 export function subscribeUnauthorized(listener: () => void): () => void {
   unauthorizedListeners.add(listener);
   return () => {
@@ -24,6 +30,10 @@ export function notifyUnauthorized(): void {
       listener();
     } catch {
       /* owner-side handling; never break senders */
+      if (!notifiedListenerError) {
+        notifiedListenerError = true;
+        console.warn('maia-board: unauthorized listener failed; sender continues.');
+      }
     }
   }
 }
@@ -38,9 +48,9 @@ export function isUnauthorized(error: unknown): boolean {
 }
 
 export class SessionStore {
-  private value: SessionSnapshot = { status: 'checking', account: null, error: '' };
+  private value: SessionSnapshot = { status: 'checking' };
   private listeners = new Set<() => void>();
-  private inflight?: Promise<void>;
+  private inflight: Promise<void> | null = null;
   private lastCheck = 0;
   constructor(private fetcher: FetchLike = fetch) {}
   snapshot = () => this.value;
@@ -55,14 +65,8 @@ export class SessionStore {
     // oxlint-disable-next-line no-useless-spread
     for (const listener of [...this.listeners]) listener();
   }
-  private update(changes: Partial<SessionSnapshot>) {
-    const next = { ...this.value, ...changes };
-    if (
-      next.status === this.value.status &&
-      next.account === this.value.account &&
-      next.error === this.value.error
-    )
-      return;
+  private setSnapshot(next: SessionSnapshot) {
+    if (JSON.stringify(this.value) === JSON.stringify(next)) return;
     this.value = next;
     this.emit();
   }
@@ -74,21 +78,21 @@ export class SessionStore {
       return Promise.resolve();
     this.inflight = (async () => {
       try {
-        const account = await fetchMe(this.fetcher);
+        const result = await fetchMe(this.fetcher);
         this.lastCheck = Date.now();
-        this.update(
-          account
-            ? { status: 'signed-in', account, error: '' }
-            : { status: 'signed-out', account: null, error: '' },
-        );
+        if (result.kind === 'signed-in') {
+          this.setSnapshot({ status: 'signed-in', account: result.account });
+        } else {
+          this.setSnapshot({ status: 'signed-out', reason: 'anonymous', message: null });
+        }
       } catch (error) {
-        this.update({
+        this.setSnapshot({
           status: 'signed-out',
-          account: null,
-          error: error instanceof Error ? error.message : 'Login check failed.',
+          reason: 'unavailable',
+          message: error instanceof Error ? error.message : 'Login check failed.',
         });
       } finally {
-        this.inflight = undefined;
+        this.inflight = null;
       }
     })();
     return this.inflight;
@@ -96,15 +100,15 @@ export class SessionStore {
   login = async (displayName: string): Promise<void> => {
     const account = await loginLocal(displayName, this.fetcher);
     this.lastCheck = Date.now();
-    this.update({ status: 'signed-in', account, error: '' });
+    this.setSnapshot({ status: 'signed-in', account });
   };
   logout = async (): Promise<void> => {
     await logout(this.fetcher);
-    this.update({ status: 'signed-out', account: null, error: '' });
+    this.setSnapshot({ status: 'signed-out', reason: 'anonymous', message: null });
   };
   adopt = (account: Account): void => {
     this.lastCheck = Date.now();
-    this.update({ status: 'signed-in', account, error: '' });
+    this.setSnapshot({ status: 'signed-in', account });
   };
   // 401 observer entry: re-check, and only the refresh result moves state.
   onUnauthorized = (): void => {
@@ -126,10 +130,24 @@ export function useSessionSnapshot(store: SessionStore): SessionSnapshot {
 }
 
 // Display name for identity labels (player strips, history rows, review
-// headers). Null outside a session provider (unit tests) or before login —
-// callers fall back to 'You' so logged-out and test renders keep working.
-export function useAccountName(): string | null {
+// headers). Explicit states: known names vs anonymous (no provider, signed
+// out, checking, or blank). Callers render via `accountDisplayName` — never
+// `?? 'You'`, which collapses the reason.
+export type AccountName =
+  | { kind: 'known'; name: string }
+  | { kind: 'anonymous'; reason: 'no-store' | 'checking' | 'signed-out' | 'blank-name' };
+
+export function useAccountName(): AccountName {
   const store = useContext(SessionContext);
-  const name = store?.snapshot().account?.display_name?.trim();
-  return name ? name : null;
+  if (store === null) return { kind: 'anonymous', reason: 'no-store' };
+  const snapshot = store.snapshot();
+  if (snapshot.status === 'checking') return { kind: 'anonymous', reason: 'checking' };
+  if (snapshot.status === 'signed-out') return { kind: 'anonymous', reason: 'signed-out' };
+  const name = snapshot.account.display_name.trim();
+  if (name === '') return { kind: 'anonymous', reason: 'blank-name' };
+  return { kind: 'known', name };
+}
+
+export function accountDisplayName(name: AccountName): string {
+  return name.kind === 'known' ? name.name : 'You';
 }
