@@ -63,10 +63,8 @@ func NewGameStore(path string) (*GameStore, error) {
 	return &GameStore{db: db}, nil
 }
 
-// initSchema creates and migrates every table in open order. The order is
-// load-bearing: the owner/source index drop (see ensureGameOwnerColumn)
-// runs before the strict triggers install, so the triggers never see the
-// stale predicate.
+// initSchema creates every table in open order. There are no migrations:
+// old database files are not supported, only the current schema.
 func initSchema(db *sql.DB) error {
 	if err := ensureGamesBaseTable(db); err != nil {
 		return err
@@ -74,16 +72,10 @@ func initSchema(db *sql.DB) error {
 	if err := ensureV2Cache(db); err != nil {
 		return err
 	}
-	if err := migrateGameSchema(db); err != nil {
-		return err
-	}
 	if err := ensureUserSchema(db); err != nil {
 		return err
 	}
 	if err := ensureImportSchema(db); err != nil {
-		return err
-	}
-	if err := ensureGameOwnerColumn(db); err != nil {
 		return err
 	}
 	return ensureStrictConstraints(db)

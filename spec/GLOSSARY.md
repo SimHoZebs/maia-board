@@ -179,7 +179,7 @@ otherwise); runners stay engine-keyed, grading reads the role. Frontend
   is page sync.
 - Frontend: `outbox/pending-wins/compare-swap/recovery/export`; backend:
   `withTx` atomicity (disposable LRU `evaluations_v2` vs durable
-  `games+meta`). Do not port outbox to backend.
+  game/user tables). Do not port outbox to backend.
 - Versions: cache envelope `Version=2` vs Maia `ValueRev 1/2` vs
   `maiaRevision` (weights SHA) vs SF `SearchPolicy/policy()` vs additive
   unversioned game DDL.

@@ -43,7 +43,7 @@ overrides the build destination (default `dist`).
   Browser document `maia-board.games.v2` holds records, current marker, and
   pending ops. Ack removes its op version, preserving newer work.
   `serverGames.ts` sends requests (gameClient); `storage.ts` supplies
-  storage + pre-rename readers. Preferences and analysis inputs are browser-local.
+  browser storage. Preferences and analysis inputs are browser-local.
 - `reviewMetrics.ts` derives move grades from objective points (best move +
   mover-relative expected score), not engine responses directly.
   `src/objective/grader.ts` is the grading role (best + expected per
