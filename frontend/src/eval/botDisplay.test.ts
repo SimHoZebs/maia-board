@@ -8,18 +8,12 @@ const settings: ReviewSettings = { botElo: 1600, userElo: 1600, model: '79m' };
 const nodes = reviewNodes(buildTimeline(START_FEN, ['e2e4']));
 it('retains only the same position while displaying the old Elo/model honestly', () => {
   const old = selectBotDisplay(nodes[0], settings, botFixture(START_FEN), null);
-  const pending = selectBotDisplay(
-    nodes[0],
-    { ...settings, botElo: 2000 },
-    undefined,
-    old.entry!,
-    true,
-  );
+  const pending = selectBotDisplay(nodes[0], { ...settings, botElo: 2000 }, null, old.entry, true);
   expect(pending).toMatchObject({ stale: true, pending: true, entry: { botElo: 1600 } });
-  expect(selectBotDisplay(nodes[1], settings, undefined, old.entry!).entry).toBeUndefined();
+  expect(selectBotDisplay(nodes[1], settings, null, old.entry).entry).toBeNull();
   const branch = reviewNodes(buildTimeline(START_FEN, ['d2d4']));
   const after = selectBotDisplay(nodes[1], settings, botFixture(nodes[1].fen), null);
-  expect(selectBotDisplay(branch[1], settings, undefined, after.entry!).entry).toBeUndefined();
+  expect(selectBotDisplay(branch[1], settings, null, after.entry).entry).toBeNull();
 });
 it('fallback identity is actual model while freshness still belongs to the requested key', () => {
   const fallback = botFixture(START_FEN, '5m', true);
@@ -33,7 +27,7 @@ it('fallback identity is actual model while freshness still belongs to the reque
     nodes[0],
     { ...settings, botElo: 2000 },
     botFixture(START_FEN),
-    shown.entry!,
+    shown.entry,
   );
   expect(settled).toMatchObject({
     stale: false,

@@ -16,7 +16,7 @@ const validMove = (move: unknown): move is string =>
 const validSquare = (square: unknown): square is Key =>
   typeof square === 'string' && /^[a-h][1-8]$/.test(square);
 export function reviewShapes(
-  moves: Record<ArrowSource, string | null | undefined>,
+  moves: Record<ArrowSource, string | null>,
   toggles: ArrowToggles,
   badge?: SquareBadge | SquareBadge[] | null,
   arrows?: ArrowSettings,

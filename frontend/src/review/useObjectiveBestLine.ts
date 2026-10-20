@@ -10,6 +10,7 @@
 // traffic.
 import { useEffect, useMemo } from 'react';
 import { buildTimeline } from '../shared/domain';
+import { plyAt } from '../shared/explicit';
 import { laneError, lanePoints, laneRows } from '../objective/index';
 import { walkObjectiveLine } from '../objective/bestLine';
 import { bestLineMaterialNote, type CapturedPiece } from '../theory/material';
@@ -83,10 +84,16 @@ export function useObjectiveBestLine(args: {
         // Terminal positions carry no lane rows: never fetch them (the job
         // filter would no-op, leaving a stuck frontier).
         if (!node || node.outcome) return { kind: 'none' as const };
-        const row = laneRows([node], { coordinator, sfEvaluations: [undefined] })[0];
-        if (!row) return { kind: 'missing' as const };
-        if (row.degraded || laneError(coordinator, node)) return { kind: 'none' as const };
-        const top = lanePoints([row], [node])[0]?.top;
+        const row = plyAt(
+          laneRows([node], { coordinator, sfEvaluations: [null] }),
+          0,
+          'walk lane row',
+        );
+        if (row === null) return { kind: 'missing' as const };
+        if (row.degraded || laneError(coordinator, node).state === 'failed')
+          return { kind: 'none' as const };
+        const point = plyAt(lanePoints([row], [node]), 0, 'walk lane point');
+        const top = point === null ? null : point.top;
         return typeof top === 'string'
           ? { kind: 'top' as const, uci: top }
           : { kind: 'none' as const };

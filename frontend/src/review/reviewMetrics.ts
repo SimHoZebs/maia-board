@@ -76,10 +76,10 @@ export type Rarity = {
   topProb: number | null;
 };
 export function botRarity(
-  bot: Pick<MoveResponse, 'top_moves' | 'degraded'> | undefined,
+  bot: Pick<MoveResponse, 'top_moves' | 'degraded'> | null,
   played: string,
 ): Rarity {
-  if (!bot || bot.degraded || !Array.isArray(bot.top_moves) || bot.top_moves.length === 0)
+  if (bot === null || bot.degraded || !Array.isArray(bot.top_moves) || bot.top_moves.length === 0)
     return { label: 'Unknown', r: null, prob: null, topProb: null };
   const topProb = bot.top_moves[0].prob;
   if (typeof topProb !== 'number' || !Number.isFinite(topProb) || topProb <= 0)
@@ -136,13 +136,10 @@ const QUALITY_LABELS: readonly Quality['label'][] = [
 function isQualityLabel(value: unknown): value is Quality['label'] {
   return QUALITY_LABELS.some(label => label === value);
 }
-export function effectiveQuality(
-  grade: EngineGrade | undefined,
-  rarity: Rarity | undefined,
-): Quality | undefined {
-  if (!grade) return undefined;
+export function effectiveQuality(grade: EngineGrade | null, rarity: Rarity | null): Quality | null {
+  if (grade === null) return null;
   if (grade.label === 'Critical') {
-    if (!rarity || rarity.label === 'Expected' || rarity.label === 'Unknown')
+    if (rarity === null || rarity.label === 'Expected' || rarity.label === 'Unknown')
       return { ...grade, label: 'Best' };
     if (rarity.label === 'Absent') return { ...grade, label: 'Excellent' };
     if (rarity.label === 'Rare' && rarity.prob != null && rarity.prob < EXCELLENT_MAX_PROB)
@@ -157,19 +154,17 @@ export function effectiveQuality(
 // Praise-rarity leg shared by both Elo lanes: Absent, or Rare with an
 // absolute share under EXCELLENT_MAX_PROB. Unknown (missing/degraded data)
 // never qualifies — absent evidence is not evidence of a find.
-export function isTinyRare(rarity: Rarity | undefined | null): boolean {
-  if (!rarity) return false;
+export function isTinyRare(rarity: Rarity | null): boolean {
+  if (rarity === null) return false;
   if (rarity.label === 'Absent') return true;
   return rarity.label === 'Rare' && rarity.prob != null && rarity.prob < EXCELLENT_MAX_PROB;
 }
 // Mover-relative gap between Stockfish's top two lines, in whiteWin points.
 // Null unless both lines are cp scores (mate lines and single-line positions
 // carry no comparable gap). Turn is the mover's color at the before-position.
-export function sfTopGap(
-  lines: { score: Score }[] | undefined,
-  turn: 'white' | 'black',
-): number | null {
-  const [first, second] = lines ?? [];
+export function sfTopGap(lines: { score: Score }[] | null, turn: 'white' | 'black'): number | null {
+  if (lines === null) return null;
+  const [first, second] = lines;
   if (!first || !second || first.score.type !== 'cp' || second.score.type !== 'cp') return null;
   const pov = (score: Score) => (turn === 'white' ? whiteWin(score) : 100 - whiteWin(score));
   return pov(first.score) - pov(second.score);
@@ -180,12 +175,13 @@ export function sfTopGap(
 // else passes through untouched, so lanes without 2400 data keep current
 // behavior exactly.
 export function alienUpgrade(
-  quality: Quality | undefined,
-  rarity: Rarity | undefined | null,
-  rarity2400: Rarity | undefined | null,
+  quality: Quality | null,
+  rarity: Rarity | null,
+  rarity2400: Rarity | null,
   gap: number | null,
-): Quality | undefined {
-  if (quality?.label !== 'Excellent' || !isTinyRare(rarity) || !isTinyRare(rarity2400))
+): Quality | null {
+  if (quality === null) return null;
+  if (quality.label !== 'Excellent' || !isTinyRare(rarity) || !isTinyRare(rarity2400))
     return quality;
   if (gap == null || gap < ALIEN_MIN_GAP) return quality;
   return { ...quality, label: 'Alien' };
@@ -221,10 +217,10 @@ function maiaHold(): string {
 }
 function rarityVerdict(
   quality: Quality,
-  rarity: Rarity | undefined,
-  bestRarity?: Rarity | null,
+  rarity: Rarity | null,
+  bestRarity: Rarity | null,
 ): string | null {
-  if (!rarity || rarity.label === 'Unknown') return null;
+  if (rarity === null || rarity.label === 'Unknown') return null;
   const praise =
     quality.label === 'Excellent' || quality.label === 'Great' || quality.label === 'Best';
   const holds = quality.label === 'Good';
@@ -255,9 +251,9 @@ function rarityVerdict(
 // A mistake whose avoidance was itself a rare find at the player's level.
 // Expected/Uncommon/Unknown best moves leave the standard wording alone.
 // Verdict-only: badges still read pure loss.
-function hardToAvoid(bestRarity: Rarity | null | undefined): string | null {
+function hardToAvoid(bestRarity: Rarity | null): string | null {
   if (
-    !bestRarity ||
+    bestRarity === null ||
     bestRarity.label === 'Expected' ||
     bestRarity.label === 'Uncommon' ||
     bestRarity.label === 'Unknown'
@@ -275,11 +271,13 @@ const UPSTAIRS_REGULAR = 'Stronger players play this regularly.';
 // (common/common, uncommon/uncommon stay silent); only contradiction or
 // dramatic extension earns a note. Unknown on either side disables it —
 // absent evidence is not evidence.
-export function secondPoolClause(
-  rarity: Rarity | undefined | null,
-  rarity2400: Rarity | undefined | null,
-): string | null {
-  if (!rarity || !rarity2400 || rarity.label === 'Unknown' || rarity2400.label === 'Unknown')
+export function secondPoolClause(rarity: Rarity | null, rarity2400: Rarity | null): string | null {
+  if (
+    rarity === null ||
+    rarity2400 === null ||
+    rarity.label === 'Unknown' ||
+    rarity2400.label === 'Unknown'
+  )
     return null;
   const own = rarity.label,
     up = rarity2400.label;
@@ -300,11 +298,11 @@ export function secondPoolClause(
 // (same grades, same clause), so priority against material/pawn notes is
 // unchanged: describeMove only consults this on a second-pool win.
 function fuseEveryLevel(
-  quality: Quality | undefined,
-  rarity: Rarity | undefined | null,
-  rarity2400: Rarity | undefined | null,
+  quality: Quality | null,
+  rarity: Rarity | null,
+  rarity2400: Rarity | null,
 ): string | null {
-  if (!quality || !rarity || !rarity2400) return null;
+  if (quality === null || rarity === null || rarity2400 === null) return null;
   const label = quality.label;
   if (label !== 'Blunder' && label !== 'Mistake' && label !== 'Inaccuracy') return null;
   const noun = negativeNoun(quality);
@@ -327,10 +325,10 @@ function fuseEveryLevel(
 export type OpeningRef = { eco: string; name: string };
 export type VerdictArgs = {
   san: string;
-  quality?: Quality | undefined;
-  rarity?: Rarity | undefined;
+  quality: Quality | null;
+  rarity: Rarity | null;
   opening?: OpeningRef | null;
-  bestRarity?: Rarity | null;
+  bestRarity: Rarity | null;
   materialNote?: string | null;
   terminal?: TerminalKind | null;
   matePatternName?: string | null;
@@ -344,10 +342,10 @@ export type VerdictArgs = {
   // objective lane; null when that lane is missing/degraded) and whether the
   // raw engine grade was Top (played == Stockfish best with a small gap —
   // translated Quality alone cannot recover it, same as isCritical).
-  rarity2400?: Rarity | null;
+  rarity2400: Rarity | null;
   isTop?: boolean | null;
 };
-export function isPraiseLabel(label: Quality['label'] | undefined): boolean {
+export function isPraiseLabel(label: Quality['label'] | null): boolean {
   return (
     label === 'Best' ||
     label === 'Great' ||
@@ -533,12 +531,16 @@ const NOTE_RULES: NoteRule[] = [
   // outranks the motif). No numbers, same bands as the grades.
   {
     name: 'vetoed-concern',
-    match: facts => isPraiseLabel(facts.quality?.label) && (facts.quality?.maiaLoss ?? 0) >= 5,
+    match: facts =>
+      facts.quality !== null &&
+      isPraiseLabel(facts.quality.label) &&
+      (facts.quality.maiaLoss ?? 0) >= 5,
     render: facts => maiaConcern(facts.quality!.maiaLoss!),
   },
   {
     name: 'positive',
-    match: facts => !!facts.positiveNote && isPraiseLabel(facts.quality?.label),
+    match: facts =>
+      !!facts.positiveNote && facts.quality !== null && isPraiseLabel(facts.quality.label),
     render: facts => facts.positiveNote!,
   },
 ];
@@ -546,7 +548,7 @@ export function describeMove(args: VerdictArgs): string | null {
   const standalone = STANDALONE_RULES.find(rule => rule.match(args));
   if (standalone) return standalone.render(args);
   const { quality, rarity, bestRarity, novelty, rarity2400 } = args;
-  if (!quality || quality.label === 'Unreviewed') return null;
+  if (quality === null || quality.label === 'Unreviewed') return null;
   const base = rarityVerdict(quality, rarity, bestRarity);
   if (!base) return null;
   const head = novelty ? `Leaves ${novelty.priorName} book. ${base}` : base;
@@ -567,7 +569,7 @@ export function matchedRuleNames(args: VerdictArgs): {
   const standalone = STANDALONE_RULES.find(rule => rule.match(args));
   if (standalone) return { standalone: standalone.name, note: null };
   const { quality, rarity, bestRarity } = args;
-  if (!quality || quality.label === 'Unreviewed') return { standalone: null, note: null };
+  if (quality === null || quality.label === 'Unreviewed') return { standalone: null, note: null };
   if (!rarityVerdict(quality, rarity, bestRarity)) return { standalone: null, note: null };
   return { standalone: null, note: NOTE_RULES.find(rule => rule.match(args))?.name ?? null };
 }
@@ -618,8 +620,8 @@ export function whiteExpected(turn: 'white' | 'black', moverExpected: number): n
 // Mover-relative expectation from a terminal outcome, for objective lanes
 // whose provider never infers game-over positions: a checkmate after your
 // move is always one you delivered; draws split.
-export function outcomeExpected(outcome: DomainOutcome | null | undefined): number | null {
-  if (!outcome) return null;
+export function outcomeExpected(outcome: DomainOutcome | null): number | null {
+  if (outcome === null) return null;
   return outcome.kind === 'checkmate' ? 100 : 50;
 }
 // Grading input for one move, assembled by the caller (which owns node
@@ -657,13 +659,13 @@ export function isMateFor(score: Score, side: 'white' | 'black'): boolean {
 // SF-only engine grade (not the pipeline): Stockfish before/after facts in,
 // EngineGrade out. Praise/difficulty translate later in effectiveQuality.
 export function reviewMove(
-  before: Evaluation | undefined,
-  after: Evaluation | undefined,
+  before: Evaluation | null,
+  after: Evaluation | null,
   game: Chess,
   played: string,
   objective?: ObjectiveGrade,
 ): EngineGrade {
-  if (!before || !after) return { label: 'Unreviewed', accuracy: null, loss: null };
+  if (before === null || after === null) return { label: 'Unreviewed', accuracy: null, loss: null };
   const legal = game.moves().length;
   if (legal === 1) return { label: 'Forced', accuracy: 100, loss: 0 };
   const pov = (score: Score) => (game.turn() === 'w' ? whiteWin(score) : 100 - whiteWin(score));
@@ -767,8 +769,8 @@ export function outcomeFromGame(
 export function evaluationForOutcome(
   outcome: DomainOutcome | null,
   search_policy: string,
-): Evaluation | undefined {
-  if (!outcome) return;
+): Evaluation | null {
+  if (outcome === null) return null;
   const winner = outcome.kind === 'checkmate' ? outcome.winner : null;
   return {
     engine: 'Stockfish 19',
@@ -780,8 +782,8 @@ export function evaluationForOutcome(
     score: winner ? { type: 'mate', value: 0, winning_side: winner } : { type: 'cp', value: 0 },
   };
 }
-export function terminalEvaluation(game: Chess): Evaluation | undefined {
-  if (!game.isGameOver()) return;
+export function terminalEvaluation(game: Chess): Evaluation | null {
+  if (!game.isGameOver()) return null;
   return evaluationForOutcome(outcomeFromGame(game), SEARCH_POLICY);
 }
 export function scoreValueText(score: Score): string {

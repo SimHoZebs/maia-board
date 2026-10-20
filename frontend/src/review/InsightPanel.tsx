@@ -1,7 +1,7 @@
 import { type Dispatch, type ReactNode } from 'react';
 import type { Action, State } from '../state/index';
 import { Button, KeyMovesList } from '../components';
-import { Chess } from 'chess.js';
+import { expectNonNull, plyAt, plyOrNull } from '../shared/explicit';
 import type { Review } from './useReview';
 import { describeMove } from './reviewMetrics';
 import { deltaBaseline, deltaColumnTitle } from '../objective/winrate';
@@ -22,7 +22,7 @@ import { SkeletonList, SkeletonText } from './ObjectiveBar';
 // status. Driven by the single reviewState (loading|partial|complete|failed).
 function ReviewActionButton({ state, review }: { state: State; review: Review }) {
   const progress = review.progress;
-  if (progress?.running) {
+  if (progress !== null && progress.running) {
     return (
       <span role="status">
         Analyzing {progress.done} of {progress.total}…
@@ -88,14 +88,27 @@ export function MoveAnalysis({
   // Two candidate lists: the display Elo's human-population list on the
   // left, the objective source on the right.
   const response = hasMove ? review.bot : review.botCurrent;
-  const node = review.nodes[hasMove ? focus : ply];
+  // Indexed rows must exist: a ply in range always has a timeline node.
+  // Out-of-range is a failure (throw), never silent `undefined`.
+  const node = expectNonNull(
+    review.nodes[hasMove ? focus : ply],
+    `missing timeline node at ply ${hasMove ? focus : ply}`,
+  );
   const candidates = hasMove
     ? review.objectiveCandidates.focus
     : review.objectiveCandidates.current;
   const insight = { fen: node.fen };
-  const played = hasMove ? (review.nodes[ply]?.uci ?? undefined) : undefined;
+  const tipNode = hasMove
+    ? expectNonNull(review.nodes[ply], `missing timeline node at ply ${ply}`)
+    : null;
+  // The UCI into the viewed position. Null at the root; empty anywhere else
+  // is a failure, not a quiet skip.
+  const played: string | null = tipNode === null ? null : tipNode.uci;
+  if (hasMove && (played === null || played === '')) {
+    throw new Error(`maia-board invariant: missing played UCI at ply ${ply}`);
+  }
   const evaluation = hasMove ? review.focus : review.current;
-  const afterEvaluation = hasMove ? review.evaluations[ply] : undefined;
+  const afterEvaluation = hasMove ? plyAt(review.evaluations, ply, 'evaluations') : null;
   // Named book lines outrank engine grades in the verdict: theory is calmer
   // than low-depth scores in the opening, and the name needs no inference.
   // Terminal facts (mate, stalemate, repetition) outrank even the book name.
@@ -104,9 +117,10 @@ export function MoveAnalysis({
     bookFlags: lineBookFlags,
     matches: lineMatches,
   } = useLineOpenings(review.timeline.moves, state.analysis.initialFen, ply);
-  const exactOpening = lineOpening?.isExact
-    ? { eco: lineOpening.eco, name: lineOpening.name }
-    : null;
+  const exactOpening =
+    lineOpening !== null && lineOpening.isExact
+      ? { eco: lineOpening.eco, name: lineOpening.name }
+      : null;
   // Material consequence: the Stockfish rank-1 PV rooted at the after-FEN
   // (see theory/bestLineSource.ts for the provider switch). Only cp-vs-cp
   // Mistake/Blunder render it (describeMove gates the labels; mate scores
@@ -114,72 +128,121 @@ export function MoveAnalysis({
   // The preview bundles the note with its clickable SAN line so "This line"
   // always has an exact referent; the button below spawns the same UCIs as a
   // branch rooted at the current ply.
-  const quality = hasMove ? review.qualities[focus] : undefined;
+  const quality = hasMove ? plyAt(review.qualities, focus, 'qualities') : null;
+  // Before/after rows for the viewed move. Missing evaluations are pending,
+  // not silent — the gates below read them explicitly.
+  const beforeNode = hasMove
+    ? expectNonNull(review.nodes[focus], `missing timeline node at ply ${focus}`)
+    : null;
+  const afterNode =
+    tipNode ?? expectNonNull(review.nodes[ply], `missing timeline node at ply ${ply}`);
+  const qualityLabel = quality === null ? null : quality.label;
+  const evalScore = evaluation === null ? null : evaluation.score;
+  const afterScore = afterEvaluation === null ? null : afterEvaluation.score;
   const bestLine =
     hasMove &&
-    played &&
+    played !== null &&
+    beforeNode !== null &&
     !exactOpening &&
-    (quality?.label === 'Mistake' || quality?.label === 'Blunder') &&
-    evaluation?.score.type === 'cp' &&
-    afterEvaluation?.score.type === 'cp' &&
+    (qualityLabel === 'Mistake' || qualityLabel === 'Blunder') &&
+    evalScore !== null &&
+    evalScore.type === 'cp' &&
+    afterScore !== null &&
+    afterScore.type === 'cp' &&
+    evaluation !== null &&
+    afterEvaluation !== null &&
     !evaluation.terminal &&
     !afterEvaluation.terminal
       ? bestLinePreview(
-          review.nodes[ply].fen,
+          afterNode.fen,
           resolveBestLineUcis({
             source: BEST_LINE_SOURCE,
             stockfishUcis: stockfishBestLineUcis(afterEvaluation, state.bestLineWindow),
             maiaUcis: review.objectiveBestLine.length ? review.objectiveBestLine : undefined,
           }),
-          review.nodes[focus].turn === 'white' ? 'white' : 'black',
+          beforeNode.turn === 'white' ? 'white' : 'black',
           state.bestLineWindow,
-          playedCapture(review.nodes[focus].fen, played),
+          playedCapture(beforeNode.fen, played),
         )
       : null;
-  const materialNote = bestLine?.note ?? null;
+  const materialNote = bestLine === null ? null : bestLine.note;
   // Best move for pawn-note suppression: the highest-winrate objective
   // candidate when listed (max expected), else the grading best (objective
-  // top else Stockfish best_move). "Doubles a pawn" reads as blame, so it
-  // stays silent when the played move IS the best or the best incurs the
-  // same structure damage.
-  const winrateBest = candidates?.entries.length
-    ? candidates.entries.reduce((a, b) => (b.expected > a.expected ? b : a)).uci
-    : undefined;
-  const bestUci = winrateBest ?? review.objective[focus]?.top ?? evaluation?.best_move ?? null;
+  // top else Stockfish best_move). Each source is explicit — a missing lane
+  // (loading/failed) falls through to the next source by name, never via a
+  // collapsed `?.` chain.
+  const winrateBest: { uci: string; source: 'winrate' } | null =
+    candidates !== null && candidates.entries.length > 0
+      ? {
+          uci: candidates.entries.reduce((a, b) => (b.expected > a.expected ? b : a)).uci,
+          source: 'winrate',
+        }
+      : null;
+  const focusObjectivePoint = hasMove ? plyAt(review.objective, focus, 'objective points') : null;
+  const focusObjectiveTop =
+    focusObjectivePoint === null || focusObjectivePoint.top === null
+      ? null
+      : focusObjectivePoint.top;
+  const objectiveTop: { uci: string; source: 'objective' } | null =
+    winrateBest !== null || focusObjectiveTop === null
+      ? null
+      : { uci: focusObjectiveTop, source: 'objective' };
+  const sfBest: { uci: string; source: 'stockfish' } | null =
+    winrateBest !== null || objectiveTop !== null
+      ? null
+      : evaluation === null || evaluation.best_move === null
+        ? null
+        : { uci: evaluation.best_move, source: 'stockfish' };
+  const bestUci =
+    winrateBest !== null
+      ? winrateBest.uci
+      : objectiveTop !== null
+        ? objectiveTop.uci
+        : sfBest !== null
+          ? sfBest.uci
+          : null;
   // Theory facts (terminal classification, dead draws, novelties, pawn
   // damage, positive whys) derive from the timeline rows, so branches
   // resolve through their own history. verdictInputsForPly owns fact gates;
   // describeMove's rule tables own priority and wording. Mate-force reads the
   // before/after score pair; the only-move fact reads the raw engine grade
   // (Critical), which the translated display quality cannot recover.
+  // Previous ply for recapture-as-exchange framing: the UCI arriving at
+  // the before-position plus the FEN before it. Null at the game start;
+  // empty UCIs are failures upstream, so here empty reads as null by name.
+  const prevNode = focus >= 1 ? plyAt(review.nodes, focus, 'nodes') : null;
+  const prevBeforeNode = focus >= 1 ? plyAt(review.nodes, focus - 1, 'nodes') : null;
+  const prevUci: string | null =
+    focus >= 1 ? (prevNode !== null && prevNode.uci !== '' ? prevNode.uci : null) : null;
+  const prevBeforeFen: string | null =
+    focus >= 1 ? (prevBeforeNode !== null ? prevBeforeNode.fen : null) : null;
   const verdictFacts =
-    hasMove && played
+    hasMove && played !== null && beforeNode !== null
       ? verdictInputsForPly({
-          beforeFen: review.nodes[focus].fen,
-          afterFen: review.nodes[ply].fen,
-          afterOutcome: review.nodes[ply].outcome,
-          san: review.nodes[ply].san ?? played,
+          beforeFen: beforeNode.fen,
+          beforeCheck: beforeNode.check,
+          afterFen: afterNode.fen,
+          afterOutcome: afterNode.outcome,
+          san: afterNode.san !== '' ? afterNode.san : played,
           playedUci: played,
           ply,
           quality,
-          rarity: review.rarities?.[focus],
+          rarity: plyAt(review.rarities, focus, 'rarities'),
           opening: exactOpening,
           openingMatches: lineMatches,
           bookFlags: lineBookFlags,
           initialFen: state.analysis.initialFen,
-          mover: review.nodes[focus].turn === 'white' ? 'white' : 'black',
-          bestRarity: review.bestRarities?.[focus],
-          rarity2400: review.rarity2400?.[focus],
+          mover: beforeNode.turn === 'white' ? 'white' : 'black',
+          bestRarity: plyOrNull(review.bestRarities, focus, 'best rarities'),
+          rarity2400: plyOrNull(review.rarity2400, focus, '2400 rarities'),
           materialNote,
           bestUci,
-          beforeScore: evaluation?.score ?? null,
-          afterScore: afterEvaluation?.score ?? null,
-          isCritical: review.engineGrades?.[focus]?.label === 'Critical',
-          isTop: review.engineGrades?.[focus]?.label === 'Top',
-          // Previous ply for recapture-as-exchange framing: the UCI arriving at
-          // the before-position plus the FEN before it. Null at the game start.
-          prevUci: focus >= 1 ? review.nodes[focus]?.uci || null : null,
-          prevBeforeFen: focus >= 1 ? (review.nodes[focus - 1]?.fen ?? null) : null,
+          beforeScore: evaluation === null ? null : evaluation.score,
+          afterScore: afterEvaluation === null ? null : afterEvaluation.score,
+          isCritical: plyOrNull(review.engineGrades, focus, 'engine grades')?.label === 'Critical',
+          isTop: plyOrNull(review.engineGrades, focus, 'engine grades')?.label === 'Top',
+          prevUci,
+          prevBeforeFen,
         })
       : null;
   const verdict = verdictFacts ? describeMove(verdictFacts) : null;
@@ -205,26 +268,29 @@ export function MoveAnalysis({
   // navigation. Lines longer than the review limit never fetch, so they stay
   // empty instead of skeleton-loading forever.
   // Focus is always x's before-position, which is never terminal in a legal
-  // line; the terminal check below is a safety net only.
-  const hasError = !!review.error;
+  // line; the timeline outcome is the safety net (history-aware: FEN parses
+  // miss threefold repetition).
+  const hasError = typeof review.error === 'string' && review.error !== '';
   const tooLong = review.nodes.length > 257;
-  let terminalPosition = !!evaluation?.terminal;
-  if (!terminalPosition) {
-    try {
-      terminalPosition = new Chess(node.fen).isGameOver();
-    } catch {
-      terminalPosition = false;
-    }
-  }
-  const displayLoading = !response && !hasError && !terminalPosition && !tooLong;
+  // Terminality reads the history-aware timeline outcome, never a FEN parse
+  // (which misses threefold repetition). No try/catch fallback: an illegal
+  // FEN is a failure upstream, not a quiet `false` here.
+  const terminalPosition =
+    (evaluation !== null && evaluation.terminal !== null) || node.outcome !== null;
+  const displayLoading = response === null && !hasError && !terminalPosition && !tooLong;
   const objectiveLoading =
-    !candidates && !node.outcome && !hasError && !terminalPosition && !tooLong;
+    candidates === null && !node.outcome && !hasError && !terminalPosition && !tooLong;
   // The verdict needs both sides of the move; the foreground lane fetches
   // both, restore/batch fill the rest. Render as soon as the pair is
   // present regardless of batch progress (progress surfaces separately via
   // ReviewActionButton); skeleton only while a side is missing.
   const verdictLoading =
-    hasMove && !!played && !verdict && !hasError && !tooLong && (!evaluation || !afterEvaluation);
+    hasMove &&
+    played !== null &&
+    !verdict &&
+    !hasError &&
+    !tooLong &&
+    (evaluation === null || afterEvaluation === null);
   // Key moves card: one fused row per distinct move (Stockfish best, 2400
   // best by expected score, 2400 most-likely by policy, played) with the
   // 2400 share, the true game-shift delta (bar-vs-bar including the opponent
@@ -232,16 +298,19 @@ export function MoveAnalysis({
   // rows the pipeline fetches; the builder falls back to the prospective
   // server/local comparison while a child is pending or failed.
   const beforePly = hasMove ? focus : ply;
-  const beforeExpected = review.objective[beforePly]?.expected ?? null;
-  const displayListed = response?.top_moves.slice(0, 5) ?? [];
-  const objectiveEntries = candidates?.entries ?? [];
+  // Missing rows are pending/failed, not silent: each source branches by
+  // name into its empty state instead of a collapsed `?. ??` chain.
+  const beforePoint = plyAt(review.objective, beforePly, 'objective points');
+  const beforeExpected = beforePoint === null ? null : beforePoint.expected;
+  const displayListed = response === null ? [] : response.top_moves.slice(0, 5);
+  const objectiveEntries = candidates === null ? [] : candidates.entries;
   const bestListed =
     objectiveEntries.length > 0
       ? Math.max(...objectiveEntries.map(candidate => candidate.expected))
       : null;
   const { kind } = deltaBaseline(beforeExpected, bestListed);
   const keyMoves = buildKeyMoves({
-    sfBest: evaluation?.best_move ?? null,
+    sfBest: evaluation === null ? null : evaluation.best_move,
     objective: candidates,
     displayTopMoves: displayListed,
     played,
@@ -254,7 +323,7 @@ export function MoveAnalysis({
   // the 2400 rows (the viewed-Elo share reads — until the display lane
   // lands), mirroring how the old per-lane sections settled independently.
   // Missing sides stay em-dashes; only a fully empty card skeletons.
-  const canRender = (!!response || !!candidates) && keyMoves.length > 0;
+  const canRender = (response !== null || candidates !== null) && keyMoves.length > 0;
   return (
     <>
       {!hasMove && (
@@ -283,8 +352,10 @@ export function MoveAnalysis({
         verdictLoading && <SkeletonText label="Loading move verdict" />
       )}
       <section aria-label="Key moves" className="engine-card">
-        {response?.degraded && <p role="status">Bot fallback results.</p>}
-        {candidates?.degraded && <p role="status">Bot 2400 fallback results.</p>}
+        {response !== null && response.degraded && <p role="status">Bot fallback results.</p>}
+        {candidates !== null && candidates.degraded && (
+          <p role="status">Bot 2400 fallback results.</p>
+        )}
         {review.botStale && (
           <p role="status">
             Showing bot {review.botElo} · updating to {review.botWantedElo}…
@@ -342,8 +413,10 @@ export function InsightPanel({
   const viewInPlace = (ply: number) => {
     dispatch({ type: 'view', ply });
   };
-  const showControls = review.tooLong || !!review.error || !!review.progress?.failed;
-  const userSide = state.analysis.ownGame ? state.analysis.perspective : undefined;
+  const batchFailed = review.progress !== null && review.progress.failed > 0;
+  const failedJobs = review.progress === null ? 0 : review.progress.failed;
+  const showControls = review.tooLong || !!review.error || batchFailed;
+  const userSide = state.analysis.ownGame ? state.analysis.perspective : null;
   const branch = state.analysis.branchFromPly !== null;
   const ply = state.analysis.index;
   return (
@@ -351,9 +424,9 @@ export function InsightPanel({
       {showControls && (
         <div className="analysis-section analysis-controls-section">
           {review.tooLong && <p role="status">Review supports up to 256 moves (plies).</p>}
-          {(review.error || !!review.progress?.failed) && (
+          {(review.error || batchFailed) && (
             <p role="alert">
-              {review.error || `${review.progress!.failed} analysis jobs failed.`}{' '}
+              {review.error || `${failedJobs} analysis jobs failed.`}{' '}
               <Button onClick={review.retry}>Retry failed</Button>
             </p>
           )}

@@ -27,14 +27,14 @@ export type TrueDeltaEntry = { value: number | null; pending: boolean };
 // 2400 most-likely by policy, and my most-likely (display top-1). Together
 // with the Stockfish best and the played move these are the card's rows.
 export function keyHeads(
-  objective: ObjectiveCandidates | undefined,
+  objective: ObjectiveCandidates | null,
   displayTopMoves: TopMove[],
 ): {
   best2400: string | null;
   likely2400: string | null;
   myLikely: string | null;
 } {
-  const entries = objective?.entries ?? [];
+  const entries = objective === null ? [] : objective.entries;
   const hasProb =
     entries.length > 0 &&
     entries.every(entry => typeof entry.prob === 'number' && Number.isFinite(entry.prob));
@@ -56,7 +56,7 @@ export function keyRowOrder(args: {
   best2400: string | null;
   likely2400: string | null;
   myLikely: string | null;
-  played?: string | undefined;
+  played?: string | null;
 }): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -96,14 +96,14 @@ export function formatKeyDelta(
 // source (both are 2400-valued).
 export function buildKeyMoves(args: {
   sfBest: string | null;
-  objective?: ObjectiveCandidates | undefined;
+  objective: ObjectiveCandidates | null;
   displayTopMoves: TopMove[];
-  played?: string | undefined;
+  played?: string | null;
   beforeExpected: number | null;
   trueDeltaByUci?: Map<string, TrueDeltaEntry> | undefined;
 }): KeyMove[] {
   const { sfBest, objective, displayTopMoves, played, beforeExpected, trueDeltaByUci } = args;
-  const entries = objective?.entries ?? [];
+  const entries = objective === null ? [] : objective.entries;
   const objByUci = new Map(entries.map(entry => [entry.uci, entry]));
   const dispByUci = new Map(displayTopMoves.map(candidate => [candidate.move, candidate]));
   const bestListed = entries.length > 0 ? Math.max(...entries.map(entry => entry.expected)) : null;

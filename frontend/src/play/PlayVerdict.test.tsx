@@ -36,7 +36,7 @@ function setup(moveUci = 'e2e4') {
     timeline,
     nodes,
     evaluations,
-    botResults: [bot, undefined],
+    botResults: [bot, null],
     objectivePoints: [
       { top: moveUci, expected: 60 },
       { top: 'e7e5', expected: 50 },
@@ -96,7 +96,7 @@ describe('PlayVerdict', () => {
         feedback: {
           ...feedback,
           qualities: [{ label: 'Unreviewed', accuracy: null, loss: null }],
-          evaluations: [undefined, undefined],
+          evaluations: [null, null],
         },
       }),
     );
@@ -160,13 +160,13 @@ describe('PlayVerdict', () => {
     };
     const feedback: PlayFeedback = {
       active: true,
-      qualities: [...Array(22).fill(undefined), { label: 'Blunder', accuracy: 20, loss: 30 }],
+      qualities: [...Array(22).fill(null), { label: 'Blunder', accuracy: 20, loss: 30 }],
       timeline,
       nodes,
       evaluations,
-      botResults: [...Array(22).fill(undefined), unlistedBot, undefined],
+      botResults: [...Array(22).fill(null), unlistedBot, null],
       objectivePoints: [
-        ...Array(22).fill(undefined),
+        ...Array(22).fill(null),
         { top: 'e3b6', expected: 50 },
         { top: 'f6e4', expected: 80 },
       ],

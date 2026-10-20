@@ -45,7 +45,7 @@ export function KeyMovesList({
   onSelect,
 }: {
   fen: string;
-  played?: string;
+  played?: string | null;
   hasMove: boolean;
   moves: KeyMove[];
   deltaTitle: string;

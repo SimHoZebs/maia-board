@@ -524,7 +524,12 @@ describe('stored games and analysis', () => {
     expect(state.saved).toEqual([]);
     expect(state.analysis.initialFen).toBe(START_FEN);
     expect(state.inputs.fen).toBe('invalid');
-    expect(parseStoredGame({ moves: 'not an array' })).toBeUndefined();
+    const rejected = parseStoredGame({ moves: 'not an array' });
+    if (rejected.ok) throw new Error('expected reject');
+    expect(rejected.reason).toBe('missing-id');
+    const notRecord = parseStoredGame(null);
+    if (notRecord.ok) throw new Error('expected reject');
+    expect(notRecord.reason).toBe('not-record');
   });
   it('round-trips custom-start PGN with history and black to move', () => {
     const fen = '4k3/8/8/8/8/8/4P3/4K3 b - - 0 12';
@@ -903,7 +908,7 @@ describe('terminal flags', () => {
     const flags = terminalFlags(initialFen, moves);
     expect(flags).toHaveLength(moves.length + 1);
     for (let index = 0; index <= moves.length; index++) {
-      const expected = terminalEvaluation(replay(moves.slice(0, index), initialFen)) !== undefined;
+      const expected = terminalEvaluation(replay(moves.slice(0, index), initialFen)) !== null;
       expect(flags[index]).toBe(expected);
     }
   };
@@ -945,7 +950,7 @@ describe('canonical timeline', () => {
         expect(row.san).toBe(last?.san ?? '');
         expect(row.uci).toBe(last ? `${last.from}${last.to}${last.promotion ?? ''}` : '');
         expect(row.lastMove).toEqual(last ? [last.from, last.to] : undefined);
-        expect(row.outcome !== null).toBe(terminalEvaluation(game) !== undefined);
+        expect(row.outcome !== null).toBe(terminalEvaluation(game) !== null);
       }
     }
   });
@@ -957,7 +962,7 @@ describe('canonical timeline', () => {
     const timeline = buildTimeline(START_FEN, moves);
     const tip = timeline.rows.at(-1)!;
     expect(tip.fen).toBe(record.fen);
-    expect(outcomeEvaluation(tip.outcome) ?? null).toEqual(record.terminal);
+    expect(outcomeEvaluation(tip.outcome)).toEqual(record.terminal);
     expect(timeline.rows.slice(1).map(row => row.san)).toEqual(record.sanMoves);
   });
 
@@ -1009,12 +1014,13 @@ describe('review qualities incremental', () => {
   ];
   const byNodes = (entries: [string[], Evaluation][]) => {
     const map = new Map(entries.map(([slice, entry]) => [JSON.stringify(slice), entry]));
-    return (node: ReviewNode) => map.get(JSON.stringify(node.timeline.moves.slice(0, node.ply)));
+    return (node: ReviewNode) =>
+      map.get(JSON.stringify(node.timeline.moves.slice(0, node.ply))) ?? null;
   };
   const run = (
     moves: string[],
     nodes: ReviewNode[],
-    lookup: (node: ReviewNode) => Evaluation | undefined,
+    lookup: (node: ReviewNode) => Evaluation | null,
     prev: ReviewQualitiesMemo | null,
     pending: Set<string> = new Set(),
     stats?: ReviewQualitiesStats,
@@ -1028,6 +1034,7 @@ describe('review qualities incremental', () => {
       pending,
       prev,
       stats,
+      objective: null,
     });
 
   it('computes settled verdicts with one review per settled ply', () => {
@@ -1087,9 +1094,9 @@ describe('review qualities incremental', () => {
     const nodes = testNodes(START_FEN, moves);
     const key = (node: ReviewNode) => reviewKey('sf', node, settings);
     const foreground = new Set([key(nodes[0]), key(nodes[1])]);
-    const cold = run(moves, nodes, () => undefined, null, foreground);
+    const cold = run(moves, nodes, () => null, null, foreground);
     expect(cold.grades[0]?.label).toBe('Unreviewed');
-    expect(cold.grades[1]).toBeUndefined();
+    expect(cold.grades[1]).toBeNull();
     const settled = run(
       moves,
       nodes,
@@ -1098,13 +1105,13 @@ describe('review qualities incremental', () => {
       new Set(),
     );
     expect(settled.grades[0]?.label).not.toBe('Unreviewed');
-    expect(settled.grades[1]).toBeUndefined();
+    expect(settled.grades[1]).toBeNull();
   });
 
   it('matches a fresh compute exactly across build, settle, append, and takeback', () => {
     const store = new Map(italianEvals.map(([slice, entry]) => [JSON.stringify(slice), entry]));
     const lookup = (node: ReviewNode) =>
-      store.get(JSON.stringify(node.timeline.moves.slice(0, node.ply)));
+      store.get(JSON.stringify(node.timeline.moves.slice(0, node.ply))) ?? null;
     const fresh = (moves: string[]) => {
       const nodes = testNodes(START_FEN, moves);
       return computeReviewQualities({
@@ -1114,6 +1121,7 @@ describe('review qualities incremental', () => {
         settingsForNode: () => settings,
         pending: new Set(),
         prev: null,
+        objective: null,
       }).grades;
     };
     let prev: ReviewQualitiesMemo | null = null;
@@ -1144,12 +1152,12 @@ describe('review qualities incremental', () => {
     expect(second.grades).toBe(first.grades);
     const clone = (node: ReviewNode) => {
       const found = byNodes(italianEvals)(node);
-      return (
-        found && {
-          ...found,
-          lines: found.lines.map(line => ({ ...line, score: { ...line.score } })),
-        }
-      );
+      return found === null
+        ? null
+        : {
+            ...found,
+            lines: found.lines.map(line => ({ ...line, score: { ...line.score } })),
+          };
     };
     const third = run(moves, nodes, clone, first.memo, new Set(), stats);
     expect(stats.reviews).toBeGreaterThan(0);

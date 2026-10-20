@@ -345,8 +345,11 @@ export function parriesMateNote(
 
 // The mover started in check, so any legal played move escapes by definition.
 // Reads the before-position only; the after-position's turn belongs to the
-// opponent and says nothing about the mover's king.
-export function escapeNote(beforeFen: string): string | null {
+// opponent and says nothing about the mover's king. Prefers the cached
+// timeline check flag when callers have a row (no FEN parse on the scrub
+// path); falls back to a single FEN parse for direct callers.
+export function escapeNote(beforeFen: string, beforeCheck?: boolean | null): string | null {
+  if (typeof beforeCheck === 'boolean') return beforeCheck ? 'Gets out of check.' : null;
   try {
     return new Chess(beforeFen).inCheck() ? 'Gets out of check.' : null;
   } catch {
@@ -377,7 +380,14 @@ export function escapeNote(beforeFen: string): string | null {
 // sharper fires.
 type PositiveContext = Pick<
   VerdictInputs,
-  'beforeFen' | 'afterFen' | 'playedUci' | 'mover' | 'beforeScore' | 'afterScore' | 'isCritical'
+  | 'beforeFen'
+  | 'afterFen'
+  | 'playedUci'
+  | 'mover'
+  | 'beforeScore'
+  | 'afterScore'
+  | 'isCritical'
+  | 'beforeCheck'
 > & { facts: MoveFacts | null };
 const POSITIVE_CANDIDATES: { name: string; note: (ctx: PositiveContext) => string | null }[] = [
   {
@@ -420,7 +430,7 @@ const POSITIVE_CANDIDATES: { name: string; note: (ctx: PositiveContext) => strin
     note: ({ beforeFen, playedUci, afterScore, mover }) =>
       parriesMateNote(beforeFen, playedUci, afterScore, mover),
   },
-  { name: 'escape', note: ({ beforeFen }) => escapeNote(beforeFen) },
+  { name: 'escape', note: ({ beforeFen, beforeCheck }) => escapeNote(beforeFen, beforeCheck) },
 ];
 
 function pawnFileCounts(fen: string, color: 'w' | 'b'): number[] | null {
@@ -533,31 +543,34 @@ export type VerdictInputs = {
   beforeFen: string;
   afterFen: string;
   afterOutcome: DomainOutcome | null;
+  // Cached timeline check flag for the before-position. When present the
+  // escape-note positive why reads it instead of parsing the FEN.
+  beforeCheck?: boolean | null;
   san: string;
   playedUci: string;
   ply: number;
-  quality: Quality | undefined;
-  rarity: Rarity | undefined;
+  quality: Quality | null;
+  rarity: Rarity | null;
   opening: OpeningRef | null;
   openingMatches: OpeningMatch[];
   bookFlags: boolean[];
   initialFen: string;
   mover: Side;
-  bestRarity?: Rarity | null;
+  bestRarity: Rarity | null;
   materialNote?: string | null;
   beforeScore?: Score | null;
   afterScore?: Score | null;
   // Raw engine fact (reviewMove label === 'Critical'), before bot-aware
   // translation. The translated Quality alone cannot recover it: Critical +
   // Expected and Top both display as Best.
-  isCritical?: boolean | null;
+  isCritical: boolean | null;
   // Raw engine fact (reviewMove label === 'Top'): played == Stockfish best
   // with a small gap. Feeds the validated-find note for rare-at-both-Elos
   // Best moves that never reach Critical.
-  isTop?: boolean | null;
+  isTop: boolean | null;
   // Played-move rarity at 2400 (objective lane policy). Feeds the blind-spot
   // and validated notes; null/Unknown disables those notes only.
-  rarity2400?: Rarity | null;
+  rarity2400: Rarity | null;
   // Highest-winrate move from the same before-position (objective candidate
   // with max expected winrate when available, else the grading best:
   // objective top else Stockfish best_move). Feeds pawn-note suppression:
@@ -578,12 +591,12 @@ export type VerdictInputs = {
 
 export type VerdictFacts = {
   san: string;
-  quality: Quality | undefined;
-  rarity: Rarity | undefined;
+  quality: Quality | null;
+  rarity: Rarity | null;
   opening: OpeningRef | null;
-  bestRarity?: Rarity | null;
-  rarity2400?: Rarity | null;
-  isTop?: boolean | null;
+  bestRarity: Rarity | null;
+  rarity2400: Rarity | null;
+  isTop: boolean | null;
   materialNote?: string | null;
   terminal: TerminalKind | null;
   matePatternName: string | null;
@@ -635,6 +648,7 @@ export function verdictInputsForPly(inputs: VerdictInputs): VerdictFacts {
     beforeScore,
     afterScore,
     isCritical,
+    beforeCheck,
   } = inputs;
   const terminal = classifyTerminal(afterFen, afterOutcome);
   const matePatternName =
@@ -642,16 +656,16 @@ export function verdictInputsForPly(inputs: VerdictInputs): VerdictFacts {
   const deadDraw = terminal === null && isKnownDeadDraw(afterFen);
   const underpromotionAvoids =
     terminal === null && !deadDraw && underpromotionAvoidsStalemate(beforeFen, playedUci, afterFen);
-  const label = quality?.label;
+  const label = quality === null ? null : quality.label;
   const suppressNovelty =
     terminal !== null ||
     deadDraw ||
     underpromotionAvoids ||
-    !label ||
+    label === null ||
     label === 'Forced' ||
     label === 'Allowed mate' ||
     label === 'Unreviewed' ||
-    !rarity ||
+    rarity === null ||
     rarity.label === 'Unknown';
   const novelty = suppressNovelty ? null : noveltyRef(openingMatches, bookFlags, ply, initialFen);
   const pawnNote =
@@ -677,6 +691,7 @@ export function verdictInputsForPly(inputs: VerdictInputs): VerdictFacts {
       beforeScore,
       afterScore,
       isCritical,
+      beforeCheck,
       facts,
     };
     for (const candidate of POSITIVE_CANDIDATES) {

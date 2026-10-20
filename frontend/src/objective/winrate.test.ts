@@ -23,7 +23,7 @@ it('converts mover-relative WDL triples to white-relative percentages', () => {
 });
 
 it('names the objective top only from clean responses', () => {
-  expect(botPoint(undefined)).toEqual({ top: null, expected: null });
+  expect(botPoint(null)).toEqual({ top: null, expected: null });
   expect(
     botPoint({
       top_moves: [{ move: 'e2e4', prob: 0.5, wdl: [0.2, 0.3, 0.5] }],

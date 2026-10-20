@@ -1,5 +1,6 @@
 import type { State } from '../state/index';
 import { START_FEN } from '../shared/domain';
+import { plyAt, plyOrNull } from '../shared/explicit';
 import { bestLinePreview, playedCapture } from '../theory/material';
 import {
   BEST_LINE_SOURCE,
@@ -43,20 +44,22 @@ export function PlayVerdict({ state, feedback }: { state: State; feedback: PlayF
   const timeline = feedback.timeline;
   const nodes = feedback.nodes;
   if (ply >= nodes.length || before >= timeline.moves.length) return <VerdictPlaceholder />;
-  const beforeNode = nodes[before];
-  const afterNode = nodes[ply];
-  if (!beforeNode || !afterNode) return <VerdictPlaceholder />;
-  const played = afterNode.uci || undefined;
-  if (!played) return <VerdictPlaceholder />;
-  const quality = feedback.qualities[before];
-  const move = timeline.moves[before];
-  const bot = feedback.botResults[before];
-  const rarity = move && bot ? botRarity(bot, move) : undefined;
-  const best = feedback.objectivePoints[before]?.top ?? feedback.evaluations[before]?.best_move;
-  const bestBot = feedback.botResults[before];
-  const bestRarity = best && bestBot ? botRarity(bestBot, best) : undefined;
-  const evaluation = feedback.evaluations[before];
-  const afterEvaluation = feedback.evaluations[ply];
+  const beforeNode = plyAt(nodes, before, 'play nodes');
+  const afterNode = plyAt(nodes, ply, 'play nodes');
+  const played = afterNode.uci !== '' ? afterNode.uci : null;
+  if (played === null) return <VerdictPlaceholder />;
+  const quality = plyAt(feedback.qualities, before, 'play qualities');
+  const move = plyAt(timeline.moves, before, 'play moves');
+  const bot = plyAt(feedback.botResults, before, 'play bot results');
+  const rarity = botRarity(bot, move);
+  const objectivePoint = plyAt(feedback.objectivePoints, before, 'play objective points');
+  const settledEval = plyAt(feedback.evaluations, before, 'play evaluations');
+  const best = objectivePoint === null ? null : objectivePoint.top;
+  const bestMove = best ?? (settledEval === null ? null : settledEval.best_move);
+  const bestBot = plyAt(feedback.botResults, before, 'play bot results');
+  const bestRarity = bestMove !== null ? botRarity(bestBot, bestMove) : null;
+  const evaluation = plyAt(feedback.evaluations, before, 'play evaluations');
+  const afterEvaluation = plyAt(feedback.evaluations, ply, 'play evaluations');
   const mover = beforeNode.turn === 'white' ? 'white' : 'black';
   const exactOpening = lineOpening?.isExact
     ? { eco: lineOpening.eco, name: lineOpening.name }
@@ -66,14 +69,16 @@ export function PlayVerdict({ state, feedback }: { state: State; feedback: PlayF
   // button); no frontier fetch is needed — the PV rides the already-fetched
   // after-position evaluation.
   const materialNote =
-    quality &&
-    played &&
+    quality !== null &&
+    played !== null &&
     !exactOpening &&
     (quality.label === 'Mistake' || quality.label === 'Blunder') &&
-    evaluation?.score.type === 'cp' &&
-    afterEvaluation?.score.type === 'cp' &&
-    !evaluation.terminal &&
-    !afterEvaluation.terminal
+    evaluation !== null &&
+    evaluation.score.type === 'cp' &&
+    afterEvaluation !== null &&
+    afterEvaluation.score.type === 'cp' &&
+    evaluation.terminal === null &&
+    afterEvaluation.terminal === null
       ? (bestLinePreview(
           afterNode.fen,
           resolveBestLineUcis({
@@ -88,9 +93,10 @@ export function PlayVerdict({ state, feedback }: { state: State; feedback: PlayF
       : null;
   const facts = verdictInputsForPly({
     beforeFen: beforeNode.fen,
+    beforeCheck: beforeNode.check,
     afterFen: afterNode.fen,
     afterOutcome: afterNode.outcome,
-    san: afterNode.san || played,
+    san: afterNode.san !== '' ? afterNode.san : played,
     playedUci: played,
     ply,
     quality,
@@ -102,16 +108,20 @@ export function PlayVerdict({ state, feedback }: { state: State; feedback: PlayF
     mover,
     bestRarity,
     materialNote,
+    // No 2400 lane in the play room: cross-Elo notes stay off by name.
+    rarity2400: null,
     // Highest-winrate proxy for pawn-note suppression (no candidate list in
     // play room): objective top else Stockfish best. "Doubles a pawn" stays
     // silent when the played move IS the best or the best incurs the same
     // damage.
-    bestUci: best ?? null,
-    beforeScore: evaluation?.score ?? null,
-    afterScore: afterEvaluation?.score ?? null,
-    isCritical: feedback.engineGrades[before]?.label === 'Critical',
-    prevUci: before >= 1 ? nodes[before]?.uci || null : null,
-    prevBeforeFen: before >= 1 ? (nodes[before - 1]?.fen ?? null) : null,
+    bestUci: bestMove,
+    beforeScore: evaluation === null ? null : evaluation.score,
+    afterScore: afterEvaluation === null ? null : afterEvaluation.score,
+    isCritical:
+      plyOrNull(feedback.engineGrades, before, 'play engine grades')?.label === 'Critical',
+    isTop: plyOrNull(feedback.engineGrades, before, 'play engine grades')?.label === 'Top',
+    prevUci: before >= 1 ? plyAt(nodes, before, 'play nodes').uci || null : null,
+    prevBeforeFen: before >= 1 ? plyAt(nodes, before - 1, 'play nodes').fen : null,
   });
   const verdict = describeMove(facts);
   if (verdict)
@@ -127,7 +137,11 @@ export function PlayVerdict({ state, feedback }: { state: State; feedback: PlayF
   // verdict, but the reserved line stays so the layout does not collapse
   // between the user's move and the AI reply.
   if (hasError || tooLong || !isUserMove) return <VerdictPlaceholder />;
-  if (!evaluation || !afterEvaluation || quality?.label === 'Unreviewed') {
+  if (
+    evaluation === null ||
+    afterEvaluation === null ||
+    (quality !== null && quality.label === 'Unreviewed')
+  ) {
     return <SkeletonText label="Loading move verdict" />;
   }
   return <VerdictPlaceholder />;

@@ -41,6 +41,7 @@ it('a different board or played move invalidates a verdict even when evaluation 
         pending: new Set(),
         prev,
         stats,
+        objective: null,
       }),
       stats,
     };
@@ -78,7 +79,7 @@ it('upgrades Excellent to Alien only with tiny 2400 rarity and a decisive gap', 
     isBotPending: () => false as boolean,
   };
   expect(translateReviewQualities(base)[0]?.label).toBe('Excellent');
-  const alien = { rarity2400: [tiny] as (Rarity | undefined)[], sfGap: [35] };
+  const alien = { rarity2400: [tiny] as (Rarity | null)[], sfGap: [35] };
   expect(translateReviewQualities({ ...base, alien })[0]?.label).toBe('Alien');
   expect(
     translateReviewQualities({ ...base, alien: { rarity2400: [expected], sfGap: [80] } })[0]?.label,
@@ -87,7 +88,7 @@ it('upgrades Excellent to Alien only with tiny 2400 rarity and a decisive gap', 
     translateReviewQualities({ ...base, alien: { rarity2400: [tiny], sfGap: [20] } })[0]?.label,
   ).toBe('Excellent');
   expect(
-    translateReviewQualities({ ...base, alien: { rarity2400: [], sfGap: [] } })[0]?.label,
+    translateReviewQualities({ ...base, alien: { rarity2400: [null], sfGap: [null] } })[0]?.label,
   ).toBe('Excellent');
   // Non-Critical grades never upgrade, even with full Alien evidence.
   expect(
@@ -166,12 +167,12 @@ it('grades badges from Stockfish with 2400 footnotes and holds the spinner while
     grade('e7e5', [0.5, 0.2, 0.3]),
     grade('e7e5', [0.5, 0.3, 0.2]),
   ];
-  const laneFor = (rows: (MoveResponse | undefined)[], pending: Set<string>): ObjectiveLane => ({
+  const laneFor = (rows: (MoveResponse | null)[], pending: Set<string>): ObjectiveLane => ({
     points: lanePoints(rows, nodes),
     pending,
     keyFor: (node: ReviewNode) => laneKey(node, () => settings),
   });
-  const run = (rows: (MoveResponse | undefined)[], pending: Set<string>) =>
+  const run = (rows: (MoveResponse | null)[], pending: Set<string>) =>
     computeReviewQualities({
       line: timeline,
       nodes,
@@ -198,12 +199,12 @@ it('grades badges from Stockfish with 2400 footnotes and holds the spinner while
   expect(reused.grades[0]).toBe(settled.grades[0]);
   // Missing before-position with its grading key pending: spinner, not SF fallback.
   const waiting = run(
-    [undefined, gradingBot[1], gradingBot[2]],
+    [null, gradingBot[1], gradingBot[2]],
     new Set([laneKey(nodes[0], () => settings)]),
   );
   expect(laneKey(nodes[0], () => settings)).toBe(gradingBotKey(nodes[0]));
   expect(waiting.grades[0]?.label).toBe('Unreviewed');
   expect(waiting.grades[1]?.label).toBe('Top');
   // Same miss without pending: default SF fallback (flat pair -> Holds).
-  expect(run([undefined, gradingBot[1], gradingBot[2]], new Set()).grades[0]?.label).toBe('Holds');
+  expect(run([null, gradingBot[1], gradingBot[2]], new Set()).grades[0]?.label).toBe('Holds');
 });

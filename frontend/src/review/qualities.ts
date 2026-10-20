@@ -1,4 +1,5 @@
 import { Chess } from 'chess.js';
+import { plyAt } from '../shared/explicit';
 import {
   reviewKey,
   stablePositionKey,
@@ -18,30 +19,31 @@ export type QualityMemoEntry = {
   stableKey: string;
   fen: string;
   move: string;
-  before?: Evaluation;
-  after?: Evaluation;
+  before: Evaluation | null;
+  after: Evaluation | null;
   needsPending: boolean;
-  grade?: EngineGrade;
+  grade: EngineGrade | null;
   // Objective inputs compare by value, not reference: providers rebuild
   // point objects per lookup while the numbers stay identical, and the
   // grade derives from the numbers alone. (SF evaluations above compare by
   // reference because the store retains cache-stable identities.)
-  objectiveTop?: string | null;
-  objectiveExpected?: number | null;
-  objectiveAfterExpected?: number | null;
-  objectivePending?: boolean;
+  // Null means no reading at this ply — never undefined.
+  objectiveTop: string | null;
+  objectiveExpected: number | null;
+  objectiveAfterExpected: number | null;
+  objectivePending: boolean;
 };
 export type UnifiedMemo = {
   scope: string;
-  entries: (QualityMemoEntry | undefined)[];
-  grades: (EngineGrade | undefined)[];
+  entries: (QualityMemoEntry | null)[];
+  grades: (EngineGrade | null)[];
 };
 
 // Objective lane: node-indexed provider points for the active source, plus
-// the pending set and key builder for its fetches. Handling below is
-// provider-neutral.
+// the pending set and key builder for its fetches. Null marks no point at
+// this ply — never undefined. Handling below is provider-neutral.
 export type ObjectiveLane = {
-  points: (ObjectivePoint | undefined)[];
+  points: (ObjectivePoint | null)[];
   pending: Set<string>;
   keyFor: (node: ReviewNode) => string;
 };
@@ -53,62 +55,75 @@ export function computeQualities(args: {
   scope: string;
   moves: string[];
   nodes: ReviewNode[];
-  evaluations: (Evaluation | undefined)[];
+  evaluations: (Evaluation | null)[];
   keyFor: (node: ReviewNode) => string;
   active: (node: ReviewNode, index: number) => boolean;
   pending: Set<string>;
   prev: UnifiedMemo | null;
   stats?: { reviews: number };
-  objective?: ObjectiveLane;
-}): { grades: (EngineGrade | undefined)[]; memo: UnifiedMemo } {
+  objective: ObjectiveLane | null;
+}): { grades: (EngineGrade | null)[]; memo: UnifiedMemo } {
   const { scope, moves, nodes, evaluations, keyFor, active, pending, prev, stats, objective } =
     args;
-  const sameScope = prev?.scope === scope;
-  let allReused = !!prev && sameScope && prev.grades.length === moves.length;
-  const entries = moves.map((move, index): QualityMemoEntry | undefined => {
-    const node = nodes[index],
-      next = nodes[index + 1];
-    if (!node || !next || !active(node, index)) return;
-    const before = evaluations[index],
-      after = evaluations[index + 1];
+  const sameScope = prev !== null && prev.scope === scope;
+  let allReused = prev !== null && sameScope && prev.grades.length === moves.length;
+  const entries = moves.map((move, index): QualityMemoEntry | null => {
+    const node = index < nodes.length ? nodes[index] : null;
+    const next = index + 1 < nodes.length ? nodes[index + 1] : null;
+    if (node === null || next === null || !active(node, index)) return null;
+    const before = plyAt(evaluations, index, 'evaluations');
+    const after = plyAt(evaluations, index + 1, 'evaluations');
     // Every missing endpoint must itself be pending. The neighbor sharing
     // only one endpoint (viewing P1 fetches N[i]+N[i+1] while move y needs
     // N[i+1]+N[i+2]) stays blank instead of flashing a spinner it can never
     // settle.
-    const beforeMissing = !before,
-      afterMissing = !after;
+    const beforeMissing = before === null,
+      afterMissing = after === null;
     const needsPending =
       (beforeMissing || afterMissing) &&
       (!beforeMissing || pending.has(keyFor(node))) &&
       (!afterMissing || pending.has(keyFor(next)));
-    const old = sameScope ? prev!.entries[index] : undefined;
+    // Memo reuse across line growth/shrink: a shorter memo (append) or a
+    // longer one (takeback) is normal — out-of-range reads mean recompute
+    // (null), never a failure. In-range holes still throw via plyAt.
+    const old =
+      sameScope && prev !== null && index < prev.entries.length
+        ? plyAt(prev.entries, index, 'memo entries')
+        : null;
     const stableKey = stablePositionKey(node);
     const objectiveInput = objectiveInputFor(objective, node, next, index);
     const objectivePending = objectiveInput
       ? objectiveInput.grade.beforePending || objectiveInput.grade.afterPending
       : false;
     if (
-      old &&
+      old !== null &&
       old.stableKey === stableKey &&
       old.fen === node.fen &&
       old.move === move &&
       old.before === before &&
       old.after === after &&
       old.needsPending === needsPending &&
-      (old.objectiveTop ?? null) === (objectiveInput?.grade.top ?? null) &&
-      (old.objectiveExpected ?? null) === (objectiveInput?.grade.expected ?? null) &&
-      (old.objectiveAfterExpected ?? null) === (objectiveInput?.grade.afterExpected ?? null) &&
-      (old.objectivePending ?? false) === objectivePending
+      old.objectiveTop === (objectiveInput === null ? null : objectiveInput.grade.top) &&
+      old.objectiveExpected === (objectiveInput === null ? null : objectiveInput.grade.expected) &&
+      old.objectiveAfterExpected ===
+        (objectiveInput === null ? null : objectiveInput.grade.afterExpected) &&
+      old.objectivePending === objectivePending
     )
       return old;
     allReused = false;
-    if (before && after && stats) stats.reviews++;
+    if (before !== null && after !== null && stats) stats.reviews++;
     const grade =
-      before && after
-        ? reviewMove(before, after, new Chess(node.fen), move, objectiveInput?.grade ?? undefined)
+      before !== null && after !== null
+        ? reviewMove(
+            before,
+            after,
+            new Chess(node.fen),
+            move,
+            objectiveInput === null ? undefined : objectiveInput.grade,
+          )
         : needsPending
           ? { label: 'Unreviewed' as const, accuracy: null, loss: null }
-          : undefined;
+          : null;
     return {
       stableKey,
       fen: node.fen,
@@ -117,13 +132,16 @@ export function computeQualities(args: {
       after,
       needsPending,
       grade,
-      objectiveTop: objectiveInput?.grade.top ?? null,
-      objectiveExpected: objectiveInput?.grade.expected ?? null,
-      objectiveAfterExpected: objectiveInput?.grade.afterExpected ?? null,
+      objectiveTop: objectiveInput === null ? null : objectiveInput.grade.top,
+      objectiveExpected: objectiveInput === null ? null : objectiveInput.grade.expected,
+      objectiveAfterExpected: objectiveInput === null ? null : objectiveInput.grade.afterExpected,
       objectivePending,
     };
   });
-  const grades = allReused ? prev!.grades : entries.map(entry => entry?.grade);
+  const grades =
+    allReused && prev !== null
+      ? prev.grades
+      : entries.map(entry => (entry === null ? null : entry.grade));
   return { grades, memo: { scope, entries, grades } };
 }
 
@@ -132,22 +150,26 @@ export function computeQualities(args: {
 // from the outcome (delivered mate wins, draws split); otherwise the
 // after-node's opponent-relative expectation inverts to the mover.
 function objectiveInputFor(
-  lane: ObjectiveLane | undefined,
+  lane: ObjectiveLane | null,
   node: ReviewNode,
   next: ReviewNode,
   index: number,
-): { grade: ObjectiveGrade; before: ObjectivePoint | undefined } | null {
-  if (!lane) return null;
-  const before = lane.points[index];
-  const after = lane.points[index + 1];
+): { grade: ObjectiveGrade; before: ObjectivePoint | null } | null {
+  if (lane === null) return null;
+  // Points align 1:1 with nodes by construction (lanePoints maps laneRows
+  // maps nodes). A short lane is a bug, so plyAt throws instead of
+  // silently grading against the wrong position.
+  const before = plyAt(lane.points, index, 'objective points');
+  const after = plyAt(lane.points, index + 1, 'objective points');
   const afterExpected =
-    outcomeExpected(next.outcome) ?? (after?.expected != null ? 100 - after.expected : null);
-  const settled = before?.top != null && before?.expected != null;
+    outcomeExpected(next.outcome) ??
+    (after !== null && after.expected != null ? 100 - after.expected : null);
+  const settled = before !== null && before.top != null && before.expected != null;
   return {
     before,
     grade: {
-      top: before?.top ?? null,
-      expected: before?.expected ?? null,
+      top: before === null ? null : before.top,
+      expected: before === null ? null : before.expected,
       afterExpected,
       beforePending: !settled && lane.pending.has(lane.keyFor(node)),
       afterPending: !next.outcome && afterExpected === null && lane.pending.has(lane.keyFor(next)),
@@ -163,14 +185,14 @@ export function computeLineQualities(args: {
   scope: string;
   moves: string[];
   nodes: ReviewNode[];
-  evaluations: (Evaluation | undefined)[];
+  evaluations: (Evaluation | null)[];
   settingsForNode: (node: ReviewNode) => ReviewSettings;
   active?: (node: ReviewNode, index: number) => boolean;
   pending: Set<string>;
   prev: UnifiedMemo | null;
   stats?: { reviews: number };
-  objective?: ObjectiveLane;
-}): { grades: (EngineGrade | undefined)[]; memo: UnifiedMemo } {
+  objective: ObjectiveLane | null;
+}): { grades: (EngineGrade | null)[]; memo: UnifiedMemo } {
   const {
     scope,
     moves,

@@ -18,12 +18,12 @@ it('carries the white-relative WDL on lane points for the eval bar', () => {
   const points = lanePoints(rows, nodes);
   expect(points[0]).toMatchObject({ expected: 65, wdl: { white: 50, draw: 30, black: 20 } });
   expect(points[1]).toMatchObject({ expected: 65, wdl: { white: 20, draw: 30, black: 50 } });
-  expect(lanePoints([undefined] as never, nodes)).toEqual([undefined]);
+  expect(lanePoints([null], nodes)).toEqual([null]);
 });
 
 it('lists ranked candidates with per-choice expectations', () => {
   const node = { fen: '', turn: 'white' } as never;
-  expect(candidatesFor(undefined, node)).toBeUndefined();
+  expect(candidatesFor(null, node)).toBeNull();
   const list = candidatesFor(
     {
       move: 'e2e4',

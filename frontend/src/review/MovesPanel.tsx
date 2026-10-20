@@ -11,6 +11,7 @@ import {
 import { IconButton } from '../components';
 import { QualityBadge, type BadgeLoading } from './ReviewCharts';
 import type { Quality } from './reviewMetrics';
+import { plyOrNull } from '../shared/explicit';
 
 export function MoveNavBar({
   ply,
@@ -75,7 +76,7 @@ type MovesCore = {
   sans: string[];
   ply: number;
   initialFen: string;
-  qualities?: (Quality | undefined)[];
+  qualities?: (Quality | null)[];
   badgeLoading?: BadgeLoading;
   bookFlags?: boolean[];
 };
@@ -93,7 +94,9 @@ type MovesBranch = {
   original?: {
     sans: string[];
     fromPly: number;
-    qualities?: (Quality | undefined)[];
+    // Null when the branch exists but the mainline pass has no values yet;
+    // absent entirely when there is no branch.
+    qualities?: (Quality | null)[] | null;
     bookFlags?: boolean[];
   };
   branchUp?: boolean;
@@ -169,7 +172,13 @@ function MovesPanel({
           <BookOpen size={13} aria-hidden="true" />
         </span>
       ) : (
-        qualities && <QualityBadge quality={qualities[index]} reserveSpace loading={badgeLoading} />
+        qualities && (
+          <QualityBadge
+            quality={plyOrNull(qualities, index, 'move qualities')}
+            reserveSpace
+            loading={badgeLoading}
+          />
+        )
       )}
     </button>
   );
@@ -212,15 +221,17 @@ function MovesPanel({
                   >
                     <BookOpen size={13} aria-hidden="true" />
                   </span>
-                ) : (
-                  original.qualities && (
-                    <QualityBadge
-                      quality={original.qualities[original.fromPly + offset]}
-                      reserveSpace
-                      loading={badgeLoading}
-                    />
-                  )
-                )}
+                ) : original.qualities ? (
+                  <QualityBadge
+                    quality={plyOrNull(
+                      original.qualities,
+                      original.fromPly + offset,
+                      'original qualities',
+                    )}
+                    reserveSpace
+                    loading={badgeLoading}
+                  />
+                ) : null}
               </button>
             ))}
           </div>

@@ -175,8 +175,8 @@ export type LabVerdict = {
     rarity: Rarity;
     rarity2400: Rarity;
     bestRarity: Rarity;
-    autoQuality: Quality | undefined;
-    finalQuality: Quality | undefined;
+    autoQuality: Quality | null;
+    finalQuality: Quality | null;
     alienApplied: boolean;
     tinyOwn: boolean;
     tiny2400: boolean;
@@ -266,7 +266,11 @@ export function buildLabVerdict(state: LabState): LabVerdict {
     sfGap,
   );
   const translated = effectiveQuality(engineGrade, rarity);
-  const alienApplied = autoQuality?.label === 'Alien' && translated?.label === 'Excellent';
+  const alienApplied =
+    autoQuality !== null &&
+    autoQuality.label === 'Alien' &&
+    translated !== null &&
+    translated.label === 'Excellent';
 
   // Novelty plumbing mirrors a line that was in book until this ply: the
   // prior position carries the exact hit, this ply leaves it.

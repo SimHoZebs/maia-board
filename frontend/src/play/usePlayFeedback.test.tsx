@@ -95,7 +95,7 @@ describe('timeline-backed move feedback', () => {
   const timeline = buildTimeline(START_FEN, ['e2e4', 'e7e5', 'g1f3', 'b8c6']);
   const nodes = reviewNodes(timeline);
   const values = new Map(nodes.map(node => [stablePositionKey(node), sfFixture(node.fen)]));
-  const lookup = (node: ReviewNode) => values.get(stablePositionKey(node));
+  const lookup = (node: ReviewNode) => values.get(stablePositionKey(node)) ?? null;
   const compute = (
     prev: PlayQualitiesMemo | null = null,
     overrides: Partial<Parameters<typeof computePlayQualities>[0]> = {},
@@ -106,10 +106,11 @@ describe('timeline-backed move feedback', () => {
       userColor: 'white',
       settings,
       sfLookup: lookup,
-      botLookup: () => undefined,
+      botLookup: () => null,
       sfPending: new Set(),
       botPending: new Set(),
       prev,
+      objective: null,
       ...overrides,
     });
 
@@ -117,9 +118,9 @@ describe('timeline-backed move feedback', () => {
     const first = compute(),
       stats = { reviews: 0 };
     expect(first.qualities[0]).toBeDefined();
-    expect(first.qualities[1]).toBeUndefined();
+    expect(first.qualities[1]).toBeNull();
     expect(first.qualities[2]).toBeDefined();
-    expect(first.qualities[3]).toBeUndefined();
+    expect(first.qualities[3]).toBeNull();
     expect(first.grades).toHaveLength(first.qualities.length);
     const count = timelineBuildsForTests(),
       second = compute(first.memo, { stats });
@@ -129,12 +130,12 @@ describe('timeline-backed move feedback', () => {
     expect(stats.reviews).toBe(0);
     expect(timelineBuildsForTests()).toBe(count);
     const black = compute(first.memo, { userColor: 'black' });
-    expect(black.qualities[0]).toBeUndefined();
+    expect(black.qualities[0]).toBeNull();
     expect(black.qualities[1]).toBeDefined();
   });
   it('pending verdicts clear on failure and settle only after both evaluations exist', () => {
-    const missing = (node: ReviewNode) => (node.ply === 1 ? undefined : lookup(node));
-    expect(compute(null, { sfLookup: missing }).qualities[0]).toBeUndefined();
+    const missing = (node: ReviewNode) => (node.ply === 1 ? null : lookup(node));
+    expect(compute(null, { sfLookup: missing }).qualities[0]).toBeNull();
     expect(
       compute(null, {
         sfLookup: missing,
@@ -166,7 +167,7 @@ describe('timeline-backed move feedback', () => {
     const branch = buildTimeline(START_FEN, ['e2e4', 'e7e5', 'f1c4']);
     const branched = compute(first.memo, { timeline: branch });
     expect(branched.qualities[0]).toEqual(first.qualities[0]);
-    expect(branched.qualities[2]).toBeUndefined();
+    expect(branched.qualities[2]).toBeNull();
   });
   it('uses side-to-move from custom-start timelines', () => {
     const custom = buildTimeline(nodes[1].fen, ['e7e5']);
@@ -212,10 +213,11 @@ describe('timeline-backed move feedback', () => {
       userColor: 'white' as const,
       settings,
       sfLookup,
-      botLookup: (_node: ReviewNode) => undefined,
+      botLookup: (_node: ReviewNode) => null,
       sfPending: new Set<string>(),
       botPending: new Set<string>(),
       prev: null,
+      objective: null,
     };
     // Bot still queued: spinner, not a provisional Best.
     expect(
@@ -257,10 +259,11 @@ describe('timeline-backed move feedback', () => {
       userColor: 'white' as const,
       settings,
       sfLookup,
-      botLookup: (_node: ReviewNode) => undefined,
+      botLookup: (_node: ReviewNode) => null,
       sfPending: new Set<string>(),
       botPending: new Set<string>(),
       prev: null,
+      objective: null,
     };
     const laneNodes = reviewNodes(line);
     const laneFor = (
@@ -286,7 +289,7 @@ describe('timeline-backed move feedback', () => {
     const waiting = computePlayQualities({
       ...base,
       objective: laneFor(
-        [undefined, grade('e7e5', [0.5, 0.2, 0.3])],
+        [null, grade('e7e5', [0.5, 0.2, 0.3])],
         new Set([laneKey(beforeNode, () => settings)]),
       ),
     });
@@ -433,10 +436,11 @@ describe('settled badges only use labels the badge can render', () => {
       userColor: 'white',
       settings,
       sfLookup: node => (node.ply === 0 ? topBefore : topAfter),
-      botLookup: () => undefined,
+      botLookup: () => null,
       sfPending: new Set(),
       botPending: new Set(),
       prev: null,
+      objective: null,
     });
     expect(top.qualities[0]?.label).toBe('Best');
     const holds = computePlayQualities({
@@ -445,10 +449,11 @@ describe('settled badges only use labels the badge can render', () => {
       userColor: 'white',
       settings,
       sfLookup: node => (node.ply === 0 ? holdsBefore : holdsAfter),
-      botLookup: () => undefined,
+      botLookup: () => null,
       sfPending: new Set(),
       botPending: new Set(),
       prev: null,
+      objective: null,
     });
     expect(holds.qualities[0]?.label).toBe('Good');
     const unmapped = [...top.qualities, ...holds.qualities].flatMap(quality =>
@@ -468,13 +473,17 @@ describe('settled badges only use labels the badge can render', () => {
       settingsForNode: () => settings,
       pending: new Set(),
       prev: null,
+      objective: null,
     });
     expect(raw.grades[0]?.label).toBe('Holds');
     const qualities = translateReviewQualities({
       grades: raw.grades,
       nodes,
-      botResults: [undefined, undefined],
-      rarities: [undefined, undefined],
+      botResults: [null, null],
+      rarities: [
+        { label: 'Unknown', r: null, prob: null, topProb: null },
+        { label: 'Unknown', r: null, prob: null, topProb: null },
+      ],
       settingsForNode: () => settings,
       isBotPending: () => false,
     });

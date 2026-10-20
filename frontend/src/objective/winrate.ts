@@ -9,10 +9,11 @@ import type { ObjectivePoint } from '../review/reviewMetrics';
 
 // One position's objective point. A degraded response still carries an
 // expectation (shown, not graded); only a clean top move names the best.
+// Null means no row at this ply (loading/failed/terminal) — never undefined.
 export function botPoint(
-  response: Pick<MoveResponse, 'top_moves' | 'wdl' | 'degraded'> | undefined,
+  response: Pick<MoveResponse, 'top_moves' | 'wdl' | 'degraded'> | null,
 ): ObjectivePoint {
-  if (!response) return { top: null, expected: null };
+  if (response === null) return { top: null, expected: null };
   const top =
     !response.degraded && typeof response.top_moves?.[0]?.move === 'string'
       ? response.top_moves[0].move
@@ -65,7 +66,7 @@ export function botWhiteWdl(
 export function trueCandidateDelta(
   beforeExpected: number | null,
   childExpected: number | null,
-  childOutcome: { kind: string } | null | undefined,
+  childOutcome: { kind: string } | null,
 ): number | null {
   if (beforeExpected == null || !Number.isFinite(beforeExpected)) return null;
   if (childOutcome) {

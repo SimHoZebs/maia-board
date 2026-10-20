@@ -21,39 +21,43 @@ import { botExpected, botPoint, botWhiteWdl } from './winrate';
 // lives in ./winrate. The badge itself is Stockfish-owned (see
 // reviewMetrics gradedReviewMove); this lane feeds footnotes and sociology.
 
-// Raw provider rows, node-aligned. The fixed 2400 identity lives inside
-// this module; callers never name it.
+// Raw provider rows, node-aligned. Null marks no row at this ply
+// (loading/failed/terminal) — never undefined. The fixed 2400 identity
+// lives inside this module; callers never name it.
 export function laneRows(
   nodes: ReviewNode[],
-  ctx: { coordinator: ReviewCoordinator; sfEvaluations: (Evaluation | undefined)[] },
-): (MoveResponse | undefined)[] {
-  return nodes.map(node => ctx.coordinator.result('maia', node, GRADING_BOT_SETTINGS));
+  ctx: { coordinator: ReviewCoordinator; sfEvaluations: (Evaluation | null)[] },
+): (MoveResponse | null)[] {
+  return nodes.map(node => {
+    const found = ctx.coordinator.result('maia', node, GRADING_BOT_SETTINGS);
+    return found === undefined ? null : found;
+  });
 }
 
 // Node-aligned objective points. The white-relative WDL rides along for the
 // eval bar (three segments + percentages); grading still reads only
 // top/expected.
 export function lanePoints(
-  rows: (MoveResponse | undefined)[],
+  rows: (MoveResponse | null)[],
   nodes: ReviewNode[],
-): (ObjectivePoint | undefined)[] {
+): (ObjectivePoint | null)[] {
   return rows.map((response, index) => {
-    if (response === undefined) return undefined;
+    if (response === null) return null;
     const point = botPoint(response);
     return { ...point, wdl: botWhiteWdl(response.wdl, nodes[index].turn) };
   });
 }
 
 // Ranked candidate list for the panel: the full top_moves with per-choice
-// expectations, in policy order. Undefined while the row is missing (the bot
+// expectations, in policy order. Null while the row is missing (the bot
 // never infers game-over positions — the panel falls back to the outcome).
 // The policy share rides along so the panel can mirror the display columns
 // (prob% + winrate delta) instead of absolute values only.
 export function candidatesFor(
-  row: MoveResponse | undefined,
+  row: MoveResponse | null,
   _node: ReviewNode,
-): ObjectiveCandidates | undefined {
-  if (!row) return undefined;
+): ObjectiveCandidates | null {
+  if (row === null) return null;
   return {
     entries: row.top_moves.map(candidate => ({
       uci: candidate.move,
@@ -77,18 +81,23 @@ export function lanePending(coordinator: ReviewCoordinator): Set<string> {
   return coordinator.botPendingKeys();
 }
 
-export function laneError(
-  coordinator: ReviewCoordinator,
-  node: ReviewNode | undefined,
-): string | undefined {
-  if (!node || node.outcome) return undefined;
-  return coordinator.error('maia', node, GRADING_BOT_SETTINGS);
+export type LaneError =
+  | { state: 'skipped'; reason: 'no-node' | 'terminal' }
+  | { state: 'failed'; message: string }
+  | { state: 'ok' };
+
+export function laneError(coordinator: ReviewCoordinator, node: ReviewNode | null): LaneError {
+  if (node === null) return { state: 'skipped', reason: 'no-node' };
+  if (node.outcome) return { state: 'skipped', reason: 'terminal' };
+  const message = coordinator.error('maia', node, GRADING_BOT_SETTINGS);
+  if (message === undefined) return { state: 'ok' };
+  return { state: 'failed', message };
 }
 
 // Nodes whose objective rows failed and need a retry sweep. The main sweep
 // owns every other engine; this module owns only its own lane.
 export function laneFailures(nodes: ReviewNode[], coordinator: ReviewCoordinator): ReviewNode[] {
-  return nodes.filter(node => laneError(coordinator, node) !== undefined);
+  return nodes.filter(node => laneError(coordinator, node).state === 'failed');
 }
 
 // Foreground fetch for the objective lane. Queues behind whatever is

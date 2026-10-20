@@ -37,11 +37,11 @@ export function QualityBadge({
   reserveSpace,
   loading = 'reel',
 }: {
-  quality?: Quality;
+  quality?: Quality | null;
   reserveSpace?: boolean;
   loading?: BadgeLoading;
 }) {
-  if (!quality) {
+  if (quality === undefined || quality === null) {
     // Genuinely not loading (opponent moves, unevaluated lines): invisible
     // reserve box, so rows keep their shape without implying work is coming.
     if (!reserveSpace) return null;
@@ -106,7 +106,7 @@ export function ReviewCharts({
   ply: number;
   sans: string[];
   onView: (ply: number) => void;
-  side?: ReviewSide;
+  side: ReviewSide | null;
 }) {
   const selected = useRef<HTMLButtonElement>(null);
   const chart = useRef<HTMLDivElement>(null);
@@ -138,16 +138,18 @@ export function ReviewCharts({
   const points = review.nodes.map((node, index) => {
     const evaluation = review.evaluations[index];
     const objective = review.objective[index];
-    const quality = index ? review.qualities[index - 1] : undefined;
-    const beforeNode = index ? review.nodes[index - 1] : null;
-    const beforeFen = beforeNode?.fen.split(' ') ?? null;
-    const mover = beforeNode ? beforeNode.turn : null;
-    const outOfScope = !!side && mover !== side;
+    // Null at the root (no move yet) and wherever a ply has no grade yet —
+    // never undefined.
+    const quality = index > 0 ? review.qualities[index - 1] : null;
+    const beforeNode = index > 0 ? review.nodes[index - 1] : null;
+    const beforeFen = beforeNode === null ? null : beforeNode.fen.split(' ');
+    const mover = beforeNode === null ? null : beforeNode.turn;
+    const outOfScope = side !== null && mover !== side;
     // Objective track: provider White winning chances; terminal positions
     // synthesize from the outcome since the bot never infers game-over nodes.
     // A Stockfish-seen forced mate pins the ends (mate display survives in
     // the copy even though centipawns are gone from the UI).
-    const mate = evaluation && evaluation.score.type === 'mate' ? evaluation.score : null;
+    const mate = evaluation !== null && evaluation.score.type === 'mate' ? evaluation.score : null;
     const mateWhite = mate
       ? (mate.winning_side ?? (mate.value > 0 ? 'white' : 'black')) === 'white'
       : null;
@@ -163,7 +165,7 @@ export function ReviewCharts({
           ? mateWhite
             ? 100
             : 0
-          : objective?.expected != null
+          : objective !== null && objective.expected != null
             ? whiteExpected(node.turn, objective.expected)
             : null;
     const moveNumber = beforeFen ? `${beforeFen[5]}${beforeFen[1] === 'w' ? '.' : '…'}` : '0';
@@ -173,7 +175,7 @@ export function ReviewCharts({
         : `${moveNumber} ${sans[index - 1]} · ${mover === 'white' ? 'White' : 'Black'}`,
       value === null ? null : `${value.toFixed(1)}% White winning chance · ${sourceLabel()}`,
       mate ? scoreValueText(mate) : null,
-      quality && quality.label !== 'Unreviewed' ? quality.label : null,
+      quality !== null && quality.label !== 'Unreviewed' ? quality.label : null,
     ]
       .filter(Boolean)
       .join(' · ');
@@ -185,7 +187,7 @@ export function ReviewCharts({
   // positions leave the track entirely so your points sit adjacently and the
   // line connects them. Without one (pasted lines) every ply stays.
   const kept = points.flatMap((point, index) => {
-    if (side !== undefined && point.mover !== side) return [];
+    if (side !== null && point.mover !== side) return [];
     return [{ ...point, origIndex: index }];
   });
   const selectedPosExact = kept.findIndex(point => point.origIndex === selectedPly);

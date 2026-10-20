@@ -1,5 +1,6 @@
 import type { ReviewNode } from './reviewCoordinator';
 import type { Quality } from './reviewMetrics';
+import { plyAt, plyOrNull } from '../shared/explicit';
 
 export const issueLabels = ['Inaccuracy', 'Mistake', 'Blunder', 'Allowed mate'] as const;
 type IssueLabel = (typeof issueLabels)[number];
@@ -37,8 +38,8 @@ export type ReviewIssue = {
 
 export function summarizeReview(
   nodes: readonly Pick<ReviewNode, 'turn' | 'ply' | 'san' | 'uci' | 'fen'>[],
-  qualities: readonly (Quality | undefined)[],
-  onlySide?: ReviewSide,
+  qualities: readonly (Quality | null)[],
+  onlySide: ReviewSide | null,
 ) {
   const sides: SideSummary[] = (['white', 'black'] as const).map(color => ({
     color,
@@ -64,17 +65,18 @@ export function summarizeReview(
   // Move numbers derive from the root's fullmove + ply, not per-row FEN
   // splits. Color comes from the typed turn; accuracy is the shared
   // reviewMetrics mean over settled qualities.
-  const rootFen = nodes[0]?.fen.split(' ') ?? [];
-  const rootMove = Number(rootFen[5]) || 1;
+  const rootNode = plyAt(nodes, 0, 'summary nodes');
+  const rootFen = rootNode.fen.split(' ');
+  const rootMove = Number(rootFen[5] ?? '') || 1;
   const rootOffset = rootFen[1] === 'b' ? 1 : 0;
   for (let index = 0; index < nodes.length - 1; index++) {
-    const row = nodes[index];
+    const row = plyAt(nodes, index, 'summary nodes');
     const color = row.turn;
-    if (onlySide && color !== onlySide) continue;
+    if (onlySide !== null && color !== onlySide) continue;
     const side = sides[color === 'white' ? 0 : 1];
     side.total++;
-    const quality = qualities[index];
-    if (!quality || quality.accuracy === null || quality.label === 'Unreviewed') continue;
+    const quality = plyOrNull(qualities, index, 'summary qualities');
+    if (quality === null || quality.accuracy === null || quality.label === 'Unreviewed') continue;
     side.reviewed++;
     scores[side.color] += quality.accuracy;
     const countLabel = countLabels.find(label => label === quality.label);
@@ -83,11 +85,12 @@ export function summarizeReview(
     if (label) {
       side.issues[label]++;
       const moveNumber = rootMove + Math.floor((rootOffset + row.ply) / 2);
+      const nextNode = plyAt(nodes, index + 1, 'summary nodes');
       issues.push({
         beforePly: row.ply,
         color: side.color,
         moveNumber,
-        san: nodes[index + 1].san ?? nodes[index + 1].uci ?? '',
+        san: nextNode.san !== '' ? nextNode.san : nextNode.uci,
         label,
         accuracy: quality.accuracy,
       });
@@ -95,7 +98,7 @@ export function summarizeReview(
   }
   for (const side of sides)
     side.accuracy = side.reviewed ? scores[side.color] / side.reviewed : null;
-  const visible = onlySide ? sides.filter(side => side.color === onlySide) : sides;
+  const visible = onlySide !== null ? sides.filter(side => side.color === onlySide) : sides;
   return {
     sides: visible,
     issues,
