@@ -35,7 +35,6 @@ import {
 import { trueCandidateDelta } from '../objective/winrate';
 import { plyAt } from '../shared/explicit';
 import type { ObjectiveLane } from './qualities';
-import { useAbortScope } from './useAbortScope';
 import { useLookupRestore } from './useLookupRestore';
 import { useServerBatch } from './useServerBatch';
 import { computeLineQualities, type UnifiedMemo } from './qualities';
@@ -387,9 +386,6 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     () => lineKeyFor(state.analysis.initialFen, moves),
     [state.analysis.initialFen, moves],
   );
-  // One abort scope (shared hook). Batch jobs are never cancelled:
-  // scope change only drops local optimism. Backgrounding never aborts.
-  const scope = useAbortScope(lineKey);
   // lineKey covers initialFen+moves with stable string identity.
   // oxlint-disable-next-line exhaustive-deps
   const timeline = useMemo(() => buildTimeline(state.analysis.initialFen, moves), [lineKey]);
@@ -509,9 +505,10 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
 
   // Eagerness (analysis): debounce + batch-wait. Current and previous
   // Stockfish grade the displayed move. The bot's focus grades that move;
-  // the current-position bot supplies forward candidates. Signal-abort is the
-  // only foreground cancel path: a line change aborts the scope; a ply
-  // change queues the new pair behind in FIFO order.
+  // the current-position bot supplies forward candidates. Fires are
+  // stateless: a line change fires the new pair without cancelling the old
+  // (rows land content-keyed), and a ply change fires the new pair
+  // alongside — the server joins same-key arrivals.
   useEffect(() => {
     if (!active || tooLong) return;
     // Cached-instant bypass: when both SF sides are already settled
@@ -529,19 +526,17 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     if (sfCached) {
       coordinator.ensure(focusNode ? [focusNode, currentNode] : [currentNode], settingsForNode, {
         priority: true,
-        signal: scope.signal,
         fastFirst: true,
       });
-      ensureLane(coordinator, focusNode ? [focusNode, currentNode] : [currentNode], scope.signal);
+      ensureLane(coordinator, focusNode ? [focusNode, currentNode] : [currentNode]);
       return;
     }
     const timer = setTimeout(() => {
       coordinator.ensure(focusNode ? [focusNode, currentNode] : [currentNode], settingsForNode, {
         priority: true,
-        signal: scope.signal,
         fastFirst: true,
       });
-      ensureLane(coordinator, focusNode ? [focusNode, currentNode] : [currentNode], scope.signal);
+      ensureLane(coordinator, focusNode ? [focusNode, currentNode] : [currentNode]);
     }, 200);
     return () => {
       clearTimeout(timer);
@@ -553,7 +548,6 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     nodes,
     currentPly,
     combinedKey,
-    scope,
     settingsForNode,
     focusNode,
     currentNode,
@@ -577,7 +571,7 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     settings: settingsForNode,
     objectiveLane: restorePair.lane.settings,
     coordinator,
-    scope: active ? scope : null,
+    scopeKey: active ? lineKey : null,
     auto: false,
     priorityPlies,
   });
@@ -696,8 +690,8 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     if (!active || tooLong || trueChildNodes.length === 0) return;
     const targets = trueChildNodes.map(entry => entry.node).filter(node => !node.outcome);
     if (targets.length === 0) return;
-    ensureLane(coordinator, targets, scope.signal);
-  }, [coordinator, active, tooLong, scope, trueChildNodes]);
+    ensureLane(coordinator, targets);
+  }, [coordinator, active, tooLong, trueChildNodes]);
   const trueChildPoints = useMemo(() => {
     const rows = trueChildNodes.map(entry =>
       plyAt(laneRows([entry.node], { coordinator, sfEvaluations: [null] }), 0, 'child lane row'),
@@ -916,15 +910,14 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     currentEval.terminal === null;
   const ensureWalkFrontier = useCallback(
     (maia: ReviewNode | null, sf: ReviewNode | null) => {
-      if (maia) ensureLane(coordinator, [maia], scope.signal);
+      if (maia) ensureLane(coordinator, [maia]);
       if (sf)
         coordinator.ensure([sf], settingsForNode, {
           priority: true,
           engines: ['sf'],
-          signal: scope.signal,
         });
     },
-    [coordinator, scope, settingsForNode],
+    [coordinator, settingsForNode],
   );
   const objectiveBestLine = useObjectiveBestLine({
     coordinator,
@@ -1185,7 +1178,6 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     progress: batch.progress,
     recordStatus,
     reviewState,
-    scope,
     lineKey,
     start: batch.start,
     retry: () => {
@@ -1245,39 +1237,32 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   // movesKey covers moves with stable string identity.
   // oxlint-disable-next-line exhaustive-deps
   const lineKey = useMemo(() => lineKeyFor(START_FEN, moves), [movesKey]);
-  // Game-scoped abort: play lines grow by append and every prefix position
-  // stays displayed, so a per-move line scope would abort the previous
-  // pair's in-flight fetches on each move. Abort only on game change or
-  // unmount; takebacks reuse the same game id and content-keyed rows, so
-  // their flights stay safe to land.
-  const scope = useAbortScope(gameId);
   const allNodes = useMemo(() => reviewNodes(timeline), [timeline]);
   // Target set (play): the only foreground work play ever issues is the
   // newest move's endpoints.
   const pair = useMemo(() => wantedPlayPair(allNodes, userColor), [allNodes, userColor]);
   const tooLong = timeline.moves.length > 256;
-  // Eagerness (play): foreground fetch on move. Requests serve FIFO and
-  // nothing queued is ever dropped, so fast play never loses a badge. The
-  // server batch is out of this path entirely — no per-ply submit, no
-  // cancel/resubmit churn, no 409 races with ourselves. Play (POST /move →
-  // Play lane) and bot analysis (POST /move/analysis → Focus lane) queue on
-  // the shared scheduler with Play priority instead of superseding each other.
+  // Eagerness (play): foreground ask on move. Every ask fires statelessly —
+  // fast play never loses a badge because rows land content-keyed and are
+  // never dropped client-side. The server batch is out of this path entirely
+  // — no per-ply submit, no cancel/resubmit churn, no 409 races with
+  // ourselves. Play (POST /move → Play lane) and bot analysis
+  // (POST /move/analysis → Focus lane) share the server scheduler with Play
+  // priority instead of superseding each other.
   useEffect(() => {
     if (!fetching || tooLong || !pair.sfNodes.length) return;
     coordinator.ensure(pair.sfNodes, settings, {
       priority: true,
       engines: ['sf'],
-      signal: scope.signal,
     });
     if (pair.botNode) {
       coordinator.ensure([pair.botNode], settings, {
         priority: true,
         engines: ['maia'],
-        signal: scope.signal,
       });
-      ensureLane(coordinator, pair.sfNodes, scope.signal);
+      ensureLane(coordinator, pair.sfNodes);
     }
-  }, [coordinator, fetching, tooLong, pair, settings, scope]);
+  }, [coordinator, fetching, tooLong, pair, settings]);
   const nodes = useMemo(() => {
     const all = reviewNodes(timeline);
     const wanted = new Set<ReviewNode>();
@@ -1290,8 +1275,8 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     return [...wanted];
   }, [timeline, userColor]);
   // Cache restore runs independently of foreground work: settled rows grade
-  // through the bulk lookup even when fetches fail. Signal-abort is the
-  // only cancel path; backgrounding never aborts. Restore errors retry
+  // through the bulk lookup even when asks fail. Restores are never
+  // cancelled on navigation; backgrounding never aborts. Restore errors retry
   // through the same capped bucket as foreground failures below.
   const restoreBaseKey = `${lineKey}|${settingsKey}`;
   const restorePair = useRestorePair({
@@ -1306,12 +1291,11 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   // the newest pair: a failure that lands right before a reply (whose pair
   // no longer covers the failed node) must still heal, or its badge blanks
   // until the next move. Buckets bound the fires; the coordinator skips
-  // already-settled keys at the pump, so a sweep re-fetches only misses.
-  // The same sweep also heals silently-dropped work (queue-wiped or
-  // superseded/409 nodes record no failure and the restore serves cache
-  // only): unsettled nodes with nothing pending ride along. Dropped work
-  // never burns the attempt budget or surfaces the exhausted error; only
-  // recorded failures do.
+  // already-settled keys, so a sweep re-fires only misses. The same sweep
+  // also heals silently-dropped work (superseded/409 nodes record no failure
+  // and the restore serves cache only): unsettled nodes with nothing pending
+  // ride along. Dropped work never burns the attempt budget or surfaces the
+  // exhausted error; only recorded failures do.
   const retryTargets: {
     key: string;
     heal: string;
@@ -1430,13 +1414,11 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   latestRetry.current = retryTargets;
   const latestSettings = useRef(settings);
   latestSettings.current = settings;
-  const latestScope = useRef(scope);
-  latestScope.current = scope;
   const latestBucket = useRef(`${lineKey}|${settingsKey}`);
   latestBucket.current = `${lineKey}|${settingsKey}`;
   const { key: retryErrorKey, heal: retryHealKey } = retryTargets;
   useEffect(() => {
-    if (!fetching || (!retryErrorKey && !retryHealKey) || scope.signal.aborted) {
+    if (!fetching || (!retryErrorKey && !retryHealKey)) {
       // Mount-restore sync: adopting a persisted job seeds state once.
       // oxlint-disable-next-line set-state-in-effect
       if (!retryErrorKey && !retryHealKey) setSustainedError(null);
@@ -1461,26 +1443,24 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     // line's surfaced failure; transient retries stay silent until the cap.
     setSustainedError(null);
     const timer = setTimeout(() => {
-      if (scope.signal.aborted || isOfflineNow()) return;
+      if (isOfflineNow()) return;
       const { sf, bot, lane, restore: restoreFailed } = latestRetry.current;
       const hasFailures = !!latestRetry.current.key;
       if (hasFailures) attempts.current.set(bucket, (attempts.current.get(bucket) ?? 0) + 1);
       // Re-issuing is enough: the coordinator clears failures for desired
-      // jobs and skips already-settled ones at the pump.
+      // jobs and skips already-settled ones.
       if (!latestRetry.current.key) {
         setSustainedError(null);
       } else if (hasExhaustedPlayRetries(attempts.current.get(bucket) ?? 0)) {
         setSustainedError(playExhaustedError(true, attempts.current.get(bucket) ?? 0));
       }
-      if (sf.length)
-        coordinator.ensure(sf, settings, { priority: true, engines: ['sf'], signal: scope.signal });
+      if (sf.length) coordinator.ensure(sf, settings, { priority: true, engines: ['sf'] });
       if (bot.length)
         coordinator.ensure(bot, settings, {
           priority: true,
           engines: ['maia'],
-          signal: scope.signal,
         });
-      if (lane.length) ensureLane(coordinator, lane, scope.signal);
+      if (lane.length) ensureLane(coordinator, lane);
       if (restoreFailed) retryRestore();
     }, FOREGROUND_RETRY_MS);
     return () => clearTimeout(timer);
@@ -1493,7 +1473,6 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     retryHealKey,
     lineKey,
     settingsKey,
-    scope,
     coordinator,
     settings,
     retryRestore,
@@ -1510,17 +1489,13 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
       const targets = latestRetry.current;
       if (!targets.key && !targets.heal) return;
       const s = latestSettings.current;
-      const sc = latestScope.current;
-      if (sc.signal.aborted) return;
-      if (targets.sf.length)
-        coordinator.ensure(targets.sf, s, { priority: true, engines: ['sf'], signal: sc.signal });
+      if (targets.sf.length) coordinator.ensure(targets.sf, s, { priority: true, engines: ['sf'] });
       if (targets.bot.length)
         coordinator.ensure(targets.bot, s, {
           priority: true,
           engines: ['maia'],
-          signal: sc.signal,
         });
-      if (targets.lane.length) ensureLane(coordinator, targets.lane, sc.signal);
+      if (targets.lane.length) ensureLane(coordinator, targets.lane);
       if (targets.restore) retryRestore();
     };
     window.addEventListener('online', onOnline);
@@ -1628,15 +1603,14 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   const playSfSettingsFor = useCallback(() => settings, [settings]);
   const ensurePlayWalkFrontier = useCallback(
     (maia: ReviewNode | null, sf: ReviewNode | null) => {
-      if (maia) ensureLane(coordinator, [maia], scope.signal);
+      if (maia) ensureLane(coordinator, [maia]);
       if (sf)
         coordinator.ensure([sf], settings, {
           priority: true,
           engines: ['sf'],
-          signal: scope.signal,
         });
     },
-    [coordinator, scope, settings],
+    [coordinator, settings],
   );
   const objectiveBestLine = useObjectiveBestLine({
     coordinator,
@@ -1660,11 +1634,10 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
           )
         : null,
   });
-  // Play queues no whole-line work and owns no batch job: the foreground
-  // pair above plus the bulk restore are the only evaluation traffic, so
-  // there is nothing to prune or cancel beyond the line scope's own abort.
-  // Badges settle on the objective lane via computePlayQualities; the
-  // coordinator keeps sole ownership of its queues.
+  // Play issues no whole-line work and owns no batch job: the foreground
+  // pair above plus the bulk restore are the only evaluation traffic, and
+  // every ask fires statelessly. Badges settle on the objective lane via
+  // computePlayQualities; display reads settled rows by key.
   return {
     active,
     qualities: computed === null ? [] : computed.qualities,

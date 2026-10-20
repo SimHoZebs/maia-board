@@ -172,7 +172,7 @@ const NODES=[
  {id:'user',c:0,y:36, kind:'user', fill:'#3a2c07',stroke:'#ffd54d',ico:'👤',t:'User workspaces',s:'Play·Analyze·History',d:'Emits {fen,moves,elos,model,settings}. Sampled play (temp>0) never populates the deterministic cache.'},
  {id:'timeline',c:1,y:24, kind:'front',fill:'#12294d',stroke:'#5aa9ff',ico:'♟',t:'Timeline (domain)',s:'position=(initial,prefix)',d:'Move list + row per ply incl. root. posId=JSON([initial,prefix]); lineKey=full line. Selects read rows, no fetch.'},
  {id:'store',c:1,y:118, kind:'cache',fill:'#0e3a24',stroke:'#3ddc84',ico:'🗄',t:'Browser EvalStore',s:'4096 rows · restore()',d:'reviewKey=JSON([posId,engine,hash]). restore() = bounded POST /evaluations/lookup chunks (≤1024, 4MiB). Visible-pair-first.'},
- {id:'coord',c:1,y:212, kind:'front',fill:'#241a4d',stroke:'#8b7bff',ico:'🎛',t:'ReviewCoordinator',s:'1 live/eng · latest-wins',d:'ensure/pump/execute. Leaving workspace cancels flights, keeps shared rows. playMove = single tracked flight.'},
+ {id:'coord',c:1,y:212, kind:'front',fill:'#241a4d',stroke:'#8b7bff',ico:'🎛',t:'ReviewCoordinator',s:'stateless fires · server queues',d:'ensure/fireOne/execute. Every ask fires at once; server joins + orders. Nothing cancels on navigate; rows land by key. playMove = stateless ask.'},
  {id:'transport',c:1,y:306, kind:'front',fill:'#0b3540',stroke:'#4de3d1',ico:'📡',t:'Transport+gameClient',s:'postJson · SSE · games',d:'Shared POST sender + gameClient + SSE batch stream (optimization; GET status = truth). Sets X-Eval-Cache.'},
  {id:'batchfe',c:1,y:400, kind:'front',fill:'#3a1c4d',stroke:'#c792ea',ico:'📦',t:'Batch/openings FE',s:'POST /reviews · /openings',d:'Bulk lookup first (hits settle at intake), submit misses ≤768. Openings once per lineKey.'},
  {id:'api',c:2,y:24, kind:'gate',fill:'#4d2a0e',stroke:'#ff9f43',ico:'🚪',t:'Go HTTP API',s:'validate → admit',d:'/move→Play, /move/analysis+/evaluate→Focus, /reviews→Batch. ≤256 plies engine, ≤4096 history, 64KiB/4MiB. Unknown fields 422.'},
@@ -362,10 +362,10 @@ function nodeName(id){const n=nodeById[id];return n?`${n.ico} ${n.t}`:id;}
 // what the DESTINATION component actually does with the packet's data
 const EDGE_WORK={
  'user>timeline':'appends UCI prefix · posId=JSON([initial,prefix])',
- 'timeline>coord':'ensure(priority): viewed ply first · 1 live req/engine',
+ 'timeline>coord':'ensure(priority): stateless asks · viewed ply first',
  'timeline>store':'reviewKey=JSON([posId,engine,hash]) · 4096-row probe',
  'timeline>transport':'materializes moves[:ply] · POST body ≤64KiB',
- 'coord>transport':'latest-wins flight · AbortController armed',
+ 'coord>transport':'stateless asks · server joins same-key',
  'store>transport':'HIT row served · wait_ms=-1, no admission',
  'batchfe>transport':'bulk {line,requests[]} · ≤768 entries · 4MiB',
  'transport>api':'validates FEN↔replay · elos 0–5000 · plies≤256',

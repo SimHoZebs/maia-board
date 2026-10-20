@@ -100,16 +100,12 @@ export function laneFailures(nodes: ReviewNode[], coordinator: ReviewCoordinator
   return nodes.filter(node => laneError(coordinator, node).state === 'failed');
 }
 
-// Foreground fetch for the objective lane. Queues behind whatever is
-// already waiting: the pump serves FIFO, so grading never disturbs the
-// display pair's order. Shares the bot queue with the display bot under
-// different keys.
-export function ensureLane(
-  coordinator: ReviewCoordinator,
-  targets: ReviewNode[],
-  signal: AbortSignal,
-): void {
-  coordinator.ensure(targets, GRADING_BOT_SETTINGS, { priority: true, engines: ['maia'], signal });
+// Foreground fetch for the objective lane. Stateless like the display pair:
+// every ask fires immediately and the server orders them; grading never
+// disturbs the display order because rows land content-keyed. Shares the
+// bot lane with the display bot under different keys.
+export function ensureLane(coordinator: ReviewCoordinator, targets: ReviewNode[]): void {
+  coordinator.ensure(targets, GRADING_BOT_SETTINGS, { priority: true, engines: ['maia'] });
 }
 
 // Human name for copy (bar, graphs). Names the role, never the model.

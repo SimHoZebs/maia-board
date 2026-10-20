@@ -6,13 +6,13 @@ import {
   type MoveResponse,
 } from '../eval/api';
 import { ceilElo } from '../board/BoardTools';
-import { mapGetOrNull } from '../shared/explicit';
 // Canonical terms: see spec/GLOSSARY.md.
 // transport = shared JSON-POST sender (evaluationTransport); coordinator =
-// foreground coordinator (this class, at most one live request per engine,
-// one FIFO queue each); flight = one tracked AbortController request
-// (PlayFiringIdentity, restoreFlights). Backend admission
-// (admit → Scheduler.Acquire) has no frontend symbol.
+// stateless foreground firer (this class): every ask fires immediately, the
+// backend owns admission, order, and dedup-by-key
+// (backend/internal/sched/scheduler.go). Server execution is detached:
+// granted ops validate+store even after the client stops waiting. Display is
+// keyed (posId/reviewKey/lineKey) so stale answers are ignored, not shown.
 import type { Evaluation } from './reviewMetrics';
 import {
   EvaluationStore,
@@ -31,8 +31,8 @@ import {
 } from '../eval/evaluationStore';
 export {
   EvaluationStore,
-  fastReviewSettings,
   fastStockfishSettings,
+  fastReviewSettings,
   fetchEvaluation,
   moverSettings,
   parseEvaluation,
@@ -52,42 +52,26 @@ export function subscribeNone(): () => void {
   return () => undefined;
 }
 
-// Abort scope: one scope key owns its foreground work. Batch jobs are never
-// cancelled: scope change only drops local optimism.
-// A line change or unmount aborts the previous scope's controller
-// (foreground signal). Backgrounding never aborts.
-export type AbortScope = { scopeKey: string; controller: AbortController; signal: AbortSignal };
-export function createAbortScope(scopeKey: string): AbortScope {
-  const controller = new AbortController();
-  return { scopeKey, controller, signal: controller.signal };
-}
-export function cancelScope(scope: AbortScope): void {
-  scope.controller.abort();
-}
+// One shared never-aborted signal for stateless fires. Foreground asks are
+// never cancelled client-side (no navigate-away abort): the shared transport
+// deadline still bounds stalls, the server joins same-key arrivals, and rows
+// land content-keyed. There is no foreground AbortScope.
+const liveSignal: AbortSignal = new AbortController().signal;
 
-type Pending = { job: Job };
-type ForegroundFlight = { job: Job; controller: AbortController };
 const engines = ['sf', 'maia'] as const;
 
-// One FIFO queue per engine for interactive (foreground) work: requests
-// serve in arrival order and nothing queued is ever dropped. Whole-game
-// batches run on the server (see batchReview); this coordinator never
-// queues them, so it stays a small foreground pump plus the cache-restore
-// path. The ONLY foreground cancel path is the AbortSignal passed to
-// ensure(); there are no clearForeground/suspend/resume entry points.
+// Stateless foreground: every desired key fires its own ask immediately —
+// no FIFO, no dedup, no abort. The server joins same-key arrivals
+// (Scheduler.Acquire), serves cache hits, and drops only via 409; 503s ride
+// the transport busy-retry. Rows land content-keyed, so a stale landing can
+// only settle rows the current line still wants, and takebacks replay from
+// cache. The only retry entry is retry() below, which refires recorded
+// foreground failures; batch failures heal through the batch resubmit.
 export class ReviewCoordinator {
   readonly store: EvaluationStore;
-  private pending: Record<Engine, Map<string, Pending>> = { sf: new Map(), maia: new Map() };
-  private foregroundFlights: Record<Engine, Set<ForegroundFlight>> = {
-    sf: new Set(),
-    maia: new Set(),
-  };
-  // The single in-flight play /move POST. Play replies are never cached
-  // (per-game sampling settings), but the flight still rides this coordinator
-  // so supersedes share one latest-wins policy with the review lanes.
-  private playFlight: AbortController | null = null;
+  private inflight = new Map<string, { engine: Engine; count: number }>();
   private failures = new Map<string, string>();
-  private restoring = new Map<string, { count: number; engine: Engine }>();
+  private failedJobs = new Map<string, Job>();
   private listeners = new Set<() => void>();
   private version = 0;
   constructor(
@@ -130,10 +114,17 @@ export class ReviewCoordinator {
   }
   // Server-batch failures live in the same map so the UI has one error
   // source. Keys from the previous batch are dropped; unrelated (foreground)
-  // failures are left alone.
+  // failures are left alone. Batch errors carry no job: the batch resubmit
+  // heals them, not retry() below.
   replaceFailures(keys: Set<string>, errors: Map<string, string>) {
-    for (const key of keys) this.failures.delete(key);
-    for (const [key, message] of errors) this.failures.set(key, message);
+    for (const key of keys) {
+      this.failures.delete(key);
+      this.failedJobs.delete(key);
+    }
+    for (const [key, message] of errors) {
+      this.failures.set(key, message);
+      this.failedJobs.delete(key);
+    }
     this.notify();
   }
   // Provisional first-paint read for the display layer: full MPV1 when
@@ -157,16 +148,11 @@ export class ReviewCoordinator {
       ...(fast ? { fast: true as const } : {}),
     };
   }
-  private finished(job: Job) {
-    return !!this.store.peek(job.engine, job.key) || this.failures.has(job.key);
-  }
-  // Queue-only calls return void synchronously; signal calls return coverage.
-  // Passing signal makes this ensure call abortable: aborting removes its
-  // queued jobs and aborts its flight jobs. Omitting signal queues
-  // foreground work in arrival order; the pump serves it FIFO and lets
-  // flight work land. Re-requesting an already-queued key keeps its place.
-  // Nothing queued is ever dropped: drops only happen server-side (409),
-  // which the callers' retry sweeps heal.
+  // Priority calls return void synchronously; signal calls return coverage.
+  // Foreground work fires statelessly in arrival order with no dedup:
+  // re-requesting an in-flight key fires again and the server joins the
+  // arrivals, so nothing is ever dropped client-side. Drops happen only
+  // server-side (409), which the callers' retry sweeps heal.
   ensure(
     nodes: ReviewNode[],
     settings: SettingsInput,
@@ -187,103 +173,70 @@ export class ReviewCoordinator {
     } = opts;
     const wanted = enginesOpt ?? [...engines];
     if (priority) {
-      const desired: Job[] = [];
-      // Fast-then-refine (foreground focus/current only, never bulk restore):
-      // queue fast 250ms MPV1 jobs ahead of the full MPV1 jobs on the sf lane so
-      // rank-1 lands first (~250ms) and the full time budget refines after (~750ms).
-      // Bot lanes queue once as before. Skip fast when full already settles
-      // (no extra fetch) or when fast already settles (queue full only).
-      const useFast = fastFirst && wanted.includes('sf');
-      if (useFast) {
-        const fastJobs: Job[] = [];
-        const fullJobs: Job[] = [];
+      // Fast-then-refine (foreground focus/current only, never bulk
+      // restore): the 250ms MPV1 ask fires first and the full MPV1 ask fires
+      // when it settles — pair-local order only, no generic machinery. Bot
+      // lanes fire alongside as before. Skip fast when full already settles
+      // (no extra fetch) or when fast already settles (fire full only).
+      if (fastFirst && wanted.includes('sf')) {
         for (const node of nodes) {
-          const fullSettings = resolveSettings(settings, node);
-          const full = this.job('sf', node, fullSettings);
-          if (!full) continue;
-          if (this.store.peek('sf', full.key)) continue;
-          const fastSettings = fastReviewSettings(fullSettings);
-          if (fastSettings) {
-            const fast = this.job('sf', node, fastSettings, true);
-            if (fast && fast.key !== full.key && !this.store.peek('sf', fast.key))
-              fastJobs.push(fast);
-          }
-          fullJobs.push(full);
-        }
-        desired.push(...fastJobs, ...fullJobs);
-        for (const node of nodes)
           for (const engine of wanted) {
             if (engine === 'sf') continue;
-            const job = this.job(engine, node, resolveSettings(settings, node));
-            if (job) desired.push(job);
+            const other = this.job(engine, node, resolveSettings(settings, node));
+            if (!other) continue;
+            if (this.store.peek(other.engine, other.key)) {
+              this.failures.delete(other.key);
+              this.failedJobs.delete(other.key);
+            } else {
+              this.fireOne(other);
+            }
           }
+          const full = this.job('sf', node, resolveSettings(settings, node));
+          if (!full) continue;
+          if (this.store.peek('sf', full.key)) {
+            this.failures.delete(full.key);
+            this.failedJobs.delete(full.key);
+            continue;
+          }
+          const fastSettings = fastReviewSettings(resolveSettings(settings, node));
+          const fast = fastSettings ? this.job('sf', node, fastSettings, true) : null;
+          if (fast && fast.key !== full.key && !this.store.peek('sf', fast.key)) {
+            this.fireFastThenFull(fast, full);
+          } else {
+            this.fireOne(full);
+          }
+        }
       } else {
         for (const node of nodes)
           for (const engine of wanted) {
             const job = this.job(engine, node, resolveSettings(settings, node));
-            if (job) desired.push(job);
+            if (!job) continue;
+            if (this.store.peek(job.engine, job.key)) {
+              this.failures.delete(job.key);
+              this.failedJobs.delete(job.key);
+              continue;
+            }
+            this.fireOne(job);
           }
       }
-      // Arrival order, nothing dropped. Re-requested keys keep their
-      // place (Map.set preserves insertion order); failures clear so the
-      // job runs again. Settled rows prune so the queue never accumulates
-      // dead keys. Flight work continues either way (non-preemptive server
-      // scheduler).
-      for (const job of desired) {
-        this.failures.delete(job.key);
-        if (this.store.peek(job.engine, job.key)) {
-          this.pending[job.engine].delete(job.key);
-        } else if (!this.pending[job.engine].has(job.key)) {
-          this.pending[job.engine].set(job.key, { job });
-        }
-      }
-      if (signal) {
-        const keys = new Set(desired.map(job => job.key));
-        const removeQueued = (engine: Engine, job: Job) => {
-          const queued = mapGetOrNull(this.pending[engine], job.key);
-          if (queued !== null && queued.job === job) this.pending[engine].delete(job.key);
-        };
-        if (signal.aborted) {
-          for (const job of desired) removeQueued(job.engine, job);
-          for (const engine of wanted) this.abortKeys(engine, keys);
-        } else {
-          // NOTE: one listener per priority ensure on the long-lived scope
-          // signal; stale entries fire once on scope teardown (bounded: tens
-          // per game, each scanning its small desired set). If profiling ever
-          // shows this hot, track and remove each listener when its desired
-          // keys all finish instead of letting teardown sweep them.
-          const onAbort = () => {
-            for (const job of desired) removeQueued(job.engine, job);
-            for (const engine of wanted) this.abortKeys(engine, keys);
-            this.notify();
-          };
-          signal.addEventListener('abort', onAbort, { once: true });
-        }
-      }
-      // Queueing never touches running work. The server slot is
-      // non-preemptive: flight work always completes and caches, so aborting
-      // only blinds this tab to a paid-for answer. The pump serves FIFO
-      // (deduplicated by key below).
-      wanted.forEach(engine => this.pump(engine));
       this.notify();
     }
     if (signal && !priority) return this.restore(nodes, settings, signal, wanted, priorityPlies);
     if (signal && priority) {
       // Priority + signal callers that also need coverage use the restore
-      // path through the same signal; foreground abort stays signal-driven.
-      // Fire-and-forget is the common case, so only return coverage when the
-      // caller asked for a non-priority restore. Priority callers that need
-      // coverage call ensure twice (once priority, once with signal only).
-      // A focus-first restore can still be requested alongside foreground
-      // work by passing priorityPlies: queue the live pair above, then
-      // restore settled rows focus-first below. The second phase dedupes via
-      // the store cache check, so no duplicate fetch storm.
+      // path through the same signal; the foreground fire above is already
+      // stateless. A focus-first restore can still be requested alongside
+      // foreground work by passing priorityPlies: the bulk lookup settles
+      // the visible pair first, then the remainder reuses those rows from
+      // cache.
       if (priorityPlies !== undefined && priorityPlies.length > 0)
         return this.restore(nodes, settings, signal, wanted, priorityPlies);
     }
   }
   // Single restore entry: settled rows come from the store's restore path;
-  // the coordinator adds only foreground pending accounting.
+  // the coordinator adds only display pending accounting (kept, so spinners
+  // hold while the lookup settles). The signal is transport hygiene for
+  // unmount/deactivation only — a line change never aborts a restore.
   async restore(
     nodes: ReviewNode[],
     settings: SettingsInput,
@@ -300,20 +253,12 @@ export class ReviewCoordinator {
           ),
         ),
     );
-    for (const [key, engine] of keys) {
-      const prior = mapGetOrNull(this.restoring, key);
-      this.restoring.set(key, { count: (prior === null ? 0 : prior.count) + 1, engine });
-    }
+    for (const [key, engine] of keys) this.track(engine, key);
     this.notify();
     try {
       return await this.store.restore(nodes, settings, [...wanted], signal, priorityPlies);
     } finally {
-      for (const [key, engine] of keys) {
-        const entry = this.restoring.get(key);
-        if (!entry) continue;
-        if (entry.count > 1) this.restoring.set(key, { count: entry.count - 1, engine });
-        else this.restoring.delete(key);
-      }
+      for (const [key] of keys) this.untrack(key);
       this.notify();
     }
   }
@@ -323,99 +268,105 @@ export class ReviewCoordinator {
   botPendingKeys(): Set<string> {
     return this.pendingKeys('maia');
   }
+  // Display-only pending: in-flight keys per engine (foreground fires plus
+  // restores). Never gates firing — refires always go out and the server
+  // joins them.
   private pendingKeys(engine: Engine): Set<string> {
-    const keys = new Set(
-      [...this.restoring].filter(([, entry]) => entry.engine === engine).map(([key]) => key),
-    );
-    for (const { job } of this.pending[engine].values()) if (!this.finished(job)) keys.add(job.key);
+    const keys = new Set<string>();
+    for (const [key, entry] of this.inflight) if (entry.engine === engine) keys.add(key);
     return keys;
   }
   isPending(engine: Engine, node: ReviewNode, settings: ReviewSettings): boolean {
     const key = reviewKey(engine, node, settings);
     if (node.outcome || this.store.peek(engine, key) || this.failures.has(key)) return false;
-    return this.restoring.has(key) || this.pending[engine].has(key);
+    return this.inflight.has(key);
   }
+  // Stateless refire: recorded foreground failures fire again immediately.
+  // Batch failures heal through the batch resubmit, not here.
   retry() {
-    for (const engine of engines) this.abort(engine);
+    const jobs = [...this.failedJobs.values()];
     this.failures.clear();
-    engines.forEach(engine => this.pump(engine));
+    this.failedJobs.clear();
+    for (const job of jobs) {
+      if (job.node.outcome || job.node.ply > 256) continue;
+      if (this.store.peek(job.engine, job.key)) continue;
+      this.fireOne(job);
+    }
     this.notify();
   }
-  private abort(engine: Engine) {
-    const runs = [...this.foregroundFlights[engine]];
-    this.foregroundFlights[engine].clear();
-    for (const run of runs) run.controller.abort();
+  private track(engine: Engine, key: string) {
+    const prior = this.inflight.get(key);
+    this.inflight.set(key, { engine, count: (prior?.count ?? 0) + 1 });
+    this.notify();
   }
-  private abortKeys(engine: Engine, keys: ReadonlySet<string>) {
-    // Snapshot iteration: listeners unsubscribe during dispatch.
-    // oxlint-disable-next-line no-useless-spread
-    for (const run of [...this.foregroundFlights[engine]]) {
-      if (keys.has(run.job.key)) {
-        this.foregroundFlights[engine].delete(run);
-        run.controller.abort();
-      }
-    }
-  }
-  private pump(engine: Engine) {
-    const queue = this.pending[engine];
-    // Prune settled rows so the queue never accumulates dead keys.
-    // Recorded failures stay queued: retry() re-drives them after clearing
-    // the failure, and the find below skips them meanwhile.
-    for (const [key, entry] of queue)
-      if (this.store.peek(entry.job.engine, entry.job.key)) queue.delete(key);
-    const flightKeys = new Set([...this.foregroundFlights[engine]].map(run => run.job.key));
-    const entry = [...queue.values()].find(
-      entry => !this.finished(entry.job) && !flightKeys.has(entry.job.key),
-    );
+  private untrack(key: string) {
+    const entry = this.inflight.get(key);
     if (!entry) return;
-    const job = entry.job;
-    const flight: ForegroundFlight = { job, controller: new AbortController() };
-    this.foregroundFlights[engine].add(flight);
-    void this.execute(job, flight.controller.signal)
-      .then(result => {
-        // Generation check: explicitly aborted work (retry/scope abort) left
-        // the set and is dropped. Superseded-but-continuing work stays in the
-        // set and always lands — the content-keyed store makes landing safe,
-        // and takebacks may reuse the same rows.
-        if (!this.foregroundFlights[engine].has(flight)) return;
-        // execute resolves sf jobs with Evaluations and bot jobs with
-        // MoveResponses; presence of top_moves discriminates the union so each
-        // lane stores a proven shape. A mismatch is unreachable — drop it
-        // rather than poison the content-keyed store.
-        if (job.engine === 'sf') {
-          if ('top_moves' in result) return;
-          this.store.store('sf', job.key, result);
-        } else {
-          if (!('top_moves' in result)) return;
-          this.store.store('maia', job.key, result);
-        }
-      })
-      .catch(error => {
-        if (!this.foregroundFlights[engine].has(flight) || flight.controller.signal.aborted) return;
-        // A superseded focus request was replaced by a newer one; the newer
-        // request covers the position, so this is not a failure to surface.
-        if (error instanceof BotApiError && error.code === 'superseded') return;
-        // Fast failure never blocks the full refine and never surfaces: drop
-        // the fast queue entry so the lane advances to the full job next.
-        // error() reads only the full key, so nothing surfaces. Without the
-        // delete, finished() stays false and the lane would retry fast forever.
-        if (job.fast) {
-          this.pending[engine].delete(job.key);
-          return;
-        }
-        this.failures.set(job.key, error instanceof Error ? error.message : 'Analysis failed.');
-      })
+    if (entry.count > 1) this.inflight.set(key, { engine: entry.engine, count: entry.count - 1 });
+    else this.inflight.delete(key);
+    this.notify();
+  }
+  private fireOne(job: Job) {
+    // Re-issuing clears the recorded failure up front so the spinner, not
+    // the stale message, shows while the refire settles.
+    this.failures.delete(job.key);
+    this.failedJobs.delete(job.key);
+    this.track(job.engine, job.key);
+    void this.execute(job)
+      .then(result => this.land(job, result))
+      .catch(error => this.recordFailure(job, error))
+      .finally(() => this.untrack(job.key));
+  }
+  // Pair-local order only: the fast ask fires, and the full ask fires when
+  // it settles (success or failure) unless the full row settled meanwhile.
+  private fireFastThenFull(fast: Job, full: Job) {
+    this.failures.delete(fast.key);
+    this.failedJobs.delete(fast.key);
+    this.failures.delete(full.key);
+    this.failedJobs.delete(full.key);
+    this.track(fast.engine, fast.key);
+    void this.execute(fast)
+      .then(
+        result => this.land(fast, result),
+        error => this.recordFailure(fast, error),
+      )
       .finally(() => {
-        // A late completion belongs to its generation, even for the same key.
-        if (!this.foregroundFlights[engine].has(flight)) return;
-        this.foregroundFlights[engine].delete(flight);
-        this.pump(engine);
-        this.notify();
+        this.untrack(fast.key);
+        // Cache-first refine: a batch or restore may have settled the full
+        // row while the fast ask was in flight.
+        if (!this.store.peek(full.engine, full.key)) this.fireOne(full);
       });
   }
-  private async execute(job: Job, signal: AbortSignal): Promise<Evaluation | MoveResponse> {
+  private land(job: Job, result: Evaluation | MoveResponse) {
+    // execute resolves sf jobs with Evaluations and bot jobs with
+    // MoveResponses; presence of top_moves discriminates the union so each
+    // lane stores a proven shape. A mismatch is unreachable — drop it
+    // rather than poison the content-keyed store.
+    if (job.engine === 'sf') {
+      if ('top_moves' in result) return;
+      this.store.store('sf', job.key, result);
+    } else {
+      if (!('top_moves' in result)) return;
+      this.store.store('maia', job.key, result);
+    }
+    this.failures.delete(job.key);
+    this.failedJobs.delete(job.key);
+  }
+  private recordFailure(job: Job, error: unknown) {
+    // A superseded focus request was replaced by a newer one; the newer
+    // request covers the position, so this is not a failure to surface.
+    // The heal sweeps still cover the key when nothing does.
+    if (error instanceof BotApiError && error.code === 'superseded') return;
+    // Fast failure never blocks the full refine and never surfaces: the
+    // fast→full chain fires the full ask regardless.
+    if (job.fast) return;
+    this.failures.set(job.key, error instanceof Error ? error.message : 'Analysis failed.');
+    this.failedJobs.set(job.key, job);
+    this.notify();
+  }
+  private async execute(job: Job): Promise<Evaluation | MoveResponse> {
     if (job.engine === 'sf')
-      return fetchEvaluation(job.node, signal, this.fetcher, job.settings.stockfish);
+      return fetchEvaluation(job.node, liveSignal, this.fetcher, job.settings.stockfish);
     // Single-position endpoint (OUT OF SCOPE for the line-oriented batch
     // change): still sends the full prefix per request.
     const prefix = job.node.timeline.moves.slice(0, job.node.ply);
@@ -425,8 +376,8 @@ export class ReviewCoordinator {
       ...(split.valueUserElo !== undefined ? { value_elo_user: split.valueUserElo } : {}),
     };
     // Retrospective analysis rides the Focus lane (POST /move/analysis),
-    // never the play lane — it fires alongside the live reply every move
-    // and queues behind it instead of superseding it.
+    // never the play lane — it fires alongside the live reply every move.
+    // Stateless asks share the server lanes; the scheduler orders them.
     return requestEngineAnalysis(
       {
         fen: job.node.fen,
@@ -439,30 +390,16 @@ export class ReviewCoordinator {
         maia_color: job.node.turn,
       },
       this.fetcher,
-      signal,
+      liveSignal,
     );
   }
-  // Play /move flight with play's tighter parameters: latest-wins (a newer
-  // play move supersedes the in-flight one; the superseded reply is dropped
-  // by request identity in the reducer) over the one shared sender
-  // (busy-retry → parse → cache-hit inside requestMove) with the shared
-  // transport deadline — no bespoke stall timer at the call site. Replies
-  // are never cached: play payloads carry per-game sampling settings
-  // (temperature, colors), so they must not settle content-keyed review rows.
-  // Analysis never touches this path (POST /move/analysis → Focus), so a
-  // live reply is only ever superseded by a newer live reply.
+  // Play /move, stateless: every live reply fires its own ask with the shared
+  // transport deadline. Latest-wins lives server-side (the Play lane 409s a
+  // superseded reply). Replies are never cached: play payloads carry
+  // per-game sampling settings, so they must not settle content-keyed
+  // review rows. Analysis never touches this path (POST /move/analysis →
+  // Focus), so a live reply is only ever superseded by a newer live reply.
   async playMove(payload: MoveRequest): Promise<MoveResponse & { cached?: boolean }> {
-    if (this.playFlight !== null) this.playFlight.abort();
-    const controller = new AbortController();
-    this.playFlight = controller;
-    try {
-      return await requestMove(payload, this.fetcher, controller.signal);
-    } finally {
-      if (this.playFlight === controller) this.playFlight = null;
-    }
-  }
-  abortPlayMove(): void {
-    if (this.playFlight !== null) this.playFlight.abort();
-    this.playFlight = null;
+    return requestMove(payload, this.fetcher);
   }
 }

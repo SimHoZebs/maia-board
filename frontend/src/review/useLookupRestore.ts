@@ -6,12 +6,6 @@ import {
   type SettingsInput,
 } from './reviewCoordinator';
 
-// Upper bound on overlapping restores. Steady state holds 0-1; a newer line
-// starts its own lookup while the previous is still landing. Past the cap
-// the oldest flight goes — a pathological-churn guard (blitzing faster than
-// cache reads return), never the normal path.
-const MAX_CONCURRENT_RESTORES = 3;
-
 // Shared imperative restore: batch progress ticks and lookup restore both
 // call the coordinator's single restore entry; only timing differs.
 export function restoreLookup(
@@ -34,9 +28,10 @@ export function restoreLookup(
 
 // Bulk cache restore for pipeline rooms and batch progress. A newer loadKey
 // starts a new restore WITHOUT aborting the previous one: rows are
-// content-keyed and play lines grow by append, so a stale landing can only
-// settle rows the new line still wants. Aborts happen only on unmount,
-// deactivation, or past the concurrency cap. nodes/settings ride refs so
+// content-keyed and play lines grow by append, so a stale landing merges
+// instead of being discarded. Every restore runs to completion — there is no
+// dedup or concurrency cap (the server joins same-key arrivals). Aborts
+// happen only on unmount or deactivation. nodes/settings ride refs so
 // rebuilt identities cannot refire a key. Backgrounding never aborts.
 export function useLookupRestore(args: {
   active: boolean;
@@ -89,12 +84,6 @@ export function useLookupRestore(args: {
   );
   useEffect(() => {
     if (!active) return;
-    if (restoreFlights.current.has(loadKey)) return;
-    while (restoreFlights.current.size >= MAX_CONCURRENT_RESTORES) {
-      const oldest = restoreFlights.current.keys().next().value!;
-      restoreFlights.current.get(oldest)!.abort();
-      restoreFlights.current.delete(oldest);
-    }
     const controller = new AbortController();
     restoreFlights.current.set(loadKey, controller);
     const forget = () => {

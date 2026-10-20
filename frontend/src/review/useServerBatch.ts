@@ -14,18 +14,12 @@ import {
   type BatchProgress,
   type PersistedBatch,
 } from './batchReview';
-import type {
-  Engine,
-  AbortScope,
-  ReviewCoordinator,
-  ReviewNode,
-  SettingsInput,
-} from './reviewCoordinator';
+import type { Engine, ReviewCoordinator, ReviewNode, SettingsInput } from './reviewCoordinator';
 import { restoreLookup } from './useLookupRestore';
 
 export type ServerBatchProgress = { total: number; done: number; failed: number; running: boolean };
 
-// Server-batch client: submit + progress UI. Nothing cancels: scope
+// Server-batch client: submit + progress UI. Nothing cancels: scope-key
 // changes, unmounts, and game deletes only drop local references while
 // server jobs drain; late callbacks are ignored via the scope-key guard, and
 // backgrounding never aborts. EventSource ticks are a pure optimization
@@ -41,7 +35,9 @@ export function useServerBatch(args: {
   // Stockfish, hashed and tracked like the rest of the batch.
   objectiveLane?: SettingsInput | null;
   coordinator: ReviewCoordinator;
-  scope: AbortScope | null;
+  // Line identity for job ownership (no abort: a scope change only drops
+  // local optimism while the server job drains).
+  scopeKey: string | null;
   auto?: boolean;
   fetcher?: typeof fetch;
   // Focus-first restore: node plies to settle before the rest of the line.
@@ -52,7 +48,7 @@ export function useServerBatch(args: {
   start: () => void;
   retry: () => void;
 } {
-  const { active, nodes, settings, engines, coordinator, scope, auto, fetcher } = args;
+  const { active, nodes, settings, engines, coordinator, scopeKey, auto, fetcher } = args;
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobScopeKey, setJobScopeKey] = useState<string | null>(null);
   const [progress, setProgress] = useState<ServerBatchProgress | null>(null);
@@ -62,10 +58,10 @@ export function useServerBatch(args: {
   nodesRef.current = nodes;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
-  const scopeRef = useRef(scope);
-  scopeRef.current = scope;
+  const scopeKeyRef = useRef(scopeKey);
+  scopeKeyRef.current = scopeKey;
   // engines arrives as an inline literal at the call sites: mirror it into
-  // a ref like nodes/settings/scope, or start() gets a new identity every
+  // a ref like nodes/settings/scopeKey, or start() gets a new identity every
   // render and re-submits forever.
   const enginesRef = useRef(engines);
   enginesRef.current = engines;
@@ -100,9 +96,8 @@ export function useServerBatch(args: {
   }, [settings]);
 
   const start = useCallback(() => {
-    const current = scopeRef.current;
-    if (!active || !current) return;
-    const submittedKey = current.scopeKey;
+    const submittedKey = scopeKeyRef.current;
+    if (!active || !submittedKey) return;
     const batchItems = buildBatchItems(
       nodesRef.current,
       settingsRef.current,
@@ -126,7 +121,7 @@ export function useServerBatch(args: {
         // cancels: drop optimism we still own so the new line never inherits
         // a running count with no job behind it. The orphan drains on the
         // server and vanishes by absence.
-        if (scopeRef.current === null || scopeRef.current.scopeKey !== submittedKey) {
+        if (scopeKeyRef.current === null || scopeKeyRef.current !== submittedKey) {
           if (!jobIdRef.current && !jobScopeRef.current) setProgress(null);
           return;
         }
@@ -140,7 +135,7 @@ export function useServerBatch(args: {
           total: batchItems.length,
         });
       } catch (submitError) {
-        if (scopeRef.current === null || scopeRef.current.scopeKey !== submittedKey) return;
+        if (scopeKeyRef.current === null || scopeKeyRef.current !== submittedKey) return;
         setError(
           submitError instanceof Error ? submitError.message : 'Review batch failed to start.',
         );
@@ -154,7 +149,6 @@ export function useServerBatch(args: {
     start();
   }, [coordinator, start]);
 
-  const scopeKey = scope === null ? null : scope.scopeKey;
   // Single definition of "the persisted job owns this mount": the stored
   // entry names this exact line and its content hash matches what this line
   // submits now. Returns the entry plus the matching items so adopters reuse
@@ -233,11 +227,11 @@ export function useServerBatch(args: {
         const status = await fetchBatchStatus(stored.jobId, fetcher);
         if (
           cancelled ||
-          scopeRef.current === null ||
-          scopeRef.current.scopeKey !== scopeKey ||
+          scopeKeyRef.current === null ||
+          scopeKeyRef.current !== scopeKey ||
           jobIdRef.current
         ) {
-          if (cancelled || scopeRef.current === null || scopeRef.current.scopeKey !== scopeKey)
+          if (cancelled || scopeKeyRef.current === null || scopeKeyRef.current !== scopeKey)
             clearOwnedOptimism();
           return;
         }
@@ -272,11 +266,11 @@ export function useServerBatch(args: {
       } catch (reattachError) {
         if (
           cancelled ||
-          scopeRef.current === null ||
-          scopeRef.current.scopeKey !== scopeKey ||
+          scopeKeyRef.current === null ||
+          scopeKeyRef.current !== scopeKey ||
           jobIdRef.current
         ) {
-          if (cancelled || scopeRef.current === null || scopeRef.current.scopeKey !== scopeKey)
+          if (cancelled || scopeKeyRef.current === null || scopeKeyRef.current !== scopeKey)
             clearOwnedOptimism();
           return;
         }
@@ -329,11 +323,11 @@ export function useServerBatch(args: {
 
   // Track progress by EventSource ticks against status ground truth,
   // restoring through the shared lookup restore. One scope-key guard drops
-  // late events for superseded scopes.
+  // late events for superseded lines.
   useEffect(() => {
     if (!active || !jobId || !jobScopeKey) return;
     const submittedKey = jobScopeKey;
-    const stale = () => scopeRef.current === null || scopeRef.current.scopeKey !== submittedKey;
+    const stale = () => scopeKeyRef.current === null || scopeKeyRef.current !== submittedKey;
     let stopped = false;
     let restoreTimer: ReturnType<typeof setTimeout> | undefined;
     let lastRestore = 0;
@@ -366,7 +360,7 @@ export function useServerBatch(args: {
       }
       // The objective lane files server-side with the batch; restore it
       // through the same lookup so its badges settle without waiting for a
-      // navigation-triggered foreground fetch.
+      // navigation-triggered foreground ask.
       const objective = objectiveLaneRef.current;
       if (objective && !restoreController.signal.aborted) {
         try {

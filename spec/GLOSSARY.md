@@ -16,9 +16,9 @@ concept.
   `frontend/src/eval/evaluationStore.ts:stablePositionKey`.
 - `lineKey = posId(initialFen, full moves)` — content key for one line.
   `lineKeyFor(initialFen, moves)` (tuple), `lineKeyForNode(node)` (ReviewNode),
-  `gradingBotKey(node)` (grading lane). Abort scopes (`{lineKey, gameId?}`)
-  key foreground work by this. Same field name recurs: `PersistedBatch.lineKey`
-  (`batchReview.ts`), openings-cache local (fetch guard).
+  `gradingBotKey(node)` (grading lane). Batch job ownership (`scopeKey`) and
+  the openings-cache local (fetch guard) key work by this. Same field name
+  recurs: `PersistedBatch.lineKey` (`batchReview.ts`).
   See `frontend/src/shared/domain.ts:lineKeyFor`.
 - `reviewKey = JSON([posId, engine, settingsHash])` — key for one engine
   reading. `settingsHash` is `stockfishPolicy` (SF) or `[botElo, userElo,
@@ -95,9 +95,10 @@ Canonical verb: `restore`. `store.restore → coordinator.restore →
 restoreLookup / useLookupRestore` is one path (cache-fill +
 visible-pair-first ordering in the store). `lookup` is the endpoint
 (`POST /evaluations/lookup`, read-only). `execute` runs + stores (single
-job); `pump` steps the per-engine queue; `ensure({priority})` queues
-foreground work. Coordinator owns `ensure/pump/execute/playMove`; store owns
-`restore`; hook owns `restoreLookup` throttling. Do not use: `prime`,
+job); `fireOne` fires one stateless ask (plus the pair-local
+`fireFastThenFull`); `ensure({priority})` fires foreground asks. Coordinator
+owns `ensure/fireOne/execute/playMove`; store owns
+`restore`; hook owns `restoreLookup` fanning. Do not use: `prime`,
 `bulk prime`, `hydrate`, `reconcile`, `backfill` (no such exports).
 Coverage: `restoreCoverage`. Lane descriptor: `restoreDescriptor`.
 Display/grading states: `displayRestore/gradeRestore` (`retryRestore`).
@@ -107,12 +108,14 @@ Display/grading states: `displayRestore/gradeRestore` (`retryRestore`).
 - `transport` — shared JSON-POST sender (`postJson /
 fetchJsonWithBusyRetry`). One shape for play/eval/batch. Worker stdio
   ("JSON-lines transport") is a different layer — qualify it.
-- `coordinator` — foreground scheduler (`ReviewCoordinator`): max one live
-  request per engine, latest-wins. Frontend "scheduler" means this; prefer
-  `coordinator`. Capital `Scheduler` is backend-only.
-- `flight` — one tracked in-flight request (`AbortController` record:
-  `playMove`, `restoreFlights`, `foregroundFlights`, `PlayFiringIdentity`).
-  Qualify the map.
+- `coordinator` — stateless foreground firer (`ReviewCoordinator`): every
+  ask fires immediately; the backend owns admission, order, and dedup.
+  Frontend "scheduler" used to mean this; prefer `coordinator` for the
+  firer. Capital `Scheduler` is backend-only.
+- `flight` — one tracked in-flight ask for display pending (firing identity
+  record: `playMove` replies match by request id in the reducer,
+  `restoreFlights` aborts on unmount only, `PlayFiringIdentity` guards the
+  play record). No abort scopes: navigation never cancels. Qualify the map.
 - `admission` — backend-only (`admit() → Scheduler.Acquire`). No frontend
   symbol.
 - Game-request senders (`serverGames.ts`) are `gameClient`, never `transport`.
@@ -127,7 +130,7 @@ batch, dedup per-scheduler). Non-preemptive, grant order `Play > Focus > Batch`.
 shares by rotation with dual caps (429 on excess). Batch entries carry
 `engine` (slot routing) + `role` (`grade` for grading-2400 rows, `display`
 otherwise); runners stay engine-keyed, grading reads the role. Frontend
-`ensure({priority})` = foreground pump; `restore` = settled rows.
+`ensure({priority})` = stateless foreground asks; `restore` = settled rows.
 `supersede` = `ErrSuperseded`/`cancelLocked`; `join` = waiter path;
 `dedup-by-key` = key policy (empty key never joins).
 

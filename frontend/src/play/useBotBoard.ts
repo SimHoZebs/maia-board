@@ -14,12 +14,12 @@ type FlightRef = { current: PlayFiringIdentity | null };
 
 // Play POST execution, shared by dispatch and the mount effect. Firing is
 // deferred a microtask so a supersede (or StrictMode rehearsal cleanup) that
-// lands in the same tick cancels before any byte is sent. The flight itself
-// rides the foreground coordinator (ReviewCoordinator.playMove: latest-wins
-// with the shared transport deadline); this record is only the firing
-// identity — reply and failure match by request identity in the reducer, and
-// the record guard drops a late response a newer game superseded, so it can
-// never land on a newer game.
+// lands in the same tick cancels before any byte is sent. The ask itself
+// rides the coordinator statelessly (ReviewCoordinator.playMove, one fire per
+// call with the shared transport deadline; latest-wins lives server-side on
+// the Play lane). This record is only the firing identity — reply and failure
+// match by request identity in the reducer, and the record guard drops a late
+// response a newer game superseded, so it can never land on a newer game.
 function firePlayRequest(
   request: State['request'],
   flight: FlightRef,
@@ -28,15 +28,14 @@ function firePlayRequest(
 ) {
   const running = flight.current;
   if (!request) {
-    if (running) {
-      flight.current = null;
-      coordinator.abortPlayMove();
-    }
+    if (running) flight.current = null;
     return;
   }
   if (running && running.id === request.id) return;
-  // Supersede frees the coordinator now; the replacement fires below.
-  if (running) coordinator.abortPlayMove();
+  // Supersede drops the record now; the replacement fires below. A superseded
+  // ask already in flight still runs server-side and is ignored here by
+  // request identity.
+  if (running) flight.current = null;
   const record: PlayFiringIdentity = { id: request.id };
   flight.current = record;
   queueMicrotask(() => {
@@ -68,14 +67,12 @@ export function useBotBoard(mode: Mode, urlLine?: UrlLine) {
   const [state, setState] = useState(() => initialState(mode, urlLine, repository.snapshot()));
   const current = useRef(state);
   const [sync] = useState(() => new HistorySyncStore());
-  // The play /move flight rides the foreground coordinator; dispatch owns only
-  // the firing identity (see firePlayRequest).
   // In-flight play POST, owned by dispatch — the shared function every board
   // event funnels through (the doc's "extract a function called from event
   // handlers"). An interaction-caused POST runs because of the interaction,
   // not because the component displayed. state.request stays the UI source
   // of truth (thinking indicator, retry gating); the coordinator owns the
-  // network flight.
+  // network ask.
   const [playCoordinator] = useState(() => new ReviewCoordinator());
   const flight = useRef<PlayFiringIdentity | null>(null);
   const lastPersisted = useRef(new Map<string, string>());
@@ -125,21 +122,19 @@ export function useBotBoard(mode: Mode, urlLine?: UrlLine) {
   // or returns nothing new), so the mount pass fires it directly — the
   // same-id guard makes the later sync dispatch a no-op, and StrictMode
   // rehearsal single-fires through the microtask cancellation above.
-  // Unmount aborts the coordinator flight; its handlers ignore it by record
-  // identity.
+  // Unmount drops the record; a late reply is ignored by request identity.
   useEffect(() => {
     const boot = current.current.request;
     if (boot && !flight.current) firePlayRequest(boot, flight, dispatch, playCoordinator);
     return () => {
       flight.current = null;
-      playCoordinator.abortPlayMove();
     };
   }, [dispatch, playCoordinator]);
   // Mode arrives exclusively through dispatch: tab taps sync it in their
   // click handlers, Back/Forward in the popstate listener, and the review /
   // unload / saved navigations through their own actions. There is no
   // render-phase correction, so `current` stays dispatch-owned (updated
-  // beside every setState above) and every request — including one queued
+  // beside every setState above) and every request — including one produced
   // by entering play with the bot to move — fires through firePlayRequest in
   // dispatch itself. No sync or backstop effects needed.
 

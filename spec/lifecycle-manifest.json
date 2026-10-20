@@ -139,7 +139,7 @@
     {
       "id": "coord",
       "file": "frontend/src/review/reviewCoordinator.ts",
-      "patterns": ["ensure\\(", "pump\\("],
+      "patterns": ["ensure\\(", "fireOne\\("],
       "viz": ["ReviewCoordinator", "latest-wins"]
     },
     {
