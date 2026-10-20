@@ -64,7 +64,10 @@ func NewGameStore(path string) (*GameStore, error) {
 }
 
 // initSchema creates every table in open order. There are no migrations:
-// old database files are not supported, only the current schema.
+// old database files are not supported, only the current schema. Fresh
+// databases enforce bounds through CREATE TABLE CHECKs; Go Validate*
+// functions enforce the same bounds with API error codes before writes
+// reach the store.
 func initSchema(db *sql.DB) error {
 	if err := ensureGamesBaseTable(db); err != nil {
 		return err
@@ -75,10 +78,7 @@ func initSchema(db *sql.DB) error {
 	if err := ensureUserSchema(db); err != nil {
 		return err
 	}
-	if err := ensureImportSchema(db); err != nil {
-		return err
-	}
-	return ensureStrictConstraints(db)
+	return ensureImportSchema(db)
 }
 
 // Close releases the SQLite pool. Tests use it; the server process exits.

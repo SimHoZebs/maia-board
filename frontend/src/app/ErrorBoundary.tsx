@@ -45,7 +45,9 @@ export class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error) {
     // Message emission before a crashed unhandled state: keep the error
     // visible in devtools even when the fallback UI is showing.
-    console.error(`maia-board crashed view [${this.props.label}]:`, error);
+    if (import.meta.env.DEV) {
+      console.error(`maia-board crashed view [${this.props.label}]:`, error);
+    }
   }
 
   componentDidUpdate(prevProps: Props) {

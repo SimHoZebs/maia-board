@@ -34,7 +34,12 @@ it('ships Allowed mate styles and a seamless reel loop for all ten verdicts', ()
   expect(styles).toContain('.quality-excellent');
   expect(styles).toContain('.quality-alien');
   expect(styles).not.toContain('.quality-miss');
-  expect(styles).toContain('#7f1d1d');
+  // Rank, not hex: allowed-mate keeps its own darkest treatment, distinct
+  // from the blunder badge one severity step above it.
+  const badgeBackground = (cls: string) =>
+    styles.match(new RegExp(`\\.${cls}\\s*{[^}]*background:\\s*([^;]+);`))?.[1]?.trim();
+  expect(badgeBackground('quality-allowed-mate')).toBeDefined();
+  expect(badgeBackground('quality-allowed-mate')).not.toBe(badgeBackground('quality-blunder'));
   expect(styles).toContain('calc(-22px * 10)');
   expect(overview).toContain('.chart-dot-allowed-mate');
   expect(overview).toContain('.chart-dot-alien');

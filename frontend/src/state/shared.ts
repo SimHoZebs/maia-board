@@ -1,11 +1,12 @@
 import { Chess, type Square } from 'chess.js';
-import { toGroundColor } from '../board/board-colors';
 import {
   analysisLine,
+  buildTimeline,
   extendLine,
   lineRecord,
   oppositeColor,
   START_FEN,
+  tipRow,
   type Position,
 } from '../shared/domain';
 import type { Evaluation } from '../review/reviewMetrics';
@@ -31,12 +32,11 @@ export function botTurn(state: State): boolean {
   const cached = botTurnMemo.get(state.play.moves);
   if (cached && cached.userColor === state.play.settings.userColor && !cached.resigned)
     return cached.result;
-  // The tip record resolves history-aware terminality once per line (repetition
-  // needs full history); side-to-move is position-only and safe to parse.
-  const record = lineRecord(state.play.moves);
-  const result =
-    toGroundColor(new Chess(record.fen).turn()) !== state.play.settings.userColor &&
-    record.terminal === null;
+  // The tip row resolves history-aware terminality once per line (repetition
+  // needs full history); side-to-move is a cached row read, never a FEN parse.
+  const timeline = buildTimeline(START_FEN, state.play.moves);
+  const end = tipRow(timeline);
+  const result = end.turn !== state.play.settings.userColor && end.outcome === null;
   botTurnMemo.set(state.play.moves, {
     userColor: state.play.settings.userColor,
     resigned: false,

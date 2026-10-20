@@ -4,7 +4,8 @@ import "database/sql"
 
 // Games table DDL. One shot: fresh databases get the full schema with
 // CHECKs from CREATE TABLE; there are no migrations (SQLite cannot ADD a
-// CHECK to a live table — see schema_triggers.go for the trigger parity).
+// CHECK to a live table). Go Validate* functions mirror these bounds with
+// API error codes before writes reach the store.
 
 func ensureGamesBaseTable(db *sql.DB) error {
 	schema := `

@@ -155,7 +155,7 @@ func ValidateClocks(value []int) *apierror.RequestError {
 // ValidateSource checks the server-owned origin stamp when present.
 // Empty is allowed here because single saves stamp after validation;
 // the import handler rejects empties before they reach the store, and the
-// DB trigger rejects any empty that slips through.
+// DB CHECK rejects any empty that slips through.
 func ValidateSource(value string) *apierror.RequestError {
 	if value == "" {
 		return nil

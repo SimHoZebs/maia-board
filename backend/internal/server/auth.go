@@ -224,6 +224,13 @@ func (s *Server) serveMe(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(user)
 }
 
+func (s *Server) validRedirectURI(candidate string) bool {
+	if candidate == "/auth/lichess/callback" {
+		return true
+	}
+	return candidate != "" && candidate == s.auth.lichessRedirect
+}
+
 func (s *Server) serveLichessStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		writeHumaError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
@@ -243,6 +250,10 @@ func (s *Server) serveLichessStart(w http.ResponseWriter, r *http.Request) {
 	}
 	if redirectURI == "" {
 		writeHumaError(w, http.StatusBadRequest, "invalid_request", "redirect_uri is required")
+		return
+	}
+	if !s.validRedirectURI(redirectURI) {
+		writeHumaError(w, http.StatusBadRequest, "invalid_request", "redirect_uri is not allowed")
 		return
 	}
 	state, err := newStateToken()

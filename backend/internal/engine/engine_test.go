@@ -523,12 +523,12 @@ func TestPoolServesDistinctRequestsConcurrently(t *testing.T) {
 }
 
 func TestPoolConstruction(t *testing.T) {
-	if got := NewPool("m", nil, 0).Size(); got != 1 {
+	if got := NewPool("m", nil, 0).PoolSize(); got != 1 {
 		t.Fatalf("count 0 clamped to %d, want 1", got)
 	}
 	p := NewPool("m", nil, 3)
-	if p.Size() != 3 || p.PoolSize() != 3 || p.Model() != "m" {
-		t.Fatalf("pool shape: size=%d model=%q", p.Size(), p.Model())
+	if p.PoolSize() != 3 {
+		t.Fatalf("pool shape: size=%d", p.PoolSize())
 	}
 	// No process starts at construction: aggregate state is unloaded.
 	if state := p.WorkerStatus().State; state != stateUnloaded {

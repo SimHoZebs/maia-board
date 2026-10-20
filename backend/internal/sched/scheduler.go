@@ -101,13 +101,6 @@ func NewSchedulerWithCapacity(n int) *Scheduler {
 	return &Scheduler{byKey: make(map[string]*ticket), running: make(map[*ticket]struct{}), capacity: n}
 }
 
-// Capacity reports the number of concurrent grants this scheduler admits.
-func (s *Scheduler) Capacity() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.capacity
-}
-
 // Acquire blocks until this key owns the slot, another caller completes the
 // same deterministic key (joined=true, caller should re-read the cache), or
 // ctx expires. An empty key disables dedup (sampled requests are unique).

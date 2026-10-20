@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -311,6 +312,51 @@ func TestImportClocks(t *testing.T) {
 	var single store.GameRow
 	if err := json.Unmarshal(w.Body.Bytes(), &single); err != nil || single.Clocks != nil {
 		t.Fatalf("single save readings: %s err=%v", w.Body, err)
+	}
+}
+
+func TestLichessStartRedirectValidation(t *testing.T) {
+	s := authedServer(t)
+	s.auth.lichessID = "test-client"
+	s.auth.lichessRedirect = "https://app.example.com/auth/lichess/callback"
+
+	evil := []string{
+		"https://evil.example/cb",
+		"//evil.example/auth/lichess/callback",
+		"https://other.example/auth/lichess/callback",
+		"https://app.example.com.evil.example/auth/lichess/callback",
+	}
+	for _, candidate := range evil {
+		path := "/auth/lichess/start?redirect_uri=" + url.QueryEscape(candidate)
+		if w := authed(t, s, http.MethodGet, path, "", ""); w.Code != http.StatusBadRequest || humaCode(t, w) != "invalid_request" {
+			t.Fatalf("evil redirect_uri %q: status %d body %s, want 400 invalid_request", candidate, w.Code, w.Body)
+		}
+	}
+
+	good := []string{
+		"/auth/lichess/callback",
+		"https://app.example.com/auth/lichess/callback",
+		"",
+	}
+	for _, candidate := range good {
+		path := "/auth/lichess/start"
+		if candidate != "" {
+			path += "?redirect_uri=" + url.QueryEscape(candidate)
+		}
+		w := authed(t, s, http.MethodGet, path, "", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("allowed redirect_uri %q: status %d body %s, want 200", candidate, w.Code, w.Body)
+		}
+		var body struct {
+			AuthorizationURL string `json:"authorization_url"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("allowed redirect_uri %q: decode %v (%s)", candidate, err, w.Body)
+		}
+		parsed, err := url.Parse(body.AuthorizationURL)
+		if err != nil || parsed.Scheme != "https" || parsed.Host != "lichess.org" {
+			t.Fatalf("allowed redirect_uri %q: authorization_url = %q", candidate, body.AuthorizationURL)
+		}
 	}
 }
 

@@ -372,9 +372,6 @@ func TestSchedulerBatchOrphanDrains(t *testing.T) {
 // third queues until one frees.
 func TestSchedulerCapacityTwo(t *testing.T) {
 	s := NewSchedulerWithCapacity(2)
-	if got := s.Capacity(); got != 2 {
-		t.Fatalf("capacity = %d, want 2", got)
-	}
 	a := awaitGrant(t, enqueueAsync(s, PriorityBatch, "a", 1))
 	b := awaitGrant(t, enqueueAsync(s, PriorityBatch, "b", 1))
 	if s.Idle() {
@@ -396,8 +393,11 @@ func TestSchedulerCapacityTwo(t *testing.T) {
 
 // Capacity clamps below 1 to single-slot.
 func TestSchedulerCapacityClamps(t *testing.T) {
-	if got := NewSchedulerWithCapacity(0).Capacity(); got != 1 {
-		t.Fatalf("capacity 0 clamped to %d, want 1", got)
+	s := NewSchedulerWithCapacity(0)
+	a := awaitGrant(t, enqueueAsync(s, PriorityBatch, "a", 1))
+	s.Release(a)
+	if !s.Idle() {
+		t.Fatal("clamped scheduler did not drain")
 	}
 }
 

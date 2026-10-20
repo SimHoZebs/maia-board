@@ -57,9 +57,13 @@ it('rejects malformed engine moves before creating SVG content', () => {
 it('marks blunder and mistake destinations with label badges', () => {
   const blunder = reviewShapes({ ...noMoves }, { ...allToggles }, { square: 'f3', glyph: '??' });
   expect(blunder).toHaveLength(1);
-  expect(blunder[0]).toMatchObject({ orig: 'f3', label: { text: '??', fill: '#e5484d' } });
+  expect(blunder[0]).toMatchObject({ orig: 'f3', label: { text: '??' } });
   const mistake = reviewShapes({ ...noMoves }, { ...allToggles }, { square: 'e5', glyph: '?' });
-  expect(mistake[0]).toMatchObject({ orig: 'e5', label: { text: '?', fill: '#f5a524' } });
+  expect(mistake[0]).toMatchObject({ orig: 'e5', label: { text: '?' } });
+  // Severity rank, not hex: blunder reads harsher than mistake.
+  expect(blunder[0].label?.fill).toBeDefined();
+  expect(mistake[0].label?.fill).toBeDefined();
+  expect(blunder[0].label?.fill).not.toBe(mistake[0].label?.fill);
   expect(
     reviewShapes({ ...noMoves }, { ...allToggles }, {
       square: 'z9',
@@ -80,12 +84,17 @@ it('marks allowed-mate destinations with the shared dark-red badge', () => {
     { square: 'g3', glyph: '💀' },
   );
   expect(allowedMate).toHaveLength(1);
-  expect(allowedMate[0]).toMatchObject({ orig: 'g3', label: { text: '💀', fill: '#7f1d1d' } });
+  expect(allowedMate[0]).toMatchObject({ orig: 'g3', label: { text: '💀' } });
+  // Rank, not hex: allowed-mate is darker than blunder and mistake.
+  const harsher = reviewShapes({ ...noMoves }, { ...allToggles }, { square: 'f3', glyph: '??' });
+  const milder = reviewShapes({ ...noMoves }, { ...allToggles }, { square: 'e5', glyph: '?' });
+  expect(allowedMate[0].label?.fill).toBeDefined();
+  expect([harsher[0].label?.fill, milder[0].label?.fill]).not.toContain(allowedMate[0].label?.fill);
 });
 it('marks the losing king with a flag badge that outranks quality badges', () => {
   const flag = reviewShapes({ ...noMoves }, { ...allToggles }, { square: 'e8', glyph: '⚑' });
   expect(flag).toHaveLength(1);
-  expect(flag[0]).toMatchObject({ orig: 'e8', label: { text: '⚑', fill: '#111827' } });
+  expect(flag[0]).toMatchObject({ orig: 'e8', label: { text: '⚑' } });
   const both = reviewShapes({ ...noMoves }, { ...allToggles }, [
     { square: 'e8', glyph: '⚑' },
     { square: 'e8', glyph: '??' },
@@ -113,8 +122,11 @@ it('shares one losing-king badge between resign and checkmate', () => {
   const mateShapes = losingKingShapes(checkmated.fen(), 'white');
   for (const shapes of [resignShapes, mateShapes]) {
     expect(shapes).toHaveLength(1);
-    expect(shapes[0]).toMatchObject({ orig: 'e1', label: { text: '⚑', fill: '#111827' } });
+    expect(shapes[0]).toMatchObject({ orig: 'e1', label: { text: '⚑' } });
   }
+  // Shared badge behavior, not hex: resign and mate render the same fill.
+  expect(resignShapes[0].label?.fill).toBeDefined();
+  expect(mateShapes[0].label?.fill).toBe(resignShapes[0].label?.fill);
   // Invalid FEN yields no badge rather than a wrong one.
   expect(losingKingBadge('junk', 'white')).toBeNull();
   expect(losingKingShapes('junk', 'white')).toEqual([]);

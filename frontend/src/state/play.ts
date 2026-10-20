@@ -1,13 +1,13 @@
-import { Chess } from 'chess.js';
 import { readableApiError } from '../eval/api';
-import { toGroundColor } from '../board/board-colors';
 import {
+  buildTimeline,
   defaultSettings,
   extendLine,
   lineRecord,
   parseSquare,
   retreatLine,
   START_FEN,
+  tipRow,
   type Settings,
 } from '../shared/domain';
 import { botTurn, queueRequest, transition, withPlay } from './shared';
@@ -55,9 +55,8 @@ export function reducePlay(state: State, action: Action): State | undefined {
     case 'takeback': {
       if (state.mode !== 'play' || !state.play.moves.length || state.play.result === 'resigned')
         return state;
-      const tip = lineRecord(state.play.moves);
-      const count =
-        toGroundColor(new Chess(tip.fen).turn()) === state.play.settings.userColor ? 2 : 1;
+      const tip = tipRow(buildTimeline(START_FEN, state.play.moves));
+      const count = tip.turn === state.play.settings.userColor ? 2 : 1;
       const { moves } = retreatLine(state.play.moves, START_FEN, count);
       return transition(withPlay(state, { ...state.play, moves }), { viewedPly: null });
     }

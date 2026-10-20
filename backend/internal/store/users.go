@@ -8,7 +8,7 @@ import (
 )
 
 // ErrInvalidDisplayName signals a display name outside 1-40 printable chars.
-// Handlers map it to 400; the DB trigger enforces the same bound.
+// Handlers map it to 400; the DB CHECK enforces the same bound.
 var ErrInvalidDisplayName = errors.New("display_name must be 1-40 printable characters")
 
 // User is the account primitive. Games, current markers, batch-review jobs,
@@ -81,7 +81,7 @@ func scanUser(scanner gameScanner) (User, error) {
 
 // CreateLocalUser mints a display-named user with no Lichess link.
 // Empty names fall back to the documented `Player` default; over-long or
-// control-char names fail clearly instead of reaching the DB trigger.
+// control-char names fail clearly instead of reaching the DB CHECK.
 func (s *GameStore) CreateLocalUser(displayName string) (User, error) {
 	id, err := NewHexID()
 	if err != nil {
@@ -326,11 +326,6 @@ func (s *GameStore) UpdateClocksIfEmpty(ownerID, source string, clocks []int) (b
 	}
 	return count > 0, nil
 }
-func (s *GameStore) SetUserCurrent(userID, gameID string) error {
-	_, err := s.db.Exec(`INSERT INTO user_current (user_id, game_id) VALUES (?, ?)
-		ON CONFLICT (user_id) DO UPDATE SET game_id = excluded.game_id`, userID, gameID)
-	return err
-}
 
 // GetUserCurrent reads one user's current-game marker ("" when unset).
 func (s *GameStore) GetUserCurrent(userID string) string {
@@ -339,9 +334,4 @@ func (s *GameStore) GetUserCurrent(userID string) string {
 		return ""
 	}
 	return id
-}
-
-// ClearUserCurrentForGame clears every per-user marker pointing at a deleted game.
-func (s *GameStore) ClearUserCurrentForGame(gameID string) {
-	_, _ = s.db.Exec(`DELETE FROM user_current WHERE game_id = ?`, gameID)
 }

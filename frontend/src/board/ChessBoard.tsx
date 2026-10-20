@@ -3,21 +3,48 @@ import { Chess, type Square } from 'chess.js';
 import { Chessground } from '@lichess-org/chessground';
 import type { Api } from '@lichess-org/chessground/api';
 import type { Color, Key } from '@lichess-org/chessground/types';
-import { legalDests, parseKey, parseSquare } from '../shared/domain';
-import { toGroundColor } from './board-colors';
+import { legalDests, parseKey, parseSquare, turnFromFen } from '../shared/domain';
 import type { DrawBrushes, DrawShape } from '@lichess-org/chessground/draw';
 import { reviewBrushes } from '../review/reviewArrows';
 
 // Chessground renders its built-in red radial `square.check` style (already
 // imported via chessground.brown.css) for whatever `check` names. chess.js
 // owns check truth; Chessground only finds that side's king square.
+// Memoized per FEN: scrubbing back and forth never re-parses, and the cached
+// timeline `check` flag (domain.ts) stays the primary source where callers
+// have a row — this is the fallback for bare-FEN boards (thumbnails).
+const CHECK_CACHE_LIMIT = 256;
+const checkCache = new Map<string, Color | false>();
 function checkForFen(fen: string): Color | false {
+  const cached = checkCache.get(fen);
+  if (cached !== undefined) return cached;
+  let result: Color | false = false;
   try {
     const game = new Chess(fen);
-    return game.inCheck() ? toGroundColor(game.turn()) : false;
+    result = game.inCheck() ? ((turnFromFen(fen) ?? 'white') as Color) : false;
   } catch {
-    return false;
+    result = false;
   }
+  checkCache.set(fen, result);
+  if (checkCache.size > CHECK_CACHE_LIMIT) checkCache.delete(checkCache.keys().next().value!);
+  return result;
+}
+// Move destinations memoized per FEN: one move-gen per new position, O(1)
+// while scrubbing the same line.
+const DESTS_CACHE_LIMIT = 128;
+const destsCache = new Map<string, Map<Key, Key[]>>();
+function destsForFen(fen: string): Map<Key, Key[]> {
+  const cached = destsCache.get(fen);
+  if (cached) return cached;
+  let dests = new Map<Key, Key[]>();
+  try {
+    dests = legalDests(new Chess(fen));
+  } catch {
+    dests = new Map<Key, Key[]>();
+  }
+  destsCache.set(fen, dests);
+  if (destsCache.size > DESTS_CACHE_LIMIT) destsCache.delete(destsCache.keys().next().value!);
+  return dests;
 }
 export type BoardPosition = { fen: string; lastMove?: readonly string[] | null };
 export type BoardTransition = { line: string; ply: number };
@@ -67,12 +94,7 @@ export function ChessBoard({
   useLayoutEffect(() => {
     const initialFen = initial.current!.fen;
     const initialCheck = checkForFen(initialFen);
-    let initialTurn: Color | undefined;
-    try {
-      initialTurn = toGroundColor(new Chess(initialFen).turn());
-    } catch {
-      initialTurn = initialCheck || undefined;
-    }
+    const initialTurn: Color | undefined = turnFromFen(initialFen) ?? (initialCheck || undefined);
     const ground = Chessground(container.current!, {
       fen: initialFen,
       orientation: initial.current!.orientation,
@@ -129,7 +151,10 @@ export function ChessBoard({
     // setup, banners, or panels). Re-measure so gestures map to live squares.
     ground.state.dom.bounds.clear();
     const version = ++generation.current;
-    const game = new Chess(position.fen);
+    // Turn is a pure FEN read; check + destinations are memoized per FEN, so
+    // scrubbing hits the cache instead of parsing + move-gen every tick.
+    const turn = turnFromFen(position.fen);
+    const check = checkForFen(position.fen);
     ground.cancelMove();
     // Adjacent plies slide; game loads jump many pieces at once and must snap
     // instead of animating every piece from the previous line's tip.
@@ -141,14 +166,14 @@ export function ChessBoard({
     ground.set({
       fen: position.fen,
       orientation,
-      turnColor: toGroundColor(game.turn()),
-      check: game.inCheck() ? toGroundColor(game.turn()) : false,
+      turnColor: turn,
+      check,
       animation: { enabled: singleStep },
       lastMove: lastMove ? parseKeyList(lastMove) : undefined,
       movable: {
         free: false,
-        color: enabled ? toGroundColor(game.turn()) : undefined,
-        dests: enabled ? legalDests(game) : new Map(),
+        color: enabled ? turn : undefined,
+        dests: enabled ? destsForFen(position.fen) : new Map(),
         showDests: true,
         events: {
           after(from, to) {

@@ -97,15 +97,11 @@ func sfSupersetCandidates(r engine.EvaluationRequest) []engine.EvaluationRequest
 	return out
 }
 
-// lookupSFCandidate reads one identity, validates shape once on the read
+// lookupSFCandidateFrom reads one identity, validates shape once on the read
 // path (write path owns poisoning defense via ValidOwnedCacheValue), then
 // slices the stored max-lines row down to the request. Provenance stays
 // native: ActualSettings and SearchPolicy report the stored search, not the
 // smaller request.
-func (s *Server) lookupSFCandidate(candidate engine.EvaluationRequest, want *engine.StockfishSettings) (*engine.EvaluationResponse, bool) {
-	return s.lookupSFCandidateFrom(serverSource{s}, candidate, want)
-}
-
 func (s *Server) lookupSFCandidateFrom(src cacheSource, candidate engine.EvaluationRequest, want *engine.StockfishSettings) (*engine.EvaluationResponse, bool) {
 	hash, key := engine.SFIdentity(candidate).Coordinates()
 	entry, ok := src.fetch(hash, "sf", key)

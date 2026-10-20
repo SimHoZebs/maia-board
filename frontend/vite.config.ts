@@ -36,6 +36,7 @@ export default defineConfig(({ mode }) => {
         '/evaluate': process.env.MAIA_API_TARGET,
         '/evaluations': process.env.MAIA_API_TARGET,
         '/games': process.env.MAIA_API_TARGET,
+        '/reviews': process.env.MAIA_API_TARGET,
         '/openings': process.env.MAIA_API_TARGET,
       }
     : {};

@@ -538,15 +538,9 @@ func NewPool(model string, baseCommand []string, count int) *Pool {
 	}()}
 }
 
-// Size reports the replica count.
-func (p *Pool) Size() int { return len(p.workers) }
-
 // PoolSize is the drain-parallelism seam: generic code sums it without
 // importing pool internals; fakes without it count as 1.
 func (p *Pool) PoolSize() int { return len(p.workers) }
-
-// Model reports the pool's model identity (cache/dedup key scope).
-func (p *Pool) Model() string { return p.model }
 
 // SetIdleTimeout configures GPU unload on every replica. Zero disables.
 func (p *Pool) SetIdleTimeout(d time.Duration) {
