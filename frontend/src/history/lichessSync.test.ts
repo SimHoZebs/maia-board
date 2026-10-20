@@ -59,8 +59,8 @@ describe('pickMostPlayedPerf', () => {
         ?.key,
     ).toBe('blitz');
     expect(pickMostPlayedPerf({ chess960: { games: 5, rating: 1500 } })?.key).toBe('chess960');
-    expect(pickMostPlayedPerf({ blitz: { games: 0, rating: 1500 } })).toBeUndefined();
-    expect(pickMostPlayedPerf(null)).toBeUndefined();
+    expect(pickMostPlayedPerf({ blitz: { games: 0, rating: 1500 } })).toBeNull();
+    expect(pickMostPlayedPerf(null)).toBeNull();
   });
 });
 
@@ -106,7 +106,7 @@ describe('manual time-control basis', () => {
   });
   it('falls back to most-played when the pinned pool is unrated', () => {
     expect(resolveEloBasis(perfs, 'bullet')).toMatchObject({ key: 'blitz', fellBack: true });
-    expect(resolveEloBasis({}, 'rapid')).toBeUndefined();
+    expect(resolveEloBasis({}, 'rapid')).toBeNull();
   });
   it('defaults unknown stored values to auto', () => {
     expect(normalizeLichessEloBasis('hyperbullet')).toBe('auto');
@@ -184,8 +184,10 @@ describe('game download mapping', () => {
       user_color: 'black',
       opponent: 'alice',
     });
-    expect(toImportPayload({ pgn: '' }, 'alice')).toBeUndefined();
-    expect(toImportPayload(JSON.parse(line('zzzz', 'carol', 'dave')), 'alice')).toBeUndefined();
+    expect(
+      toImportPayload({ ...JSON.parse(line('abcd1234', 'alice', 'bob')), pgn: '' }, 'alice'),
+    ).toBeNull();
+    expect(toImportPayload(JSON.parse(line('zzzz', 'carol', 'dave')), 'alice')).toBeNull();
   });
   it('prefers PGN header names for opponent display case', () => {
     const tagged = JSON.stringify({
@@ -239,7 +241,7 @@ describe('game download mapping', () => {
     });
   });
   it('requests clock readings from the games export', () => {
-    expect(lichessGamesUrl('alice')).toContain('clocks=true');
+    expect(lichessGamesUrl('alice', null)).toContain('clocks=true');
   });
   it('maps clocks, speeds, and correspondence days', () => {
     const timed = JSON.stringify({
@@ -326,7 +328,7 @@ describe('game download mapping', () => {
       body: true,
       text: async () => body,
     })) as unknown as typeof fetch;
-    const { payloads, skipped } = await downloadLichessGames('alice', undefined, fetchImpl);
+    const { payloads, skipped } = await downloadLichessGames('alice', null, fetchImpl);
     expect(payloads).toHaveLength(2);
     expect(skipped).toBe(1);
   });

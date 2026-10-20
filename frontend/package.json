@@ -39,6 +39,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@lichess-org/types": "^2.0.176",
     "@playwright/test": "^1.63.0",
     "@types/node": "^24.13.4",
     "@types/react": "^19.3.0",

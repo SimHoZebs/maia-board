@@ -117,32 +117,32 @@ function perfGames(value: unknown): number {
   return typeof games === 'number' && Number.isFinite(games) && games > 0 ? Math.floor(games) : 0;
 }
 
-function perfRating(value: unknown): number | undefined {
-  if (!isRecord(value)) return undefined;
+function perfRating(value: unknown): number | null {
+  if (!isRecord(value)) return null;
   const rating = (value as Record<string, unknown>).rating;
-  return typeof rating === 'number' && Number.isFinite(rating) ? Math.round(rating) : undefined;
+  return typeof rating === 'number' && Number.isFinite(rating) ? Math.round(rating) : null;
 }
 
 // Most-played standard pool wins; ties break toward longer controls
 // (candidate order). Falls back to any rated pool when none of the standard
-// ones has games, and to undefined when nothing is rated.
-export function pickMostPlayedPerf(perfs: unknown): PickedPerf | undefined {
-  if (!isRecord(perfs)) return undefined;
-  let best: PickedPerf | undefined;
+// ones has games, and to null when nothing is rated — never undefined.
+export function pickMostPlayedPerf(perfs: unknown): PickedPerf | null {
+  if (!isRecord(perfs)) return null;
+  let best: PickedPerf | null = null;
   for (const key of LICHESS_CANDIDATE_PERFS) {
     const rating = perfRating(perfs[key]);
-    if (rating === undefined) continue;
+    if (rating === null) continue;
     const games = perfGames(perfs[key]);
     if (games <= 0) continue;
-    if (!best || games > best.games) best = { key, rating, games };
+    if (best === null || games > best.games) best = { key, rating, games };
   }
-  if (best) return best;
+  if (best !== null) return best;
   for (const [key, value] of Object.entries(perfs)) {
     const rating = perfRating(value);
-    if (rating === undefined) continue;
+    if (rating === null) continue;
     const games = perfGames(value);
     if (games <= 0) continue;
-    if (!best || games > best.games) best = { key, rating, games };
+    if (best === null || games > best.games) best = { key, rating, games };
   }
   return best;
 }
@@ -153,21 +153,18 @@ export type ResolvedEloBasis = PickedPerf & { fellBack: boolean };
 // games wins outright; a pinned but unrated pool falls back to most-played
 // (fellBack) so an explicit pick never hard-fails a sync. 'auto' is pure
 // most-played and never falls back.
-export function resolveEloBasis(
-  perfs: unknown,
-  basis: LichessEloBasis,
-): ResolvedEloBasis | undefined {
+export function resolveEloBasis(perfs: unknown, basis: LichessEloBasis): ResolvedEloBasis | null {
   if (basis !== 'auto' && isRecord(perfs)) {
     const rating = perfRating(perfs[basis]);
-    if (rating !== undefined && perfGames(perfs[basis]) > 0) {
+    if (rating !== null && perfGames(perfs[basis]) > 0) {
       return { key: basis, rating, games: perfGames(perfs[basis]), fellBack: false };
     }
     const auto = pickMostPlayedPerf(perfs);
-    if (auto) return { ...auto, fellBack: true };
-    return undefined;
+    if (auto !== null) return { ...auto, fellBack: true };
+    return null;
   }
   const auto = pickMostPlayedPerf(perfs);
-  if (!auto) return undefined;
+  if (auto === null) return null;
   return { ...auto, fellBack: false };
 }
 
@@ -256,8 +253,8 @@ export async function fetchLichessProfile(
   }
   const picked = isRecord(body)
     ? resolveEloBasis(body.perfs, normalizeLichessEloBasis(basis))
-    : undefined;
-  if (!picked)
+    : null;
+  if (picked === null)
     throw new LichessSyncError(
       'no_rated_games',
       `@${trimmed} has no rated games yet.`,
@@ -350,34 +347,42 @@ export function formatSyncAge(fetchedAt: number, now = Date.now()): string {
   return new Date(fetchedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-export type LichessGame = {
-  id?: string;
-  pgn?: string;
-  createdAt?: number;
-  winner?: string;
-  status?: string;
-  speed?: string;
-  perf?: string | { key?: string; name?: string };
-  clock?: { initial?: number; increment?: number };
-  // Per-ply remaining time in centiseconds for the side that just moved
-  // (Lichess `clocks` field, requested with clocks=true). Absent for
-  // correspondence/untimed games and older exports.
-  clocks?: unknown;
-  daysPerTurn?: number;
-  timeControl?: string;
-  players?: {
-    white?: { rating?: number; ratingDiff?: number; user?: { id?: string } };
-    black?: { rating?: number; ratingDiff?: number; user?: { id?: string } };
-  };
-};
+import type { components } from '@lichess-org/types';
+
+// Game export rows, typed by the official Lichess OpenAPI spec
+// (lichess-org/api, `components.schemas.GameJson`). The wire is still
+// untrusted JSON — every reader below re-validates ranges and shapes, so a
+// lying server degrades to a skipped row, never a bad import. Fields the
+// spec never names (`timeControl`, our `source`/`opponent` stamps) stay
+// custom and are derived, never trusted.
+export type LichessGame = components['schemas']['GameJson'];
+type LichessGamePlayer =
+  | components['schemas']['GamePlayerUser']
+  | components['schemas']['GamePlayerAi'];
+
+// Human side or null (AI sides carry a level, not a user, and never count
+// as the linked identity — those rows skip by name, explicitly).
+function gameUser(side: LichessGamePlayer): components['schemas']['GamePlayerUser'] | null {
+  return 'user' in side ? side : null;
+}
+
+// TimeControl PGN header, trimmed. Null when absent or blank — the header
+// regex lives in exactly one place so callers never re-derive it.
+function timeControlHeader(pgn: string): string | null {
+  const found = pgn.match(/\[TimeControl\s+"([^"]+)"\]/i);
+  if (found === null) return null;
+  const value = found[1].trim();
+  return value === '' ? null : value;
+}
 
 // Canonical clock from a Lichess game row. Prefers the structured clock
 // (`clock.initial`/`clock.increment` seconds), falls back to the PGN
-// TimeControl header, then to correspondence days. Returns undefined for
-// untimed rows (local display reads that as unlimited).
-function clockOf(game: LichessGame): string | undefined {
-  const initial = game.clock?.initial;
-  const increment = game.clock?.increment;
+// TimeControl header, then to correspondence days. Null means untimed
+// (local display reads that as unlimited) — never undefined.
+function clockOf(game: LichessGame): string | null {
+  const clock = game.clock === undefined ? null : game.clock;
+  const initial = clock === null ? null : clock.initial;
+  const increment = clock === null ? null : clock.increment;
   if (
     typeof initial === 'number' &&
     Number.isInteger(initial) &&
@@ -390,17 +395,18 @@ function clockOf(game: LichessGame): string | undefined {
   ) {
     return `${initial}+${increment}`;
   }
-  const header = game.pgn?.match(/\[TimeControl\s+"([^"]+)"\]/i)?.[1]?.trim();
-  if (header && header !== '?' && header !== '-') {
+  const pgn = game.pgn === undefined ? null : game.pgn;
+  const header = pgn === null ? null : timeControlHeader(pgn);
+  if (header !== null && header !== '?' && header !== '-') {
     if (/^\d+\+\d+$/.test(header)) return header;
     // Correspondence PGNs encode days-per-move as moves/seconds variants
     // (e.g. `1/86400`); the day count below covers the common shape.
     const daysMatch = header.match(/^1\/(\d+)$/);
-    if (daysMatch) {
+    if (daysMatch !== null) {
       const days = Math.round(Number(daysMatch[1]) / 86400);
       if (days >= 1 && days <= 14) return `${days}d`;
     }
-    return undefined;
+    return null;
   }
   if (header === '-') return '-';
   if (
@@ -411,45 +417,46 @@ function clockOf(game: LichessGame): string | undefined {
   ) {
     return `${game.daysPerTurn}d`;
   }
-  return undefined;
+  return null;
 }
 
 // Per-ply remaining centiseconds, one entry per move for the side that
 // just moved. Prefers the structured `clocks` array, falls back to PGN
-// [%clk h:mm:ss] comments. Returns undefined unless the readings line up
-// exactly with the move list (a partial array is worse than none: the
-// review strips index by ply).
-function clocksOf(game: LichessGame, moveCount: number): number[] | undefined {
-  if (moveCount <= 0) return undefined;
+// [%clk h:mm:ss] comments. Null unless the readings line up exactly with
+// the move list (a partial array is worse than none: the review strips
+// index by ply) — never undefined.
+function clocksOf(game: LichessGame, moveCount: number): number[] | null {
+  if (moveCount <= 0) return null;
   const valid = (value: unknown): value is number =>
     typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 14 * 86400 * 100;
   if (Array.isArray(game.clocks)) {
     if (game.clocks.length === moveCount && game.clocks.every(valid)) {
       return [...game.clocks];
     }
+    // Present-but-bad array falls through to the PGN comments below.
   }
-  const matches = [...(game.pgn ?? '').matchAll(/\{\s*\[%clk\s+([0-9:.]+)\s*\]\s*\}/g)];
-  if (matches.length !== moveCount) return undefined;
+  const pgn = game.pgn === undefined ? null : game.pgn;
+  const matches = [...(pgn === null ? '' : pgn).matchAll(/\{\s*\[%clk\s+([0-9:.]+)\s*\]\s*\}/g)];
+  if (matches.length !== moveCount) return null;
   const parsed: number[] = [];
   for (const match of matches) {
     const parts = match[1].split(':').map(Number);
-    if (parts.some(part => !Number.isFinite(part) || part < 0)) return undefined;
+    if (parts.some(part => !Number.isFinite(part) || part < 0)) return null;
     let seconds = 0;
     for (const part of parts) seconds = seconds * 60 + part;
     const centiseconds = Math.round(seconds * 100);
-    if (!valid(centiseconds)) return undefined;
+    if (!valid(centiseconds)) return null;
     parsed.push(centiseconds);
   }
   return parsed;
 }
 
-function speedOf(game: LichessGame): string | undefined {
-  const candidates = [
-    game.speed,
-    typeof game.perf === 'string' ? game.perf : (game.perf?.key ?? game.perf?.name),
-  ];
+function speedOf(game: LichessGame): string | null {
+  // Both fields are strings per the spec; anything else on the wire reads
+  // as an unknown pool (null), never throwing.
+  const candidates: unknown[] = [game.speed, game.perf];
   for (const candidate of candidates) {
-    if (typeof candidate !== 'string' || !candidate) continue;
+    if (typeof candidate !== 'string' || candidate === '') continue;
     const lowered = candidate.trim().toLowerCase();
     if (
       lowered === 'ultrabullet' ||
@@ -462,65 +469,68 @@ function speedOf(game: LichessGame): string | undefined {
       return lowered;
     }
   }
-  return undefined;
+  return null;
 }
 
-export function toImportPayload(game: LichessGame, username: string): ImportPayload | undefined {
-  if (!game.pgn) return undefined;
+export function toImportPayload(game: LichessGame, username: string): ImportPayload | null {
+  const pgn = game.pgn === undefined ? null : game.pgn;
+  if (pgn === null || pgn === '') return null;
   let moves: string[];
   try {
-    moves = loadLine('', game.pgn).moves;
+    moves = loadLine('', pgn).moves;
   } catch {
-    return undefined;
+    return null;
   }
-  if (!moves.length) return undefined;
+  if (moves.length === 0) return null;
   const lowered = username.trim().toLowerCase();
-  const whiteId = game.players?.white?.user?.id?.toLowerCase();
-  const blackId = game.players?.black?.user?.id?.toLowerCase();
-  const userColor = whiteId === lowered ? 'white' : blackId === lowered ? 'black' : undefined;
-  if (!userColor) return undefined;
-  const ownRating =
-    userColor === 'white' ? game.players?.white?.rating : game.players?.black?.rating;
-  const foeRating =
-    userColor === 'white' ? game.players?.black?.rating : game.players?.white?.rating;
-  const ownDiff =
-    userColor === 'white' ? game.players?.white?.ratingDiff : game.players?.black?.ratingDiff;
+  // players is required by the spec, but a truncated export row still
+  // skips instead of throwing.
+  const players = game.players === undefined ? null : game.players;
+  if (players === null) return null;
+  const white = gameUser(players.white);
+  const black = gameUser(players.black);
+  const whiteId = white === null ? null : white.user.id.toLowerCase();
+  const blackId = black === null ? null : black.user.id.toLowerCase();
+  const userSide = whiteId === lowered ? white : blackId === lowered ? black : null;
+  if (userSide === null) return null;
+  const userColor = userSide === white ? 'white' : 'black';
+  const foe = userSide === white ? black : white;
   const clamp = (value: unknown, fallback: number) =>
     typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 5000
       ? value
       : fallback;
-  const clampDiff = (value: unknown): number | undefined =>
+  const clampDiff = (value: unknown): number | null =>
     typeof value === 'number' && Number.isInteger(value) && value >= -1000 && value <= 1000
       ? value
-      : undefined;
-  const winner = game.winner === 'white' ? 'white' : game.winner === 'black' ? 'black' : undefined;
-  const resigned = winner !== undefined && winner !== userColor && game.status === 'resign';
+      : null;
+  const winner = game.winner === undefined ? null : game.winner;
+  const resigned = winner !== null && winner !== userColor && game.status === 'resign';
   // Opponent identity comes from the game itself (PGN headers carry display
   // case, ids are the fallback) — never the platform name.
-  const headerName = (tag: 'White' | 'Black'): string | undefined => {
-    const name = game.pgn?.match(new RegExp(`\\[${tag}\\s+"([^"]+)"\\]`))?.[1]?.trim();
-    return name ? name.slice(0, 64) : undefined;
+  const headerName = (tag: 'White' | 'Black'): string | null => {
+    const found = pgn.match(new RegExp(`\\[${tag}\\s+"([^"]+)"\\]`));
+    if (found === null) return null;
+    const name = found[1].trim();
+    return name === '' ? null : name.slice(0, 64);
   };
-  const foeName =
-    userColor === 'white'
-      ? (headerName('Black') ?? game.players?.black?.user?.id)
-      : (headerName('White') ?? game.players?.white?.user?.id);
+  const headerFoe = headerName(userColor === 'white' ? 'Black' : 'White');
+  const foeName = headerFoe !== null ? headerFoe : foe === null ? null : foe.user.id;
   // Strict imports: source and opponent are always stamped. A Lichess row
   // without an id or a foe name is skipped (counted, never sent as '') so
   // the server's required-field rejection never fires on our own payloads.
   const gameId =
     typeof game.id === 'string' && /^[A-Za-z0-9]{4,16}$/.test(game.id)
       ? `lichess:${game.id}`
-      : undefined;
-  if (!gameId || !foeName) return undefined;
-  const diff = clampDiff(ownDiff);
+      : null;
+  if (gameId === null || foeName === null) return null;
+  const diff = clampDiff(userSide.ratingDiff);
   const clock = clockOf(game);
   const pool = speedOf(game);
   const readings = clocksOf(game, moves.length);
   return {
     user_color: userColor,
-    elo_maia: clamp(foeRating, 1500),
-    elo_user: clamp(ownRating, 1300),
+    elo_maia: clamp(foe === null ? null : foe.rating, 1500),
+    elo_user: clamp(userSide.rating, 1300),
     model: '79m',
     moves,
     ...(typeof game.createdAt === 'number'
@@ -529,16 +539,16 @@ export function toImportPayload(game: LichessGame, username: string): ImportPayl
     ...(resigned ? { result: 'resigned' } : {}),
     source: gameId,
     opponent: foeName,
-    ...(diff !== undefined ? { rating_diff: diff } : {}),
-    ...(clock !== undefined ? { time_control: clock } : {}),
-    ...(pool !== undefined ? { speed: pool } : {}),
-    ...(readings !== undefined ? { clocks: readings } : {}),
+    ...(diff !== null ? { rating_diff: diff } : {}),
+    ...(clock !== null ? { time_control: clock } : {}),
+    ...(pool !== null ? { speed: pool } : {}),
+    ...(readings !== null ? { clocks: readings } : {}),
   };
 }
 
-export function lichessGamesUrl(username: string, since?: string): string {
+export function lichessGamesUrl(username: string, since: string | null): string {
   const params = new URLSearchParams({ max: '1000', pgnInJson: 'true', clocks: 'true' });
-  const sinceMs = since ? Date.parse(since) : NaN;
+  const sinceMs = since === null ? NaN : Date.parse(since);
   if (Number.isFinite(sinceMs)) params.set('since', String(sinceMs));
   return `https://lichess.org/api/games/user/${encodeURIComponent(username.trim())}?${params}`;
 }
@@ -547,7 +557,7 @@ export function lichessGamesUrl(username: string, since?: string): string {
 // so Elo sync can proceed even when the games download fails.
 export async function downloadLichessGames(
   username: string,
-  since: string | undefined,
+  since: string | null,
   fetchImpl: FetchLike = fetch,
 ): Promise<{ payloads: ImportPayload[]; skipped: number }> {
   const trimmed = normalizeLichessUsername(username);
@@ -569,10 +579,10 @@ export async function downloadLichessGames(
   let skipped = 0;
   for (const line of text.split('\n')) {
     const row = line.trim();
-    if (!row) continue;
+    if (row === '') continue;
     try {
       const parsed = toImportPayload(JSON.parse(row) as LichessGame, trimmed);
-      if (parsed) payloads.push(parsed);
+      if (parsed !== null) payloads.push(parsed);
       else skipped++;
     } catch {
       skipped++;
