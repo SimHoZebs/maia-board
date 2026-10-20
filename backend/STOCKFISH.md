@@ -1,171 +1,141 @@
 # Stockfish evaluation
 
-`POST /evaluate` runs native Stockfish 19 through a separate Python helper.
-The Go server owns its admission slot and request cancellation. See the
-[backend README](README.md) for the other API endpoints and the
-[root README](../README.md) for FEN (position), UCI (coordinate move), and ply
-(one player's move) terminology. The helper runs persistent (`--serve`):
-one warm interpreter + one warm engine per admission slot, so repeat
-requests skip interpreter startup, python-chess import, and UCI spawn.
+`POST /evaluate` runs native Stockfish 19 through a Python helper. Go owns
+the admission slot and cancellation. Route contract is in
+[API.md](API.md#post-evaluate); terms and limits in
+[../spec/GLOSSARY.md](../spec/GLOSSARY.md).
+The helper runs persistent (`--serve`): one warm interpreter + one warm
+engine per admission slot.
 
 ## Request and position history
 
 ```json
-{"fen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1","moves":[]}
+{
+  "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+  "moves": []
+}
 ```
 
-`initial_fen` optionally supplies a custom starting position; otherwise the
-standard starting position applies. `moves` contains UCI coordinate moves
-(for example `e2e4` or `a7a8q`) from that starting position. The helper checks
-both positions for semantic validity, replays legal moves, and compares the
-result with `fen`, including counters. FEN comparison normalizes castling and
-en-passant representation through python-chess; uncapturable en-passant targets
-normalize to `-`. Both sides to move are supported.
+`initial_fen` optionally sets a custom start; default is the standard
+start. `moves` holds UCI moves (e.g. `e2e4`, `a7a8q`) from that start. The
+helper validates both positions, replays legal moves, and compares the
+result with `fen`, including counters. FEN comparison normalizes castling
+and en-passant via python-chess; uncapturable en-passant targets normalize
+to `-`. Both sides to move supported.
 
-Send the full available history, including when examining an earlier position.
-Repetition and Stockfish search depend on that history. A custom starting FEN
-cannot reconstruct repetitions before that position. Requests accept under
-64 KiB of JSON (a body at exactly the limit is a `413`) and 256 plies
-(individual player moves). Unknown JSON fields are a `422`, trailing
-JSON values a `400`. Executables, threads, and memory come from
-server configuration.
+Send the full available history, including for earlier positions.
+Repetition and search depend on it. Custom-start FEN cannot reconstruct
+earlier repetitions. Threads and memory are fixed by the legacy policy
+below; the binary path comes from server config.
 
-Optional `settings` configures the search:
+Optional `settings`:
 
 ```json
-{"time_ms":2000,"lines":5,"depth":18}
+{ "time_ms": 2000, "lines": 5, "depth": 18 }
 ```
 
-`time_ms` is an integer from 250 to 30000; `lines` is an integer from 1 to 5;
-`depth` is an integer from 0 to 40, defaulting to 0. Time and lines are required
-when supplying settings. Depth 0 has no depth target. An explicit search uses time and optional
-depth limits, with no node-count limit; the first reached limit stops the search.
-Its policy identifier is `sf19-ms{time_ms}-mpv{lines}-d{depth}-t4-h128-v3`.
-Omitting settings retains the legacy policy shown below.
+`time_ms` 250–30000; `lines` 1–5; `depth` 0–40 (default 0). Time and lines
+required when settings supplied. Depth 0 has no depth target. Explicit
+search stops at the first reached time/depth limit. Policy id is
+`sf19-ms{time_ms}-mpv{lines}-d{depth}-t4-h128-v3`. Omitting settings keeps
+the legacy policy below.
 
-The frontend Settings page saves Stockfish preferences in this browser, initially
-750 ms, 2 lines, and depth 0. Preferences are included in position-cache and
-completed-analysis identities. Maia analysis remains independent of these settings.
+Settings page stores Stockfish prefs in this browser (initially 750 ms, 2
+lines, depth 0). Prefs join position-cache and completed-analysis identity.
+Maia analysis is independent of them.
 
-The server derives evaluation cache identity from the request and engine revision.
-An exact settings match takes precedence over compatible reuse with the same time
-and depth but more candidate lines. Reused results retain their original
-`search_policy`; `actual_settings` identifies the search that produced them.
-Candidate-count reuse is approximate because a larger search can divide its time
-differently. The [backend README](README.md#storage-and-cache) describes bulk lookup.
+Cache reuse: exact settings match first; compatible reuse needs same
+time/depth with more lines. Reused rows keep their `search_policy`;
+`actual_settings` names the producing search. Candidate-count reuse is
+approximate.
 
 ## Response and score perspective
 
 ```json
 {
   "engine": "Stockfish 19",
-  "search_policy": "sf19-n100k-ms750-mpv2-t4-h128-v3",
+  "search_policy": "sf19-n100k-ms750-mpv2-t2-h128-v3",
   "depth": 15,
   "terminal": null,
   "best_move": "e2e4",
-  "score": {"type": "cp", "value": 27},
+  "score": { "type": "cp", "value": 27 },
   "lines": [
-    {"move": "e2e4", "score": {"type": "cp", "value": 27}, "depth": 15},
-    {"move": "d2d4", "score": {"type": "cp", "value": 20}, "depth": 15}
+    { "move": "e2e4", "score": { "type": "cp", "value": 27 }, "depth": 15 },
+    { "move": "d2d4", "score": { "type": "cp", "value": 20 }, "depth": 15 }
   ]
 }
 ```
 
-The example illustrates the shape; moves, scores, and depths vary by search.
-All scores use White's perspective. `cp` means centipawns: `+100` favors White,
-`-100` favors Black. A `mate` score reports signed moves to mate: `+3` with
-`winning_side: "white"`, or `-3` with `winning_side: "black"`. Terminal checkmate
-uses `value: 0` and an explicit `winning_side` to remove zero-sign ambiguity.
+Moves/scores/depths vary by search. All scores are White-perspective. `cp`
+is centipawns (`+100` favors White). `mate` is signed moves to mate with
+`winning_side: white|black`. Terminal mate uses `value: 0` plus explicit
+`winning_side`.
 
-`terminal` is `null`, `white_win`, `black_win`, or `draw`. Terminal positions
-return HTTP 200 without starting Stockfish: `depth: 0`, `best_move: null`,
-and `lines: []`. Draws have a zero centipawn score. Checkmate takes precedence
-over the move-clock draw rule.
+`terminal` is `null`, `white_win`, `black_win`, or `draw`. Terminals return
+200 without starting Stockfish: `depth: 0`, `best_move: null`, `lines: []`.
+Draws score 0 cp. Mate outranks the move-clock draw rule.
 
-Draw detection includes stalemate, insufficient material, existing threefold
-repetition, and the existing 100-halfmove clock, matching chess.js's automatic
-game-over treatment of those claimable draws. A draw claim available only
-after announcing the next move does **not** end the current position. Thus the
-helper deliberately uses existing-position repetition/clock checks rather
-than python-chess's broader `claim_draw=True`. Automatic fivefold repetition
-and the 75-move rule are also covered by python-chess's outcome check.
+Draws cover stalemate, insufficient material, existing threefold
+repetition, and the 100-halfmove clock (chess.js automatic game-over
+treatment of those claimable draws). A draw claimable only after the next
+move does not end the current position, so the helper uses
+existing-position repetition/clock checks, not `claim_draw=True`.
+Fivefold/75-move also covered by python-chess outcome check.
 
-`lines` contains up to the requested number of ranked root moves (two for legacy
-requests), with distinct first moves across ranks. `best_move` and `score` come from
-the first line. Each depth is the engine's actual reported search depth;
-top-level depth is the minimum across returned lines. The helper selects the
-deepest iteration containing exact scores for all requested root lines. It
-discards bounds-only reports and incomplete iterations. If no complete exact
-iteration is available, it returns an engine error.
+`lines` holds up to the requested ranked root moves (2 legacy), distinct
+first moves. `best_move`/`score` come from line 1. Depths are the engine's
+reported depths; top-level depth is the minimum across lines. The helper
+keeps the deepest iteration with exact scores for all requested lines,
+drops bounds-only/incomplete iterations, and errors when none is complete.
 
 ## Resource and failure behavior
 
-The legacy policy uses four threads, 128 MiB hash, two principal variations
-(`MultiPV=2`, meaning two candidate lines), and
-`Limit(nodes=100000, time=0.75)`. The node budget is capped by a 750 ms search
-clock. Position validation adds time beyond the search clock. Search depth is
-an observation, never a target or guarantee.
-The wall-clock limit can cause results to vary under host load.
+Legacy policy: 4 threads, 128 MiB hash, `MultiPV=2`, `Limit(nodes=100000,
+time=0.75)`. Position validation adds time beyond the search clock. Depth is
+observed, never a target. Wall-clock limit means results vary under load.
 
-Two admission slots cover one lookup each on a warm helper: one for
-interactive Focus work, one for Batch reviews, so Focus never queues behind a
-Batch entry's in-flight ~750ms search. The helper spawns its engine once per
-slot (version-checked and configured at startup) and reuses it across
-requests; the 128 MiB hash persists within a slot, which only affects speed,
-never validity. Concurrent evaluations on the same slot
-receive `503 engine_busy` with `Retry-After: 1`; there is no queue
-for single evaluations (whole-game batches go through `POST /reviews`,
-documented in [API.md](API.md)). The whole operation has an eight-second timeout tied
-to HTTP request cancellation. Go starts a separate process group; python-chess
-starts Stockfish with `setpgrp=False` so both inherit that group. A dead
-engine respawns once and retries the request; anything else (timeout,
-unreachable helper, unusable output) kills the helper's process group and the
-next lookup restarts warm. Explicit settings add the requested search time to the eight-second
-operation timeout. Each admission slot stays occupied during that search;
-whole-game reviews apply the budget separately to each position.
-Pipe waits are capped at one second. Cleanup also kills survivors after
-a wrapper crash and reaps adopted group members when the server is PID 1.
+Two admission slots (interactive Focus + Batch reviews) so Focus never queues
+behind an in-flight Batch search. Helper spawns its engine once per slot
+(version-checked, configured at startup); 128 MiB hash persists per slot.
+Concurrent evaluations on one slot get `503 engine_busy` + `Retry-After: 1`;
+no queue for single evaluations (whole games go through `POST /reviews` in
+[API.md](API.md)). Whole op timeout 8 s tied to HTTP cancellation. Go starts
+a separate process group; python-chess starts Stockfish with `setpgrp=False`
+so both share it. Dead engine respawns once and retries; other failures
+(timeout, unreachable helper, unusable output) kill the helper's group; next
+lookup restarts warm. Explicit settings add the search time to the 8 s
+timeout. Each slot stays held for the search; batch applies the budget per
+position. Pipe waits cap at 1 s. Cleanup also kills survivors after a
+wrapper crash and reaps adopted members when the server is PID 1.
 
-Errors use Huma's `ErrorModel` envelope; the `Code` below rides in
-`errors[0].message`, the human text in `detail`:
+Errors use the [`API.md`](API.md#envelope-and-limits) envelope; `Code`
+below rides in `errors[0].message`:
 
-| HTTP | Code | Meaning |
-| --- | --- | --- |
-| 400 | (none) | Malformed JSON or trailing values |
-| 422 | (none) | Unknown fields, missing required keys, or misshapen settings |
-| 413 | (none) | Body at or over the limit |
-| 400 | `invalid_fen` | Malformed FEN |
-| 400 | `invalid_position` | Semantically invalid position or illegal/malformed move |
-| 400 | `position_mismatch` | Replay does not produce the supplied FEN |
-| 400 | `history_too_long` | More than 256 plies |
-| 405 | `method_not_allowed` | Request method is not POST |
-| 503 | `engine_busy` | Evaluation slot occupied |
-| 502 | `engine_unavailable` | Timeout, process failure, wrong engine version, or unusable output |
+| HTTP | Code                 | Meaning                                                  |
+| ---- | -------------------- | -------------------------------------------------------- |
+| 400  | (none)               | Malformed JSON or trailing values                        |
+| 422  | (none)               | Unknown fields, missing keys, misshapen settings         |
+| 413  | (none)               | Body at or over the limit                                |
+| 400  | `invalid_fen`        | Malformed FEN                                            |
+| 400  | `invalid_position`   | Invalid position or illegal/malformed move               |
+| 400  | `position_mismatch`  | Replay does not produce the supplied FEN                 |
+| 400  | `history_too_long`   | More than 256 plies                                      |
+| 405  | `method_not_allowed` | Method is not POST                                       |
+| 503  | `engine_busy`        | Slot occupied                                            |
+| 502  | `engine_unavailable` | Timeout, process failure, wrong version, unusable output |
 
-Client error messages contain no engine stderr or system paths.
-Operator configuration: `PYTHON` (default `python3`), `STOCKFISH_WORKER`
-(default `/app/stockfish_worker.py`), and `STOCKFISH_BINARY`
-(default `/app/stockfish`).
+Client errors carry no engine stderr or system paths. Operator config
+(`PYTHON`, `STOCKFISH_WORKER`, `STOCKFISH_BINARY`) is in the
+[backend README](README.md#runtime-configuration-and-upstream).
 
 ## Timing traces
 
-Server and worker logs separate request time from native search time:
+Worker log lines (`stockfish_timing outcome=ok ...` plus `outcome=error`
+with `total_ms`) split each evaluation into process-spawn vs actual search.
 
-- Server log, one line per request: `evaluate status=… plies=… policy=…
-  duration_ms=… wait_ms=… depth=… lines=…` and `move status=… plies=… model=…
-  degraded=… duration_ms=… wait_ms=…`. `wait_ms` is the admission queue wait
-  inside `exec_ms` (-1 on cache hits / pre-admission errors). Read with
-  `docker logs` (Komodo keeps them).
-- Worker lines in the same server log: `stockfish_timing outcome=ok
-  policy=… multipv=… plies=… total_ms=… spawn_ms=… search_ms=… depth=…
-  lines=…`, plus `outcome=error` with `total_ms` on failures. They split
-  each evaluation into process-spawn vs actual search.
-
-`search_ms` near the requested `time_ms` points at the search budget;
-`spawn_ms` is near zero on a warm engine and nonzero only after a helper or
-engine restart. Compare `plies` across requests
-to examine history-length effects. The [frontend performance fixture](../frontend/README.md#simulated-client-performance)
-separately measures navigation, rendering, and mocked network timings.
+`search_ms` near requested `time_ms` points at the search budget; `spawn_ms`
+near zero on a warm engine, nonzero after restart. Compare `plies` for
+history-length effects.
 
 ## Build provenance and redistribution
 
@@ -178,36 +148,29 @@ Engine inputs pinned by `backend/Dockerfile`:
 - Network URL: https://tests.stockfishchess.org/api/nn/nn-1a298aa575a0.nnue
 - Python packages: `python-chess==1.999`, `chess==1.11.2`
 
-Stockfish is GPL-3.0 licensed. The runtime image includes its `COPYING`,
-original source archive, and this document under `/app/licenses/`. Preserve
-the source, network access, license, and build recipe when redistributing
-binaries.
+Stockfish is GPL-3.0. The runtime image includes its `COPYING`, source
+archive, and this document under `/app/licenses/`. Preserve source, network
+access, license, and build recipe when redistributing binaries.
 
 ## Verification
 
-From `backend/`:
+Engine-only checks (worker tests plus the gated Go HTTP/cancellation test).
+Shared Go suite (`go test`, `go vet`) is in the
+[backend README](README.md#local-verification):
 
 ```sh
-CGO_ENABLED=0 go test ./...
-CGO_ENABLED=0 go vet ./...
-cd workers && STOCKFISH_BINARY=/app/stockfish python3 -m unittest -v test_stockfish_worker test_engine_settings
+cd backend/workers && STOCKFISH_BINARY=/app/stockfish python3 -m unittest -v test_stockfish_worker test_engine_settings
 STOCKFISH_BINARY=/app/stockfish go test ./internal/server/ -v -run TestRealStockfishHTTPAndCancellation
 ```
 
-Python discovery runs from `backend/workers/`; the Go suite runs from
-`backend/` (its `STOCKFISH_WORKER` default resolves to the workers dir
-relative to the test package).
+Python discovery runs from `backend/workers/`.
 
-The Python modules combine mocked searches with actual helper subprocesses
-and the real native engine; real searches skip when `STOCKFISH_BINARY` is unset.
-It checks start/middle/endgame searches, score signs, mating moves, terminal
-handling without an engine, full-history repetition, invalid positions, and
-custom-start replay. The Go suite checks HTTP validation, error mapping, busy
-admission, request cancellation, timeout, and process-group cleanup; the
-environment-gated integration test also observes the real Stockfish child
-before cancelling its request.
+Worker modules combine mocked searches with real helper subprocesses and the
+native engine; real searches skip when `STOCKFISH_BINARY` is unset. Covers
+start/middle/endgame, score signs, mates, terminals without engine,
+full-history repetition, invalid positions, custom-start replay.
 
-Engine-only verification from the repository root:
+Engine-only verification from the repo root:
 
 ```sh
 docker build --target stockfish-build -f backend/Dockerfile -t maia-board-stockfish-check:engine .
@@ -217,6 +180,5 @@ docker rm "$container"
 cd backend/workers && STOCKFISH_BINARY=/tmp/stockfish python3 -m unittest -v test_stockfish_worker test_engine_settings
 ```
 
-The same extraction also supports manual verification of
-`test_engine_settings` and the Go HTTP/cancellation integration test on the
-host with Python 3.12 and the pinned chess packages.
+Same extraction supports host verification of `test_engine_settings` and
+the Go HTTP/cancellation test with Python 3.12 and pinned chess packages.

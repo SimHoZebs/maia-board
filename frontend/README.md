@@ -1,19 +1,17 @@
 # Maia Board frontend
 
-React and React Router provide the Play, Analyze, and History workspaces. Vite
-builds a static app; the Go server serves it in production. `chess.js` supplies
-legal moves and game-history rules. `ChessBoard.tsx` adapts Chessground, which owns
-the board container's descendants while React owns the surrounding interface.
+React + React Router for Play, Analyze, History workspaces. Vite builds a
+static app served by Go in production. `chess.js` supplies legal moves and
+game-history rules. `ChessBoard.tsx` adapts Chessground (owns board DOM;
+React owns surrounding UI).
 
-See the [root README](../README.md) for product behavior and the definitions of
-FEN, UCI, ply, and PGN. Canonical terminology for position identity, eval
-pipeline stages, restore, transport/coordinator/flight, lanes, and limits lives
-in [spec/GLOSSARY.md](../spec/GLOSSARY.md) — this doc links there instead of
-re-defining.
+Product behavior is in the [root README](../README.md). Wire shapes are in
+[backend/API.md](../backend/API.md); terminology, lanes, and limits in
+[spec/GLOSSARY.md](../spec/GLOSSARY.md).
 
 ## Commands
 
-Run from `frontend/` with Node.js 22:
+From `frontend/` with Node.js 22:
 
 ```sh
 npm ci
@@ -22,123 +20,107 @@ npm run typecheck
 npm run build:bundle
 ```
 
-`npm run build` combines the last two commands. `npm run dev` starts Vite;
-`npm run preview` serves a built bundle. Set `MAIA_API_TARGET` to an existing
-backend URL to proxy `/move`, `/move/analysis`, `/evaluate`, `/evaluations/lookup`, `/reviews`, `/reviews/:id`, `/games`, and `/openings`.
-`MAIA_BUILD_DIR` overrides the build destination (default `dist`).
+`npm run build` = typecheck + bundle. `npm run dev` starts Vite;
+`npm run preview` serves a built bundle. Set `MAIA_API_TARGET` to a backend
+URL to proxy `/move`, `/move/analysis`, `/evaluate`, `/evaluations/lookup`,
+`/reviews`, `/reviews/:id`, `/games`, `/openings`. `MAIA_BUILD_DIR`
+overrides the build destination (default `dist`).
 
 ## State boundaries
 
-- `BoardRouter.tsx` maps `/play`, `/analyze`, `/history`, and `/settings` to their
-  workspaces. Analysis URLs carry UCI moves and an optional custom initial FEN.
-  The reducer mirrors the destination as an explicit execution context, synchronized
-  before request effects run. Navigation and reducer actions cooperate when loading
-  or resuming a game; the URL also restores analysis content on Back/Forward.
-- `state.ts` and `useBotBoard.ts` coordinate game actions and the active session.
-  Historical Play positions are read-only; returning to the tip follows live play.
-- `domain.ts` contains chess-domain data and rules. Full accumulated history is
-  needed for repetition; a selected FEN cannot supply that history by itself.
-- `evaluationStore.ts`, `reviewCoordinator.ts`, and `useReview.ts` separate cached
-  engine results, request coordination, and the analysis view's lifecycle.
-- `gameRepository.ts` owns explicit save/delete operations, pending writes, and
-  paged server sync. Its `maia-board.games.v2` browser document stores game
-  records, the current marker, and pending operations together. A successful
-  request removes the operation with its version, preserving newer work.
-  `serverGames.ts` sends game requests (gameClient); `storage.ts` supplies browser storage
-  and legacy record readers. Preferences and analysis inputs are browser-local.
-- `reviewMetrics.ts` derives retrospective move grades from objective points
-  (best move + mover-relative expected score), never from engine responses
-  directly. `src/objective/grader.ts` owns the grading role (best +
-  expected per position, currently bot 2400); the dormant
-  `src/objective/graderStockfish.ts` implements the same role surface and is
-  wired in with a one-line change. `src/objective/winrate.ts` owns bot
-  candidate-display math (winrate columns), imported directly by the panel.
-  Current-position candidates and previous-move grading refer
-  to different positions.
-- Two bot lanes are load-bearing: game-level bot (findability — "was it
-  rare for this player," feeds rarity + candidate lists at game settings)
-  and grading bot 2400 (objective truth — "would 2400 consider it best").
-  Praise needs both; Stockfish keeps mate scores + rank-1 PV for material
-  preview only.
+- `BoardRouter.tsx` maps `/play`, `/analyze`, `/history`, `/settings`.
+  Analysis URLs carry UCI moves + optional custom initial FEN. The reducer
+  mirrors the destination as execution context before request effects run.
+  URL restores analysis content on Back/Forward.
+- `state.ts` + `useBotBoard.ts` coordinate game actions and the session.
+  Historical Play positions are read-only; returning to the tip resumes live
+  play.
+- `domain.ts`: chess-domain data/rules. Full history needed for repetition;
+  a FEN alone is insufficient.
+- `evaluationStore.ts`, `reviewCoordinator.ts`, `useReview.ts`: cached
+  results, request coordination, analysis lifecycle.
+- `gameRepository.ts`: saves/deletes, pending writes, paged server sync.
+  Browser document `maia-board.games.v2` holds records, current marker, and
+  pending ops. Ack removes its op version, preserving newer work.
+  `serverGames.ts` sends requests (gameClient); `storage.ts` supplies
+  storage + legacy readers. Preferences and analysis inputs are browser-local.
+- `reviewMetrics.ts` derives move grades from objective points (best move +
+  mover-relative expected score), not engine responses directly.
+  `src/objective/grader.ts` is the grading role (best + expected per
+  position, currently bot 2400); `graderStockfish.ts` implements the same
+  surface and wires in with a one-line change. `src/objective/winrate.ts`
+  owns candidate-display math. Candidates and previous-move grading refer to
+  different positions.
+- Two bot lanes: game-level bot (findability at game settings; feeds rarity
+  - candidate lists) and grading bot 2400 (objective truth). Stockfish keeps
+    mate scores + rank-1 PV for material preview.
 
 ### Chess timeline and evaluation
 
-Each timeline stores its move sequence once and a row for every position, including
-the root. Rows contain position, turn, last move, and history-derived draw/checkmate
-outcomes. Internal evaluation references pair a timeline with a ply; they do not
-store a move-prefix array per position. HTTP requests materialize the required
-prefix at the transport boundary. Selecting positions reads existing rows.
+Each timeline stores its move sequence once plus one row per position
+(including root). Rows hold position, turn, last move, history-derived
+draw/checkmate outcomes. Eval references pair timeline + ply; no per-row
+move-prefix arrays. Transport materializes the prefix. Selecting positions
+reads existing rows.
 
-`domain.ts` retains at most 64 timelines. Shared history rows keep local numeric
-identifiers across retained branches and takebacks. These identifiers are browser
-memory keys; rebuilding an evicted history can assign new ones and restore its
-evaluations from the server. They never determine the server's durable cache identity.
+`domain.ts` retains a bounded timeline cache (see
+[limits](../spec/GLOSSARY.md#limits)). Shared history rows keep local numeric
+ids across branches/takebacks. These are browser memory keys only; rebuilds
+can reassign them and restore evals from the server. Never server cache
+identity (see [GLOSSARY](../spec/GLOSSARY.md#position-identity)).
 
-The shared `EvaluationStore` retains at most 4096 settled results **across both
-engines**, evicting the oldest stored entry. Workspace coordinators own requests,
-failures, and queues; leaving a workspace cancels its requests without clearing
-the shared results. Each coordinator runs one request per engine, prioritizes the
-viewed position, and keeps explicit batch work queued. Late replies are checked
-against the active request before being stored.
+`EvaluationStore` retains a bounded number of settled results across both
+engines (oldest evicted; see [limits](../spec/GLOSSARY.md#limits)). Coordinators own requests/failures/queues; leaving a
+workspace cancels its requests without clearing shared results. One request
+per engine per coordinator; viewed position first; explicit batch work
+queued. Late replies checked against the active request before store.
 
-Restoration uses bounded `POST /evaluations/lookup` chunks, limited to 1024 requests
-and 4 MiB each. Missing or invalid rows remain misses. Restoration does not start
-whole-line inference; foreground analysis and the explicit batch action generate
-results. Terminal scoring comes from the timeline's recorded outcomes through
-`outcomeEvaluation.ts`. Engine inference is limited to 256 plies.
-Batch progress rides the browser's native EventSource as a pure optimization;
-the status endpoint is the ground truth. Status + restore refetch on mount,
-focus, visibility-visible, online, and stream error is what survives
-backgrounding — a broken stream only costs speed.
+Restore uses bounded `POST /evaluations/lookup` chunks (see
+[limits](../spec/GLOSSARY.md#limits) and
+[API](../backend/API.md#post-evaluationslookup)). Missing/invalid rows stay misses. Restore never starts whole-line
+inference; foreground analysis + explicit batch generate results. Terminal
+scoring comes from timeline outcomes (`outcomeEvaluation.ts`). Batch progress uses native EventSource as
+optimization; status endpoint is ground truth. Status + restore refetch on
+mount, focus, visible, online, stream error. A broken stream costs speed
+only.
 
-The server owns cache writes and repair. The frontend validates Stockfish's actual
-search policy before displaying a compatible result and limits displayed candidates
-without changing its provenance. A larger candidate search with the same time and
-depth is approximate reuse. Bot fallback results retain `model_used` and `degraded`
-so the interface can name the actual model.
+Server owns cache writes/repair. Frontend validates Stockfish policy before
+displaying compatible results and slices candidates without changing
+provenance. Bot fallback rows keep `model_used`/`degraded`.
 
 ### Game durability and recovery
 
-The repository imports legacy saved games and pending operations, retaining game
-identifiers and the original legacy outbox. It continues to use the v2 document key
-`maia-board.games.v2`. Page sync merges server records with pending local
-changes and creates no save/delete operation. Older pages merge into the library;
-an incomplete page is never treated as the full collection.
+Repository imports legacy games + pending ops, keeping ids and the legacy
+outbox. Still uses `maia-board.games.v2` key. Page sync merges server
+records with pending local changes; creates no ops. Older pages merge in;
+an incomplete page is never the full collection.
 
-A save/delete is written to browser storage before transmission. Each pending
-operation has a version; its acknowledgement removes only that version. Storage
-failures stop transmission and surface through the recovery interface. Rejected
-operations and malformed pending data remain available for export or explicit
-discard. Discarding a pending operation does not infer a server deletion.
-Local play during a history fetch wins: the arriving page is neither merged
-nor dropped, and the skipped range stays explicitly loadable with Load more.
+Saves/deletes write browser storage before send. Each pending op has a
+version; ack removes that version only. Storage failure stops send and
+surfaces via recovery UI. Rejected ops and malformed data stay available
+for export or discard. Discard infers no server deletion. Local play during
+fetch wins: arriving page is neither merged nor dropped; skipped range stays
+loadable via Load more.
 
-Where supported, browser locks serialize repository writes and sync across tabs.
-The repository also compares the stored document before overwriting it. A conflict
-stops syncing and asks the user to export this tab's pending work before reloading;
-local play can continue in memory. Recovery exports include local games, the current
-marker, pending operations, and malformed records retained for recovery.
+Where supported, browser locks serialize writes/sync across tabs.
+Repository compares the document before overwrite. Conflict stops syncing
+and asks to export this tab's pending work before reload; local play
+continues in memory. Recovery exports include local games, current marker,
+pending ops, retained malformed records.
 
 ### Opening book
 
-Move sequences resolve to ECO names through `POST /openings`, so
-transpositions converge and branches resolve through their full line. The
-server owns the book table and lookup; the client fetches once per loaded
-line (cached by line, aborted on navigation) and derives the viewed
-position's deepest ancestor locally. `src/openings.ts` owns that fetch plus
-the ancestor derivation. `MovesPanel.tsx` swaps the eval badge slot for a
-book chip on in-book moves; `ReviewOverview.tsx` names the viewed line
-first. The move verdict in `InsightPanel.tsx` reports terminal facts first
-(mate with miniature names, stalemate, repetition, fifty-move), then exact
-book hits, then the quality-by-rarity synthesis with novelty and
-pawn-damage notes for mistakes (`src/theory.ts`), and the single strongest
-  why for good moves — fresh mate force, only move to hold, promotion,
-  fork, en passant, immediate material gain, or escape from
-  check — instead of restating engine grades. `PlayVerdict.tsx` renders the
-  same sentence under the move list in Play when both `feedback` and the
-  `playVerdict` option are on; it grades the user's moves only and has no
-  explore-line button. Table source, pin, and regeneration are
-documented in [backend README](../backend/README.md#game-and-engine-api).
+Sequences resolve to ECO names via `POST /openings`: transpositions
+converge; branches resolve through their full line. Server owns table +
+lookup; client fetches once per loaded line (cached by line, aborted on
+navigation) and derives the viewed position's deepest ancestor locally.
+`src/openings.ts` owns fetch + derivation. `MovesPanel.tsx` swaps the eval
+badge for a book chip on in-book moves; `ReviewOverview.tsx` names the
+viewed line first. `InsightPanel.tsx` verdict order: terminals first, then
+book hits, then quality-by-rarity (`src/theory.ts`). `PlayVerdict.tsx`
+renders the same sentence in Play for user moves only (needs `feedback` +
+`playVerdict`); no explore-line button. Table source/pin/regeneration: see
+[backend README](../backend/README.md#openings-table).
 
 ## Browser checks
 
@@ -148,15 +130,12 @@ npm run test:browser
 npm run test:browser:strict
 ```
 
-Playwright serves the static fixture bundle through request interception and mocks
-the API. No development server is needed. `test:browser:strict` builds with
-development React so StrictMode exercises effect cleanup. `test:browser:run`
-executes an already-built fixture bundle for manual verification; run the
-separate typecheck and build steps first, then this script against the
-finished bundle.
+Playwright serves the static fixture bundle via interception and mocks the
+API; no dev server needed. `test:browser:strict` builds with development
+React for StrictMode effect cleanup. `test:browser:run` executes an
+already-built bundle; run typecheck + build first.
 
-For a separately named run, build first, then isolate Playwright's results and HTML
-report:
+Named run with isolated outputs (build first):
 
 ```sh
 MAIA_BUILD_DIR=dist-browser npm run build
@@ -164,24 +143,24 @@ PLAYWRIGHT_HTML_OUTPUT_DIR=playwright-report/local \
   npm run test:browser:run -- --reporter=line,html --output=test-results/local
 ```
 
-Screenshots use Playwright's per-test output paths. The production and StrictMode
-scripts still share `dist-browser`, and the browser fixtures read that directory
-directly. Serialize builds and suites that require different bundles; isolated
-report directories alone do not isolate their build inputs.
+Screenshots use per-test output paths. Production and StrictMode share
+`dist-browser`; fixtures read that directory directly. Serialize builds and
+suites needing different bundles; isolated report dirs do not isolate build
+inputs.
 
 ## Simulated-client performance
 
-`npm run test:perf` builds `dist-profiling` with React's profiling entry and runs
-the opt-in client simulation. It covers play, a generated analysis line, batch
-analysis, scrubbing, rating changes, and exploration with mocked engine latency.
-It measures frontend interaction costs rather than real model inference speed.
+`npm run test:perf` builds `dist-profiling` (React profiling entry) and runs
+the opt-in client simulation: play, generated analysis line, batch analysis,
+scrubbing, rating changes, exploration with mocked latency. Measures
+frontend interaction cost, not model inference.
 
-`PERF_SEED` selects a reproducible line; `PERF_PLIES` defaults to 40 and
-`PERF_PLAY_MOVES` controls play length. `PERF_MAIA_MS`, `PERF_SF_MS`, and
-`PERF_CACHE_MS` default to 900, 750, and 25 milliseconds. Longer lines may require
-a larger timeout in `playwright.perf.config.ts`.
+`PERF_SEED` selects the line; `PERF_PLIES` defaults 40; `PERF_PLAY_MOVES`
+controls play length. `PERF_MAIA_MS`/`PERF_SF_MS`/`PERF_CACHE_MS` default
+900/750/25 ms. Longer lines may need a larger timeout in
+`playwright.perf.config.ts`.
 
-The report attaches `perf-metrics.json` with interaction timings, React commits,
-network rows, and early-versus-late scrub costs. `CommitRecorder` collects React
-commits only when the fixture registers `window.__perfCommits`; normal builds use
-the ordinary React entry point.
+Report attaches `perf-metrics.json` (interaction timings, React commits,
+network rows, early-vs-late scrub). `CommitRecorder` collects commits only
+when the fixture registers `window.__perfCommits`; normal builds use the
+ordinary React entry.

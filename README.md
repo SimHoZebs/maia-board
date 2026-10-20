@@ -1,57 +1,44 @@
 # Maia Board
 
-A minimal self-hosted chess app with **Play**, **Analyze**, and **History**.
-Play against Maia's rating-conditioned move model, explore positions with Maia
-and Stockfish, and keep games on your own server. The combined container serves
-the web interface and Go API and runs both engines locally.
+Minimal self-hosted chess app with **Play**, **Analyze**, and **History**.
+Play against rating-conditioned Maia, explore positions with Maia and
+Stockfish, and keep games on your own server. One container serves the web
+interface and Go API and runs both engines locally.
 
 ## Using the app
 
-- **Play** starts or resumes a game against Maia. The selected rating conditions
-  the model's move choices. Temperature controls sampling: 0 chooses its highest
-  probability move; 1 samples its original distribution.
-- **Analyze** imports a game or starting position, examines the selected position,
-  and explores a temporary continuation. Whole-line analysis evaluates positions
-  across the loaded game or explored line.
-- **History** stores games on the server for resuming, analysis, export, and deletion.
-  Browser storage holds preferences, local game records, and pending writes for retry.
+- **Play** starts or resumes a game against Maia. Selected rating conditions
+  the model. Temperature 0 takes the top-probability move; 1 samples the
+  distribution.
+- **Analyze** imports a game or starting position, examines the selected
+  position, and explores a temporary continuation. Whole-line analysis
+  evaluates positions across the loaded game or line.
+- **History** stores games on the server for resume, analysis, export, and
+  deletion. Browser storage holds preferences, local records, and pending
+  writes for retry.
 
 ### Reading analysis
 
-Current-position candidates answer "what could be played from this board?"
-Retrospective move grades compare evaluations before and after a played move.
-A starting position has candidates but no previous move to grade; an explored
-continuation owns its positions, and candidate branches belong to the board
-position that produced them.
+Candidates answer "what can be played here". Grades compare evaluations
+before and after the played move. A starting position has no previous move
+to grade; explored lines own their positions.
 
-Maia `top_moves` carry model policy probabilities per rating; they need not
-sum to 100%. WDL describes the first candidate, choosing-side perspective.
-`model_used` and `degraded` flag 79M-to-5M fallback. Scores show Maia 2400
-White winning chances, not centipawns; mates and material notes come from
-Stockfish underneath. Grades derive from Maia 2400 expectation deltas and are
-estimates, not guarantees.
+Evaluations reuse browser memory and the server SQLite cache; sampled play
+moves and degraded fallbacks bypass it. Saved games are independent of
+cache eviction. See [backend storage and cache](backend/README.md#storage-and-cache).
 
-Deterministic evaluations reuse from browser memory and the server SQLite
-cache, keyed on position history plus engine identity, ratings/model for Maia,
-and search settings for Stockfish. Sampled play moves and degraded fallbacks
-bypass the server cache. Saved games are independent of cache eviction.
-See [backend storage and cache](backend/README.md#storage-and-cache).
-
-Games can be saved with up to 4096 plies within a 64 KiB request. Engine analysis
-accepts at most 256 plies; a longer game's save remains independent of that limit.
-History loads older pages explicitly. Failed pending writes remain available for
-retry or export. If another tab changes the browser repository, this tab stops
-syncing and asks you to export its pending work before reloading.
+History pages load explicitly. Failed writes stay available for retry or
+export. If another tab changes the browser repository, this tab stops
+syncing and asks for export before reload.
 
 ## Development
 
-Requires Node.js 22, Go (see [`backend/go.mod`](backend/go.mod)), and
-Python 3.12.
+Requires Node.js 22, Go (see [`backend/go.mod`](backend/go.mod)), Python 3.12.
 
 Setup (once):
 
 ```sh
-scripts/env-setup.sh   # builds backend/bin/stockfish, creates ~/.venvs/maia-board
+scripts/env-setup.sh   # backend/bin/stockfish, ~/.venvs/maia-board
 (cd frontend && npm ci)
 ```
 
@@ -71,9 +58,8 @@ OPENINGS_LOOKUP=$PWD/workers/openings_lookup.py PYTHON=$HOME/.venvs/maia-board/b
 go run ./cmd/server
 ```
 
-Listens on http://localhost:8080. Serves games, history, openings, and
-Stockfish. Does not serve Maia moves: the host venv has no torch or
-weights, so `/move` needs the container.
+Listens on http://localhost:8080. `/move` needs the container (host venv
+has no torch/weights).
 
 Frontend, from `frontend/`:
 
@@ -81,9 +67,10 @@ Frontend, from `frontend/`:
 MAIA_API_TARGET=http://127.0.0.1:8080 npm run dev
 ```
 
-Open http://localhost:5173. `MAIA_API_TARGET` is the backend URL; without
-it, API calls fail. `MAIA_API_TARGET=http://127.0.0.1:8080 npm run preview`
-serves the last production build at http://localhost:4173.
+Open http://localhost:5173. `MAIA_API_TARGET` is the backend URL.
+`MAIA_API_TARGET=http://127.0.0.1:8080 npm run preview` serves the last
+production build at http://localhost:4173. Frontend details are in
+[`frontend/README.md`](frontend/README.md).
 
 ### Checks
 
@@ -94,23 +81,20 @@ scripts/verify.sh               # typecheck + vitest + go vet/test
 scripts/e2e.sh <spec>           # build dist-browser, preview, run a Playwright spec
 scripts/perf.sh                 # profiling build + PERF_SEED/PERF_PLIES matrix
 scripts/backend-perf.sh         # mock-engine backend perf matrix (no weights/GPU)
-node scripts/backend-perf-live.mjs --url <backend>  # live-engine latency (needs real server)
+node scripts/backend-perf-live.mjs --url <backend>  # live-engine latency
 scripts/serve.sh                # preview an existing build
 node scripts/chess.mjs "<fen>"  # position legality/SAN/UCI/material as JSON
 scripts/env-setup.sh            # Stockfish and Python venv bootstrap
 ```
 
-Browser fixtures mock engine responses. They do not exercise
-real model inference. Browser specs need `npx playwright install chromium`
-once. Keep concurrent browser runs' output directories separate; see
-[`frontend/README.md`](frontend/README.md).
+Browser fixtures mock engine responses. Browser specs need
+`npx playwright install chromium` once. Keep concurrent runs' output
+directories separate; see [`frontend/README.md`](frontend/README.md).
 
-Python setup details, mocked-worker commands, and real-engine checks are in
-[`backend/README.md`](backend/README.md) and [`backend/STOCKFISH.md`](backend/STOCKFISH.md).
-There is no CI workflow; local verification runs the same stages in order:
-Go/mock-worker checks, the frontend typecheck, then the packaged Stockfish
-engine extraction and browser fixture build. Run the TypeScript typecheck
-once before building the browser fixtures.
+Python/worker details are in [`backend/README.md`](backend/README.md) and
+[`backend/STOCKFISH.md`](backend/STOCKFISH.md). No CI; local verification
+runs the same stages in order: Go/mock-worker checks, frontend typecheck,
+packaged Stockfish extraction, browser fixture build.
 
 ## Combined container and hosting
 
@@ -120,22 +104,20 @@ From the repository root:
 docker compose up --build
 ```
 
-Open `http://localhost:8080`. The image bundles the static frontend, Go server,
-Python workers, Stockfish 19, and both Maia weights (79M + 5M, under 500 MiB),
-so starts never touch Hugging Face at runtime. The [`compose.yaml`](compose.yaml) persists
-games in `maia-board-data`; `maia-board-models` seeds from the image on first use
-and keeps existing caches working offline unchanged.
+Open `http://localhost:8080`. The image bundles the static frontend, Go
+server, Python workers, Stockfish 19, and both Maia weights (79M + 5M,
+under 500 MiB). Reads only from the baked-in cache at runtime. [`compose.yaml`](compose.yaml)
+persists games in `maia-board-data`; `maia-board-models` seeds from the
+image on first use.
 
-Hardware: NVIDIA (driver R560+, container toolkit, uncomment the `deploy`
-block for GPU access), AMD, Intel, or no GPU all work — Maia falls back to CPU
-automatically where torch sees no CUDA device. A slim CPU-only image is one
-commented build arg away; see the comments in `compose.yaml`. Stockfish always
-runs on CPU. Builds assume x86-64 Linux; ARM hosts are not covered. No ROCm
-build is provided.
+Hardware: NVIDIA (driver R560+, container toolkit, uncomment `deploy` for
+GPU), AMD, Intel, or no GPU. Details are in
+[`backend/README.md`](backend/README.md#gpu-inference). Stockfish runs on
+CPU. Builds assume x86-64 Linux; no ARM or ROCm build.
 
-Upstream dependencies: [Maia3](https://github.com/CSSLab/maia3/tree/1e13597c42d4858b7cfd7cfdae01e297263364b2),
+Upstream: [Maia3](https://github.com/CSSLab/maia3/tree/1e13597c42d4858b7cfd7cfdae01e297263364b2),
 [Stockfish](https://github.com/official-stockfish/Stockfish/tree/sf_19),
-[chess.js](https://github.com/jhlywa/chess.js), and
-[Chessground](https://github.com/lichess-org/chessground). Stockfish redistribution
-inputs and license locations are documented in [`backend/STOCKFISH.md`](backend/STOCKFISH.md).
-HTTP route reference lives in [`backend/API.md`](backend/API.md).
+[chess.js](https://github.com/jhlywa/chess.js),
+[Chessground](https://github.com/lichess-org/chessground). Stockfish
+redistribution inputs are in [`backend/STOCKFISH.md`](backend/STOCKFISH.md).
+HTTP routes are in [`backend/API.md`](backend/API.md).

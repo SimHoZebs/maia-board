@@ -1,192 +1,73 @@
 # Maia Board backend
 
-The Go HTTP server owns request validation, SQLite persistence, and engine process
-lifecycle. Python adapters perform history-aware chess validation and call Maia3
-or native Stockfish. Maia inference uses the pinned upstream `Maia3UCIEngine`
-API; Go remains the HTTP boundary.
+Go HTTP server: request validation, SQLite persistence, engine process
+lifecycle. Python adapters do history-aware validation and call Maia3 or
+native Stockfish. Maia uses the pinned `Maia3UCIEngine` API; Go is the HTTP
+boundary.
 
-## Game and engine API
+## Openings table
 
-The [root README](../README.md) defines FEN (a position), UCI coordinate moves,
-ply (one player's move), and PGN game notation. Canonical terminology for
-position identity, eval pipeline stages, restore/lookup/execute, lanes, and
-limits lives in [spec/GLOSSARY.md](../spec/GLOSSARY.md).
-
-`POST /move` accepts a history-aware Maia request:
-
-```json
-{
-  "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
-  "moves": ["e2e4"],
-  "elo_maia": 1500,
-  "elo_user": 1300,
-  "model": "79m",
-  "maia_color": "black",
-  "temperature": 0
-}
-```
-
-For standard-start history, omit `initial_fen` or supply the standard starting
-FEN. Supply `initial_fen` explicitly for a custom starting position. The worker
-replays `moves` from that position and compares the result with `fen` before inference.
-Elo inputs accept 0–5000; model names are `79m` and `5m` (default `79m`).
-Single-model servers (`MAIA3_FALLBACK_MODEL=off`) reject explicit `5m`.
-Inference accepts at most 256 plies. Position history and FEN must describe the
-same board, and `maia_color` must match the side to move.
-
-Temperature accepts 0–2 and defaults to 0 at the API. Zero chooses the highest
-policy move; 1 samples the original distribution. Play's new-game setup defaults
-to 1; saved games retain their temperature and legacy games default to 0.
-
-Responses contain the selected `move`, ranked `top_moves` with model policy
-probabilities, and normalized `[loss, draw, win]` `wdl` for the first candidate.
-Sampling can select a move outside the displayed candidates. `model_used` and
-`degraded` identify fallback from 79M to 5M. Served rows (not stored rows)
-also carry `delta_baseline` (the before-position 2400 point) and per-candidate
-`delta` values, computed at read time from the grading row behind the request;
-without a grading row the fields stay absent and the client falls back to its
-list-max comparison. Busy responses return 503; a failed
-79M operation can fall back to 5M, while an explicit 5M request uses only that model.
-
-`POST /move/analysis` accepts the same payload for retrospective Maia analysis
-(deterministic; omit `temperature`). It admits on the Focus lane while `/move`
-admits on Play, so a live reply and its move feedback queue instead of
-superseding each other.
-
-`POST /evaluate` performs a Stockfish search. Its settings, score perspective,
-history validation, limits, and process cleanup are documented in
-[`STOCKFISH.md`](STOCKFISH.md). Errors use `{code, message}`. `/healthz` supplies
-the server health endpoint. Full route, shape, and status reference lives in
-[`API.md`](API.md).
-
-`POST /openings` resolves ECO opening names for a line. It accepts
-`{initial_fen, moves}` (UCI, at most 4096 plies) and returns every exact book
-hit as `{matches: [{ply, eco, name}], book_flags}` where `book_flags[i]` names
-the position after `moves[i]`. The book is defined from the standard start
-only: custom-start lines return empty matches and all-false flags, never an
-error. A missing table degrades the same way with `"degraded": true`.
-Chess truth lives in `workers/openings_lookup.py` (python-chess); Go owns HTTP
-validation and the process boundary. The table is `workers/openings_table.json`,
-generated from the pinned
+Chess truth is `workers/openings_lookup.py` (python-chess); Go owns HTTP
+and the process boundary. Table is `workers/openings_table.json`, generated
+from the pinned
 [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings)
-TSVs (CC0). Regenerate after changing the pin (from `frontend/`, needs its
-`node_modules` for chess.js):
+TSVs (CC0). Regenerate after changing the pin (from `frontend/`):
 
 ```sh
 node scripts/build-openings-table.mjs          # rewrite backend/workers/openings_table.json
-node scripts/build-openings-table.mjs --check  # fail when the artifact is stale
+node scripts/build-openings-table.mjs --check  # fail when stale
 ```
-
-`GET /games?limit=200&offset=0` lists saved games with `games`, `current_id`,
-`current_game`, `total`, and `next_offset`. The default page size is 200 and the
-maximum is 500. `next_offset: null` ends pagination; `current_game` also supplies
-the active game when it is outside the page.
-`POST /games` creates or updates a game. `GET /games/:id` retrieves a game;
-`DELETE /games/:id` is idempotent and clears a matching current-game marker.
-Games retain their identifier, settings, move history, and creation time.
-Re-saving unchanged game content preserves its recency position.
-Game saves accept at most 4096 plies within the 64 KiB JSON body limit. A game
-can exceed the engine's 256-ply history budget and still be saved.
 
 ## Storage and cache
 
-SQLite uses a pure-Go driver and write-ahead logging. `DB_PATH` selects the file
-(default `maia-board.db`). Persist its directory, including SQLite's companion
-files, across container replacement. Take a consistent SQLite backup using the
-SQLite backup API or `VACUUM INTO` from a live connection; copying only an active
-database's main file can omit writes still in its write-ahead log.
+SQLite with pure-Go driver and WAL. `DB_PATH` selects the file (default
+`maia-board.db`). Persist its directory, including companion files. Back up
+with the SQLite backup API or `VACUUM INTO` from a live connection; copying
+only the main file can omit WAL writes.
 
-Games and the current-game marker persist independently of evaluation rows.
-Schema migrations run when the store opens. Browser pending writes are managed
-by the frontend's persistence layer.
+Games and the current-game marker persist independently of eval rows.
+Migrations run at store open. Browser pending writes belong to the
+frontend persistence layer.
 
-`POST /move`, `POST /move/analysis`, and `POST /evaluate` can reuse stored evaluations before starting
-inference. `X-Eval-Cache` distinguishes `hit` and `miss`. Only deterministic Maia
-requests participate; sampled play moves and degraded fallback responses are not
-persisted as deterministic analysis. Invalid cached results fall through to engine
-evaluation. The cache evicts old writes beyond 25000 v2 rows, without deleting games.
-
-The server derives v2 cache identity from the current FEN, initial FEN, full move
-history, engine revision, and applicable settings. Legacy client cache coordinates
-do not determine this identity; the legacy table is dropped when the store opens
-and its misses recompute through the engine endpoints. Evaluation writes are
-server-owned, and corrupt results are recomputed by the engine endpoints.
-Cache rows stay per-model by design: Stockfish and Maia shapes, validators,
-and settings differ, so one combined row would bust the Stockfish half on a
-Maia rating change. Composition stays request-time over per-model reads;
-no combined row is ever stored.
-
-`POST /evaluations/lookup` accepts `{line: {initial_fen, moves}, requests: [...]}` with at most 1024 requests
-and a 4 MiB body. Each entry supplies `engine: "sf" | "maia"`, `fen`, and `ply`
-(slicing the shared line); Stockfish may supply `settings`, while Maia supplies `elo_maia`,
-`elo_user`, and `model`. The response is
-`{results: [{index, value, actual_settings?}]}`. Missing indexes are cache misses.
-This read-only endpoint never starts inference; invalid requests return a typed 400.
-
-Stockfish exact settings take precedence. Compatible reuse requires matching time
-and depth with more candidate lines. Returned `search_policy` and `actual_settings`
-describe the original search. Such reuse is approximate: a search with more
-candidates can allocate its budget differently from an independent smaller search.
-The frontend validates the reported policy and settings, then slices displayed
-candidates without relabelling their original search. Legacy cache-repair PUTs are
-rejected; malformed lookup values remain misses until an engine endpoint recomputes
-them. Maia identity includes both ratings and the pinned upstream model revision.
-
-Within the batch lane, submits share fairly by rotation (A,B,A,B) with dual
-admission caps (misses per engine + unfinished jobs, 429 wait-once). This is
-fairness-without-auth for self-host scaling to family/friends; priority
-lanes (Play > Focus > Batch) stay regardless. Threat model: authenticated
-users over a trusted LAN/tailnet. Sessions are HttpOnly cookies; games,
-current markers, and review jobs scope to the session owner, while the
-evaluation cache stays shared content (keyed by position, never by user).
-Lichess OAuth links a verified identity (`POST /auth/lichess/start`,
-`/auth/lichess/callback`; needs `LICHESS_CLIENT_ID` plus redirect URI), and
-`POST /imports/games` appends external history into the caller's owned store.
-Same-key resubmits join instead of growing the queue;
-the caps are tripwires so a runaway client fails visibly with 429. Maia
-large-model misses count against both the large and small tallies because
-79M→5M fallback eligibility is unknowable at intake; mixed submits can
-therefore 429 while the small slot is idle. That conservative over-count is
-intentional backpressure.
+`POST /move`, `/move/analysis`, `/evaluate` can reuse stored evaluations.
+`X-Eval-Cache: hit|miss` (contract in [`API.md`](API.md#envelope-and-limits)).
+Only deterministic Maia requests participate; sampled play moves and
+degraded fallbacks are not persisted. Invalid cached rows fall through to
+inference. Eviction drops old writes past the v2 row cap in
+[limits](../spec/GLOSSARY.md#limits); games are never evicted.
 
 ## Maia worker lifecycle
 
-Go communicates with a warm Python worker using JSON-lines: one JSON object per
-line on standard input/output, bounded to 64 KiB. After loading, Python emits
-`{"ready": true}`; each request receives a result or typed error. Diagnostics go
-to standard error and Go retains bounded diagnostic output in its logs.
+Go talks to a warm Python worker over JSON-lines stdin/stdout (64 KiB max).
+After load Python emits `{"ready": true}`; each request gets a result or
+typed error. Diagnostics go to stderr; Go keeps bounded output in logs.
 
-The adapter uses the pinned upstream argument parser, `Maia3UCIEngine` constructor,
-model loader, option handling, full-history position command, and `score_moves`.
-Every request resets both ratings, candidate count, and temperature. The worker
-validates positions and moves before invoking upstream, then validates legal
-candidates, probability ordering, and win/draw/loss values before replying.
+The adapter uses the pinned upstream arg parser, `Maia3UCIEngine`
+constructor, model loader, option handling, full-history position command,
+and `score_moves`. Every request resets ratings, candidate count, and
+temperature. The worker replays `moves` from the starting position and
+compares the result with `fen`, then validates positions/moves before
+upstream, then validates candidates, probability ordering, and WDL before
+replying.
 
-Each model pool has one serial operation slot per replica. Admission waits at most 100 ms;
-identical deterministic work can join the running operation. Sampled play requests
-do not share results. Startup has a 300-second deadline and inference has a separate
-120-second deadline. A cancelled worker caller stops waiting while the operation
-continues to own its slot until the reply is drained. A hard timeout or protocol
-failure kills and reaps the worker process group before releasing admission.
-Successful operations preserve the warm process for the next request.
+One serial slot per model replica. Admission waits at most 100 ms;
+identical deterministic work joins the running op. Sampled play requests
+never share. Startup deadline 300 s; inference deadline 120 s. A cancelled
+caller stops waiting while the op holds the slot until drained. Hard timeout
+or protocol failure kills and reaps the worker process group before release.
+Success keeps the warm process.
 
-Workers idle longer than `MAIA3_IDLE_TIMEOUT` are stopped to free GPU memory;
-the next request cold-starts them. The sweep never interrupts running or queued
-work, only truly idle processes.
+Workers idle past `MAIA3_IDLE_TIMEOUT` stop to free GPU memory; the next
+request cold-starts. The sweep never touches running or queued work.
 
-The `/move` and `/move/analysis` HTTP handlers wait with client cancellation detached from that bounded
-worker operation. A disconnected client therefore leaves the handler waiting long
-enough to validate and persist a successful deterministic result under its canonical
-cache identity. The worker's caller API still supports cancellation of an individual
-waiter. Neither path releases the serial slot before the operation is drained or
-terminated. Sampled and degraded responses remain excluded from persistent caching.
-
-Stockfish uses one warm helper per admission slot whose cancellation kills its process
-group, as described in [STOCKFISH.md](STOCKFISH.md#resource-and-failure-behavior).
+`/move` and `/move/analysis` wait with client cancellation detached from the
+bounded worker op. A disconnected client still validates and persists a
+deterministic result under its canonical identity. Sampled/degraded results
+stay excluded from persistent cache.
 
 ## Backend performance
 
-`scripts/backend-perf.sh` runs the mock-engine perf harness
+`scripts/backend-perf.sh` runs the mock-engine harness
 (`TestBackendPerfMock` in `perf_mock_test.go`) over a seed × plies matrix:
 
 ```sh
@@ -194,144 +75,115 @@ scripts/backend-perf.sh                 # defaults: seed 1, 40 plies
 scripts/backend-perf.sh --seed 1,2 --plies 40,80 --maia-ms 5
 ```
 
-It measures Go overhead with inference stubbed to a fixed `PERF_MAIA_MS`
-sleep: boot reply, line lookup, whole-line batch drain (with first-half /
-second-half split), per-position lookup sweep, rating-change foreground,
-Play+Focus lane collision, and Stockfish cache-hit serve. Hits measure the
-real SQLite read path; misses never touch a subprocess. Each cell writes
-`test-results/backend-perf-s<seed>-p<plies>.json` with step timings,
-endpoint p50/p95, and early-vs-late splits, mirroring the frontend
-`perf-metrics.json` philosophy. The harness runs only with
-`PERF_MODE=mock`, so plain `go test ./...` stays fast. `PERF_LINE_JSON`
-optionally points at `scripts/gen-perf-line.py --seed N --plies M` output
-to run the shared seeded line (same mulberry32 as the frontend client
-sim); otherwise a synthetic line is used.
-
-`move` and `evaluate` log lines carry `validate_us` (decode + validation),
-`exec_ms` (cache→admission→inference→store), and `wait_ms` (admission queue
-wait inside `exec_ms`; -1 when admission was never reached) alongside
-`duration_ms`, so `docker logs` latency curves split validation overhead,
-queue waiting, and engine execution (`exec_ms - wait_ms` ~= inference +
-store on misses). `review-batch entry` lines carry `wait_ms` likewise.
+It stubs inference with a fixed `PERF_MAIA_MS` sleep: boot reply, line
+lookup, whole-line batch drain (first/second-half split), lookup sweep,
+rating-change foreground, Play+Focus collision, SF cache-hit serve. Hits
+measure the real SQLite read path; misses never touch a subprocess. Each
+cell writes `test-results/backend-perf-s<seed>-p<plies>.json`. Runs only
+with `PERF_MODE=mock`. `PERF_LINE_JSON` optionally points at
+`scripts/gen-perf-line.py --seed N --plies M` output for the shared seeded
+line; otherwise a synthetic line is used.
 
 ### Live-engine profiling
 
-The mock harness cannot answer how different inputs change latency
-(history length, search budget, model size, cold workers). For that, run
-the live harness against a real backend — the home-server container or
-any reachable deployment — from a machine with Node.js 22:
+Mock harness cannot show how inputs change latency (history length, search
+budget, model size, cold workers). Profile against a real backend:
 
 ```sh
 node scripts/backend-perf-live.mjs --url http://debian-server:8080 \
   --seed 1 --plies 40 --cache-bust 37
 ```
 
-It drives a seeded chess.js line (real positions; the worker rejects
-replay-inconsistent triples) through cold start, a per-ply miss curve,
-a hit curve over the same identities, a 3-lane whole-line batch
-(SF + display Maia + 2400 grading, chunked past the 768-entry cap),
-foreground-during-batch priority, per-lane Play/Focus/SF contention
-timing, a same-lane supersede storm plus same-key join proof, a
-client-abort write-through probe, a max-size 256-ply batch, a 429
-admission-cap probe, a Stockfish time×lines grid, and
-79m vs 5m. Miss scenarios take deterministic Elo offsets (plus
-`--cache-bust` per run) so a lived-in cache cannot silently turn the
-miss curve into hits; 503/409/429 responses are recorded, not retried
-away. Cold model load can take minutes; single requests time out at 3
-minutes, the cold probe at 10. See `--help` for the scenario list and
-`--scenarios` to run a subset.
+Drives a seeded chess.js line through cold start, per-ply miss curve, hit
+curve, 3-lane whole-line batch, foreground-during-batch priority,
+per-lane contention, supersede storm, join proof, abort write-through,
+256-ply batch, 429 cap probe, SF time×lines grid, 79M vs 5M. Miss scenarios
+use Elo offsets plus `--cache-bust` so a lived-in cache cannot turn misses
+into hits; 503/409/429 are recorded, not retried. Cold load can take
+minutes; single requests time out at 3 min, cold probe at 10. See `--help`
+for the scenario list and `--scenarios` for a subset.
 
 ## Local verification
 
-Run from `backend/`:
+From `backend/`:
 
 ```sh
 CGO_ENABLED=0 go test ./...
 CGO_ENABLED=0 go vet ./...
 ```
 
-Create a Python 3.12 virtual environment in a location outside tracked source:
+Python 3.12 venv outside tracked source:
 
 ```sh
 python3 -m venv /path/to/maia-test-venv
 /path/to/maia-test-venv/bin/python -m pip install python-chess==1.999 chess==1.11.2
 ```
 
-Use that interpreter for test discovery from `backend/workers/`:
+Test discovery from `backend/workers/`:
 
 ```sh
 cd backend/workers
 /path/to/maia-test-venv/bin/python -m unittest discover -v
 ```
 
-The default suite uses `python-chess`, a stub Maia module, and engine mocks, without
-Torch or weights. Real Stockfish cases skip unless `STOCKFISH_BINARY` names the
-engine. For real-engine checks, build the pinned engine from `Dockerfile`,
-extract the binary as shown in [STOCKFISH.md](STOCKFISH.md#verification), and
-run `test_stockfish_worker` plus `test_engine_settings` on the host before the
-Go HTTP/cancellation integration test.
+Default suite uses python-chess, a stub Maia module, and engine mocks (no
+torch/weights). Real Stockfish cases skip unless `STOCKFISH_BINARY` is set.
+For real-engine checks, build the pinned engine from `Dockerfile`, extract
+the binary as in [STOCKFISH.md](STOCKFISH.md#verification), and run
+`test_stockfish_worker` plus `test_engine_settings` on the host before the
+Go HTTP/cancellation test.
 
-The real Maia test skips unless `MAIA3_TEST_MODEL` names a locally cached model.
-Run it in an environment with the pinned Maia runtime dependencies and cached
-weights, such as the combined image with the test file supplied:
+Real Maia test skips unless `MAIA3_TEST_MODEL` names a locally cached model.
+Run where pinned Maia runtime deps and cached weights exist (e.g. combined
+image with the test file supplied):
 
 ```sh
 cd backend/workers && MAIA3_TEST_MODEL=5m python -m unittest -v test_maia3_real
 ```
 
-That test requests local files only. It checks deterministic history-aware inference;
-mock tests do not measure model quality or cold-loading performance.
+That test uses local files only. Mocks do not measure model quality or
+cold-load time.
 
 ## Runtime configuration and upstream
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `PORT` | `8080` | HTTP listening port |
-| `STATIC_DIR` | `/app/static` | Frontend build |
-| `DB_PATH` | `maia-board.db` | SQLite database |
-| `PYTHON` | `python3` | Worker interpreter |
-| `MAIA3_WORKER` | `/app/maia3_worker.py` | Maia adapter |
-| `MAIA3_MODEL_79M` | `79m` | Primary-model alias |
-| `MAIA3_MODEL_5M` | `5m` | Fallback-model alias |
-| `MAIA3_WORKERS` | `1` | Primary-model replica processes sharing one priority scheduler; raise on a big GPU for concurrent Play/Focus/Batch throughput (each replica duplicates weights + a CUDA context) |
-| `MAIA3_FALLBACK_MODEL` | `5m` | `5m` keeps the 79M→5M degraded fallback; `off` runs a single-model server where explicit 5m requests are rejected and degraded responses are impossible |
-| `MAIA3_FALLBACK_WORKERS` | `1` | Fallback-model replicas; ignored with a warning when fallback is off |
-| `MAIA3_DEVICE` | `auto` | Torch device for both Maia workers: `auto` (upstream default — CUDA when torch sees a GPU, else CPU), `cpu`, or `cuda[:N]`. CUDA also enables AMP; explicit `cpu` keeps AMP off. Invalid values fail fast at startup. |
-| `MAIA3_IDLE_TIMEOUT` | `10m` | Unused Maia worker lifetime: Go duration after which an idle model process is stopped to free GPU memory (`0` disables). The next request cold-starts it. Invalid values fail fast at startup. |
-| `STOCKFISH_WORKER` | `/app/stockfish_worker.py` | Stockfish adapter |
-| `STOCKFISH_BINARY` | `/app/stockfish` | Native engine |
+| Variable                 | Default                    | Purpose                                                                         |
+| ------------------------ | -------------------------- | ------------------------------------------------------------------------------- |
+| `PORT`                   | `8080`                     | HTTP listening port                                                             |
+| `STATIC_DIR`             | `/app/static`              | Frontend build                                                                  |
+| `DB_PATH`                | `maia-board.db`            | SQLite database                                                                 |
+| `PYTHON`                 | `python3`                  | Worker interpreter                                                              |
+| `MAIA3_WORKER`           | `/app/maia3_worker.py`     | Maia adapter                                                                    |
+| `MAIA3_MODEL_79M`        | `79m`                      | Primary-model alias                                                             |
+| `MAIA3_MODEL_5M`         | `5m`                       | Fallback-model alias                                                            |
+| `MAIA3_WORKERS`          | `1`                        | Primary-model replicas sharing one priority scheduler                           |
+| `MAIA3_FALLBACK_MODEL`   | `5m`                       | `5m` keeps 79M→5M fallback; `off` runs single-model (explicit 5m rejected)      |
+| `MAIA3_FALLBACK_WORKERS` | `1`                        | Fallback-model replicas; ignored with warning when fallback is off              |
+| `MAIA3_DEVICE`           | `auto`                     | Torch device for both Maia workers: `auto`, `cpu`, `cuda[:N]`. CUDA enables AMP |
+| `MAIA3_IDLE_TIMEOUT`     | `10m`                      | Idle worker lifetime before stop (`0` disables). Invalid values fail fast       |
+| `STOCKFISH_WORKER`       | `/app/stockfish_worker.py` | Stockfish adapter                                                               |
+| `STOCKFISH_BINARY`       | `/app/stockfish`           | Native engine                                                                   |
 
-The [combined Dockerfile](Dockerfile) pins the Torch wheel index and Maia3 revision
+[Dockerfile](Dockerfile) pins the Torch wheel index and Maia3 revision
 `1e13597c42d4858b7cfd7cfdae01e297263364b2`. It bakes both Maia3 checkpoints
-(79M + 5M) into `/models/huggingface` at build time via `maia3-cache`
-(pass `--build-arg HF_TOKEN=...` for authenticated fetches with higher rate
-limits; the arg never lands in the image). At runtime the server passes
-`--local-files-only` to every Maia worker and sets `HF_HUB_OFFLINE=1`, so
-restarts and idle-timeout reloads only read the baked-in cache and a Hugging
-Face outage cannot take the app down. Named volumes created from the image are
-seeded with those files on first use; pre-existing volumes holding the same
-checkpoints keep working offline unchanged. Build from the repository root as described in the
+(79M + 5M) into `/models/huggingface` via `maia3-cache`
+(`--build-arg HF_TOKEN=...` for higher rate limits; never lands in the
+image). At runtime the server passes `--local-files-only` and sets
+`HF_HUB_OFFLINE=1`. Named volumes seeded from the image keep working
+offline. Build from the repo root as in
 [root README](../README.md#combined-container-and-hosting).
 
 ## GPU inference
 
-The image ships a CUDA PyTorch build (`TORCH_INDEX_URL`, default cu126),
-so the same image runs GPU inference where a GPU is visible and CPU
-elsewhere with no config change (`MAIA3_DEVICE=auto`). Both workers (79M +
-5M, under 500 MiB of weights plus two CUDA contexts) fit comfortably on a
-4 GiB card. Requirements on the host:
+CUDA PyTorch build (`TORCH_INDEX_URL`, default cu126): GPU where visible,
+CPU elsewhere, no config change (`MAIA3_DEVICE=auto`). Both workers (79M +
+5M, under 500 MiB plus two CUDA contexts) fit 4 GiB. Requirements:
 
-- NVIDIA driver at or above what the image's CUDA generation needs (cu126
-  needs R560+); a mismatch surfaces as worker startup failure in the logs.
-- NVIDIA container toolkit installed, and the service granted GPU access
-  (compose `gpus: all` or equivalent).
-- To build a slim CPU-only image instead, pass
-  `--build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu`.
+- NVIDIA driver for the image's CUDA generation (cu126 needs R560+).
+- NVIDIA container toolkit + granted GPU access (`gpus: all` or equivalent).
+- Slim CPU-only image: `--build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu`.
 
-Idle workers (`MAIA3_IDLE_TIMEOUT`, default 10 minutes) are unloaded from GPU
-until the next request, so the card is free for other uses between games.
-
-Stockfish always runs on CPU and is unaffected.
+Idle workers (`MAIA3_IDLE_TIMEOUT`, default 10 min) unload from GPU until
+the next request. Stockfish always runs on CPU.
 
 - [Pinned Maia3 source](https://github.com/CSSLab/maia3/tree/1e13597c42d4858b7cfd7cfdae01e297263364b2)
 - [Pinned model API](https://github.com/CSSLab/maia3/blob/1e13597c42d4858b7cfd7cfdae01e297263364b2/maia3/uci.py)

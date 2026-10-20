@@ -1,31 +1,27 @@
 # Maia Board HTTP API
 
-Conventions, routes, and error shapes. Stockfish search internals
-(policy, scores, reuse, timeouts) live in [STOCKFISH.md](STOCKFISH.md)
-and are not duplicated here. Canonical terminology (position/line/reviewKey,
-evaluation vs batch reviews vs lookup, lanes) and the limits table live in
+Conventions, routes, and error shapes. Stockfish search internals are in
+[STOCKFISH.md](STOCKFISH.md). Canonical terms and the limits table are in
 [../spec/GLOSSARY.md](../spec/GLOSSARY.md).
 
 ## Envelope and limits
 
-- Errors are Huma's `ErrorModel` as JSON: `{title, status, detail,
-  errors}`. Our machine-readable code vocabulary (`invalid_fen`,
-  `engine_busy`, `superseded`, …) rides in `errors[0].message`; human
-  text rides in `detail`. Huma's own request errors (malformed JSON →
-  `400`, unknown fields or missing required keys → `422`, oversized
-  bodies → `413`) carry no code and read as `unknown` client-side.
-  The machine-readable spec lives at `/openapi.json`
-  (checked in as [../spec/openapi.yaml](../spec/openapi.yaml)).
+- Errors are Huma `ErrorModel` JSON: `{title, status, detail, errors}`.
+  Machine-readable codes (`invalid_fen`, `engine_busy`, `superseded`, …)
+  ride in `errors[0].message`; human text in `detail`. Huma request errors
+  (malformed JSON → `400`, unknown fields or missing keys → `422`,
+  oversized bodies → `413`) carry no code and read as `unknown`.
+  Machine-readable spec: `/openapi.json` (checked in as
+  [../spec/openapi.yaml](../spec/openapi.yaml)).
 - Single-object POST endpoints reject unknown fields (`422`), trailing
-  values (`400`), and over-limit bodies (`413`).
-- Body limits: `POST /move`, `/move/analysis`, `/evaluate`, `/games`,
-  `/openings` accept under 64 KiB; `POST /reviews` and
-  `POST /evaluations/lookup` accept under 4 MiB.
-- `X-Eval-Cache: hit | miss` is set on `POST /move`, `/move/analysis`
-  (only when `temperature == 0`; sampled requests omit it), and
-  `POST /evaluate`. Bulk lookup and batch progress do not set it.
-- FEN means six-field position string; UCI means coordinate move
-  (`e2e4`, `a7a8q`); ply means one player's move.
+  values (`400`), over-limit bodies (`413`).
+- Body limits: `/move`, `/move/analysis`, `/evaluate`, `/games`, `/openings`
+  under 64 KiB; `/reviews`, `/evaluations/lookup` under 4 MiB.
+- `X-Eval-Cache: hit | miss` on `/move`, `/move/analysis` (only
+  `temperature == 0`; sampled requests omit it), `/evaluate`. Bulk lookup
+  and batch progress do not set it.
+- FEN: six-field position. UCI: coordinate move (`e2e4`, `a7a8q`). Ply: one
+  player's move.
 
 ## POST /move
 
@@ -43,30 +39,29 @@ Live Maia reply (Play lane). Same payload as `/move/analysis`.
 
 - `model`: `79m` (default) or `5m`; `maia_color` must match FEN side to move.
 - `elo_maia`/`elo_user` required, 0–5000; `elo_maia` is the mover (Self,
-  `maia_color` side), `elo_user` the other side (Oppo). History review
-  sends per-mover pairs (user turns swap to Self=userElo).
-  `temperature` 0–2 (default 0).
-- `moves` at most 256 plies, UCI-shaped.
-- Errors: `400 invalid_request | invalid_fen | invalid_elo | invalid_model | invalid_maia_color | not_maia_turn | history_too_long | invalid_move | invalid_initial_fen | position_mismatch | missing_elo | game_over | invalid_position`, `409 superseded` (same-lane newer request won), `503 engine_busy` (`Retry-After: 1`), `502 engine_unavailable`, `405 method_not_allowed`.
+  `maia_color` side), `elo_user` the other side. History review sends
+  per-mover pairs. `temperature` 0–2 (default 0).
+- `moves` max 256 plies, UCI.
+- Errors: `400 invalid_request | invalid_fen | invalid_elo | invalid_model | invalid_maia_color | not_maia_turn | history_too_long | invalid_move | invalid_initial_fen | position_mismatch | missing_elo | game_over | invalid_position`, `409 superseded`, `503 engine_busy` (`Retry-After: 1`), `502 engine_unavailable`, `405 method_not_allowed`.
 
 ## POST /move/analysis
 
-Retrospective Maia analysis (Focus lane). Request/response shapes match
-`POST /move`, except the response may also carry read-time delta context:
+Retrospective Maia analysis (Focus lane). Shapes match `/move`, plus
+read-time delta context:
 
 ```json
 {"delta_baseline": {"value": 52.1, "kind": "before"},
  "top_moves": [{"move": "c7c5", "prob": 0.31, "wdl": [...], "delta": 1.2}]}
 ```
 
-`delta_baseline`/`delta` are attached at serve time from the
-before-position 2400 grading row, never stored; absent when no grading
-row applies. Same error set as `/move` (lane `focus`).
+`delta_baseline`/`delta` attach at serve time from the before-2400 grading
+row, never stored; absent without a grading row. Same error set as `/move`
+(lane `focus`).
 
 ## POST /evaluate
 
-Stockfish search (Focus lane). Full settings/score/provenance semantics
-in [STOCKFISH.md](STOCKFISH.md).
+Stockfish search (Focus lane). Settings/score/provenance in
+[STOCKFISH.md](STOCKFISH.md).
 
 ```json
 // request
@@ -79,17 +74,16 @@ in [STOCKFISH.md](STOCKFISH.md).
  "actual_settings": {"time_ms": 2000, "lines": 5, "depth": 0}}
 ```
 
-- `moves` at most 256 plies; `settings` (when present) needs
-  `time_ms` 250–30000, `lines` 1–5, `depth` 0–40.
+- `moves` max 256 plies; `settings` (when present) needs `time_ms`
+  250–30000, `lines` 1–5, `depth` 0–40.
 - Errors: STOCKFISH.md table (`invalid_json | invalid_fen |
-  invalid_position | position_mismatch | history_too_long`,
+invalid_position | position_mismatch | history_too_long`,
   `503 engine_busy` + `Retry-After: 1`, `502 engine_unavailable`,
   `405 method_not_allowed`).
 
 ## POST /evaluations/lookup
 
-Read-only bulk cache read. Never starts inference; misses are simply
-absent from `results`.
+Read-only bulk cache read. Never infers; misses are absent from `results`.
 
 ```json
 // request
@@ -102,57 +96,59 @@ absent from `results`.
 {"results": [{"index": 0, "value": {...}, "actual_settings": {...}}]}
 ```
 
-- `line.moves` is the shared game line (at most 4096 plies, UCI);
-  each entry's `ply` slices it (`moves[:ply]`).
-- At most 1024 entries. Each entry requires `engine`, `fen`, `ply`;
-  `sf` entries take `settings`, `maia` entries take
-  `elo_maia`/`elo_user`/`model` (never mixed).
+- `line.moves`: shared game line (max 4096 plies, UCI); each entry's `ply`
+  slices it (`moves[:ply]`).
+- Max 1024 entries. Each needs `engine`, `fen`, `ply`; `sf` takes
+  `settings`, `maia` takes `elo_maia`/`elo_user`/`model` (never mixed).
 - Errors: `400 invalid_request` (indexed as `requests[i]: …`),
   `405 method_not_allowed`, `502 engine_unavailable` when the store is down.
 
 ## POST /reviews
 
-Whole-game batch submit. Two-phase admission: validate + cache-filter,
-then insert or `429`.
+Whole-game batch submit. Two-phase: validate + cache-filter, then insert
+or `429`.
 
 ```json
 // request: same {line, requests} shape as /evaluations/lookup
 // response 202
-{"job_id": "<hex>", "total": 300, "cached": 120, "pending": 180}
+{ "job_id": "<hex>", "total": 300, "cached": 120, "pending": 180 }
 ```
 
-- At most 768 entries (`400 invalid_request` outside 1–768);
-  cache hits settle at intake and never consume queue.
-- Caps: at most 8 unfinished jobs; at most 768 unresolved misses per
-  scheduler (sf / maia-79m / maia-5m; 79m misses count against both
-  Maia tallies). Over either cap → `429 engine_busy` with
-  `Retry-After: 5`.
-- `502 engine_unavailable` when the store is down, or Stockfish is
-  absent while sf misses remain.
-- Per-index engine failures do not fail the submit; they surface in
-  the status `errors` map.
+- Max 768 entries (`400 invalid_request` outside 1–768); cache hits settle
+  at intake and never queue.
+- Caps: max 8 unfinished jobs; max 768 unresolved misses per scheduler
+  (sf / maia-79m / maia-5m; 79m misses count against both Maia tallies).
+  Over either cap → `429 engine_busy` with `Retry-After: 5`.
+- `502 engine_unavailable` when the store is down, or Stockfish absent while
+  sf misses remain.
+- Per-index engine failures do not fail the submit; they surface in the
+  status `errors` map.
 
 ## GET /reviews/:id
 
-Batch status poll (there is no `/reviews/:id/status` path; this GET
-is the status read).
+Batch status poll. This GET is the status read (no `/status` path).
 
 ```json
-{"job_id": "<id>", "total": 300, "done": 200, "failed": 3,
- "finished": false, "errors": {"42": "the engine is busy"}}
+{
+  "job_id": "<id>",
+  "total": 300,
+  "done": 200,
+  "failed": 3,
+  "finished": false,
+  "errors": { "42": "the engine is busy" }
+}
 ```
 
-- Errors: `404 not_found` (unknown or evicted id; only the last 8
-  finished jobs are retained), `405 method_not_allowed` (no DELETE).
+- Errors: `404 not_found` (unknown or evicted id; only the last 8 finished
+  jobs are retained), `405 method_not_allowed` (no DELETE).
 
 ## GET /reviews/:id/events (SSE)
 
 Streams `event: progress` with the bare batch status JSON as `data` (same
-shape as `GET /reviews/:id`, no wrapper), starting with a snapshot so
-reconnects reconcile via `GET /reviews/:id` + bulk lookup. The server keeps
-no replay buffer and ignores Last-Event-ID; counters are cumulative so the
-latest tick supersedes earlier ones. Heartbeat `:ping` every 15 s; stream
-ends when `finished: true`. `Content-Type: text/event-stream`, no buffering.
+shape as `GET /reviews/:id`), starting with a snapshot. No replay buffer;
+Last-Event-ID ignored; counters are cumulative so the latest tick
+supersedes earlier ones. Heartbeat `:ping` every 15 s; ends when
+`finished: true`. `Content-Type: text/event-stream`, no buffering.
 Errors: `404 not_found`, `405 method_not_allowed`.
 
 ## GET /games, POST /games
@@ -161,31 +157,29 @@ Errors: `404 not_found`, `405 method_not_allowed`.
 // GET /games?limit=200&offset=0 → 200
 {"games": [{...}], "current_id": "<id>|null", "current_game": {...},
  "total": 12, "next_offset": 10}
-// current_game is present only when a current game exists;
-// next_offset: null ends pagination.
 // POST /games → 200 (insert or update; unchanged re-save keeps recency)
 {"user_color": "white", "elo_maia": 1500, "elo_user": 1300,
  "model": "79m", "moves": ["e2e4"], "result": "", "current": true}
 ```
 
 - List default `limit` 200, max 500; `offset` non-negative;
-  `next_offset: null` ends pagination. Game row:
+  `next_offset: null` ends pagination. `current_game` present only when a
+  current game exists. Row:
   `{id, created_at, updated_at, user_color, elo_maia, elo_user,
-  model, moves, temperature, result?, source?, opponent?, rating_diff?}`.
-  `rating_diff` is the user's Lichess rating change (nil when unknown:
-  local games and pre-diff imports).
-- Save: `user_color` white/black, elos 0–5000, `model` 79m/5m,
-  `moves` at most 4096 plies UCI, `result` empty or `resigned`,
-  `temperature` 0–2, `created_at` RFC3339 when supplied.
-  `opponent`/`source`/`rating_diff` are server-owned: single saves stamp
-  `Maia <elo>`/`local`/nil and ignore client values.
-- Errors: `400 invalid_request | invalid_user_color | missing_elo | invalid_elo | invalid_model | history_too_long | invalid_move | invalid_result | invalid_created_at | invalid_rating_diff`, `502 engine_unavailable` (store down), `405 method_not_allowed`.
+model, moves, temperature, result?, source?, opponent?, rating_diff?}`.
+  `rating_diff` is the user's Lichess rating change (nil when unknown).
+- Save: `user_color` white/black, elos 0–5000, `model` 79m/5m, `moves` max
+  4096 plies UCI, `result` empty or `resigned`, `temperature` 0–2,
+  `created_at` RFC3339 when supplied. `opponent`/`source`/`rating_diff` are
+  server-owned: single saves stamp `Maia <elo>`/`local`/nil and ignore
+  client values.
+- Errors: `400 invalid_request | invalid_user_color | missing_elo | invalid_elo | invalid_model | history_too_long | invalid_move | invalid_result | invalid_created_at | invalid_rating_diff`, `502 engine_unavailable`, `405 method_not_allowed`.
 
 ## GET /games/:id, DELETE /games/:id
 
 - `GET` → 200 game row; unknown id → `404 not_found`.
-- `DELETE` → 204, idempotent (unknown ids still succeed), clears a
-  matching current-game marker. Other methods → `405`.
+- `DELETE` → 204, idempotent (unknown ids still succeed), clears a matching
+  current-game marker. Other methods → `405`.
 
 ## POST /openings
 
@@ -197,10 +191,9 @@ Errors: `404 not_found`, `405 method_not_allowed`.
  "book_flags": [true, true], "degraded": true}
 ```
 
-- `moves` UCI, at most 4096 plies. Book is defined from the standard
-  start only: custom-start lines return empty matches / all-false
-  flags, never an error. Missing table degrades with
-  `"degraded": true`.
+- `moves` UCI, max 4096 plies. Book covers the standard start only:
+  custom-start lines return empty matches / all-false flags, never an error.
+  Missing table degrades with `"degraded": true`.
 - Errors: `400 invalid_fen | invalid_position | history_too_long`,
   `502 openings_unavailable`, `405 method_not_allowed`.
 
@@ -220,12 +213,11 @@ Session accounts (plain Chi handlers; Huma cannot set cookies).
 
 - Every `/games`, `/move`, `/move/analysis`, `/evaluate`,
   `/evaluations/lookup`, `/reviews`, `/openings`, `/imports/games` call
-  requires the session cookie (or `Authorization: Bearer`) and returns
-  `401 unauthenticated` without one. Bare `&Server{}` test instances with
-  no auth service stay in legacy open mode.
-- Games scope to the session owner: lists count only owned rows, reads of
+  needs the session cookie (or `Authorization: Bearer`); without it →
+  `401 unauthenticated`. Bare `&Server{}` test instances stay in open mode.
+- Games scope to the session owner: lists count owned rows only, reads of
   another owner's id answer `404 not_found`, saves stamping another id
-  answer `403 forbidden`, and the current-game marker is per user.
+  answer `403 forbidden`; current-game marker is per user.
 
 ## GET /auth/lichess/start, GET|POST /auth/lichess/callback
 
@@ -234,48 +226,46 @@ Lichess OAuth (PKCE S256, `scope=preference:read`). Configure
 
 ```json
 // GET /auth/lichess/start?redirect_uri=<url> → 200
-{"authorization_url": "https://lichess.org/oauth?...&state=<hex>", "state": "<hex>"}
+{
+  "authorization_url": "https://lichess.org/oauth?...&state=<hex>",
+  "state": "<hex>"
+}
 // GET /auth/lichess/callback?code=...&state=... → 302 to /settings?login=ok
-// (sets cookie; browser leg). POST with a JSON {code, state} body → 200 User row.
+// (sets cookie; browser leg). POST with {code, state} → 200 User row.
 ```
 
-- Without client configuration `/start` answers `501 oauth_unconfigured`.
-- The callback exchanges the code at `https://lichess.org/api/token`,
-  reads `https://lichess.org/api/account`, and upserts the user by Lichess id.
+- Without client config `/start` answers `501 oauth_unconfigured`.
+- Callback exchanges the code at `https://lichess.org/api/token`, reads
+  `https://lichess.org/api/account`, upserts by Lichess id.
 
 ## POST /imports/games
 
-Bulk history append into the caller's owned store (at most 100 entries,
-4 MiB body; per-entry `current` is ignored).
+Bulk history append into the caller's store (max 100 entries, 4 MiB;
+per-entry `current` ignored).
 
 ```json
-// request (provider/username record an import run; entries may carry source)
+// request (provider/username record a run; entries may carry source)
 {"provider": "lichess", "username": "bob",
  "games": [{"user_color": "white", "elo_maia": 1500, "elo_user": 1300,
   "model": "79m", "moves": ["e2e4"], "created_at": "2024-01-01T00:00:00Z",
   "source": "lichess:abc123xy", "opponent": "foe", "rating_diff": 12}]}
- // response 200 (400 when nothing saved and real errors exist)
+// response 200 (400 when nothing saved and real errors exist)
 {"saved": [{...}], "errors": {"3": "invalid_move"}, "skipped": 5, "refreshed": 2}
 ```
 
-- Entries validate exactly like `POST /games`; ownership is forced from
-  the session. `source` accepts `lichess:<gameId>` only
-  (`400 invalid_source` otherwise); entries whose source the owner already
-  has are skipped, never duplicated. `opponent` accepts 1–64 printable
-  characters (`400 invalid_opponent` otherwise) and backfills rows saved
-  before names existed. `rating_diff` accepts -1000..1000
-  (`400 invalid_rating_diff` otherwise) and backfills rows saved before
-  diffs existed. `time_control`, `speed`, and `clocks` backfill the same
-  way. `refreshed` counts skipped rows that actually gained a field, so a
-  full re-download (the Settings "Backfill details" button) reports how
-  many older games were topped up. An all-skipped run is `200`
-  ("already up to date"). Errors: `400 invalid_request` (empty or >100
-  entries, unknown provider), `401 unauthenticated`, per-index codes in
-  `errors`.
+- Entries validate like `POST /games`; ownership forced from the session.
+  `source` accepts `lichess:<gameId>` only (`400 invalid_source`);
+  already-owned sources skip, never duplicate. `opponent` 1–64 printable
+  chars (`400 invalid_opponent`) backfills pre-name rows. `rating_diff`
+  -1000..1000 (`400 invalid_rating_diff`) backfills pre-diff rows.
+  `time_control`, `speed`, `clocks` backfill likewise. `refreshed` counts
+  skipped rows that gained a field. All-skipped is `200` ("already up to
+  date"). Errors: `400 invalid_request` (empty or >100 entries, unknown
+  provider), `401 unauthenticated`, per-index codes in `errors`.
 
 ## GET /imports/status
 
-History lifecycle summary for the panel: newest Lichess run plus owned total.
+History summary: newest Lichess run plus owned total.
 
 ```json
 // response 200
@@ -286,15 +276,10 @@ History lifecycle summary for the panel: newest Lichess run plus owned total.
 {"last": null, "total": 0}
 ```
 
-- Entries validate exactly like `POST /games`; ownership is forced from
-  the session. Errors: `400 invalid_request` (empty or >100 entries),
-  `401 unauthenticated`, per-index codes in `errors`.
-
 ## POST /imports/adopt
 
-One-time migration for pre-user history: every unowned game row becomes the
-caller's. No current-game marker is carried: only owned saves set one.
-Idempotent — a second account adopts nothing.
+One-time migration for pre-user history: unowned rows become the caller's.
+No current-game marker carried. Idempotent.
 
 ```json
 // GET /imports/adopt → 200 (read-only count for the claim gate)
@@ -313,9 +298,8 @@ Liveness plus Maia worker state. `GET` only.
 {"status": "ok|degraded|unavailable", "models": {"79m": {...}, "5m": {...}}}
 ```
 
-Single-model servers (`MAIA3_FALLBACK_MODEL=off`) omit the `5m` entry and
-report `unavailable` when the primary failed. Returns 503 when every
-configured pool failed, 200 otherwise. Explicit `5m` requests on such
-servers are rejected with `400 invalid_model` (`/move`, `/move/analysis`)
-or `400 invalid_request` (batch entries); cached `5m` lookup rows still
-serve.
+Single-model servers (`MAIA3_FALLBACK_MODEL=off`) omit `5m` and report
+`unavailable` when the primary failed. Returns 503 when every configured
+pool failed, 200 otherwise. Explicit `5m` on such servers: `400
+invalid_model` (`/move`, `/move/analysis`) or `400 invalid_request`
+(batch); cached `5m` lookup rows still serve.
