@@ -40,71 +40,28 @@ type OAuthState struct {
 	ExpiresAt   string `json:"expires_at"`
 }
 
-func ensureUserSchema(db *sql.DB) error {
-	schema := `
-	CREATE TABLE IF NOT EXISTS users (
-		id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 128),
-		created_at TEXT NOT NULL CHECK (length(created_at) BETWEEN 1 AND 64),
-		display_name TEXT NOT NULL DEFAULT 'Player' CHECK (length(display_name) BETWEEN 1 AND 40),
-		lichess_username TEXT UNIQUE CHECK (lichess_username IS NULL OR (length(lichess_username) BETWEEN 1 AND 64 AND lichess_username = lower(lichess_username))),
-		lichess_id TEXT UNIQUE CHECK (lichess_id IS NULL OR length(lichess_id) BETWEEN 1 AND 128),
-		CHECK ((lichess_username IS NULL) = (lichess_id IS NULL))
-	);
-	CREATE TABLE IF NOT EXISTS sessions (
-		id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 128),
-		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK (length(user_id) BETWEEN 1 AND 128),
-		created_at TEXT NOT NULL CHECK (length(created_at) BETWEEN 1 AND 64),
-		expires_at TEXT NOT NULL CHECK (length(expires_at) BETWEEN 1 AND 64)
-	);
-	CREATE TABLE IF NOT EXISTS user_current (
-		user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE CHECK (length(user_id) BETWEEN 1 AND 128),
-		game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE CHECK (length(game_id) BETWEEN 1 AND 128)
-	);
-	CREATE TABLE IF NOT EXISTS oauth_state (
-		state TEXT PRIMARY KEY CHECK (length(state) BETWEEN 1 AND 128),
-		verifier TEXT NOT NULL CHECK (length(verifier) BETWEEN 1 AND 256),
-		redirect_uri TEXT NOT NULL CHECK (length(redirect_uri) BETWEEN 1 AND 512),
-		created_at TEXT NOT NULL CHECK (length(created_at) BETWEEN 1 AND 64),
-		expires_at TEXT NOT NULL CHECK (length(expires_at) BETWEEN 1 AND 64)
-	);
-	CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
-	CREATE INDEX IF NOT EXISTS idx_users_lichess ON users(lichess_username);
-	CREATE INDEX IF NOT EXISTS idx_users_lichess_id ON users(lichess_id);`
-	if _, err := db.Exec(schema); err != nil {
-		return err
-	}
-	if err := ensureImportSchema(db); err != nil {
-		return err
-	}
-	return ensureGameOwnerColumn(db)
+// normalizeLichessUsername canonicalizes a Lichess username for storage and
+// lookup: trim surrounding space, lowercase. Lichess names are
+// case-insensitive for identity; display case lives in display_name.
+func normalizeLichessUsername(username string) string {
+	return strings.ToLower(strings.TrimSpace(username))
 }
 
-func ensureGameOwnerColumn(db *sql.DB) error {
-	if err := ensureGameColumn(db, "owner_id", "ALTER TABLE games ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
+// ValidateDisplayName checks a local display name before it reaches the store.
+func ValidateDisplayName(name string) error {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return nil // callers map empty to the 'Player' fallback
 	}
-	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_games_owner ON games(owner_id, updated_at DESC)`); err != nil {
-		return err
+	if len([]rune(trimmed)) < 1 || len([]rune(trimmed)) > 40 {
+		return ErrInvalidDisplayName
 	}
-	if err := ensureGameColumn(db, "source", "ALTER TABLE games ADD COLUMN source TEXT NOT NULL DEFAULT 'local' CHECK (length(source) BETWEEN 1 AND 32 AND (source = 'local' OR source LIKE 'lichess:%'))"); err != nil {
-		return err
+	for _, c := range trimmed {
+		if c < 0x20 || c == 0x7f {
+			return ErrInvalidDisplayName
+		}
 	}
-	if err := ensureGameColumn(db, "opponent", "ALTER TABLE games ADD COLUMN opponent TEXT NOT NULL DEFAULT 'Unknown' CHECK (length(opponent) BETWEEN 1 AND 64)"); err != nil {
-		return err
-	}
-	// External imports dedupe per owner: re-running the same Lichess import
-	// skips rows instead of duplicating them. Only `lichess:<id>` rows
-	// participate; local games carry `local` and never collide.
-	// DROP first: pre-strict DBs already have this name with the old
-	// `WHERE source <> ''` predicate, and CREATE IF NOT EXISTS would keep
-	// the stale index live — then backfilling 26x (owner, local) collides
-	// and NewGameStore fails open. The drop runs before backfill via
-	// NewGameStore order (ensureUserSchema -> ensureStrictConstraints).
-	if _, err := db.Exec(`DROP INDEX IF EXISTS idx_games_owner_source`); err != nil {
-		return err
-	}
-	_, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_games_owner_source ON games(owner_id, source) WHERE source LIKE 'lichess:%'`)
-	return err
+	return nil
 }
 
 func scanUser(scanner gameScanner) (User, error) {

@@ -1,9 +1,6 @@
 package store
 
-import (
-	"database/sql"
-	"strings"
-)
+import "database/sql"
 
 // Backfill + trigger enforcement for the strict-constraint migration.
 //
@@ -59,30 +56,6 @@ func backfillLegacyRows(db *sql.DB) error {
 	// Games: empty source means a local engine game.
 	if _, err := db.Exec(`UPDATE games SET source = 'local' WHERE source IS NULL OR source = ''`); err != nil {
 		return err
-	}
-	return nil
-}
-
-// normalizeLichessUsername canonicalizes a Lichess username for storage and
-// lookup: trim surrounding space, lowercase. Lichess names are
-// case-insensitive for identity; display case lives in display_name.
-func normalizeLichessUsername(username string) string {
-	return strings.ToLower(strings.TrimSpace(username))
-}
-
-// ValidateDisplayName checks a local display name before it reaches the store.
-func ValidateDisplayName(name string) error {
-	trimmed := strings.TrimSpace(name)
-	if trimmed == "" {
-		return nil // callers map empty to the 'Player' fallback
-	}
-	if len([]rune(trimmed)) < 1 || len([]rune(trimmed)) > 40 {
-		return ErrInvalidDisplayName
-	}
-	for _, c := range trimmed {
-		if c < 0x20 || c == 0x7f {
-			return ErrInvalidDisplayName
-		}
 	}
 	return nil
 }

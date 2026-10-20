@@ -1,14 +1,9 @@
 package store
 
 import (
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"net/url"
-	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,16 +11,7 @@ import (
 
 	"maia-board/backend/internal/apierror"
 	"maia-board/backend/internal/chess"
-
-	_ "modernc.org/sqlite"
 )
-
-// GameStore persists game history in SQLite. All games start from the standard
-// position, so only the UCI move history is stored. Terminal resignation is
-// stored in result; other endings derive from replaying moves.
-type GameStore struct {
-	db *sql.DB
-}
 
 type GameRow struct {
 	Temperature float64  `json:"temperature"`
@@ -96,104 +82,6 @@ type GamePayload struct {
 	// stays in the payload so the store has one save path for legacy ('')
 	// and owned rows.
 	OwnerID string `json:"owner_id,omitempty"`
-}
-
-// gameStoreDSN carries the connection pragmas in validated shorthand form so
-// every pooled connection inherits them (an Exec would only reach one).
-func gameStoreDSN(path string) string {
-	const params = "_journal_mode=WAL&_timeout=5000&_fk=1"
-	if strings.HasPrefix(path, "file:") {
-		sep := "?"
-		if strings.Contains(path, "?") {
-			sep = "&"
-		}
-		return path + sep + params
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		abs = path
-	}
-	dsn := (&url.URL{Scheme: "file", Path: abs}).String()
-	sep := "?"
-	if strings.Contains(dsn, "?") {
-		sep = "&"
-	}
-	return dsn + sep + params
-}
-
-func NewGameStore(path string) (*GameStore, error) {
-	if dir := filepath.Dir(path); dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, err
-		}
-	}
-	db, err := sql.Open("sqlite", gameStoreDSN(path))
-	if err != nil {
-		return nil, err
-	}
-	// WAL keeps readers unblocked during batch write bursts; every pooled
-	// connection inherits the pragmas from the DSN (Exec pragmas would only
-	// reach one pooled connection). Writes still serialize inside SQLite.
-	db.SetMaxOpenConns(8)
-	schema := `
-	CREATE TABLE IF NOT EXISTS games (
-		id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 128),
-		created_at TEXT NOT NULL CHECK (length(created_at) BETWEEN 1 AND 64),
-		updated_at TEXT NOT NULL CHECK (length(updated_at) BETWEEN 1 AND 64 AND updated_at >= created_at),
-		user_color TEXT NOT NULL CHECK (user_color IN ('white', 'black')),
-		elo_maia INTEGER NOT NULL CHECK (elo_maia BETWEEN 0 AND 5000),
-		elo_user INTEGER NOT NULL CHECK (elo_user BETWEEN 0 AND 5000),
-		model TEXT NOT NULL CHECK (model IN ('79m', '5m')),
-		moves TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(moves)),
-		result TEXT NOT NULL DEFAULT '' CHECK (result IN ('', 'resigned')),
-		temperature REAL NOT NULL DEFAULT 0 CHECK (temperature BETWEEN 0 AND 2)
-	);
-	CREATE INDEX IF NOT EXISTS idx_games_updated ON games(updated_at DESC);`
-	if _, err := db.Exec(schema); err != nil {
-		db.Close()
-		return nil, err
-	}
-	// The legacy evaluations table is disposable cache, not user data: drop
-	// it once on open. Misses recompute through the engine endpoints.
-	if _, err := db.Exec(`DROP TABLE IF EXISTS evaluations`); err != nil {
-		db.Close()
-		return nil, err
-	}
-	// The legacy meta KV table held the pre-user global current-game marker.
-	// Per-user markers live in user_current now; drop it once on open.
-	if _, err := db.Exec(`DROP TABLE IF EXISTS meta`); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if err := ensureV2Cache(db); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if err := migrateGameSchema(db); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if err := ensureUserSchema(db); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if err := ensureStrictConstraints(db); err != nil {
-		db.Close()
-		return nil, err
-	}
-	return &GameStore{db: db}, nil
-}
-
-// Close releases the SQLite pool. Tests use it; the server process exits.
-func (s *GameStore) Close() error { return s.db.Close() }
-
-// NewHexID mints a 32-hex-digit identifier for games and batch jobs.
-func NewHexID() (string, error) {
-	var bytes [16]byte
-	if _, err := rand.Read(bytes[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(bytes[:]), nil
 }
 
 // ValidateGamePayload checks a game save before it reaches the store.
