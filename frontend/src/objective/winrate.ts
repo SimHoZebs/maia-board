@@ -14,8 +14,12 @@ export function botPoint(
   response: Pick<MoveResponse, 'top_moves' | 'wdl' | 'degraded'> | null,
 ): ObjectivePoint {
   if (response === null) return { top: null, expected: null };
+  // Empty policy lists name no top move (unknown positions) — an explicit
+  // length check, never an indexed undefined.
   const top =
-    !response.degraded && typeof response.top_moves?.[0]?.move === 'string'
+    !response.degraded &&
+    response.top_moves.length > 0 &&
+    typeof response.top_moves[0].move === 'string'
       ? response.top_moves[0].move
       : null;
   return { top, expected: botExpected(response.wdl) };

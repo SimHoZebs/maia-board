@@ -19,31 +19,31 @@ import type { Action, AnalysisSnapshot, State } from './types';
 // the snapshot session truth. The loaded analysis line survives refresh
 // independently of the import-form inputs: the snapshot is the board, the
 // inputs are the importer's text.
-export function readSnapshot(): { analysis: State['analysis']; gameId?: string } | undefined {
-  let stored: Partial<AnalysisSnapshot> | undefined;
+export function readSnapshot(): { analysis: State['analysis']; gameId: string | null } | null {
+  let stored: Partial<AnalysisSnapshot> | null;
   try {
     stored = readStorage<Partial<AnalysisSnapshot>>(KEYS.snapshot);
   } catch (error) {
     if (error instanceof StorageError) {
       console.warn(`maia-board: corrupt snapshot for ${error.key}; starting empty.`);
-      return undefined;
+      return null;
     }
     throw error;
   }
+  if (stored === null) return null;
   if (
-    !stored ||
     typeof stored.initialFen !== 'string' ||
     !Array.isArray(stored.moves) ||
     !stored.moves.every(move => typeof move === 'string')
   )
-    return;
+    return null;
   let base: State['analysis'];
   try {
     base = loadLine(stored.initialFen, stored.moves.join(' '));
   } catch {
-    return;
+    return null;
   }
-  if (base.moves.length !== stored.moves.length) return;
+  if (base.moves.length !== stored.moves.length) return null;
   // Imported PGN names survive refresh: the snapshot persists the parsed
   // roster, and untrusted stored values validate before display.
   const players = normalizeLinePlayers(stored.players);
@@ -60,16 +60,19 @@ export function readSnapshot(): { analysis: State['analysis']; gameId?: string }
     ownGame: stored.ownGame === true,
     ...(players ? { players } : {}),
   };
-  return { analysis, ...(typeof stored.gameId === 'string' ? { gameId: stored.gameId } : {}) };
+  return {
+    analysis,
+    gameId: typeof stored.gameId === 'string' ? stored.gameId : null,
+  };
 }
-export function snapshotOf(analysis: State['analysis'], gameId?: string): AnalysisSnapshot {
+export function snapshotOf(analysis: State['analysis'], gameId: string | null): AnalysisSnapshot {
   return {
     initialFen: analysis.initialFen,
     moves: analysis.moves,
     index: analysis.index,
     perspective: analysis.perspective,
     ownGame: analysis.ownGame,
-    ...(gameId ? { gameId } : {}),
+    gameId,
     ...(analysis.players ? { players: analysis.players } : {}),
   };
 }
@@ -113,7 +116,7 @@ export function reduceAnalysis(state: State, action: Action): State | undefined 
       }
       const from = parseSquare(action.uci.slice(0, 2));
       const to = parseSquare(action.uci.slice(2, 4));
-      if (from === undefined || to === undefined) return state;
+      if (from === null || to === null) return state;
       return commitMove(state, from, to, action.uci[4]);
     }
     case 'explore-line': {

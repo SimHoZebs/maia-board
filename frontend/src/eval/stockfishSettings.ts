@@ -8,14 +8,15 @@ export const STOCKFISH_STORAGE_KEY = 'maia.stockfish.v1';
 // accepts 1-5 so old mpv2+ cached rows keep serving via superset slicing.
 export const defaultStockfishSettings: StockfishSettings = { time_ms: 750, lines: 1, depth: 0 };
 export function normalizeStockfishSettings(
-  value?: Partial<StockfishSettings> | null,
+  value: Partial<StockfishSettings> | null,
 ): StockfishSettings {
+  const input: Partial<StockfishSettings> = value === null ? {} : value;
   const integer = (n: unknown, min: number, max: number, fallback: number) =>
     typeof n === 'number' && Number.isInteger(n) && n >= min && n <= max ? n : fallback;
   return {
-    time_ms: integer(value?.time_ms, 250, 30000, 750),
+    time_ms: integer(input.time_ms, 250, 30000, 750),
     lines: 1,
-    depth: integer(value?.depth, 0, 40, 0),
+    depth: integer(input.depth, 0, 40, 0),
   };
 }
 export function stockfishPolicy(settings?: StockfishSettings): string {

@@ -46,7 +46,11 @@ function destsForFen(fen: string): Map<Key, Key[]> {
   if (destsCache.size > DESTS_CACHE_LIMIT) destsCache.delete(destsCache.keys().next().value!);
   return dests;
 }
-export type BoardPosition = { fen: string; lastMove?: readonly string[] | null };
+export type BoardPosition = {
+  fen: string;
+  // Null at the root (no move yet) — never undefined.
+  lastMove: readonly string[] | null;
+};
 export type BoardTransition = { line: string; ply: number };
 type Props = {
   position: BoardPosition;
@@ -56,7 +60,9 @@ type Props = {
   thinking: boolean;
   interactionVersion: number;
   coordinatesOnSquares: boolean;
-  shapes?: DrawShape[];
+  // Always provided by callers (possibly empty) — no-shapes is `[]`,
+  // never an omitted prop.
+  shapes: DrawShape[];
   brushes?: DrawBrushes;
   onMove: (from: Square, to: Square) => void;
 };
@@ -121,7 +127,11 @@ export function ChessBoard({
     // shift (setup opening, banners, fonts) would otherwise offset every click,
     // so refresh the memo whenever the board resizes.
     const element = container.current;
-    const observer = new ResizeObserver(() => api.current?.state.dom.bounds.clear());
+    const observer = new ResizeObserver(() => {
+      // Null past teardown: skip the refresh instead of touching a dead board.
+      const instance = api.current;
+      if (instance !== null) instance.state.dom.bounds.clear();
+    });
     if (element) observer.observe(element);
     // Chessground builds the coords DOM once at construction; the caller
     // forces a fresh mount (via key) when the style switches.
@@ -129,22 +139,26 @@ export function ChessBoard({
       observer.disconnect();
       ground.destroy();
       api.current = null;
-      element?.replaceChildren();
+      if (element !== null) element.replaceChildren();
     };
   }, []);
   /* oxlint-enable exhaustive-deps */
-  const lastMove = position.lastMove?.join(',');
+  const lastMove = position.lastMove === null ? null : position.lastMove.join(',');
   // lastMove is built from [Key, Key] above, so parsing always succeeds;
   // an unparsable entry yields no highlight rather than a wrong one.
-  const parseKeyList = (text: string): Key[] | undefined => {
+  const parseKeyList = (text: string): Key[] | null => {
     const keys: Key[] = [];
     for (const part of text.split(',')) {
       const key = parseKey(part);
-      if (key === undefined) return undefined;
+      if (key === null) return null;
       keys.push(key);
     }
     return keys;
   };
+  // Parsed highlight halves: null means no highlight (root, or an entry
+  // that never parses) — the chessground undefined lives only in the set
+  // call above.
+  const parsedLastMove = lastMove === null ? null : parseKeyList(lastMove);
   useLayoutEffect(() => {
     const ground = api.current!;
     // The board may have moved since the last measurement (layout shifts from
@@ -169,7 +183,9 @@ export function ChessBoard({
       turnColor: turn,
       check,
       animation: { enabled: singleStep },
-      lastMove: lastMove ? parseKeyList(lastMove) : undefined,
+      // Chessground's own contract wants undefined for no highlight: map
+      // our explicit null at exactly this boundary, nowhere else.
+      lastMove: parsedLastMove === null ? undefined : parsedLastMove,
       movable: {
         free: false,
         color: enabled ? turn : undefined,
@@ -182,7 +198,7 @@ export function ChessBoard({
             if (api.current !== ground || generation.current !== version) return;
             const fromSquare = parseSquare(from);
             const toSquare = parseSquare(to);
-            if (fromSquare === undefined || toSquare === undefined)
+            if (fromSquare === null || toSquare === null)
               throw new Error(`Invalid board squares: ${from}${to}`);
             callback.current(fromSquare, toSquare);
             // Also resync unchanged positions after rejection or promotion selection.
@@ -202,18 +218,23 @@ export function ChessBoard({
     orientation,
     enabled,
     lastMove,
+    parsedLastMove,
     gesture,
     interactionVersion,
   ]);
   useLayoutEffect(() => {
-    api.current?.setAutoShapes(shapes ?? []);
+    const instance = api.current;
+    if (instance === null) return;
+    instance.setAutoShapes(shapes);
   }, [position.fen, shapes, interactionVersion, orientation]);
   // Shafts repaint through the shapes hash (reviewShapes embeds the arrow
   // style signature); arrowhead markers are append-only defs keyed by brush
   // name, so callers remount via key on brushes change for fresh heads. This
   // live set still updates shafts if a caller ever edits brushes in place.
   useLayoutEffect(() => {
-    api.current?.set({ drawable: { brushes } });
+    const instance = api.current;
+    if (instance === null) return;
+    instance.set({ drawable: { brushes } });
   }, [brushes]);
   // React owns this element; Chessground owns all its descendants and CSS classes.
   return (

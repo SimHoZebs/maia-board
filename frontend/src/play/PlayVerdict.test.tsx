@@ -32,6 +32,7 @@ function setup(moveUci = 'e2e4') {
   };
   const feedback: PlayFeedback = {
     active: true,
+    error: null,
     qualities: [{ label: 'Best', accuracy: 100, loss: 0 }],
     timeline,
     nodes,
@@ -160,6 +161,7 @@ describe('PlayVerdict', () => {
     };
     const feedback: PlayFeedback = {
       active: true,
+      error: null,
       qualities: [...Array(22).fill(null), { label: 'Blunder', accuracy: 20, loss: 30 }],
       timeline,
       nodes,

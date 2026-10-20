@@ -89,16 +89,16 @@ export function useBotBoard(mode: Mode, urlLine?: UrlLine) {
       // replayable reducer/render lifecycle. Boot reads have no mutation command.
       if (action.type === 'delete') {
         repository.delete(action.id);
-        let storedSnapshot: { gameId?: string } | undefined;
+        let storedSnapshot: { gameId?: string } | null;
         try {
           storedSnapshot = readStorage<{ gameId?: string }>(KEYS.snapshot);
         } catch (error) {
           if (error instanceof StorageError) {
             console.warn(`maia-board: corrupt snapshot for ${error.key}; skipping clear.`);
-            storedSnapshot = undefined;
+            storedSnapshot = null;
           } else throw error;
         }
-        if (storedSnapshot?.gameId === action.id) {
+        if (storedSnapshot !== null && storedSnapshot.gameId === action.id) {
           try {
             writeStorage(KEYS.snapshot, null);
           } catch (error) {
@@ -191,9 +191,7 @@ export function useBotBoard(mode: Mode, urlLine?: UrlLine) {
       [KEYS.analysis, state.inputs],
       [
         KEYS.snapshot,
-        state.analysisLoaded
-          ? snapshotOf(state.analysis, state.analysisSourceId ?? undefined)
-          : null,
+        state.analysisLoaded ? snapshotOf(state.analysis, state.analysisSourceId) : null,
       ],
     ] as const) {
       // Dirty-check: analysis object identity turns over on every move, but

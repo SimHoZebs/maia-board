@@ -86,8 +86,9 @@ export function BoardRouter() {
   const { pathname, search } = useLocation();
   const navigate = useNavigate();
   // Redirects start in an inert context until the destination URL is committed.
-  const mode =
-    destinations.find(destination => matchPath(destination.path, pathname))?.mode ?? 'history';
+  // Unknown paths land on history by name — never an undefined mode.
+  const destination = destinations.find(destination => matchPath(destination.path, pathname));
+  const mode = destination === undefined ? 'history' : destination.mode;
   // Parsed once per location: the initializer takes the mount value for boot,
   // the sync effect takes the live one for Back/Forward.
   const urlLine = useMemo(
@@ -208,9 +209,8 @@ export function BoardRouter() {
       const url = new URL(window.location.href);
       // Back/Forward moves location without an action: sync the reducer at
       // the event, the same explicit path as tab clicks (no-op when equal).
-      const dest =
-        destinations.find(destination => matchPath(destination.path, url.pathname))?.mode ??
-        'history';
+      const found = destinations.find(destination => matchPath(destination.path, url.pathname));
+      const dest = found === undefined ? 'history' : found.mode;
       boardDispatch({ type: 'mode', mode: dest });
       if (url.pathname !== '/analyze' || parseAnalysisSearch(url.search)) return;
       if (loadedRef.current && lastContentRef.current) {

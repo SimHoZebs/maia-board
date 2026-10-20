@@ -23,7 +23,7 @@ export type DisplayPreview = {
 export const DEMO_BEFORE_FEN = '4k3/8/8/8/8/8/4P3/4K3 w - - 0 1';
 export const DEMO_AFTER_FEN = '4k3/8/8/8/4P3/8/8/4K3 b - - 0 1';
 const DEMO_LASTMOVE: Key[] = [parseKey('e2'), parseKey('e4')].filter(
-  (key): key is Key => key !== undefined,
+  (key): key is Key => key !== null,
 );
 
 function PreviewBoard({

@@ -133,8 +133,8 @@ export class GameRepository {
   private value: RepositorySnapshot;
   private listeners = new Set<() => void>();
   private epoch = 0;
-  private pageController?: AbortController;
-  private flushController?: AbortController;
+  private pageController: AbortController | null = null;
+  private flushController: AbortController | null = null;
   private flushing?: Promise<void>;
   private writes = Promise.resolve();
   private expectedRaw: string | null = null;
@@ -229,7 +229,7 @@ export class GameRepository {
   // cancels its in-flight history page fetch here. Foreground eval abort lives
   // with that owner, not in the repository. Batch jobs are never cancelled.
   cancelScope(_gameId: string) {
-    this.pageController?.abort();
+    if (this.pageController !== null) this.pageController.abort();
   }
   delete(id: string) {
     this.epoch++;
@@ -317,7 +317,9 @@ export class GameRepository {
         if (!controller.signal.aborted)
           this.update({
             error: error instanceof Error ? error.message : String(error),
-            failedVersion: this.value.pending[0]?.version ?? null,
+            // Null when the queue drained under the failure — no single
+            // op to blame — never undefined.
+            failedVersion: this.value.pending.length > 0 ? this.value.pending[0].version : null,
           });
       }
     })();
@@ -331,7 +333,7 @@ export class GameRepository {
     return this.flushing;
   };
   private async page(offset: number) {
-    this.pageController?.abort();
+    if (this.pageController !== null) this.pageController.abort();
     const controller = new AbortController();
     this.pageController = controller;
     const epoch = this.epoch;
@@ -406,8 +408,8 @@ export class GameRepository {
     return () => {
       this.active = false;
       this.lifecycle++;
-      this.pageController?.abort();
-      this.flushController?.abort();
+      if (this.pageController !== null) this.pageController.abort();
+      if (this.flushController !== null) this.flushController.abort();
     };
   };
 }

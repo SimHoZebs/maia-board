@@ -49,8 +49,7 @@ export function reviewShapes(
   const shapes: DrawShape[] = ranked.map(({ move, brush }) => {
     const orig = parseKey(move.slice(0, 2));
     const dest = parseKey(move.slice(2, 4));
-    if (orig === undefined || dest === undefined)
-      throw new Error(`Invalid review arrow move: ${move}`);
+    if (orig === null || dest === null) throw new Error(`Invalid review arrow move: ${move}`);
     return { orig, dest, brush, customSvg: { html: `<!--${signature}-->` } };
   });
   const badges =

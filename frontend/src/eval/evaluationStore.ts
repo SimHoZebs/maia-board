@@ -249,11 +249,14 @@ function actualPolicy(
   value: Evaluation,
   requested: StockfishSettings | undefined,
   actual: unknown,
-): StockfishSettings | undefined {
-  if (!requested) {
-    if (value.search_policy !== stockfishPolicy(undefined) || actual != null)
+): StockfishSettings | null {
+  if (requested === undefined) {
+    if (
+      value.search_policy !== stockfishPolicy(undefined) ||
+      (actual !== null && actual !== undefined)
+    )
       throw new Error('Stockfish returned incompatible search settings.');
-    return;
+    return null;
   }
   const want = requested;
   // Live responses may carry the wrapper field directly. A policy can also
@@ -261,14 +264,14 @@ function actualPolicy(
   const match = /^sf19-ms(\d+)-mpv(\d+)-d(\d+)-t4-h128-v3$/.exec(value.search_policy);
   const policy = match
     ? { time_ms: Number(match[1]), lines: Number(match[2]), depth: Number(match[3]) }
-    : undefined;
+    : null;
   // Present-but-malformed provenance previously failed the integer checks
   // below; reject it here instead so no fallback can mask it.
-  if (actual != null && !isStockfishSettings(actual))
+  if (actual !== null && actual !== undefined && !isStockfishSettings(actual))
     throw new Error('Stockfish returned incompatible search settings.');
-  const found = (actual == null ? undefined : actual) ?? policy;
+  const found = actual === null || actual === undefined ? policy : actual;
   if (
-    !found ||
+    found === null ||
     !Number.isInteger(found.time_ms) ||
     !Number.isInteger(found.lines) ||
     !Number.isInteger(found.depth) ||
@@ -300,12 +303,14 @@ export function parseEvaluation(
     value.actual_settings &&
     JSON.stringify(actual) !== JSON.stringify(value.actual_settings)
   ) {
-    const left = isRecord(actual) ? actual : undefined;
-    const right = isRecord(value.actual_settings) ? value.actual_settings : undefined;
+    const left = isRecord(actual) ? actual : null;
+    const right = isRecord(value.actual_settings) ? value.actual_settings : null;
+    const provenanceField = (record: Record<string, unknown> | null, name: string): unknown =>
+      record === null ? null : record[name];
     if (
-      left?.time_ms !== right?.time_ms ||
-      left?.lines !== right?.lines ||
-      left?.depth !== right?.depth
+      provenanceField(left, 'time_ms') !== provenanceField(right, 'time_ms') ||
+      provenanceField(left, 'lines') !== provenanceField(right, 'lines') ||
+      provenanceField(left, 'depth') !== provenanceField(right, 'depth')
     )
       throw invalid();
   }
@@ -322,8 +327,8 @@ export function parseEvaluation(
   } else {
     if (
       !value.lines.length ||
-      value.lines.length > (provenance?.lines ?? 2) ||
-      value.best_move !== value.lines[0]?.move
+      value.lines.length > (provenance === null ? 2 : provenance.lines) ||
+      value.best_move !== value.lines[0].move
     )
       throw invalid();
     if (
@@ -335,7 +340,7 @@ export function parseEvaluation(
           isScore(line.score) &&
           line.depth === value.depth &&
           line.depth >= 1 &&
-          (!settings?.depth || line.depth <= settings.depth),
+          (settings === undefined || settings.depth === 0 || line.depth <= settings.depth),
       ) ||
       new Set(value.lines.map(line => line.move)).size !== value.lines.length
     )
@@ -522,7 +527,7 @@ export class EvaluationStore {
           })),
     );
     const ordered = (() => {
-      if (!priorityPlies?.length) return jobs;
+      if (priorityPlies === undefined || priorityPlies.length === 0) return jobs;
       const wanted = new Set(priorityPlies);
       const head: Job[] = [];
       const tail: Job[] = [];

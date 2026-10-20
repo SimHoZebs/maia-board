@@ -124,7 +124,10 @@ export async function startLichessLogin(fetchImpl: FetchLike = fetch): Promise<v
     throw new AccountError('server_unreachable', 'The game server could not be reached.');
   }
   const body = (await response.json().catch(() => null)) as { authorization_url?: unknown } | null;
-  if (!response.ok || typeof body?.authorization_url !== 'string') {
+  // Null body (unreadable JSON) and non-string URLs are both start failures —
+  // named separately so a missing field never reads as a transport error.
+  const authorizationUrl = body === null ? null : body.authorization_url;
+  if (!response.ok || typeof authorizationUrl !== 'string') {
     throw new AccountError(
       'unknown',
       response.status === 501
@@ -135,14 +138,14 @@ export async function startLichessLogin(fetchImpl: FetchLike = fetch): Promise<v
   }
   let target: URL;
   try {
-    target = new URL(body.authorization_url);
+    target = new URL(authorizationUrl);
   } catch {
     throw new AccountError('unknown', 'Lichess login failed to start.', response.status);
   }
   if (target.origin !== 'https://lichess.org') {
     throw new AccountError('unknown', 'Lichess login failed to start.', response.status);
   }
-  window.location.assign(body.authorization_url);
+  window.location.assign(authorizationUrl);
 }
 
 export type ImportPayload = {

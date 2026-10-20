@@ -61,36 +61,45 @@ export function PlayVerdict({ state, feedback }: { state: State; feedback: PlayF
   const evaluation = plyAt(feedback.evaluations, before, 'play evaluations');
   const afterEvaluation = plyAt(feedback.evaluations, ply, 'play evaluations');
   const mover = beforeNode.turn === 'white' ? 'white' : 'black';
-  const exactOpening = lineOpening?.isExact
-    ? { eco: lineOpening.eco, name: lineOpening.name }
-    : null;
+  const exactOpening =
+    lineOpening !== null && lineOpening.isExact
+      ? { eco: lineOpening.eco, name: lineOpening.name }
+      : null;
   // Stockfish rank-1 PV (see theory/bestLineSource.ts) instead of the
   // grading-lane walk. PlayVerdict renders the note only (no explore
   // button); no frontier fetch is needed — the PV rides the already-fetched
   // after-position evaluation.
-  const materialNote =
-    quality !== null &&
-    played !== null &&
-    !exactOpening &&
-    (quality.label === 'Mistake' || quality.label === 'Blunder') &&
-    evaluation !== null &&
-    evaluation.score.type === 'cp' &&
-    afterEvaluation !== null &&
-    afterEvaluation.score.type === 'cp' &&
-    evaluation.terminal === null &&
-    afterEvaluation.terminal === null
-      ? (bestLinePreview(
-          afterNode.fen,
-          resolveBestLineUcis({
-            source: BEST_LINE_SOURCE,
-            stockfishUcis: stockfishBestLineUcis(afterEvaluation, state.bestLineWindow),
-            maiaUcis: feedback.objectiveBestLine.length ? feedback.objectiveBestLine : undefined,
-          }),
-          mover,
-          state.bestLineWindow,
-          playedCapture(beforeNode.fen, played),
-        )?.note ?? null)
-      : null;
+  // Best-line note for Blunder/Mistake only; every other shape (including
+  // a missing preview) reads as no note — named once, never `?.`-chained.
+  const bestLineNote = (() => {
+    if (
+      quality === null ||
+      played === null ||
+      exactOpening !== null ||
+      (quality.label !== 'Mistake' && quality.label !== 'Blunder') ||
+      evaluation === null ||
+      evaluation.score.type !== 'cp' ||
+      afterEvaluation === null ||
+      afterEvaluation.score.type !== 'cp' ||
+      evaluation.terminal !== null ||
+      afterEvaluation.terminal !== null
+    )
+      return null;
+    const preview = bestLinePreview(
+      afterNode.fen,
+      resolveBestLineUcis({
+        source: BEST_LINE_SOURCE,
+        stockfishUcis: stockfishBestLineUcis(afterEvaluation, state.bestLineWindow),
+        maiaUcis: feedback.objectiveBestLine.length > 0 ? feedback.objectiveBestLine : null,
+      }),
+      mover,
+      state.bestLineWindow,
+      playedCapture(beforeNode.fen, played),
+    );
+    return preview === null ? null : preview.note;
+  })();
+  const materialNote = bestLineNote;
+  const focusGrade = plyOrNull(feedback.engineGrades, before, 'play engine grades');
   const facts = verdictInputsForPly({
     beforeFen: beforeNode.fen,
     beforeCheck: beforeNode.check,
@@ -117,9 +126,8 @@ export function PlayVerdict({ state, feedback }: { state: State; feedback: PlayF
     bestUci: bestMove,
     beforeScore: evaluation === null ? null : evaluation.score,
     afterScore: afterEvaluation === null ? null : afterEvaluation.score,
-    isCritical:
-      plyOrNull(feedback.engineGrades, before, 'play engine grades')?.label === 'Critical',
-    isTop: plyOrNull(feedback.engineGrades, before, 'play engine grades')?.label === 'Top',
+    isCritical: focusGrade !== null && focusGrade.label === 'Critical',
+    isTop: focusGrade !== null && focusGrade.label === 'Top',
     prevUci: before >= 1 ? plyAt(nodes, before, 'play nodes').uci || null : null,
     prevBeforeFen: before >= 1 ? plyAt(nodes, before - 1, 'play nodes').fen : null,
   });
@@ -131,7 +139,7 @@ export function PlayVerdict({ state, feedback }: { state: State; feedback: PlayF
       </p>
     );
   const tooLong = timeline.moves.length > 256;
-  const hasError = !!feedback.error;
+  const hasError = feedback.error !== null;
   const isUserMove = mover === state.play.settings.userColor;
   // Opponent moves, failed evaluations, and overlong lines never produce a
   // verdict, but the reserved line stays so the layout does not collapse

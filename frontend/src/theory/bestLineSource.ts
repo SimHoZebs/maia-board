@@ -25,34 +25,34 @@ export function shouldWalkMaia(source: BestLineSource = BEST_LINE_SOURCE): boole
   return source === 'maia';
 }
 
-// Stockfish rank-1 PV sliced to the verdict window. Returns undefined when
+// Stockfish rank-1 PV sliced to the verdict window. Returns null when
 // there is no usable PV (missing evaluation, no lines, stripped PV, mate or
 // terminal rows are gated by callers, not here). bestLinePreview() re-slices
 // and validates legality, so this stays a thin projection.
 export function stockfishBestLineUcis(
-  afterEvaluation: Evaluation | undefined,
+  afterEvaluation: Evaluation | null,
   windowPlies: number,
-): string[] | undefined {
-  const pv = afterEvaluation?.lines[0]?.pv;
-  if (!pv || pv.length === 0) return undefined;
+): string[] | null {
+  if (afterEvaluation === null) return null;
+  const lines = afterEvaluation.lines;
+  if (lines.length === 0) return null;
+  const pv = lines[0].pv;
+  if (pv === undefined || pv.length === 0) return null;
   const window = normalizeBestLineWindow(windowPlies);
   const sliced = pv.slice(0, window);
-  return sliced.length ? [...sliced] : undefined;
+  return sliced.length > 0 ? [...sliced] : null;
 }
 
 // Single resolution point for both rooms. Stockfish wins when selected and
 // present; otherwise falls back to the Maia walk when provided (lets the
-// line converge as frontier rows land), else undefined (silent verdict).
+// line converge as frontier rows land), else null (silent verdict).
 export function resolveBestLineUcis(args: {
-  source?: BestLineSource;
-  stockfishUcis: string[] | undefined;
-  maiaUcis: string[] | undefined;
-}): string[] | undefined {
-  const source = args.source ?? BEST_LINE_SOURCE;
-  if (source === 'stockfish') {
-    if (args.stockfishUcis?.length) return args.stockfishUcis;
-    return undefined;
+  source: BestLineSource;
+  stockfishUcis: string[] | null;
+  maiaUcis: string[] | null;
+}): string[] | null {
+  if (args.source === 'stockfish') {
+    return args.stockfishUcis !== null && args.stockfishUcis.length > 0 ? args.stockfishUcis : null;
   }
-  if (args.maiaUcis?.length) return args.maiaUcis;
-  return undefined;
+  return args.maiaUcis !== null && args.maiaUcis.length > 0 ? args.maiaUcis : null;
 }

@@ -53,7 +53,8 @@ export function buildCapturePrefix(initialFen: string, moves: string[]): Capture
   const game = new Chess(initialFen);
   for (const move of moves) {
     const turn = game.turn();
-    const captured = applyUci(game, move).captured?.toLowerCase();
+    const taken = applyUci(game, move).captured;
+    const captured = taken === undefined ? null : taken.toLowerCase();
     if (captured && isCapturedPiece(captured)) {
       if (turn === 'w') white.push(captured);
       else black.push(captured);
@@ -83,7 +84,8 @@ export function capturesFromLine(
   for (let index = 0; index < clamped; index++) {
     const turn = game.turn();
     const applied = applyUci(game, moves[index]);
-    const captured = applied.captured?.toLowerCase();
+    const taken = applied.captured;
+    const captured = taken === undefined ? null : taken.toLowerCase();
     if (captured && isCapturedPiece(captured)) {
       if (turn === 'w') white.push(captured);
       else black.push(captured);
@@ -132,7 +134,8 @@ export function capturedLabel(by: Side, pieces: readonly CapturedPiece[], lead: 
 export function playedCapture(beforeFen: string, playedUci: string): CapturedPiece | null {
   if (typeof playedUci !== 'string' || playedUci.length === 5) return null;
   try {
-    const piece = applyUci(new Chess(beforeFen), playedUci).captured?.toLowerCase();
+    const taken = applyUci(new Chess(beforeFen), playedUci).captured;
+    const piece = taken === undefined ? null : taken.toLowerCase();
     if (!piece || !isCapturedPiece(piece)) return null;
     return piece;
   } catch {
@@ -199,7 +202,7 @@ function piecesText(pieces: CapturedPiece[]): string {
 }
 export function bestLineMaterialNote(
   afterFen: string,
-  pv: readonly string[] | undefined,
+  pv: readonly string[] | null,
   mover: Side,
   windowPlies: number = DEFAULT_BEST_LINE_WINDOW,
   playedTake: CapturedPiece | null = null,
@@ -218,7 +221,7 @@ export function bestLineMaterialNote(
 export type BestLinePreview = { ucis: string[]; sans: string[]; text: string; note: string };
 export function bestLinePreview(
   afterFen: string,
-  pv: readonly string[] | undefined,
+  pv: readonly string[] | null,
   mover: Side,
   windowPlies: number = DEFAULT_BEST_LINE_WINDOW,
   playedTake: CapturedPiece | null = null,
@@ -426,7 +429,8 @@ export function playedMoveGainNote(
   let captured: CapturedPiece | null = null;
   try {
     const probe = new Chess(beforeFen);
-    const piece = applyUci(probe, playedUci).captured?.toLowerCase();
+    const taken = applyUci(probe, playedUci).captured;
+    const piece = taken === undefined ? null : taken.toLowerCase();
     if (!piece || !isCapturedPiece(piece)) return null;
     captured = piece;
   } catch {
@@ -606,11 +610,11 @@ function formatSanLine(afterFen: string, sans: readonly string[]): string {
 
 function analyzeBestLineWindow(
   afterFen: string,
-  pv: readonly string[] | undefined,
+  pv: readonly string[] | null,
   mover: Side,
   windowPlies: number = DEFAULT_BEST_LINE_WINDOW,
 ): BestLineAnalysis | null {
-  if (!pv || pv.length === 0) return null;
+  if (pv === null || pv.length === 0) return null;
   const window = pv.slice(0, normalizeBestLineWindow(windowPlies));
   let game: Chess;
   try {
@@ -642,7 +646,8 @@ function analyzeBestLineWindow(
     } catch {
       return null;
     }
-    const captured = applied.captured?.toLowerCase();
+    const taken = applied.captured;
+    const captured = taken === undefined ? null : taken.toLowerCase();
     if (captured && isCapturedPiece(captured)) {
       lastCapture = ply;
       if (turn === 'w' ? mover === 'white' : mover === 'black') moverCaptures.push(captured);

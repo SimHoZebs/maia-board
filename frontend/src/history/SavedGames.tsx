@@ -89,7 +89,8 @@ function MultiSelect<T extends string>({
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setOpen(false);
-        trigger.current?.focus();
+        const triggerEl = trigger.current;
+        if (triggerEl !== null) triggerEl.focus();
       }
     };
     document.addEventListener('pointerdown', onPointer);
@@ -186,9 +187,15 @@ export function SavedGames({
   // for engine games, Lichess names for imports). The fallback stays for
   // pre-strict caches predating the strict migration.
   const you = accountDisplayName(useAccountName());
-  const opponentOf = (game: StoredGame) =>
-    game.opponent ||
-    (game.source?.startsWith('lichess:') ? 'Lichess' : `Maia ${game.settings.botElo}`);
+  const opponentOf = (game: StoredGame) => {
+    if (game.opponent) return game.opponent;
+    // Absent source means a local game (pre-strict rows omit it the same
+    // way); either way the fallback name is derived, never blank.
+    const source = game.source === undefined ? null : game.source;
+    return source !== null && source.startsWith('lichess:')
+      ? 'Lichess'
+      : `Maia ${game.settings.botElo}`;
+  };
   // History titles carry both Elos: yours (raw) and the opponent's
   // (botElo, clamped to the trained range for Maia). Maia rows already
   // embed their Elo in the name, so only bare names gain a suffix.

@@ -1,5 +1,6 @@
 import type { TopMove } from '../eval/api';
 import { botExpected, deltaBaseline, formatWinrateDelta } from '../objective/winrate';
+import { mapGetOrNull } from '../shared/explicit';
 import type { ObjectiveCandidates } from './reviewMetrics';
 
 // One row of the Key moves card: a single UCI with the roles it fulfills plus
@@ -113,23 +114,28 @@ export function buildKeyMoves(args: {
   const ordered = keyRowOrder({ sfBest, best2400, likely2400, myLikely, played });
 
   return ordered.map(uci => {
-    const obj = objByUci.get(uci);
-    const disp = dispByUci.get(uci);
+    const obj = mapGetOrNull(objByUci, uci);
+    const disp = mapGetOrNull(dispByUci, uci);
     const roles: KeyMoveRole[] = [];
     if (uci === sfBest) roles.push('sf-best');
     if (best2400 != null && uci === best2400) roles.push('best-2400');
     if (likely2400 != null && uci === likely2400) roles.push('likely-2400');
     if (played != null && uci === played) roles.push('played');
-    const prob2400 = typeof obj?.prob === 'number' && Number.isFinite(obj.prob) ? obj.prob : null;
-    const dispExpected = disp ? botExpected(disp.wdl) : null;
-    const expected2400 = obj?.expected ?? dispExpected;
+    const prob2400 =
+      obj !== null && typeof obj.prob === 'number' && Number.isFinite(obj.prob) ? obj.prob : null;
+    const dispExpected = disp !== null ? botExpected(disp.wdl) : null;
+    const expected2400 = obj !== null ? obj.expected : dispExpected;
     const probMine =
-      typeof disp?.prob === 'number' && Number.isFinite(disp.prob) ? disp.prob : null;
-    const trueEntry = trueDeltaByUci?.get(uci);
-    const delta = trueEntry?.value ?? null;
-    const deltaPending = trueEntry ? trueEntry.value == null && trueEntry.pending : false;
+      disp !== null && typeof disp.prob === 'number' && Number.isFinite(disp.prob)
+        ? disp.prob
+        : null;
+    const trueEntry = trueDeltaByUci === undefined ? null : mapGetOrNull(trueDeltaByUci, uci);
+    const delta = trueEntry === null ? null : trueEntry.value;
+    const deltaPending = trueEntry !== null && trueEntry.value == null && trueEntry.pending;
     const serverDelta =
-      typeof obj?.delta === 'number' && Number.isFinite(obj.delta) ? obj.delta : null;
+      obj !== null && typeof obj.delta === 'number' && Number.isFinite(obj.delta)
+        ? obj.delta
+        : null;
     const prospective =
       serverDelta ?? (expected2400 != null && baseline != null ? expected2400 - baseline : null);
     return { uci, roles, prob2400, expected2400, probMine, delta, deltaPending, prospective };

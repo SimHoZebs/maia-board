@@ -78,7 +78,8 @@ type MovesCore = {
   initialFen: string;
   qualities?: (Quality | null)[];
   badgeLoading?: BadgeLoading;
-  bookFlags?: boolean[];
+  // Null when book data never loaded; omitted callers get the same default.
+  bookFlags: boolean[] | null;
 };
 
 type MovesNavigation = {
@@ -97,7 +98,8 @@ type MovesBranch = {
     // Null when the branch exists but the mainline pass has no values yet;
     // absent entirely when there is no branch.
     qualities?: (Quality | null)[] | null;
-    bookFlags?: boolean[];
+    // Null when book data never loaded for the original line.
+    bookFlags: boolean[] | null;
   };
   branchUp?: boolean;
 };
@@ -117,10 +119,11 @@ function MovesPanel({
   branchUp = false,
   menu,
   hideNav = false,
-  bookFlags = undefined,
+  bookFlags = null,
 }: MovesCore & MovesNavigation & MovesBranch & { analysis?: boolean }) {
   const active = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
+  const originalFromPly = original === undefined ? -1 : original.fromPly;
   useLayoutEffect(() => {
     const container = list.current!;
     const reveal = () => {
@@ -139,7 +142,7 @@ function MovesPanel({
     const observer = new ResizeObserver(reveal);
     observer.observe(container);
     return () => observer.disconnect();
-  }, [ply, sans.length, analysis, original?.fromPly]);
+  }, [ply, sans.length, analysis, originalFromPly]);
   const parts = initialFen.split(' '),
     first = Number(parts[5]) * 2 + (parts[1] === 'b' ? 1 : 0);
   const number = (index: number) => (
@@ -163,7 +166,7 @@ function MovesPanel({
       onClick={() => onView(index + 1)}
     >
       {number(index)} {san}{' '}
-      {bookFlags?.[index] ? (
+      {bookFlags !== null && bookFlags[index] === true ? (
         <span
           className="quality quality-book"
           title="Book move — known opening, not engine-evaluated"
@@ -213,7 +216,8 @@ function MovesPanel({
                 onClick={() => (onOriginalView ?? onView)(original.fromPly + offset + 1)}
               >
                 {number(original.fromPly + offset)} {san}{' '}
-                {original.bookFlags?.[original.fromPly + offset] ? (
+                {original.bookFlags !== null &&
+                original.bookFlags[original.fromPly + offset] === true ? (
                   <span
                     className="quality quality-book"
                     title="Book move — known opening, not engine-evaluated"

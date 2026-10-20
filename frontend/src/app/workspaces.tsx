@@ -390,7 +390,8 @@ export function PlayWorkspace({ state, dispatch }: Props) {
     orientation,
   ]);
   const [confirmResign, setConfirmResign] = useState(false);
-  const replyIdentity = state.insight?.mode === 'play' ? state.insight.response : undefined;
+  const replyIdentity =
+    state.insight !== null && state.insight.mode === 'play' ? state.insight.response : null;
   const displayedPly = state.viewedPly ?? state.play.moves.length;
   // Prefix table rebuilt only when the move list identity changes: every
   // render (including viewed-ply browsing) is an O(1) lookup instead of an
@@ -429,7 +430,7 @@ export function PlayWorkspace({ state, dispatch }: Props) {
           captures={playCaptures[color]}
           lead={materialLeadFor(playDiff, color)}
         />
-        {color !== settings.userColor && replyIdentity?.degraded && (
+        {color !== settings.userColor && replyIdentity !== null && replyIdentity.degraded && (
           <span role="status">Fallback model reply</span>
         )}
         {thinking && (
@@ -456,7 +457,7 @@ export function PlayWorkspace({ state, dispatch }: Props) {
       ? resigned
         ? oppositeColor(settings.userColor)
         : null
-      : playTip.outcome?.kind === 'checkmate'
+      : playTip.outcome !== null && playTip.outcome.kind === 'checkmate'
         ? oppositeColor(playTip.turn)
         : null;
   const resultText = resigned
@@ -473,7 +474,9 @@ export function PlayWorkspace({ state, dispatch }: Props) {
   const loser = useMemo<'white' | 'black' | null>(() => {
     if (resigned && !historic) return settings.userColor;
     if (!ready) return null;
-    return viewedRow.outcome?.kind === 'checkmate' ? viewedRow.turn : null;
+    return viewedRow.outcome !== null && viewedRow.outcome.kind === 'checkmate'
+      ? viewedRow.turn
+      : null;
   }, [resigned, historic, settings.userColor, ready, viewedRow]);
   // Standalone play flag via the shared losing-king helper: identical badge
   // construction as the analysis mated-king flag, so resign and checkmate
@@ -697,7 +700,7 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   const playedQuality =
     ready && ply > 0 ? plyOrNull(review.qualities, ply - 1, 'badge qualities') : null;
   const playedUci = ready && ply > 0 && viewedArrowNode !== null ? viewedArrowNode.uci : null;
-  const badgeSquare = playedUci === null ? null : (parseKey(playedUci.slice(2, 4)) ?? null);
+  const badgeSquare = playedUci === null ? null : parseKey(playedUci.slice(2, 4));
   const playedLabel = playedQuality === null ? null : playedQuality.label;
   const badgeGlyph: SquareBadge['glyph'] =
     playedLabel === 'Allowed mate' ? '💀' : playedLabel === 'Blunder' ? '??' : '?';
@@ -716,7 +719,9 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   // construction is the shared losing-king helper, identical to the play
   // resign/checkmate flag.
   const matedLoser =
-    position.outcome?.kind === 'checkmate' ? oppositeColor(position.outcome.winner) : null;
+    position.outcome !== null && position.outcome.kind === 'checkmate'
+      ? oppositeColor(position.outcome.winner)
+      : null;
   const flagBadge: SquareBadge | null = useMemo(
     () => losingKingBadge(position.fen, matedLoser),
     [position.fen, matedLoser],
@@ -771,8 +776,12 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   const analysisNames: Record<'white' | 'black', string> | null = sourceGame
     ? (() => {
         const userLabel = `${you} (${sourceGame.settings.userElo})`;
+        // Absent source means a local game (pre-strict rows omit it the
+        // same way); either way the fallback name is derived, never blank.
+        const gameSource = sourceGame.source === undefined ? null : sourceGame.source;
         const raw =
-          sourceGame.opponent || (sourceGame.source?.startsWith('lichess:') ? 'Lichess' : 'Maia');
+          sourceGame.opponent ||
+          (gameSource !== null && gameSource.startsWith('lichess:') ? 'Lichess' : 'Maia');
         const oppLabel = raw.startsWith('Maia ') ? raw : `${raw} (${sourceGame.settings.botElo})`;
         return sourceGame.settings.userColor === 'white'
           ? { white: userLabel, black: oppLabel }
@@ -785,7 +794,7 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
     const shownOver = viewedOver;
     const active = position.turn === color && !shownOver;
     const isActive = active && ready;
-    const label = analysisNames?.[color] ?? sideName(color);
+    const label = analysisNames === null ? sideName(color) : analysisNames[color];
     // Remaining time at the viewed ply for reviewed imports (ad-hoc lines
     // and local games carry no readings, so the span stays unmounted there).
     const left = remainingAt(sourceGame ?? state.play, ply, color);
@@ -863,7 +872,7 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
                       }
                       outcome={position.outcome}
                       orientation={orientation}
-                      failed={review.currentError !== undefined}
+                      failed={review.currentError !== null}
                     />
                   </div>
                 </>

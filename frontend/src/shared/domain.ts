@@ -5,6 +5,7 @@ import type { Evaluation } from '../review/reviewMetrics';
 import { outcomeFromGame } from '../review/reviewMetrics';
 import { outcomeEvaluation } from '../review/outcomeEvaluation';
 import { clampElo } from '../board/BoardTools';
+import { mapGetOrNull } from './explicit';
 
 // Terms: see spec/GLOSSARY.md (position/line/posId/lineKey).
 export const START_FEN = new Chess().fen();
@@ -16,7 +17,13 @@ export type Settings = {
   model: BotModel;
   temperature?: number;
 };
-export type Position = { fen: string; moves: string[]; sanMoves: string[]; lastMove?: [Key, Key] };
+export type Position = {
+  fen: string;
+  moves: string[];
+  sanMoves: string[];
+  // Null at the root (no move yet) — never undefined.
+  lastMove: [Key, Key] | null;
+};
 export type Analysis = {
   initialFen: string;
   moves: string[];
@@ -216,7 +223,11 @@ export const newId = () =>
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-export function normalizeSettings(stored?: Partial<Settings> | null): Settings {
+// Null (or an omitted argument) means no stored settings: every field
+// falls back, and each fallback is named below. The container is narrowed
+// once here so no `?.` trails into the per-field fallbacks.
+export function normalizeSettings(stored: Partial<Settings> | null = null): Settings {
+  const input: Partial<Settings> = stored === null ? {} : stored;
   const elo = (value: unknown, fallback: number) =>
     typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 5000
       ? value
@@ -225,21 +236,21 @@ export function normalizeSettings(stored?: Partial<Settings> | null): Settings {
   // 400 still conditions, displays, and caches as 800); the player's own
   // identity stays raw for the coming global-Elo pass.
   const botElo = (value: unknown, fallback: number) => clampElo(elo(value, fallback));
-  const storedBotElo = stored?.botElo;
+  const storedBotElo = input.botElo;
   // The player's own rating defaults to the 400 anchor (see userElo.ts),
   // never to the bot strength: mirroring botElo guesses the user is a 1600
   // player. Pre-rename saves keep their stored userElo.
   return {
-    userColor: stored?.userColor === 'black' ? 'black' : 'white',
-    model: stored?.model === '5m' ? '5m' : '79m',
+    userColor: input.userColor === 'black' ? 'black' : 'white',
+    model: input.model === '5m' ? '5m' : '79m',
     botElo: botElo(storedBotElo, 1600),
-    userElo: elo(stored?.userElo, 400),
+    userElo: elo(input.userElo, 400),
     temperature:
-      typeof stored?.temperature === 'number' &&
-      Number.isFinite(stored.temperature) &&
-      stored.temperature >= 0 &&
-      stored.temperature <= 2
-        ? stored.temperature
+      typeof input.temperature === 'number' &&
+      Number.isFinite(input.temperature) &&
+      input.temperature >= 0 &&
+      input.temperature <= 2
+        ? input.temperature
         : 0,
   };
 }
@@ -252,22 +263,26 @@ export function normalizeSettings(stored?: Partial<Settings> | null): Settings {
 const SQUARE_LOOKUP: Record<string, Square | undefined> = Object.fromEntries(
   SQUARES.map(square => [square, square]),
 );
-export function parseSquare(text: unknown): Square | undefined {
-  return typeof text === 'string' ? SQUARE_LOOKUP[text] : undefined;
+export function parseSquare(text: unknown): Square | null {
+  if (typeof text !== 'string') return null;
+  const found = SQUARE_LOOKUP[text];
+  return found === undefined ? null : found;
 }
 const KEY_LOOKUP: Record<string, Key | undefined> = Object.fromEntries([
   ...SQUARES.map(square => [square, square]),
   ...(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const).map(file => [`${file}0`, `${file}0`]),
 ]);
-export function parseKey(text: unknown): Key | undefined {
-  return typeof text === 'string' ? KEY_LOOKUP[text] : undefined;
+export function parseKey(text: unknown): Key | null {
+  if (typeof text !== 'string') return null;
+  const found = KEY_LOOKUP[text];
+  return found === undefined ? null : found;
 }
 
 export function applyUci(game: Chess, uci: string) {
   if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(uci)) throw new Error(`Invalid UCI move: ${uci}`);
   const from = parseSquare(uci.slice(0, 2));
   const to = parseSquare(uci.slice(2, 4));
-  if (from === undefined || to === undefined) throw new Error(`Invalid UCI move: ${uci}`);
+  if (from === null || to === null) throw new Error(`Invalid UCI move: ${uci}`);
   return game.move({ from, to, ...(uci[4] ? { promotion: uci[4] } : {}) });
 }
 export function uciFromMove(move: { from: string; to: string; promotion?: string }) {
@@ -286,12 +301,12 @@ export function replay(moves: string[], initialFen = START_FEN): Chess {
 }
 export function positionOf(game: Chess): Position {
   const history = game.history({ verbose: true });
-  const last = history.at(-1);
+  const last = history.length > 0 ? history[history.length - 1] : null;
   return {
     fen: game.fen(),
     moves: history.map(uciFromMove),
     sanMoves: game.history(),
-    lastMove: last ? [last.from, last.to] : undefined,
+    lastMove: last === null ? null : [last.from, last.to],
   };
 }
 export function legalDests(game: Chess): Map<Key, Key[]> {
@@ -332,9 +347,8 @@ export function parsePgnMoves(pgn: string, game: Chess): string[] {
 }
 export function loadLine(fen = '', pgn = ''): Analysis {
   // Explicit FEN wins; otherwise honor the starting position in an exported PGN.
-  const initialFen = new Chess(
-    fen.trim() || pgn.match(/\[FEN\s+"([^"]+)"\]/i)?.[1] || START_FEN,
-  ).fen();
+  const fenTag = pgn.match(/\[FEN\s+"([^"]+)"\]/i);
+  const initialFen = new Chess(fen.trim() || (fenTag === null ? '' : fenTag[1]) || START_FEN).fen();
   const moves = parsePgnMoves(pgn, new Chess(initialFen));
   const timeline = buildTimeline(initialFen, moves);
   const players = parsePgnPlayers(pgn);
@@ -355,33 +369,38 @@ export function loadLine(fen = '', pgn = ''): Analysis {
 // strips; absent name headers mean movetext-only input (no players). A bare
 // `White` tag never matches `WhiteElo`: the closing quote pattern requires
 // whitespace after the tag name.
-export function parsePgnPlayers(pgn: string): LinePlayers | undefined {
-  const tag = (name: string): string | undefined => {
-    const value = pgn.match(new RegExp(`\\[${name}\\s+"([^"]+)"\\]`, 'i'))?.[1]?.trim();
+export function parsePgnPlayers(pgn: string): LinePlayers | null {
+  const tag = (name: string): string | null => {
+    const found = pgn.match(new RegExp(`\\[${name}\\s+"([^"]+)"\\]`, 'i'));
+    const value = found === null ? null : found[1].trim();
     // PGN uses "?" for unknown: chess.js also emits it for unset headers on
     // export, so it parses as absent and header-less lines round-trip clean.
-    if (!value || value === '?') return undefined;
+    if (value === null || value === '' || value === '?') return null;
     return value.slice(0, 64);
   };
-  const elo = (name: string): number | undefined => {
-    const parsed = Number.parseInt(tag(name) ?? '', 10);
-    return Number.isInteger(parsed) && parsed >= 0 && parsed <= 5000 ? parsed : undefined;
+  const elo = (name: string): number | null => {
+    const raw = tag(name);
+    const parsed = Number.parseInt(raw === null ? '' : raw, 10);
+    return Number.isInteger(parsed) && parsed >= 0 && parsed <= 5000 ? parsed : null;
   };
-  const player = (color: 'White' | 'Black'): LinePlayer | undefined => {
+  const player = (color: 'White' | 'Black'): LinePlayer | null => {
     const name = tag(color);
-    if (name === undefined) return undefined;
+    if (name === null) return null;
     const rating = elo(`${color}Elo`);
-    return rating === undefined ? { name } : { name, elo: rating };
+    return rating === null ? { name } : { name, elo: rating };
   };
   const white = player('White');
   const black = player('Black');
-  if (white === undefined && black === undefined) return undefined;
-  return { white: white ?? { name: 'White' }, black: black ?? { name: 'Black' } };
+  if (white === null && black === null) return null;
+  return {
+    white: white === null ? { name: 'White' } : white,
+    black: black === null ? { name: 'Black' } : black,
+  };
 }
 // Untrusted-storage counterpart of parsePgnPlayers: snapshots persist the
 // parsed roster, so refresh restores it only when it still validates.
-export function normalizeLinePlayers(value: unknown): LinePlayers | undefined {
-  if (typeof value !== 'object' || value === null) return undefined;
+export function normalizeLinePlayers(value: unknown): LinePlayers | null {
+  if (typeof value !== 'object' || value === null) return null;
   const side = (entry: unknown, fallback: string): LinePlayer => {
     if (typeof entry !== 'object' || entry === null) return { name: fallback };
     const record = entry as Record<string, unknown>;
@@ -395,11 +414,11 @@ export function normalizeLinePlayers(value: unknown): LinePlayers | undefined {
       record.elo >= 0 &&
       record.elo <= 5000
         ? record.elo
-        : undefined;
-    return elo === undefined ? { name } : { name, elo };
+        : null;
+    return elo === null ? { name } : { name, elo };
   };
   const record = value as Record<string, unknown>;
-  if (record.white === undefined && record.black === undefined) return undefined;
+  if (record.white === undefined && record.black === undefined) return null;
   return { white: side(record.white, 'White'), black: side(record.black, 'Black') };
 }
 export function exportLine(analysis: Analysis, timeControl?: string): string {
@@ -490,16 +509,19 @@ export function findKingSquare(game: Chess, color: 'w' | 'b'): Square | null {
   return null;
 }
 const KING_SQUARE_CACHE_LIMIT = 512;
-const kingSquareCache = new Map<string, Key | undefined>();
-export function kingSquare(fen: string, color: SideColor): Key | undefined {
+const kingSquareCache = new Map<string, Key | null>();
+export function kingSquare(fen: string, color: SideColor): Key | null {
   const key = `${fen}|${color}`;
-  if (kingSquareCache.has(key)) return kingSquareCache.get(key);
-  let result: Key | undefined;
+  const hit = mapGetOrNull(kingSquareCache, key);
+  // A cached null is a settled miss (invalid FEN or no king) — only a
+  // true map miss recomputes. has/get pairs would read the miss twice.
+  if (hit !== null || kingSquareCache.has(key)) return hit;
+  let result: Key | null;
   try {
     const found = findKingSquare(new Chess(fen), color === 'white' ? 'w' : 'b');
-    result = found ? parseKey(found) : undefined;
+    result = found === null ? null : parseKey(found);
   } catch {
-    result = undefined;
+    result = null;
   }
   kingSquareCache.set(key, result);
   if (kingSquareCache.size > KING_SQUARE_CACHE_LIMIT)
@@ -524,7 +546,7 @@ export type TimelineRow = {
   // (game.inCheck()), so render loops read it instead of parsing the FEN.
   check: boolean;
   outcome: DomainOutcome | null;
-  lastMove: [Key, Key] | undefined;
+  lastMove: [Key, Key] | null;
 };
 export type Timeline = { initialFen: string; moves: string[]; rows: TimelineRow[] };
 export type DomainOutcome = { kind: 'checkmate'; winner: SideColor } | { kind: 'draw' };
@@ -571,7 +593,8 @@ function deriveTimeline(
   const normalized = game.fen();
   // Prefix rows are shared with retained timelines, including branches and
   // takebacks. The scan is bounded by 64 lines and allocates no prefixes.
-  let shared: Timeline | undefined;
+  // Null means no shared prefix found — never undefined.
+  let shared: Timeline | null = null;
   let sharedPly = -1;
   for (const candidate of timelineCache.values()) {
     if (candidate.initialFen !== normalized) continue;
@@ -588,20 +611,22 @@ function deriveTimeline(
     }
   }
   const rows: TimelineRow[] = [
-    shared?.rows[0] ?? {
-      ply: 0,
-      uci: '',
-      san: '',
-      fen: game.fen(),
-      turn: game.turn() === 'w' ? 'white' : 'black',
-      check: game.inCheck(),
-      outcome: outcome(game),
-      lastMove: undefined,
-    },
+    shared === null
+      ? {
+          ply: 0,
+          uci: '',
+          san: '',
+          fen: game.fen(),
+          turn: game.turn() === 'w' ? 'white' : 'black',
+          check: game.inCheck(),
+          outcome: outcome(game),
+          lastMove: null,
+        }
+      : shared.rows[0],
   ];
   for (const uci of moves) {
     const applied = applyUci(game, uci);
-    if (shared && rows.length <= sharedPly) {
+    if (shared !== null && rows.length <= sharedPly) {
       rows.push(shared.rows[rows.length]);
       continue;
     }
@@ -618,7 +643,7 @@ function deriveTimeline(
   }
   const timeline = { initialFen: normalized, moves: [...moves], rows };
   for (const row of rows) {
-    if (row.lastMove) Object.freeze(row.lastMove);
+    if (row.lastMove !== null) Object.freeze(row.lastMove);
     if (row.outcome) Object.freeze(row.outcome);
     Object.freeze(row);
   }
@@ -738,7 +763,7 @@ export function lineRecord(moves: string[], initialFen = START_FEN): LineRecord 
     fen: end.fen,
     moves,
     sanMoves: timeline.rows.slice(1).map(row => row.san),
-    lastMove: end.lastMove ? [...end.lastMove] : undefined,
+    lastMove: end.lastMove === null ? null : [...end.lastMove],
     terminal: outcomeEvaluation(end.outcome),
   };
 }
@@ -790,7 +815,7 @@ export function resultTextForOutcome(outcome: DomainOutcome | null): string {
   return 'Draw';
 }
 export function resultTextForTip(_tipFen: string, terminal: Evaluation | null): string {
-  if (terminal?.terminal === 'white_win') return 'White wins';
-  if (terminal?.terminal === 'black_win') return 'Black wins';
-  return terminal ? 'Draw' : 'Unfinished';
+  if (terminal !== null && terminal.terminal === 'white_win') return 'White wins';
+  if (terminal !== null && terminal.terminal === 'black_win') return 'Black wins';
+  return terminal !== null ? 'Draw' : 'Unfinished';
 }

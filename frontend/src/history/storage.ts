@@ -36,10 +36,10 @@ export class StorageError extends Error {
   }
 }
 
-// Missing keys are the only `undefined` this boundary returns. Corrupt JSON
+// Missing keys read as null (no value) — never undefined. Corrupt JSON
 // and unavailable localStorage throw StorageError instead of collapsing
 // into the missing state.
-export function readStorage<T>(key: string): T | undefined {
+export function readStorage<T>(key: string): T | null {
   // Quarantined JSON boundary: JSON.parse() returns `any`, which flows into
   // the generic without an assertion. Every caller validates downstream —
   // parseStoredGame (saved/current games), normalizeSettings (settings),
@@ -51,7 +51,7 @@ export function readStorage<T>(key: string): T | undefined {
   } catch (cause) {
     throw new StorageError(key, `Local storage is unavailable for ${key}.`, { cause });
   }
-  if (value === null || value === '') return undefined;
+  if (value === null || value === '') return null;
   try {
     return JSON.parse(value) as T;
   } catch (cause) {
@@ -75,8 +75,8 @@ export function writeStorage(key: string, value: unknown): void {
 // Narrows unvalidated storage JSON to normalizeSettings' input without
 // asserting: only values normalizeSettings can distinguish pass through (its
 // own per-field fallbacks decide the rest), so behavior is unchanged.
-function toSettingsInput(value: unknown): Partial<Settings> | undefined {
-  if (!isRecord(value)) return undefined;
+function toSettingsInput(value: unknown): Partial<Settings> | null {
+  if (!isRecord(value)) return null;
   const input: Partial<Settings> = {};
   const { userColor, model, botElo, userElo, temperature } = value;
   if (userColor === 'black' || userColor === 'white') input.userColor = userColor;
@@ -157,23 +157,23 @@ export function loadSettings(): Settings {
   } catch (error) {
     if (error instanceof StorageError) {
       console.warn(`maia-board: corrupt settings for ${error.key}; using defaults.`);
-      return normalizeSettings(undefined);
+      return normalizeSettings(null);
     }
     throw error;
   }
 }
 
-// Preference reads that must survive corrupt storage: missing returns
-// `undefined` for the normalizer to default; corrupt logs an explicit repair
-// and also returns `undefined`. Callers never see StorageError here —
+// Preference reads that must survive corrupt storage: missing reads as
+// null for the normalizer to default; corrupt logs an explicit repair
+// and also reads as null. Callers never see StorageError here —
 // boot-critical game data (repository, snapshot) lets it throw instead.
-export function readPreference<T>(key: string): T | undefined {
+export function readPreference<T>(key: string): T | null {
   try {
     return readStorage<T>(key);
   } catch (error) {
     if (error instanceof StorageError) {
       console.warn(`maia-board: corrupt preference for ${error.key}; using defaults.`);
-      return undefined;
+      return null;
     }
     throw error;
   }

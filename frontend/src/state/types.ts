@@ -111,6 +111,7 @@ export type AnalysisSnapshot = {
   index: number;
   perspective: SideColor;
   ownGame: boolean;
-  gameId?: string;
+  // Null when the line is not owned by a game (imported/pasted lines).
+  gameId: string | null;
   players?: LinePlayers;
 };

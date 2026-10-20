@@ -25,8 +25,10 @@ export function restoreLookup(
     nodes,
     settings,
     signal,
-    opts.engines ? [...opts.engines] : undefined,
-    opts.priorityPlies?.length ? [...opts.priorityPlies] : undefined,
+    opts.engines !== undefined ? [...opts.engines] : undefined,
+    opts.priorityPlies !== undefined && opts.priorityPlies.length > 0
+      ? [...opts.priorityPlies]
+      : undefined,
   );
 }
 
@@ -42,7 +44,9 @@ export function useLookupRestore(args: {
   settings: SettingsInput;
   coordinator: ReviewCoordinator;
   loadKey: string;
-  onSettled?: (error: string | undefined) => void;
+  // Null means the lookup settled clean; a string names the failure.
+  // Absent callback (undefined) means nobody listens — not a state.
+  onSettled?: (error: string | null) => void;
   // Focus-first restore: node plies to settle before the rest of the line.
   // Rides a ref so an inline literal cannot resubmit every render.
   priorityPlies?: readonly number[];
@@ -102,25 +106,28 @@ export function useLookupRestore(args: {
       settingsRef.current,
       controller.signal,
       {
-        ...(enginesRef.current ? { engines: enginesRef.current } : {}),
-        ...(priorityRef.current?.length ? { priorityPlies: priorityRef.current } : {}),
+        ...(enginesRef.current !== undefined ? { engines: enginesRef.current } : {}),
+        ...(priorityRef.current !== undefined && priorityRef.current.length > 0
+          ? { priorityPlies: priorityRef.current }
+          : {}),
       },
     );
+    const settle = (error: string | null) => {
+      // Stale restores merged their rows into the shared store on the way
+      // out; only the current line's outcome drives retry callers.
+      if (loadKeyRef.current !== loadKey) return;
+      const settled = settledRef.current;
+      if (settled !== undefined) settled(error);
+    };
     void Promise.resolve(task).then(
       () => {
         forget();
-        // Stale restores merged their rows into the shared store on the way
-        // out; only the current line's outcome drives retry callers.
-        if (loadKeyRef.current === loadKey) settledRef.current?.(undefined);
+        settle(null);
       },
       error => {
         forget();
         if (controller.signal.aborted) return;
-        if (loadKeyRef.current === loadKey) {
-          settledRef.current?.(
-            error instanceof Error ? error.message : 'Evaluation lookup failed.',
-          );
-        }
+        settle(error instanceof Error ? error.message : 'Evaluation lookup failed.');
       },
     );
   }, [coordinator, active, loadKey]);

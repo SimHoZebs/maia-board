@@ -48,7 +48,7 @@ export function useServerBatch(args: {
   priorityPlies?: readonly number[];
 }): {
   progress: ServerBatchProgress | null;
-  error: string | undefined;
+  error: string | null;
   start: () => void;
   retry: () => void;
 } {
@@ -56,7 +56,7 @@ export function useServerBatch(args: {
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobScopeKey, setJobScopeKey] = useState<string | null>(null);
   const [progress, setProgress] = useState<ServerBatchProgress | null>(null);
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
   const itemsRef = useRef<BatchItem[]>([]);
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
@@ -90,11 +90,11 @@ export function useServerBatch(args: {
   useEffect(() => {
     if (prevSettingsRef.current === settings) return;
     prevSettingsRef.current = settings;
-    if (!progressRef.current?.running) {
+    if (progressRef.current === null || !progressRef.current.running) {
       setJobId(null);
       setJobScopeKey(null);
       setProgress(null);
-      setError(undefined);
+      setError(null);
       itemsRef.current = [];
     }
   }, [settings]);
@@ -112,7 +112,7 @@ export function useServerBatch(args: {
     itemsRef.current = batchItems;
     const keysHash = hashBatchKeys(batchItems.map(item => item.key));
     coordinator.replaceFailures(new Set(batchItems.map(item => item.key)), new Map());
-    setError(undefined);
+    setError(null);
     setProgress({ total: batchItems.length, done: 0, failed: 0, running: batchItems.length > 0 });
     if (!batchItems.length) {
       setJobId(null);
@@ -126,11 +126,11 @@ export function useServerBatch(args: {
         // cancels: drop optimism we still own so the new line never inherits
         // a running count with no job behind it. The orphan drains on the
         // server and vanishes by absence.
-        if (scopeRef.current?.scopeKey !== submittedKey) {
+        if (scopeRef.current === null || scopeRef.current.scopeKey !== submittedKey) {
           if (!jobIdRef.current && !jobScopeRef.current) setProgress(null);
           return;
         }
-        setError(undefined);
+        setError(null);
         setJobId(submitted.job_id);
         setJobScopeKey(submittedKey);
         writePersistedBatch({
@@ -140,7 +140,7 @@ export function useServerBatch(args: {
           total: batchItems.length,
         });
       } catch (submitError) {
-        if (scopeRef.current?.scopeKey !== submittedKey) return;
+        if (scopeRef.current === null || scopeRef.current.scopeKey !== submittedKey) return;
         setError(
           submitError instanceof Error ? submitError.message : 'Review batch failed to start.',
         );
@@ -154,7 +154,7 @@ export function useServerBatch(args: {
     start();
   }, [coordinator, start]);
 
-  const scopeKey = scope?.scopeKey ?? null;
+  const scopeKey = scope === null ? null : scope.scopeKey;
   // Single definition of "the persisted job owns this mount": the stored
   // entry names this exact line and its content hash matches what this line
   // submits now. Returns the entry plus the matching items so adopters reuse
@@ -189,9 +189,11 @@ export function useServerBatch(args: {
     if (!(auto && active && scopeKey)) return;
     // Already attached to the persisted same-content job: nothing to do. A
     // differing jobId means a newer submission owns the hook, so fall
-    // through and resubmit.
+    // through and resubmit. No persisted entry reads as a different job.
+    const persistedJobId = readPersistedBatch();
     if (
-      (!jobIdRef.current || jobIdRef.current === readPersistedBatch()?.jobId) &&
+      (!jobIdRef.current ||
+        (persistedJobId !== null && jobIdRef.current === persistedJobId.jobId)) &&
       persistedItemsFor(scopeKey) !== null
     )
       return;
@@ -213,7 +215,7 @@ export function useServerBatch(args: {
     coordinator.replaceFailures(new Set(currentItems.map(item => item.key)), new Map());
     // Mount-restore sync: adopting a persisted job seeds state once.
     // oxlint-disable-next-line set-state-in-effect
-    setError(undefined);
+    setError(null);
     setProgress({ total: stored.total, done: 0, failed: 0, running: true });
     setJobScopeKey(scopeKey);
     // Drop optimism only while we still own it (no job attached yet and the
@@ -229,14 +231,22 @@ export function useServerBatch(args: {
     void (async () => {
       try {
         const status = await fetchBatchStatus(stored.jobId, fetcher);
-        if (cancelled || scopeRef.current?.scopeKey !== scopeKey || jobIdRef.current) {
-          if (cancelled || scopeRef.current?.scopeKey !== scopeKey) clearOwnedOptimism();
+        if (
+          cancelled ||
+          scopeRef.current === null ||
+          scopeRef.current.scopeKey !== scopeKey ||
+          jobIdRef.current
+        ) {
+          if (cancelled || scopeRef.current === null || scopeRef.current.scopeKey !== scopeKey)
+            clearOwnedOptimism();
           return;
         }
         // Torn-read guard: another tab may have replaced the single shared
         // persisted entry between our read and this GET. Total alone cannot
-        // detect it, so re-read and only adopt the job we still own.
-        if (readPersistedBatch()?.jobId !== stored.jobId) {
+        // detect it, so re-read and only adopt the job we still own. A
+        // missing entry is a different job, never ours.
+        const reread = readPersistedBatch();
+        if (reread === null || reread.jobId !== stored.jobId) {
           clearOwnedOptimism();
           return;
         }
@@ -260,8 +270,14 @@ export function useServerBatch(args: {
         if (errors.size) coordinator.replaceFailures(new Set(), errors);
         if (status.finished) clearPersistedBatch(stored.jobId);
       } catch (reattachError) {
-        if (cancelled || scopeRef.current?.scopeKey !== scopeKey || jobIdRef.current) {
-          if (cancelled || scopeRef.current?.scopeKey !== scopeKey) clearOwnedOptimism();
+        if (
+          cancelled ||
+          scopeRef.current === null ||
+          scopeRef.current.scopeKey !== scopeKey ||
+          jobIdRef.current
+        ) {
+          if (cancelled || scopeRef.current === null || scopeRef.current.scopeKey !== scopeKey)
+            clearOwnedOptimism();
           return;
         }
         if (reattachError instanceof BatchGoneError) clearPersistedBatch(stored.jobId);
@@ -305,7 +321,7 @@ export function useServerBatch(args: {
       setJobId(null);
       setJobScopeKey(null);
       setProgress(null);
-      setError(undefined);
+      setError(null);
       itemsRef.current = [];
     }
   }, [active, jobId, jobScopeKey]);
@@ -317,7 +333,7 @@ export function useServerBatch(args: {
   useEffect(() => {
     if (!active || !jobId || !jobScopeKey) return;
     const submittedKey = jobScopeKey;
-    const stale = () => scopeRef.current?.scopeKey !== submittedKey;
+    const stale = () => scopeRef.current === null || scopeRef.current.scopeKey !== submittedKey;
     let stopped = false;
     let restoreTimer: ReturnType<typeof setTimeout> | undefined;
     let lastRestore = 0;
@@ -343,7 +359,7 @@ export function useServerBatch(args: {
           restoreController.signal,
           // Conditional field: omitted when no priority plies ride along.
           // oxlint-disable-next-line no-useless-spread
-          { ...(priority?.length ? { priorityPlies: priority } : {}) },
+          { ...(priority !== undefined && priority.length > 0 ? { priorityPlies: priority } : {}) },
         );
       } catch {
         /* superseded restore */
@@ -356,7 +372,7 @@ export function useServerBatch(args: {
         try {
           await restoreLookup(coordinator, nodesRef.current, objective, restoreController.signal, {
             engines: ['maia'],
-            ...(priority?.length ? { priorityPlies: priority } : {}),
+            ...(priority !== undefined && priority.length > 0 ? { priorityPlies: priority } : {}),
           });
         } catch {
           /* superseded restore */

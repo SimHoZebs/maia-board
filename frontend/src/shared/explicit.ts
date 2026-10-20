@@ -16,6 +16,12 @@ export function expectNonNull<T>(value: T | null | undefined, message: string): 
   return value;
 }
 
+// Miss reads as null (no entry) — never undefined past this boundary.
+export function mapGetOrNull<K, V>(map: ReadonlyMap<K, V>, key: K): V | null {
+  const found: unknown = map.get(key);
+  return found === undefined ? null : (found as V);
+}
+
 // Per-ply read from a node-aligned array. Out-of-range and holes are
 // failures (throw); `null` is the explicit no-value-at-this-ply state that
 // producers write and consumers branch on. Never return `undefined` here.

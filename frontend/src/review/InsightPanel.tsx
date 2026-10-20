@@ -135,7 +135,9 @@ export function MoveAnalysis({
     ? expectNonNull(review.nodes[focus], `missing timeline node at ply ${focus}`)
     : null;
   const afterNode =
-    tipNode ?? expectNonNull(review.nodes[ply], `missing timeline node at ply ${ply}`);
+    tipNode !== null
+      ? tipNode
+      : expectNonNull(review.nodes[ply], `missing timeline node at ply ${ply}`);
   const qualityLabel = quality === null ? null : quality.label;
   const evalScore = evaluation === null ? null : evaluation.score;
   const afterScore = afterEvaluation === null ? null : afterEvaluation.score;
@@ -158,7 +160,7 @@ export function MoveAnalysis({
           resolveBestLineUcis({
             source: BEST_LINE_SOURCE,
             stockfishUcis: stockfishBestLineUcis(afterEvaluation, state.bestLineWindow),
-            maiaUcis: review.objectiveBestLine.length ? review.objectiveBestLine : undefined,
+            maiaUcis: review.objectiveBestLine.length > 0 ? review.objectiveBestLine : null,
           }),
           beforeNode.turn === 'white' ? 'white' : 'black',
           state.bestLineWindow,
@@ -216,6 +218,9 @@ export function MoveAnalysis({
     focus >= 1 ? (prevNode !== null && prevNode.uci !== '' ? prevNode.uci : null) : null;
   const prevBeforeFen: string | null =
     focus >= 1 ? (prevBeforeNode !== null ? prevBeforeNode.fen : null) : null;
+  // Raw engine facts for the verdict's only-move/validated notes. A missing
+  // grade reads as neither — never undefined.
+  const focusGrade = plyOrNull(review.engineGrades, focus, 'engine grades');
   const verdictFacts =
     hasMove && played !== null && beforeNode !== null
       ? verdictInputsForPly({
@@ -239,8 +244,8 @@ export function MoveAnalysis({
           bestUci,
           beforeScore: evaluation === null ? null : evaluation.score,
           afterScore: afterEvaluation === null ? null : afterEvaluation.score,
-          isCritical: plyOrNull(review.engineGrades, focus, 'engine grades')?.label === 'Critical',
-          isTop: plyOrNull(review.engineGrades, focus, 'engine grades')?.label === 'Top',
+          isCritical: focusGrade !== null && focusGrade.label === 'Critical',
+          isTop: focusGrade !== null && focusGrade.label === 'Top',
           prevUci,
           prevBeforeFen,
         })

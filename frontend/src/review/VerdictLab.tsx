@@ -179,7 +179,8 @@ export function VerdictLab() {
   const result = useMemo(() => buildLabVerdict(state), [state]);
   const { facts, verdict, rules, trace } = result;
   const presetKnown = PRESETS.some(preset => preset.id === state.preset);
-  const blurb = PRESETS.find(preset => preset.id === state.preset)?.blurb;
+  const preset = PRESETS.find(preset => preset.id === state.preset);
+  const blurb = preset === undefined ? null : preset.blurb;
 
   return (
     <div className="app-shell lab-page vlab">
@@ -209,7 +210,7 @@ export function VerdictLab() {
             ))}
           </select>
         </Field>
-        {blurb && <p className="lab-intro">{blurb}</p>}
+        {blurb !== null && <p className="lab-intro">{blurb}</p>}
         <div className="vlab-grid">
           <div className="vlab-knobs">
             <section className="lab-row" aria-label="Position">
@@ -500,7 +501,8 @@ export function VerdictLab() {
                 <div>
                   <dt>engine → display</dt>
                   <dd>
-                    {trace.engineGrade.label} → {trace.finalQuality?.label ?? '—'}
+                    {trace.engineGrade.label} →{' '}
+                    {trace.finalQuality === null ? '—' : trace.finalQuality.label}
                     {trace.alienApplied ? ' (alien upgrade)' : ''}
                   </dd>
                 </div>

@@ -76,7 +76,7 @@ describe('bounded canonical timeline', () => {
       expect(row.fen).toBe(game.fen());
       expect(row.san).toBe(applied?.san ?? '');
       expect(row.turn).toBe(game.turn() === 'w' ? 'white' : 'black');
-      expect(row.lastMove).toEqual(applied ? [applied.from, applied.to] : undefined);
+      expect(row.lastMove).toEqual(applied === undefined ? null : [applied.from, applied.to]);
       expect(row.outcome !== null).toBe(game.isGameOver());
       if (game.isCheckmate())
         terminals.push({ outcome: row.outcome, winner: game.turn() === 'w' ? 'black' : 'white' });
@@ -131,7 +131,7 @@ describe('losing-king square', () => {
     const moved = new Chess(START_FEN);
     moved.move('e2e4');
     expect(kingSquare(moved.fen(), 'white')).toBe('e1');
-    expect(kingSquare('junk', 'white')).toBeUndefined();
+    expect(kingSquare('junk', 'white')).toBeNull();
   });
 });
 describe('time controls', () => {

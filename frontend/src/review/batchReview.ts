@@ -67,7 +67,8 @@ function batchStorage(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | n
 
 export function readPersistedBatch(): PersistedBatch | null {
   try {
-    const raw = batchStorage()?.getItem(BATCH_PERSIST_KEY);
+    const storage = batchStorage();
+    const raw = storage === null ? null : storage.getItem(BATCH_PERSIST_KEY);
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed)) return null;
@@ -93,7 +94,8 @@ export function readPersistedBatch(): PersistedBatch | null {
 
 export function writePersistedBatch(entry: PersistedBatch): void {
   try {
-    batchStorage()?.setItem(BATCH_PERSIST_KEY, JSON.stringify(entry));
+    const storage = batchStorage();
+    if (storage !== null) storage.setItem(BATCH_PERSIST_KEY, JSON.stringify(entry));
   } catch {
     // Private-mode/quota failures keep analysis working; reattach just skips.
   }
@@ -275,7 +277,7 @@ export async function submitBatch(
   // 429 backpressure sits BEFORE the generic branch: wait once per
   // Retry-After, resubmit once, else surface engine-busy.
   if (first.response.status === 429) {
-    await sleepImpl(parseBatchRetryDelayMs(first.response.headers?.get('Retry-After') ?? null));
+    await sleepImpl(parseBatchRetryDelayMs(first.response.headers.get('Retry-After')));
     const second = await postOnce();
     if (second.response.status === 429) {
       throw new BotApiError('engine_busy', 'The review servers are busy. Try again shortly.', 429);

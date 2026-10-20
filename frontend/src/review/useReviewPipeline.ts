@@ -153,7 +153,8 @@ export function translateReviewQualities(args: {
 export type PlayFeedback = {
   active: boolean;
   qualities: (Quality | null)[];
-  error?: string;
+  // Null means no sustained failure — never undefined.
+  error: string | null;
   timeline: Timeline;
   nodes: ReviewNode[];
   evaluations: (Evaluation | null)[];
@@ -200,10 +201,10 @@ export function isOfflineValue(onLine: unknown): boolean {
   return onLine === false;
 }
 
-export function getNavigatorOnLine(): boolean | undefined {
-  if (typeof window === 'undefined' || typeof window.navigator === 'undefined') return undefined;
-  const onLine = window.navigator?.onLine;
-  return typeof onLine === 'boolean' ? onLine : undefined;
+export function getNavigatorOnLine(): boolean | null {
+  if (typeof window === 'undefined' || typeof window.navigator === 'undefined') return null;
+  const onLine = window.navigator.onLine;
+  return typeof onLine === 'boolean' ? onLine : null;
 }
 
 export function isOfflineNow(readOnLine: () => unknown = getNavigatorOnLine): boolean {
@@ -218,10 +219,8 @@ export function hasExhaustedPlayRetries(attemptCount: number): boolean {
   return attemptCount >= FOREGROUND_RETRY_ATTEMPTS;
 }
 
-export function playExhaustedError(hasErrors: boolean, attemptCount: number): string | undefined {
-  return hasErrors && hasExhaustedPlayRetries(attemptCount)
-    ? PLAY_RETRY_EXHAUSTED_MESSAGE
-    : undefined;
+export function playExhaustedError(hasErrors: boolean, attemptCount: number): string | null {
+  return hasErrors && hasExhaustedPlayRetries(attemptCount) ? PLAY_RETRY_EXHAUSTED_MESSAGE : null;
 }
 
 // Nodes that need a heal sweep: no settled row, no recorded failure, and no
@@ -322,8 +321,10 @@ function useRestorePair(args: {
   displayKey: string;
   priorityPlies?: readonly number[];
 }): {
-  restore: { key: string; error?: string } | null;
-  gradeRestore: { key: string; error?: string } | null;
+  // Null restore means not settled yet (never started, loading, or reset) —
+  // never undefined. Error is null on clean settle, a message on failure.
+  restore: { key: string; error: string | null } | null;
+  gradeRestore: { key: string; error: string | null } | null;
   gradeKey: string;
   lane: ReturnType<typeof restoreDescriptor>;
   laneReady: boolean;
@@ -331,13 +332,15 @@ function useRestorePair(args: {
 } {
   const { active, nodes, settings, coordinator, displayKey, priorityPlies } = args;
   const lane = useMemo(() => restoreDescriptor(), []);
-  const [restore, setRestore] = useState<{ key: string; error?: string } | null>(null);
-  const [gradeRestore, setGradeRestore] = useState<{ key: string; error?: string } | null>(null);
+  const [restore, setRestore] = useState<{ key: string; error: string | null } | null>(null);
+  const [gradeRestore, setGradeRestore] = useState<{ key: string; error: string | null } | null>(
+    null,
+  );
   const [restoreAttempt, setRestoreAttempt] = useState(0);
   // Stable across renders so room retry/online effects can depend on it
   // without rescheduling every render.
   const retryRestore = useCallback(() => setRestoreAttempt(attempt => attempt + 1), []);
-  const gradeKey = `${displayKey}|${lane?.suffix ?? 'nolane'}`;
+  const gradeKey = `${displayKey}|${lane.suffix}`;
   useLookupRestore({
     active,
     nodes,
@@ -350,14 +353,14 @@ function useRestorePair(args: {
   useLookupRestore({
     active: active && lane.settings !== null,
     nodes,
-    settings: lane?.settings ?? settings,
-    engines: lane?.engines ?? [],
+    settings: lane.settings ?? settings,
+    engines: lane.engines,
     coordinator,
     loadKey: `${gradeKey}|${restoreAttempt}`,
     priorityPlies,
     onSettled: error => setGradeRestore({ key: gradeKey, error }),
   });
-  const laneReady = lane === null || gradeRestore?.key === gradeKey;
+  const laneReady = gradeRestore !== null && gradeRestore.key === gradeKey;
   return { restore, gradeRestore, gradeKey, lane, laneReady, retryRestore };
 }
 
@@ -424,7 +427,7 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
         gameForLine.settings.userColor,
       ])
     : '';
-  const userColor = gameForLine?.settings.userColor;
+  const userColor = gameForLine === null ? null : gameForLine.settings.userColor;
   // On own-game mainlines, both sides retain the saved game identity for
   // policy (what was actually played): Maia-2 conditions on (Self=mover,
   // Oppo=other), so moverSettings swaps to Self on the user's turns and
@@ -445,7 +448,9 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
         }
       : null;
     return (node: ReviewNode): ReviewSettings =>
-      pinned && userColor && ownGame ? moverSettings(pinned, userColor, node.turn) : settings;
+      pinned !== null && userColor !== null && ownGame
+        ? moverSettings(pinned, userColor, node.turn)
+        : settings;
     // pinnedKey covers the game settings with stable string identity.
     // oxlint-disable-next-line exhaustive-deps
   }, [settings, pinnedKey, userColor, ownGame]);
@@ -465,7 +470,7 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
         mainGameForLine.settings.userColor,
       ])
     : '';
-  const mainUserColor = mainGameForLine?.settings.userColor;
+  const mainUserColor = mainGameForLine === null ? null : mainGameForLine.settings.userColor;
   const mainlineSettingsForNode = useMemo(() => {
     const pinned = mainGameForLine
       ? {
@@ -481,7 +486,7 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
       : null;
     const mainOwnGame = state.analysis.ownGame;
     return (node: ReviewNode): ReviewSettings =>
-      pinned && mainUserColor && mainOwnGame
+      pinned !== null && mainUserColor !== null && mainOwnGame
         ? moverSettings(pinned, mainUserColor, node.turn)
         : settings;
     // mainPinnedKey covers the game settings with stable string identity.
@@ -498,7 +503,8 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   const focusNode = focusPly >= 0 ? nodes[focusPly] : null;
   const currentSettings = settingsForNode(currentNode);
   const focusSettings = focusNode ? settingsForNode(focusNode) : settings;
-  const focusIsBot = !!focusNode && !!userColor && isBotPosition(focusNode, userColor, ownGame);
+  const focusIsBot =
+    focusNode !== null && userColor !== null && isBotPosition(focusNode, userColor, ownGame);
   const tooLong = timeline.moves.length > 256;
 
   // Eagerness (analysis): debounce + batch-wait. Current and previous
@@ -569,7 +575,7 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     active: active && !tooLong,
     nodes,
     settings: settingsForNode,
-    objectiveLane: restorePair.lane?.settings ?? null,
+    objectiveLane: restorePair.lane.settings,
     coordinator,
     scope: active ? scope : null,
     auto: false,
@@ -746,7 +752,7 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   // badge reel -> placeholder -> reel on every poll until evals land. The
   // union holds the reel steady (the play-room ca7effd precedent); misses
   // still settle progressively as rows land and failures never join.
-  const batchRunning = !!batch.progress?.running;
+  const batchRunning = batch.progress !== null && batch.progress.running;
   const sfPendingForGrades = useMemo(() => {
     const base = coordinator.sfPendingKeys();
     if (!active || !batchRunning) return base;
@@ -1017,8 +1023,8 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   // count toward completeness (the objective-point check additionally
   // requires presence, and SF-sourced points always accompany exact rows
   // through the shared check).
-  const laneReady = restorePair.lane === null || gradeRestore?.key === restorePair.gradeKey;
-  const restoresReady = displayRestore?.key === restoreKey && laneReady;
+  const laneReady = gradeRestore !== null && gradeRestore.key === restorePair.gradeKey;
+  const restoresReady = displayRestore !== null && displayRestore.key === restoreKey && laneReady;
   const coverage = useMemo(
     () =>
       active && restoresReady
@@ -1049,9 +1055,9 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     state:
       !active || tooLong
         ? 'none'
-        : displayRestore?.key !== restoreKey || !laneReady
+        : displayRestore === null || displayRestore.key !== restoreKey || !laneReady
           ? 'checking'
-          : coverage?.covered === coverage?.total
+          : coverage !== null && coverage.covered === coverage.total
             ? 'fresh'
             : 'none',
   };
@@ -1073,7 +1079,8 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   // Forward candidates only expose the requested key. The focus panel can
   // retain a same-position previous identity with its explicit stale label.
   const botCurrent = active ? plyAt(botResults, currentPly, 'bot results') : null;
-  const currentError = active ? coordinator.error('sf', currentNode, currentSettings) : undefined;
+  const currentSfError = active ? coordinator.error('sf', currentNode, currentSettings) : undefined;
+  const currentError = currentSfError === undefined ? null : currentSfError;
   const focusLaneError = active ? laneError(coordinator, focusNode) : null;
   const currentLaneError = active ? laneError(coordinator, currentNode) : null;
   const laneMessage =
@@ -1083,32 +1090,51 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
           currentLaneError.state === 'failed' &&
           currentLaneError.message !== ''
         ? currentLaneError.message
-        : undefined;
+        : null;
+  // First named error wins; every arm is an explicit null (no record) or a
+  // message. Coordinator misses stay undefined at their source and fall
+  // through the `||` below without ever surfacing as a state.
+  const focusSfError =
+    active && focusNode !== null ? coordinator.error('sf', focusNode, focusSettings) : undefined;
+  const focusMaiaError =
+    active && focusNode !== null ? coordinator.error('maia', focusNode, focusSettings) : undefined;
+  const currentMaiaError = active
+    ? coordinator.error('maia', currentNode, currentSettings)
+    : undefined;
+  const displayRestoreError =
+    displayRestore !== null && displayRestore.key === restoreKey ? displayRestore.error : null;
+  const gradeRestoreError =
+    restorePair.lane.settings !== null &&
+    gradeRestore !== null &&
+    gradeRestore.key === restorePair.gradeKey
+      ? gradeRestore.error
+      : null;
   const error =
     currentError ||
-    (active && focusNode
-      ? coordinator.error('sf', focusNode, focusSettings) ||
-        coordinator.error('maia', focusNode, focusSettings)
-      : undefined) ||
-    (active ? coordinator.error('maia', currentNode, currentSettings) : undefined) ||
+    focusSfError ||
+    focusMaiaError ||
+    currentMaiaError ||
     laneMessage ||
-    (displayRestore?.key === restoreKey ? displayRestore.error : undefined) ||
-    (restorePair.lane.settings !== null && gradeRestore?.key === restorePair.gradeKey
-      ? gradeRestore.error
-      : undefined) ||
-    batch.error;
+    displayRestoreError ||
+    gradeRestoreError ||
+    batch.error ||
+    null;
+  const batchProgress = batch.progress;
   const batchComplete =
-    !!batch.progress &&
-    !batch.progress.running &&
-    batch.progress.done === batch.progress.total &&
-    !batch.progress.failed;
-  const coverageComplete = !!(coverage && coverage.covered === coverage.total);
+    batchProgress !== null &&
+    !batchProgress.running &&
+    batchProgress.done === batchProgress.total &&
+    batchProgress.failed === 0;
+  const coverageComplete = coverage !== null && coverage.covered === coverage.total;
   const reviewState: ReviewState =
-    error || (batch.progress && batch.progress.failed > 0)
+    error !== null || (batchProgress !== null && batchProgress.failed > 0)
       ? 'failed'
       : batchComplete || coverageComplete
         ? 'complete'
-        : !displayRestore || displayRestore.key !== restoreKey || !laneReady || !coverage
+        : displayRestore === null ||
+            displayRestore.key !== restoreKey ||
+            !laneReady ||
+            coverage === null
           ? 'loading'
           : 'partial';
   return {
@@ -1153,7 +1179,7 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     botStale: displayed.stale,
     botPending: displayed.pending,
     botLocked: focusIsBot,
-    gameElo: gameForLine?.settings.botElo,
+    gameElo: gameForLine === null ? null : gameForLine.settings.botElo,
     error,
     currentError,
     progress: batch.progress,
@@ -1165,7 +1191,9 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     retry: () => {
       coordinator.retry();
       batch.retry();
-      if (displayRestore?.error || gradeRestore?.error) restorePair.retryRestore();
+      const displayFailed = displayRestore !== null && displayRestore.error !== null;
+      const gradeFailed = gradeRestore !== null && gradeRestore.error !== null;
+      if (displayFailed || gradeFailed) restorePair.retryRestore();
     },
     tooLong,
   };
@@ -1348,10 +1376,13 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     const botTargets = merge(botFailed, botMissing, node => reviewKey('maia', node, settings));
     const laneTargets = merge(laneFailed, laneMissing, node => laneKey(node, () => settings));
     const restoreFailed =
-      (displayRestore?.key === restoreBaseKey && !!displayRestore.error) ||
+      (displayRestore !== null &&
+        displayRestore.key === restoreBaseKey &&
+        displayRestore.error !== null) ||
       (restorePair.lane.settings !== null &&
-        gradeRestore?.key === restorePair.gradeKey &&
-        !!gradeRestore.error);
+        gradeRestore !== null &&
+        gradeRestore.key === restorePair.gradeKey &&
+        gradeRestore.error !== null);
     const parts = [
       ...sfFailed.map(node => reviewKey('sf', node, settings)),
       ...botFailed.map(node => reviewKey('maia', node, settings)),
@@ -1388,7 +1419,7 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     restorePair.lane,
   ]);
   const attempts = useRef(new Map<string, number>());
-  const [sustainedError, setSustainedError] = useState<string | undefined>(undefined);
+  const [sustainedError, setSustainedError] = useState<string | null>(null);
   // Deps key on the derived signatures, not the targets object: the keys
   // are pure functions of the failed/missing lists, so unrelated renders
   // neither clear the backoff timer nor schedule duplicates.
@@ -1408,7 +1439,7 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     if (!fetching || (!retryErrorKey && !retryHealKey) || scope.signal.aborted) {
       // Mount-restore sync: adopting a persisted job seeds state once.
       // oxlint-disable-next-line set-state-in-effect
-      if (!retryErrorKey && !retryHealKey) setSustainedError(undefined);
+      if (!retryErrorKey && !retryHealKey) setSustainedError(null);
       return;
     }
     const bucket = `${lineKey}|${settingsKey}`;
@@ -1428,7 +1459,7 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     if (isOfflineNow()) return;
     // Fresh bucket (line/settings change or online reset) drops a previous
     // line's surfaced failure; transient retries stay silent until the cap.
-    setSustainedError(undefined);
+    setSustainedError(null);
     const timer = setTimeout(() => {
       if (scope.signal.aborted || isOfflineNow()) return;
       const { sf, bot, lane, restore: restoreFailed } = latestRetry.current;
@@ -1437,7 +1468,7 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
       // Re-issuing is enough: the coordinator clears failures for desired
       // jobs and skips already-settled ones at the pump.
       if (!latestRetry.current.key) {
-        setSustainedError(undefined);
+        setSustainedError(null);
       } else if (hasExhaustedPlayRetries(attempts.current.get(bucket) ?? 0)) {
         setSustainedError(playExhaustedError(true, attempts.current.get(bucket) ?? 0));
       }
@@ -1475,7 +1506,7 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     const onOnline = () => {
       const bucket = latestBucket.current;
       attempts.current.delete(bucket);
-      setSustainedError(undefined);
+      setSustainedError(null);
       const targets = latestRetry.current;
       if (!targets.key && !targets.heal) return;
       const s = latestSettings.current;

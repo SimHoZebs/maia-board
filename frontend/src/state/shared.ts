@@ -73,7 +73,7 @@ export function queueRequest(state: State): State {
   // matching stay sound. Different games, positions, or settings always key
   // differently (the payload carries moves and full settings).
   const key = `${state.play.id}:${JSON.stringify(request.payload)}`;
-  if (lastQueuedRequest?.key === key)
+  if (lastQueuedRequest !== null && lastQueuedRequest.key === key)
     return { ...state, error: '', request: lastQueuedRequest.request };
   lastQueuedRequest = { key, request };
   return { ...state, error: '', request };

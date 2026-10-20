@@ -219,7 +219,9 @@ export function buildLabVerdict(state: LabState): LabVerdict {
   }
   const legalMoves = (() => {
     try {
-      return game?.moves().length ?? null;
+      // Null game (unparseable FEN) holds the spinner like a pending lane
+      // instead of throwing.
+      return game === null ? null : game.moves().length;
     } catch {
       return null;
     }

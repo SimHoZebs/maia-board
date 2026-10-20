@@ -336,7 +336,7 @@ describe('play retry offline/exhaustion helpers', () => {
     expect(isOfflineValue(0)).toBe(false);
   });
   it('reads navigator onLine guarded (no window in vitest node env)', () => {
-    expect(getNavigatorOnLine()).toBeUndefined();
+    expect(getNavigatorOnLine()).toBeNull();
     expect(isOfflineNow()).toBe(false);
   });
   it('supports injectable online reads and never throws', () => {
@@ -356,9 +356,9 @@ describe('play retry offline/exhaustion helpers', () => {
     expect(hasExhaustedPlayRetries(99)).toBe(true);
   });
   it('surfaces an error only with failures present at the cap', () => {
-    expect(playExhaustedError(false, 3)).toBeUndefined();
-    expect(playExhaustedError(true, 2)).toBeUndefined();
-    expect(playExhaustedError(true, 0)).toBeUndefined();
+    expect(playExhaustedError(false, 3)).toBeNull();
+    expect(playExhaustedError(true, 2)).toBeNull();
+    expect(playExhaustedError(true, 0)).toBeNull();
     expect(playExhaustedError(true, 3)).toBe(PLAY_RETRY_EXHAUSTED_MESSAGE);
     expect(playExhaustedError(true, 4)).toBe(PLAY_RETRY_EXHAUSTED_MESSAGE);
   });

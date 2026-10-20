@@ -20,7 +20,11 @@ export function Dialog({
       if (dialog.open) dialog.close();
       // Return focus to the opener so Escape-to-close lands predictably.
       if (previous && document.contains(previous)) previous.focus();
-      else (document.activeElement instanceof HTMLElement ? document.activeElement : null)?.blur();
+      else {
+        const focused =
+          document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        if (focused !== null) focused.blur();
+      }
     };
   }, []);
   const onBackdropClick = (event: MouseEvent<HTMLDialogElement>) => {

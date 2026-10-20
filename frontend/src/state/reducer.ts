@@ -56,7 +56,9 @@ export function initialState(
   const restoredSession = readSnapshot();
   let analysis = loadLine();
   let analysisLoaded = false;
-  let analysisSourceId: string | null = restoredSession?.gameId ?? null;
+  // Null when no session was restored (fresh boot) — never undefined.
+  const restoredGameId = restoredSession === null ? null : restoredSession.gameId;
+  let analysisSourceId: string | null = restoredGameId;
   if (mode === 'analysis' && urlLine) {
     try {
       const linked = loadLine(urlLine.initialFen, urlLine.moves.join(' '));
@@ -147,7 +149,8 @@ function reduceRoot(state: State, action: Action): State | undefined {
       if (state.mode === 'analysis' && !state.analysisLoaded) return state;
       if (!game.moves({ square: action.from, verbose: true }).some(move => move.to === action.to))
         return state;
-      if (game.get(action.from)?.type === 'p' && /[18]$/.test(action.to))
+      const fromPiece = game.get(action.from);
+      if (fromPiece !== undefined && fromPiece.type === 'p' && /[18]$/.test(action.to))
         return { ...state, promotion: { from: action.from, to: action.to } };
       return commitMove(state, action.from, action.to);
     }

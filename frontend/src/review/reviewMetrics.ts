@@ -95,6 +95,12 @@ export function botRarity(
     topProb,
   };
 }
+// Explicit label test for nullable verdict inputs: null never matches, and
+// no `?.` collapses the miss into an undefined comparison. Used across the
+// rule tables below so every grade gate names its state.
+function isLabel<T extends { label: string }>(value: T | null, label: string): boolean {
+  return value !== null && value.label === label;
+}
 // The verdict carries only the quality × rarity synthesis ("A sharp find.").
 // Grades, scores, and lines already live in badges, charts, and candidate
 // lists. Praise meets findability; negative grades meet popularity.
@@ -370,9 +376,9 @@ const STANDALONE_RULES: StandaloneRule[] = [
     match: facts => facts.terminal === 'stalemate' || facts.terminal === 'repetition',
     render: facts => {
       const negative =
-        facts.quality?.label === 'Blunder' ||
-        facts.quality?.label === 'Mistake' ||
-        facts.quality?.label === 'Inaccuracy';
+        isLabel(facts.quality, 'Blunder') ||
+        isLabel(facts.quality, 'Mistake') ||
+        isLabel(facts.quality, 'Inaccuracy');
       const noun = facts.terminal === 'stalemate' ? 'stalemate' : 'a repetition draw';
       return negative ? `${facts.san} allows ${noun}.` : `${facts.san} forces ${noun}.`;
     },
@@ -394,7 +400,7 @@ const STANDALONE_RULES: StandaloneRule[] = [
   },
   {
     name: 'forced',
-    match: facts => facts.quality?.label === 'Forced',
+    match: facts => isLabel(facts.quality, 'Forced'),
     render: () => `The only legal move.`,
   },
   {
@@ -413,7 +419,7 @@ const STANDALONE_RULES: StandaloneRule[] = [
   // the miss, "common/rare" would just repeat "allows mate".
   {
     name: 'pin-allowed-mate',
-    match: facts => facts.quality?.label === 'Allowed mate' && !!facts.pinClaim,
+    match: facts => isLabel(facts.quality, 'Allowed mate') && !!facts.pinClaim,
     render: facts => {
       const hard = hardToAvoid(facts.bestRarity);
       const fused = fusePinWithMate(facts.pinClaim!);
@@ -439,23 +445,23 @@ const NOTE_RULES: NoteRule[] = [
     match: facts =>
       !!facts.pinClaim &&
       !!facts.materialNote &&
-      (facts.quality?.label === 'Mistake' || facts.quality?.label === 'Blunder'),
+      (isLabel(facts.quality, 'Mistake') || isLabel(facts.quality, 'Blunder')),
     render: facts => fusePinWithMaterial(facts.pinClaim!, facts.materialNote!),
   },
   {
     name: 'material',
     match: facts =>
       !!facts.materialNote &&
-      (facts.quality?.label === 'Mistake' || facts.quality?.label === 'Blunder'),
+      (isLabel(facts.quality, 'Mistake') || isLabel(facts.quality, 'Blunder')),
     render: facts => facts.materialNote!,
   },
   {
     name: 'pawn',
     match: facts =>
       !!facts.pawnNote &&
-      (facts.quality?.label === 'Blunder' ||
-        facts.quality?.label === 'Mistake' ||
-        facts.quality?.label === 'Inaccuracy'),
+      (isLabel(facts.quality, 'Blunder') ||
+        isLabel(facts.quality, 'Mistake') ||
+        isLabel(facts.quality, 'Inaccuracy')),
     render: facts => facts.pawnNote!,
   },
   // Reverse 2400 footnote: the engine convicts but the settled 2400 lane
@@ -464,13 +470,19 @@ const NOTE_RULES: NoteRule[] = [
   // read outranks who plays it). Agreement stays silent — no annotation.
   {
     name: 'maia-hold',
-    match: facts =>
-      (facts.quality?.label === 'Blunder' ||
-        facts.quality?.label === 'Mistake' ||
-        facts.quality?.label === 'Inaccuracy') &&
-      facts.quality?.maiaLoss != null &&
-      Number.isFinite(facts.quality.maiaLoss) &&
-      classifyLoss(facts.quality.maiaLoss) == null,
+    match: facts => {
+      // Narrow once: every check below reads a settled grade, never a miss.
+      const quality = facts.quality;
+      if (quality === null) return false;
+      return (
+        (quality.label === 'Blunder' ||
+          quality.label === 'Mistake' ||
+          quality.label === 'Inaccuracy') &&
+        quality.maiaLoss != null &&
+        Number.isFinite(quality.maiaLoss) &&
+        classifyLoss(quality.maiaLoss) == null
+      );
+    },
     render: () => maiaHold(),
   },
   // Second-pool sociology for the inaccuracy family: the consequence notes
@@ -479,9 +491,9 @@ const NOTE_RULES: NoteRule[] = [
   {
     name: 'second-pool',
     match: facts =>
-      (facts.quality?.label === 'Blunder' ||
-        facts.quality?.label === 'Mistake' ||
-        facts.quality?.label === 'Inaccuracy') &&
+      (isLabel(facts.quality, 'Blunder') ||
+        isLabel(facts.quality, 'Mistake') ||
+        isLabel(facts.quality, 'Inaccuracy')) &&
       secondPoolClause(facts.rarity, facts.rarity2400) != null,
     render: facts => secondPoolClause(facts.rarity, facts.rarity2400)!,
   },
@@ -490,13 +502,13 @@ const NOTE_RULES: NoteRule[] = [
   // and more specific than a tactical motif).
   {
     name: 'only-move',
-    match: facts => facts.quality?.label === 'Alien',
+    match: facts => isLabel(facts.quality, 'Alien'),
     render: () => `Stockfish sees nothing else that holds.`,
   },
   {
     name: 'validated',
     match: facts =>
-      facts.quality?.label === 'Best' &&
+      isLabel(facts.quality, 'Best') &&
       facts.isTop === true &&
       isTinyRare(facts.rarity) &&
       isTinyRare(facts.rarity2400),
@@ -505,9 +517,9 @@ const NOTE_RULES: NoteRule[] = [
   {
     name: 'blind-spot',
     match: facts =>
-      (facts.quality?.label === 'Excellent' ||
-        facts.quality?.label === 'Great' ||
-        facts.quality?.label === 'Best') &&
+      (isLabel(facts.quality, 'Excellent') ||
+        isLabel(facts.quality, 'Great') ||
+        isLabel(facts.quality, 'Best')) &&
       isTinyRare(facts.rarity2400),
     render: () => `Even 2400s rarely play this.`,
   },
@@ -516,12 +528,12 @@ const NOTE_RULES: NoteRule[] = [
   {
     name: 'bright-spot',
     match: facts =>
-      (facts.quality?.label === 'Excellent' ||
-        facts.quality?.label === 'Great' ||
-        facts.quality?.label === 'Best') &&
+      (isLabel(facts.quality, 'Excellent') ||
+        isLabel(facts.quality, 'Great') ||
+        isLabel(facts.quality, 'Best')) &&
       !!facts.rarity &&
       facts.rarity.label !== 'Expected' &&
-      facts.rarity2400?.label === 'Expected',
+      isLabel(facts.rarity2400, 'Expected'),
     render: () => UPSTAIRS_REGULAR,
   },
   // Overruled 2400 drop: the badge is Stockfish-owned (praise) but the
@@ -553,7 +565,7 @@ export function describeMove(args: VerdictArgs): string | null {
   if (!base) return null;
   const head = novelty ? `Leaves ${novelty.priorName} book. ${base}` : base;
   const noteRule = NOTE_RULES.find(rule => rule.match(args));
-  if (noteRule?.name === 'second-pool') {
+  if (noteRule !== undefined && noteRule.name === 'second-pool') {
     const fused = fuseEveryLevel(quality, rarity, rarity2400);
     if (fused) return novelty ? `Leaves ${novelty.priorName} book. ${fused}` : fused;
   }
@@ -571,7 +583,8 @@ export function matchedRuleNames(args: VerdictArgs): {
   const { quality, rarity, bestRarity } = args;
   if (quality === null || quality.label === 'Unreviewed') return { standalone: null, note: null };
   if (!rarityVerdict(quality, rarity, bestRarity)) return { standalone: null, note: null };
-  return { standalone: null, note: NOTE_RULES.find(rule => rule.match(args))?.name ?? null };
+  const note = NOTE_RULES.find(rule => rule.match(args));
+  return { standalone: null, note: note === undefined ? null : note.name };
 }
 export function whiteWin(score: Score): number {
   return score.type === 'cp'
@@ -670,7 +683,11 @@ export function reviewMove(
   if (legal === 1) return { label: 'Forced', accuracy: 100, loss: 0 };
   const pov = (score: Score) => (game.turn() === 'w' ? whiteWin(score) : 100 - whiteWin(score));
   const loss = Math.max(0, pov(before.score) - pov(after.score));
-  const [first, second] = before.lines;
+  // Rank-1/2 rows by position: single-line rows (fast provisional MPV1) have
+  // no second line, and terminal syntheses have none at all. Absent lines
+  // are explicit nulls — never destructured undefined.
+  const firstLine = before.lines.length > 0 ? before.lines[0] : null;
+  const secondLine = before.lines.length > 1 ? before.lines[1] : null;
   const best = played === before.best_move;
   const mover = game.turn() === 'w' ? 'white' : 'black';
   const opp = mover === 'white' ? 'black' : 'white';
@@ -682,11 +699,13 @@ export function reviewMove(
     legal >= 2 &&
     before.score.type === 'cp' &&
     after.score.type === 'cp' &&
-    first?.move === played &&
-    second?.move !== played &&
-    first.score.type === 'cp' &&
-    second?.score.type === 'cp' &&
-    pov(first.score) - pov(second.score) >= 10;
+    firstLine !== null &&
+    firstLine.move === played &&
+    (secondLine === null || secondLine.move !== played) &&
+    firstLine.score.type === 'cp' &&
+    secondLine !== null &&
+    secondLine.score.type === 'cp' &&
+    pov(firstLine.score) - pov(secondLine.score) >= 10;
   if (objective !== undefined) return gradedReviewMove(objective, { best, critical, loss });
   return sfGrade({ best, critical, loss, capNegatives: false });
 }

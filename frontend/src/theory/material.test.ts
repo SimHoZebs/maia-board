@@ -113,7 +113,7 @@ describe('bestLineMaterialNote', () => {
   it('silences promotions, illegal PVs, and missing lines', () => {
     expect(bestLineMaterialNote('7k/P7/8/8/8/8/8/4K3 w - - 0 1', ['a7a8q'], 'white')).toBeNull();
     expect(bestLineMaterialNote(START_FEN, ['e2e9'], 'white')).toBeNull();
-    expect(bestLineMaterialNote(START_FEN, undefined, 'white')).toBeNull();
+    expect(bestLineMaterialNote(START_FEN, null, 'white')).toBeNull();
     expect(bestLineMaterialNote(START_FEN, [], 'white')).toBeNull();
   });
 
@@ -285,7 +285,7 @@ describe('bestLinePreview', () => {
     expect(bestLinePreview(START_FEN, ['e2e4', 'e7e5'], 'white')).toBeNull();
     expect(bestLinePreview('7k/P7/8/8/8/8/8/4K3 w - - 0 1', ['a7a8q'], 'white')).toBeNull();
     expect(bestLinePreview(START_FEN, ['e2e9'], 'white')).toBeNull();
-    expect(bestLinePreview(START_FEN, undefined, 'white')).toBeNull();
+    expect(bestLinePreview(START_FEN, null, 'white')).toBeNull();
   });
 });
 

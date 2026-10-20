@@ -392,7 +392,7 @@ describe('task lifecycles', () => {
   it('boots shared links over the snapshot but keeps its cursor on match', () => {
     localStorage.setItem(
       KEYS.snapshot,
-      JSON.stringify(snapshotOf({ ...loadLine('', '1. e4 e5'), index: 1 })),
+      JSON.stringify(snapshotOf({ ...loadLine('', '1. e4 e5'), index: 1 }, null)),
     );
     const matched = initialState('analysis', { initialFen: START_FEN, moves: ['e2e4', 'e7e5'] });
     expect(matched.analysisLoaded).toBe(true);
@@ -407,7 +407,7 @@ describe('task lifecycles', () => {
       '',
       '[White "Alice Cooper"]\n[Black "Bob Marley"]\n[WhiteElo "1500"]\n\n1. e4 e5',
     );
-    localStorage.setItem(KEYS.snapshot, JSON.stringify(snapshotOf({ ...line, index: 1 })));
+    localStorage.setItem(KEYS.snapshot, JSON.stringify(snapshotOf({ ...line, index: 1 }, null)));
     const booted = initialState('analysis', {
       initialFen: START_FEN,
       moves: ['e2e4', 'e7e5'],
@@ -949,7 +949,7 @@ describe('canonical timeline', () => {
         expect(row.turn).toBe(game.turn() === 'w' ? 'white' : 'black');
         expect(row.san).toBe(last?.san ?? '');
         expect(row.uci).toBe(last ? `${last.from}${last.to}${last.promotion ?? ''}` : '');
-        expect(row.lastMove).toEqual(last ? [last.from, last.to] : undefined);
+        expect(row.lastMove).toEqual(last === undefined ? null : [last.from, last.to]);
         expect(row.outcome !== null).toBe(terminalEvaluation(game) !== null);
       }
     }

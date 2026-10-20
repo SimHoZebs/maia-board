@@ -33,10 +33,10 @@ describe('bestLineSource', () => {
     expect(stockfishBestLineUcis(sfEval(['e2e4']), 3)).toEqual(['e2e4']);
   });
 
-  it('returns undefined without a usable PV', () => {
-    expect(stockfishBestLineUcis(undefined, 3)).toBeUndefined();
-    expect(stockfishBestLineUcis(sfEval(undefined), 3)).toBeUndefined();
-    expect(stockfishBestLineUcis(sfEval([]), 3)).toBeUndefined();
+  it('returns null without a usable PV', () => {
+    expect(stockfishBestLineUcis(null, 3)).toBeNull();
+    expect(stockfishBestLineUcis(sfEval(undefined), 3)).toBeNull();
+    expect(stockfishBestLineUcis(sfEval([]), 3)).toBeNull();
   });
 
   it('prefers stockfish when selected, maia otherwise', () => {
@@ -60,10 +60,10 @@ describe('bestLineSource', () => {
     // Stockfish source never falls back to the Maia walk: a missing PV is
     // silence, not a cross-source substitution.
     expect(
-      resolveBestLineUcis({ source: 'stockfish', stockfishUcis: undefined, maiaUcis: ['f6e4'] }),
-    ).toBeUndefined();
+      resolveBestLineUcis({ source: 'stockfish', stockfishUcis: null, maiaUcis: ['f6e4'] }),
+    ).toBeNull();
     expect(
-      resolveBestLineUcis({ source: 'maia', stockfishUcis: ['a5c4'], maiaUcis: undefined }),
-    ).toBeUndefined();
+      resolveBestLineUcis({ source: 'maia', stockfishUcis: ['a5c4'], maiaUcis: null }),
+    ).toBeNull();
   });
 });

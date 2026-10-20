@@ -450,7 +450,8 @@ function captureOf(
   try {
     const probe = new Chess(beforeFen);
     const applied = applyUci(probe, uci);
-    const piece = applied.captured?.toLowerCase();
+    const takenPiece = applied.captured;
+    const piece = takenPiece === undefined ? null : takenPiece.toLowerCase();
     if (!piece || !isCapturedPiece(piece)) return null;
     return { piece, square: applied.to };
   } catch {
@@ -481,10 +482,14 @@ export function createMoveFacts(args: {
     from = applied.from;
     to = applied.to;
     san = applied.san;
-    const taken = applied.captured?.toLowerCase();
+    const rawTaken = applied.captured;
+    const taken = rawTaken === undefined ? null : rawTaken.toLowerCase();
     captured = taken && isCapturedPiece(taken) ? taken : null;
     promotion = applied.promotion;
-    moverPiece = postMoveGame.get(to)?.type?.toLowerCase() ?? '';
+    moverPiece = (() => {
+      const landed = postMoveGame.get(to);
+      return landed === undefined ? '' : landed.type.toLowerCase();
+    })();
     givesCheck = postMoveGame.inCheck();
   } catch {
     return null;

@@ -50,8 +50,8 @@ export function LichessSyncControl({ username, rating }: { username: string; rat
 
   // Reports only what the persistent lines cannot: failures, and how many
   // games arrived or gained missing details. A clean sync with nothing new
-  // reports nothing.
-  const syncAll = async (since?: string): Promise<string | null> => {
+  // reports nothing. Null since means a full import (no lower bound).
+  const syncAll = async (since: string | null): Promise<string | null> => {
     const problems: string[] = [];
     let added = 0;
     let refreshed = 0;
@@ -68,7 +68,7 @@ export function LichessSyncControl({ username, rating }: { username: string; rat
         added = result.saved.length;
         refreshed = result.refreshed;
         if (failed) problems.push(`${failed} game${failed === 1 ? '' : 's'} failed to save.`);
-      } else if (!since) {
+      } else if (since === null) {
         return 'No importable games found.';
       }
     } catch (error) {
@@ -81,7 +81,8 @@ export function LichessSyncControl({ username, rating }: { username: string; rat
     // already succeeded and reported its counts.
     if (added || refreshed) {
       try {
-        await syncRef.current?.retry();
+        const syncStore = syncRef.current;
+        if (syncStore !== null) await syncStore.retry();
       } catch {
         /* import counts above already reported; history refreshes next load */
       }
@@ -94,7 +95,7 @@ export function LichessSyncControl({ username, rating }: { username: string; rat
     return parts.length ? parts.join(' ') : null;
   };
 
-  const doSync = async (since?: string) => {
+  const doSync = async (since: string | null) => {
     if (syncingRef.current) return;
     syncingRef.current = true;
     setBusy(true);
@@ -132,7 +133,11 @@ export function LichessSyncControl({ username, rating }: { username: string; rat
       syncingRef.current = true;
       setBusy(true);
       try {
-        if (live) setSyncState(await syncAll(statusRef.current?.last?.created_at));
+        // Null status (never synced) and null last run both mean a full
+        // import — named once here instead of a `?.` chain at the call.
+        const snapshot = statusRef.current;
+        const lastRun = snapshot === null ? null : snapshot.last;
+        if (live) setSyncState(await syncAll(lastRun === null ? null : lastRun.created_at));
       } catch {
         // syncAll already degrades per leg; nothing left to report.
       } finally {
@@ -159,10 +164,11 @@ export function LichessSyncControl({ username, rating }: { username: string; rat
     saveLichessEloBasis(next);
     // The effect above re-runs on the basis change and syncs; an explicit
     // pass here covers the case where it is already mid-flight and skips.
-    if (!syncingRef.current) void doSync(status?.last?.created_at);
+    const lastRun = status === null ? null : status.last;
+    if (!syncingRef.current) void doSync(lastRun === null ? null : lastRun.created_at);
   };
 
-  const last = status?.last ?? null;
+  const last = status === null ? null : status.last;
   const fellBack = matchedElo !== null && basis !== 'auto' && basis !== matchedElo.perf;
   return (
     <div className="settings-control">
@@ -194,7 +200,7 @@ export function LichessSyncControl({ username, rating }: { username: string; rat
             </Button>
             <Button
               variant="quiet"
-              onClick={() => doSync()}
+              onClick={() => doSync(null)}
               disabled={busy}
               aria-label="Backfill details"
               title="Re-download your full Lichess history to fill missing details (opponent, rating change, time control, clock readings) on already-imported games"
@@ -203,7 +209,7 @@ export function LichessSyncControl({ username, rating }: { username: string; rat
             </Button>
           </>
         ) : (
-          <Button variant="primary" onClick={() => doSync()} disabled={busy}>
+          <Button variant="primary" onClick={() => doSync(null)} disabled={busy}>
             {busy ? 'Importing…' : 'Import games + rating'}
           </Button>
         )}

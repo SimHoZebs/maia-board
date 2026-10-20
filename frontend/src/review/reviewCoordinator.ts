@@ -6,6 +6,7 @@ import {
   type MoveResponse,
 } from '../eval/api';
 import { ceilElo } from '../board/BoardTools';
+import { mapGetOrNull } from '../shared/explicit';
 // Canonical terms: see spec/GLOSSARY.md.
 // transport = shared JSON-POST sender (evaluationTransport); coordinator =
 // foreground coordinator (this class, at most one live request per engine,
@@ -239,7 +240,8 @@ export class ReviewCoordinator {
       if (signal) {
         const keys = new Set(desired.map(job => job.key));
         const removeQueued = (engine: Engine, job: Job) => {
-          if (this.pending[engine].get(job.key)?.job === job) this.pending[engine].delete(job.key);
+          const queued = mapGetOrNull(this.pending[engine], job.key);
+          if (queued !== null && queued.job === job) this.pending[engine].delete(job.key);
         };
         if (signal.aborted) {
           for (const job of desired) removeQueued(job.engine, job);
@@ -276,7 +278,7 @@ export class ReviewCoordinator {
       // work by passing priorityPlies: queue the live pair above, then
       // restore settled rows focus-first below. The second phase dedupes via
       // the store cache check, so no duplicate fetch storm.
-      if (priorityPlies?.length)
+      if (priorityPlies !== undefined && priorityPlies.length > 0)
         return this.restore(nodes, settings, signal, wanted, priorityPlies);
     }
   }
@@ -298,8 +300,10 @@ export class ReviewCoordinator {
           ),
         ),
     );
-    for (const [key, engine] of keys)
-      this.restoring.set(key, { count: (this.restoring.get(key)?.count ?? 0) + 1, engine });
+    for (const [key, engine] of keys) {
+      const prior = mapGetOrNull(this.restoring, key);
+      this.restoring.set(key, { count: (prior === null ? 0 : prior.count) + 1, engine });
+    }
     this.notify();
     try {
       return await this.store.restore(nodes, settings, [...wanted], signal, priorityPlies);
@@ -448,7 +452,7 @@ export class ReviewCoordinator {
   // Analysis never touches this path (POST /move/analysis → Focus), so a
   // live reply is only ever superseded by a newer live reply.
   async playMove(payload: MoveRequest): Promise<MoveResponse & { cached?: boolean }> {
-    this.playFlight?.abort();
+    if (this.playFlight !== null) this.playFlight.abort();
     const controller = new AbortController();
     this.playFlight = controller;
     try {
@@ -458,7 +462,7 @@ export class ReviewCoordinator {
     }
   }
   abortPlayMove(): void {
-    this.playFlight?.abort();
+    if (this.playFlight !== null) this.playFlight.abort();
     this.playFlight = null;
   }
 }

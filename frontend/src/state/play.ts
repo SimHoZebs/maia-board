@@ -77,7 +77,7 @@ export function reducePlay(state: State, action: Action): State | undefined {
         const uci = action.response.move;
         const from = parseSquare(uci.slice(0, 2));
         const to = parseSquare(uci.slice(2, 4));
-        if (from === undefined || to === undefined)
+        if (from === null || to === null)
           throw new Error(`Bot returned an unreadable move: ${uci}`);
         const { moves } = extendLine(state.play.moves, START_FEN, from, to, uci[4]);
         return {
