@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useContext } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { Button } from '../components';
 import { bulkImport, importStatus, type ImportStatus } from '../history/account';
+import { SyncContext } from '../history/syncStore';
 import {
   LICHESS_BASIS_OPTIONS,
   downloadLichessGames,
@@ -27,10 +28,13 @@ function syncErrorMessage(error: unknown, fallback: string): string {
 export function LichessSyncControl({ username, rating }: { username: string; rating: number }) {
   const basis = useLichessEloBasis();
   const matchedElo = matchingLichessCache(useLichessEloCache(), username);
+  const sync = useContext(SyncContext);
   const [busy, setBusy] = useState(false);
   const [syncState, setSyncState] = useState<string | null>(null);
   const [status, setStatus] = useState<ImportStatus | null>(null);
   const syncingRef = useRef(false);
+  const syncRef = useRef(sync);
+  syncRef.current = sync;
 
   const refreshStatus = async () => {
     try {
@@ -71,6 +75,17 @@ export function LichessSyncControl({ username, rating }: { username: string; rat
       problems.push(syncErrorMessage(error, 'Games import failed.'));
     }
     await refreshStatus();
+    // Bulk import writes straight to the server, bypassing the game
+    // repository. Refresh it so history shows the new games without a
+    // page reload; failures stay silent here since the import itself
+    // already succeeded and reported its counts.
+    if (added || refreshed) {
+      try {
+        await syncRef.current?.retry();
+      } catch {
+        /* import counts above already reported; history refreshes next load */
+      }
+    }
     if (problems.length) return problems.join(' ');
     const parts: string[] = [];
     if (added) parts.push(`+${added} new game${added === 1 ? '' : 's'}.`);
