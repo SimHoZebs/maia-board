@@ -13,7 +13,8 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "openapi": "(cd ../backend && OPENAPI_DUMP=../spec/openapi.yaml go run ./cmd/server)",
-    "api:gen": "npm run openapi && npx orval",
+    "api:gen": "npm run openapi && npx orval && npm run api:md",
+    "api:md": "npm run openapi && npx widdershins ../spec/openapi.yaml -o ../docs/API.md",
     "build:bundle": "vite build",
     "build": "npm run typecheck && npm run build:bundle",
     "build:profiling": "tsc --noEmit && vite build --mode profiling --outDir dist-profiling",
@@ -49,6 +50,7 @@
     "oxlint": "1.88.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.0",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.0",
+    "widdershins": "^4.0.1"
   }
 }

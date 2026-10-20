@@ -7,6 +7,96 @@
 import * as zod from 'zod';
 
 /**
+ * @summary Lichess OAuth browser leg (302 back into the app)
+ */
+export const LichessCallbackQueryParams = zod.strictObject({
+  "code": zod.string().optional(),
+  "state": zod.string().optional()
+})
+
+export const LichessCallbackBody = zod.strictObject({
+  "code": zod.string(),
+  "state": zod.string()
+})
+
+export const LichessCallbackResponse = zod.void()
+
+
+/**
+ * @summary Lichess OAuth code exchange (JSON leg)
+ */
+export const LichessCallbackPostQueryParams = zod.strictObject({
+  "code": zod.string().optional(),
+  "state": zod.string().optional()
+})
+
+export const LichessCallbackPostBody = zod.strictObject({
+  "code": zod.string(),
+  "state": zod.string()
+})
+
+export const LichessCallbackPostResponse = zod.strictObject({
+  "$schema": zod.url().optional().describe('A URL to the JSON Schema for this object.'),
+  "created_at": zod.string(),
+  "display_name": zod.string(),
+  "id": zod.string(),
+  "lichess_id": zod.string().optional(),
+  "lichess_username": zod.string().optional()
+})
+
+
+/**
+ * @summary Begin Lichess OAuth (PKCE S256, scope preference:read)
+ */
+export const LichessStartQueryParams = zod.strictObject({
+  "redirect_uri": zod.string().optional()
+})
+
+export const LichessStartResponse = zod.strictObject({
+  "$schema": zod.url().optional().describe('A URL to the JSON Schema for this object.'),
+  "authorization_url": zod.string(),
+  "state": zod.string()
+})
+
+
+/**
+ * @summary Begin Lichess OAuth (JSON leg)
+ */
+export const LichessStartPostQueryParams = zod.strictObject({
+  "redirect_uri": zod.string().optional()
+})
+
+export const LichessStartPostResponse = zod.strictObject({
+  "$schema": zod.url().optional().describe('A URL to the JSON Schema for this object.'),
+  "authorization_url": zod.string(),
+  "state": zod.string()
+})
+
+
+/**
+ * @summary Create a local session account
+ */
+export const AuthLocalBody = zod.strictObject({
+  "display_name": zod.string()
+})
+
+export const AuthLocalResponse = zod.strictObject({
+  "$schema": zod.url().optional().describe('A URL to the JSON Schema for this object.'),
+  "created_at": zod.string(),
+  "display_name": zod.string(),
+  "id": zod.string(),
+  "lichess_id": zod.string().optional(),
+  "lichess_username": zod.string().optional()
+})
+
+
+/**
+ * @summary Revoke the session
+ */
+export const AuthLogoutResponse = zod.void()
+
+
+/**
  * @summary Stockfish search (Focus lane)
  */
 export const EvaluateBody = zod.strictObject({
@@ -243,6 +333,44 @@ export const HealthzResponse = zod.strictObject({
 
 
 /**
+ * @summary Bulk Lichess history append (max 100 entries, 4 MiB)
+ */
+export const ImportsGamesResponse = zod.unknown()
+
+
+/**
+ * @summary Newest Lichess import run plus owned total
+ */
+export const ImportsStatusResponse = zod.strictObject({
+  "$schema": zod.url().optional().describe('A URL to the JSON Schema for this object.'),
+  "last": zod.strictObject({
+  "created_at": zod.string(),
+  "id": zod.string(),
+  "provider": zod.string(),
+  "requested": zod.int(),
+  "saved": zod.int(),
+  "skipped": zod.int(),
+  "user_id": zod.string(),
+  "username": zod.string()
+}),
+  "total": zod.int()
+})
+
+
+/**
+ * @summary Current session user
+ */
+export const MeResponse = zod.strictObject({
+  "$schema": zod.url().optional().describe('A URL to the JSON Schema for this object.'),
+  "created_at": zod.string(),
+  "display_name": zod.string(),
+  "id": zod.string(),
+  "lichess_id": zod.string().optional(),
+  "lichess_username": zod.string().optional()
+})
+
+
+/**
  * @summary Live Maia game reply (Play lane)
  */
 export const MoveBody = zod.strictObject({
@@ -398,3 +526,13 @@ export const ReviewsStatusResponse = zod.strictObject({
   "job_id": zod.string(),
   "total": zod.int()
 })
+
+
+/**
+ * @summary Batch progress stream (fast-path; poll is ground truth)
+ */
+export const ReviewsEventsParams = zod.object({
+  "id": zod.string().describe('Batch job id')
+})
+
+export const ReviewsEventsResponse = zod.unknown()
