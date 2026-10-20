@@ -64,30 +64,20 @@ type Grant struct {
 	t *ticket
 }
 
-// Scheduler orders admission to engine slots across three FIFO lanes.
-// Lane derives from the endpoint (/move→Play, /move/analysis→Focus,
-// /evaluate→Focus, /reviews→Batch); the X-Priority header is ignored
-// (legacy clients may still send it). The /move vs /move/analysis split is
-// intentional: a live reply and its analysis fire together every move, and
-// same-lane arrivals supersede instead of queueing, so merging them would
-// 409 the live reply.
+// Scheduler orders admission to engine slots across FIFO lanes: sync lanes
+// are depth-1 latest-wins (a newer same-lane arrival supersedes the queued
+// waiter, which gets ErrSuperseded), Batch is unbounded FIFO. Lane mapping
+// and grant order live in spec/GLOSSARY.md. Dedup-by-key spans lanes within
+// this scheduler instance; empty keys never dedup. (The X-Priority header
+// is ignored.)
 // It owns ordering and cancellation only; execution stays with the caller
 // (Worker.predict / Evaluator.run), which keeps its own timeouts and process
 // lifecycle. The zero value is unusable; use NewScheduler.
 //
-// Depths: Play 1 latest-wins, Focus 1 latest-wins (a new arrival replaces the
-// queued waiter, which gets ErrSuperseded and never consumes a slot),
-// Batch unbounded FIFO. Dedup-by-key spans lanes within this scheduler
-// instance; empty keys never dedup. Stockfish runs two instances
-// (interactive + batch), so a Focus duplicate of in-flight Batch work
-// recomputes instead of joining; correctness is unaffected (last write wins).
-// Grant order is Play>Focus>Batch, non-preemptive (a grant waits at most for
-// a running op to finish).
-//
 // Capacity is the number of concurrent grants (engine slots behind this
-// scheduler). NewScheduler keeps the historical single-slot behavior;
-// pools build multi-slot schedulers with NewSchedulerWithCapacity so N
-// replicas share one priority queue, dedup map, and rotation cursor.
+// scheduler). NewScheduler builds a single-slot scheduler; pools build
+// multi-slot schedulers with NewSchedulerWithCapacity so N replicas share
+// one priority queue, dedup map, and rotation cursor.
 type Scheduler struct {
 	mu          sync.Mutex
 	queues      [3][]*ticket

@@ -11,8 +11,8 @@ import (
 // Handlers map it to 400; the DB trigger enforces the same bound.
 var ErrInvalidDisplayName = errors.New("display_name must be 1-40 printable characters")
 
-// User is the account primitive. Games, current markers, review jobs, and
-// engine calls scope to User.ID. Lichess linkage is optional: local users
+// User is the account primitive. Games, current markers, batch-review jobs,
+// and engine calls scope to User.ID. Lichess linkage is optional: local users
 // exist first, Lichess OAuth links later.
 type User struct {
 	ID              string `json:"id"`
@@ -283,10 +283,8 @@ func (s *GameStore) CountUnowned() (int, error) {
 	return countRows(s.db, `SELECT COUNT(*) FROM games WHERE owner_id = ''`)
 }
 
-// UpdateOpponentIfEmpty backfills a missing opponent name on an imported row
-// (legacy safety for rows saved before names were stamped; strict imports
-// always carry a name, so this is normally a no-op overwrite guard).
-// Never touches updated_at: a name refresh must not churn recency order.
+// UpdateOpponentIfEmpty fills a missing opponent name on an imported row.
+// Never touches updated_at: a refresh must not churn recency.
 func (s *GameStore) UpdateOpponentIfEmpty(ownerID, source, opponent string) (bool, error) {
 	if ownerID == "" || source == "" || opponent == "" {
 		return false, nil
@@ -303,9 +301,8 @@ func (s *GameStore) UpdateOpponentIfEmpty(ownerID, source, opponent string) (boo
 	return count > 0, nil
 }
 
-// UpdateRatingDiffIfEmpty backfills a missing Lichess ratingDiff on an
-// imported row (re-imports refresh diffs for rows saved before diffs were
-// stamped). Never touches updated_at: a diff refresh must not churn recency.
+// UpdateRatingDiffIfEmpty fills a missing Lichess ratingDiff on an
+// imported row. Never touches updated_at: a refresh must not churn recency.
 func (s *GameStore) UpdateRatingDiffIfEmpty(ownerID, source string, ratingDiff *int) (bool, error) {
 	if ownerID == "" || source == "" || ratingDiff == nil {
 		return false, nil
@@ -322,9 +319,8 @@ func (s *GameStore) UpdateRatingDiffIfEmpty(ownerID, source string, ratingDiff *
 	return count > 0, nil
 }
 
-// UpdateTimeControlIfEmpty backfills a missing clock setting on an imported
-// row (re-imports refresh time controls for rows saved before they were
-// stamped). Never touches updated_at: a clock refresh must not churn recency.
+// UpdateTimeControlIfEmpty fills a missing clock setting on an imported
+// row. Never touches updated_at: a refresh must not churn recency.
 func (s *GameStore) UpdateTimeControlIfEmpty(ownerID, source string, timeControl, speed *string) (bool, error) {
 	if ownerID == "" || source == "" || (timeControl == nil && speed == nil) {
 		return false, nil
@@ -357,10 +353,8 @@ func (s *GameStore) UpdateTimeControlIfEmpty(ownerID, source string, timeControl
 	return updated, nil
 }
 
-// UpdateClocksIfEmpty backfills missing per-ply readings on an imported
-// row (re-imports refresh readings for rows saved before clocks were
-// requested). Never touches updated_at: a readings refresh must not churn
-// recency.
+// UpdateClocksIfEmpty fills missing per-ply readings on an imported row.
+// Never touches updated_at: a refresh must not churn recency.
 func (s *GameStore) UpdateClocksIfEmpty(ownerID, source string, clocks []int) (bool, error) {
 	if ownerID == "" || source == "" || clocks == nil {
 		return false, nil

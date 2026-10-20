@@ -46,7 +46,7 @@ type EvaluationLine struct {
 	// Optional rank-1 PV (up to 5 UCI, first == Move) rooted at the evaluated
 	// position. Rows stored before the PV feature have no PV; the server
 	// treats those as a cache miss (see lookupSFCandidateFrom) so one live
-	// re-search backfills them. Frontend rows without a PV stay silent.
+	// re-search refreshes them. Frontend rows without a PV stay silent.
 	PV []string `json:"pv,omitempty"`
 }
 
@@ -66,35 +66,15 @@ type EvaluationResponse struct {
 	WaitMs int64 `json:"-"`
 }
 
-// Evaluator owns the priority schedulers, one warm helper per scheduler, and
-// the trusted process configuration. Each slot's helper is a persistent
-// `python helper --serve` process holding a warm interpreter and a warm
-// engine: repeat requests skip interpreter startup, python-chess import, and
-// UCI spawn, paying only the search budget. The schedulers still order
-// admission to protect the CPU; the per-slot grant serializes that slot's
-// helper exchange, so interactive Focus work never shares a process with a
-// Batch search.
-//
-// Per-request overhead left (see stockfish_timing spawn_ms vs search_ms):
-// spawn_ms is ~0 on a warm engine and only nonzero after a restart. Fork
-// isolation is gone, but cancellation is unchanged (SIGKILL of the process
-// group on timeout, helper restarts on next use) and output validation still
-// rejects garbage per request. The engine's 128 MiB hash persists across
-// requests within a slot; that only affects speed, never validity.
-//
-// GOMAXPROCS-aware concurrency: two admission slots instead of one. The
-// interactive scheduler serves Play>Focus>Batch for sync traffic (/evaluate
-// uses Focus); the batch scheduler serves Batch reviews. Focus therefore never
-// queues behind a Batch entry's in-flight ~750ms search. Worst case is 2
-// concurrent searches x 4 Stockfish threads = 8 busy threads, sized for
-// typical 4-8 CPU hosts. Dedup-by-key is per-scheduler: a Focus duplicate of
-// an in-flight Batch position recomputes instead of joining; correctness is
-// unaffected (last write wins, cache identity is deterministic).
+// Evaluator owns the priority schedulers, one warm helper per slot, and
+// the trusted process configuration. Two slots (interactive + batch) so
+// Focus never queues behind a Batch search; lane semantics live in
+// spec/GLOSSARY.md.
 type Evaluator struct {
 	command []string
-	// sched is the interactive slot (Play>Focus>Batch ordering).
+	// sched is the interactive scheduler (Play>Focus>Batch ordering).
 	sched *sched.Scheduler
-	// batchSched is the batch slot (Batch reviews). Nil in some tests;
+	// batchSched is the batch scheduler. Nil in some tests;
 	// schedulerFor falls back to whichever scheduler exists.
 	batchSched *sched.Scheduler
 	timeout    time.Duration
@@ -134,21 +114,21 @@ func NewEvaluatorForTest(command []string, timeout time.Duration) *Evaluator {
 // workerFor returns the warm helper for one scheduler, starting from
 // nothing on first use. One worker per scheduler keeps the interactive and
 // batch slots on separate processes, matching the separate admission slots.
-func (e *Evaluator) workerFor(slot *sched.Scheduler) *stockfishWorker {
+func (e *Evaluator) workerFor(scheduler *sched.Scheduler) *stockfishWorker {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.workers == nil {
 		e.workers = make(map[*sched.Scheduler]*stockfishWorker)
 	}
-	worker, ok := e.workers[slot]
+	worker, ok := e.workers[scheduler]
 	if !ok {
 		worker = &stockfishWorker{command: append([]string(nil), e.command...)}
-		e.workers[slot] = worker
+		e.workers[scheduler] = worker
 	}
 	return worker
 }
 
-// exchange serves one lookup on the warm helper, starting it on demand. Any
+// exchange serves one search on the warm helper, starting it on demand. Any
 // protocol or timeout failure kills the process group and drops it — the
 // next exchange restarts clean (losing warmth only on the failure path).
 func (w *stockfishWorker) exchange(ctx context.Context, input []byte) ([]byte, error) {
@@ -228,8 +208,7 @@ func (w *stockfishWorker) ensureLocked(ctx context.Context) error {
 }
 
 // readLineLocked reads one newline-terminated reply, bounded so a rogue
-// helper cannot grow the server's memory without limit (the old fork path
-// capped collection at the same bound).
+// helper cannot grow the server's memory without limit.
 func (w *stockfishWorker) readLineLocked(ctx context.Context) ([]byte, error) {
 	proc := w.proc
 	type response struct {
@@ -282,10 +261,10 @@ func (w *stockfishWorker) failLockedWithMu() {
 	w.failLocked()
 }
 
-// schedulerFor picks the admission slot by priority: Batch reviews use the
-// batch slot, everything else (Play/Focus sync) uses the interactive slot so
-// Focus never waits for a Batch search. Test-constructed Evaluators with a nil
-// slot fall back to the existing one.
+// schedulerFor picks the scheduler by priority: Batch work uses the batch
+// scheduler, everything else (Play/Focus sync) uses the interactive
+// scheduler so Focus never waits for a Batch search. Test-constructed
+// Evaluators with a nil scheduler fall back to the existing one.
 func (e *Evaluator) schedulerFor(prio sched.Priority) *sched.Scheduler {
 	if prio == sched.PriorityBatch {
 		if e.batchSched != nil {
@@ -378,8 +357,7 @@ func (e *Evaluator) Run(waitCtx, execCtx context.Context, prio sched.Priority, s
 		return fail(err)
 	}
 	if err := ctx.Err(); err != nil {
-		// Answered at the deadline: don't trust or serve it, matching the
-		// old fork path (which killed the group here instead).
+		// Answered at the deadline: don't trust or serve it.
 		e.workerFor(sched).failLockedWithMu()
 		return fail(err)
 	}
@@ -398,9 +376,8 @@ func (e *Evaluator) Run(waitCtx, execCtx context.Context, prio sched.Priority, s
 		}
 	}
 	var result EvaluationResponse
-	// Single strict decode path (validate-on-write owns poisoning defense;
-	// read validates shape once here, then semantic ranges below). This
-	// collapses the former evaluationDocument+strictDocument double decode.
+	// Single strict decode path: read validates shape here, then semantic
+	// ranges below.
 	decoded, err := evalcache.DecodeStrict[EvaluationResponse](output, EvalRequired, DocAllowNull)
 	if err != nil || !ValidEvaluationValue(decoded, request.Settings) {
 		return fail(errors.New("invalid worker response"))

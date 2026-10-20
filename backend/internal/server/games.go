@@ -18,10 +18,9 @@ type GamesListInput struct {
 }
 
 // GamesPage is the GET /games document. current_id and next_offset stay
-// null (never omitted) exactly like the old mux; current_game is omitted
-// when unset because Huma cannot express a required-but-nullable object
-// $ref, and the client already treats an absent game as none. Saved tabs
-// keep reading all three without a shape check.
+// null (never omitted); current_game is omitted when unset because Huma
+// cannot express a required-but-nullable object $ref, and the client
+// already treats an absent game as none.
 type GamesPage struct {
 	Games       []store.GameRow `json:"games"`
 	CurrentID   *string         `json:"current_id"`
@@ -139,14 +138,12 @@ func (s *Server) handleGamesCreate(ctx context.Context, input *GamesCreateInput)
 		status = http.StatusBadRequest
 		return nil, apiError(status, err.Code, err.Message)
 	}
-	// Play is always against the engine: the opponent name is server-owned,
-	// stamped from the bot Elo, never taken from the client. Local games
-	// carry the explicit `local` source so the column never holds `''`.
+	// Play is always against the engine: opponent, source, and rating fields
+	// are server-stamped, and any client-sent clock is cleared (local play
+	// is untimed), never stored.
 	payload.Opponent = "Maia " + strconv.Itoa(*payload.EloMaia)
 	payload.Source = "local"
 	payload.RatingDiff = nil
-	// Local play is untimed: no user-facing clock setting exists, so the
-	// server clears any client-sent clock rather than storing it.
 	payload.TimeControl = nil
 	payload.Speed = nil
 	payload.Clocks = nil

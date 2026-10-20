@@ -35,14 +35,9 @@ const (
 )
 
 // Single executor: one resolve + execute path for /move, /move/analysis,
-// /evaluate, and /reviews entries. Lookup reuses resolve read-only (no admission, no store).
-// Live callers pass strictBatch=false (forgiving: 79M→5M degraded fallback is
-// served but never cached); batch entries pass strictBatch=true (per-index
-// failure so live can retry). Both engines keep one timeout policy each
-// (Worker.startWait/moveWait, Evaluator.timeout); admission lives inside
-// predict/run. Work runs on detached contexts so disconnects never leak slots
-// and granted ops still write through. Intake cache-filtering happens at
-// batch submit (resolveBatchEntryRequest + prefetched intake filter); write-through happens inside execute.
+// /evaluate, and /reviews entries; lookup reuses resolve read-only.
+// strictBatch=false serves degraded 79M→5M fallback without caching;
+// strictBatch=true fails per-index so live can retry.
 func resolveSFQuery(query LookupRequest, initialFEN string, prefix []string) (engine.EvaluationRequest, *apierror.RequestError) {
 	if prefix == nil {
 		return engine.EvaluationRequest{}, &apierror.RequestError{Code: "invalid_request", Message: "moves must be an array"}
@@ -84,10 +79,7 @@ func resolveMaiaQuery(query LookupRequest, initialFEN string, prefix []string) (
 }
 
 // engineExecutor unifies the Stockfish and Maia execute paths behind one
-// contract: cache-read, run, validate, store, with degraded policy handled
-// generically (SF never degrades; Maia live serves degraded without caching,
-// batch fails per-index). Both engines keep one timeout policy each;
-// admission lives inside runLive.
+// contract: cache-read, run, validate, store.
 type engineExecutor[T any] interface {
 	loadCached() (T, bool)
 	runLive(waitCtx, execCtx context.Context, prio sched.Priority, submitSeq uint64) (result T, release func(), degraded bool, err error)
@@ -219,10 +211,7 @@ func (s *Server) executeSF(waitCtx, execCtx context.Context, prio sched.Priority
 }
 
 // executeMaia runs one Maia inference with join-retry and write-through.
-// Returns hit=true when served from cache. Live (strictBatch=false) serves
-// degraded 79M→5M fallback without caching; batch (strictBatch=true) fails
-// per-index so the position can be retried live. submitSeq orders batch-lane
-// tickets; sync callers pass 0.
+// Returns hit=true when served from cache.
 func (s *Server) executeMaia(waitCtx, execCtx context.Context, prio sched.Priority, submitSeq uint64, req engine.MaiaRequest, model string, strictBatch bool) (engine.MoveResponse, bool, error) {
 	return executeWithRetry[engine.MoveResponse](maiaExecutor{s: s, req: req, model: model, useCache: req.Temperature == 0}, waitCtx, execCtx, prio, submitSeq, strictBatch)
 }
@@ -236,14 +225,9 @@ const (
 	batchFailed  batchStatus = "failed"
 )
 
-// Entry roles: grading vs display. The model (entry.engine) routes the
-// slot; the role names why the batch needs the row. "grade" is a grading
-// Maia 2400 entry: resolved identity equals the grading hash, so its row
-// doubles as the delta baseline other rows read at serve time. "display"
-// is everything else the batch fills (display-Maia policy rows, Stockfish
-// rows for material/mate/candidates). Stockfish multiplexes those uses
-// through one lane today; when it backs grading, its grading entries take
-// the grade role without touching the machinery below.
+// Entry roles: grading vs display. The engine routes the slot; the role
+// names why the batch needs the row. "grade" rows double as the delta
+// baseline other rows read at serve time; "display" is everything else.
 const (
 	roleGrade   = "grade"
 	roleDisplay = "display"
@@ -307,10 +291,7 @@ func (job *batchJob) progress() BatchProgress {
 }
 
 // complete records one settled entry, notifies live subscribers, and emits
-// the per-entry timing line. Those lines are the batch equivalent of the
-// per-request move/evaluate lines: `docker logs` (Komodo) shows the
-// per-index latency curve, where a second-half cliff points at
-// ply-correlated cost and flat-but-slow lines point at the search budget.
+// the per-entry timing line.
 func (job *batchJob) complete(entry *batchEntry, errMsg string, waitMs int64) {
 	status := batchDone
 	if errMsg != "" {
@@ -487,10 +468,8 @@ func (js *ReviewJobs) resolveBatchEntryRequest(index int, line BatchLine, query 
 		}
 		entry.maiaReq, entry.maiaModel = request, model
 		entry.role = roleDisplay
-		// Grading lane, made explicit: a Maia entry whose resolved
-		// identity equals the grading hash shares the grading row other
-		// rows read as their delta baseline — including a 2400 display
-		// row, which dedups onto it by identity normalization.
+		// Grading lane: a Maia entry whose identity equals the grading hash
+		// shares the grading row other rows read as their delta baseline.
 		entryHash, _ := engine.MaiaIdentity(request, model).Coordinates()
 		gradeHash, _ := maiaGradingHash(request)
 		if entryHash == gradeHash {
@@ -661,9 +640,7 @@ func (js *ReviewJobs) handleSubmit(ctx context.Context, input *SubmitInput) (*Su
 	return nil, apiError(http.StatusTooManyRequests, "engine_busy", "review queue depth exceeded, retry later")
 }
 
-// writeBusy emits the queue-pressure snapshot line. The 429 + Retry-After
-// ride the retryAfter middleware (429 defaults to 5s, matching the old
-// explicit header); this keeps the observability signal.
+// writeBusy emits the queue-pressure snapshot line.
 func (js *ReviewJobs) writeBusy(unfinished, sf, large, small int) {
 	log.Printf("review-batch busy unfinished=%d sf_queue=%d large_queue=%d small_queue=%d",
 		unfinished, sf, large, small)
@@ -679,8 +656,7 @@ type ReviewStatusOutput struct {
 }
 
 func (js *ReviewJobs) handleStatus(ctx context.Context, input *ReviewStatusInput) (*ReviewStatusOutput, error) {
-	// No DELETE: Chi answers DELETE with 405 before this handler runs (§3).
-	// Old-tab teardowns already swallow teardown failures.
+	// No DELETE: the router answers DELETE with 405 before this handler runs.
 	job := js.byID(input.ID)
 	if job == nil {
 		return nil, apiError(http.StatusNotFound, "not_found", "unknown review batch")
@@ -697,18 +673,11 @@ func (js *ReviewJobs) handleStatus(ctx context.Context, input *ReviewStatusInput
 	return &ReviewStatusOutput{Body: job.progress()}, nil
 }
 
-// drain executes one slot lane at a time per engine (sf stays single-lane;
-// the maia lane runs up to the pool's replica count in parallel) with the
-// two lanes in parallel. Lanes are
-// engine-keyed because slots are engine-owned; entry roles (grade vs
-// display) ride along for treatment, never for routing. Work runs on
-// detached contexts: a disconnected client neither stops the batch nor
-// leaks its slot.
-//
-// Batch yield: each entry holds its engine slot only for that entry. After
-// the write-through the slot is released before the next entry is admitted,
-// so pumpLocked grants any waiting Play/Focus ticket next (Play>Focus>Batch).
-// Interactive work therefore waits at most for a running batch op to finish.
+// drain executes one slot lane at a time per engine (the maia lane runs up
+// to the pool's replica count in parallel). Lanes are engine-keyed; entry
+// roles ride along for treatment, never routing. Each entry holds its slot
+// only for that entry, so pumpLocked grants waiting Play/Focus tickets next
+// (Play>Focus>Batch). Work runs on detached contexts.
 func (js *ReviewJobs) drain(job *batchJob) {
 	started := time.Now()
 	var wg sync.WaitGroup
@@ -750,8 +719,7 @@ func (js *ReviewJobs) drain(job *batchJob) {
 }
 
 // maiaConcurrency bounds the maia drain lane: one worker per pool replica
-// so extra GPUs actually serve whole-line reviews. Non-pool predictors
-// (test fakes) count as 1, preserving historical single-lane behavior.
+// (non-pool predictors count as 1).
 func (js *ReviewJobs) maiaConcurrency() int {
 	if js == nil || js.s == nil || js.s.pool == nil {
 		return 1
@@ -790,11 +758,7 @@ func batchErrMessage(err error) string {
 }
 
 // runEntry executes one batch entry through the shared executor table.
-// The runner is engine-keyed because the slot is engine-owned; the entry's
-// role does not route. Each entry holds its engine slot only for that entry; the slot is released
-// inside execute before the next entry is admitted, so interactive work waits
-// at most one batch op. Per-index completion (with job correlation) stays in
-// job.complete, which emits the per-entry timing line.
+// The runner is engine-keyed; the entry's role does not route.
 func (js *ReviewJobs) runEntry(job *batchJob, entry *batchEntry) {
 	bg := context.Background()
 	runners := map[string]func() (int64, error){

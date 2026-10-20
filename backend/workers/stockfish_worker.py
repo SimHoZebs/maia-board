@@ -61,11 +61,6 @@ def white_score(score):
 
 def report_timing(request, policy, multipv, started, spawn_ms, search_ms, depth, count):
     # One stderr line per request (stdout stays pure JSON for the Go wrapper).
-    # Go inherits this into the server log, so each backend `evaluate ...`
-    # line pairs with a worker line splitting total into process spawn vs
-    # actual search: spawn-dominated cost points at fork/exec pressure,
-    # search-dominated cost points at the time_ms/lines/depth budget.
-    # plies is the in-game position index, the x-axis for second-half cliffs.
     plies = len(request.get("moves") or [])
     total_ms = round((time.monotonic() - started) * 1000)
     print(f"stockfish_timing outcome=ok policy={policy} multipv={multipv} plies={plies} "
@@ -75,17 +70,14 @@ def report_timing(request, policy, multipv, started, spawn_ms, search_ms, depth,
 
 def spawn_engine(binary):
     """Spawn, version-check, and configure one engine. Only called with a
-    fresh spawn: the warm path reuses the returned handle across requests
-    (sequential analysis() calls are normal python-chess usage; the 128 MiB
-    hash persists, which only affects speed, never validity)."""
+    fresh spawn: the warm path reuses the returned handle across requests."""
     # Go establishes the process group; inheriting it is essential for cancellation.
     engine = chess.engine.SimpleEngine.popen_uci(binary, setpgrp=False)
     try:
         if engine.id.get("name") != "Stockfish 19":
             raise RuntimeError("unexpected engine version")
-        # Fixed Threads=4 / Hash=128 for speed (policy v3). Fixed rather than
-        # min(cpu,4) so cache identity stays deterministic across hosts; the Go
-        # side splits interactive vs batch into two slots (max 2 x 4 threads).
+        # Fixed Threads=4/Hash=128 (policy v3): fixed so cache identity
+        # stays deterministic across hosts.
         engine.configure({"Threads": 4, "Hash": 128})
     except Exception:
         drop_engine(engine)
@@ -173,11 +165,9 @@ def evaluate(request, binary, engine=None):
         complete = [depth for depth, lines in iterations.items() if len(lines) == count]
         if not complete:
             raise RuntimeError("no complete exact engine result")
-        # Ranks must show distinct first moves. Transient reports can echo one
-        # rank's PV into another at the same depth; keeping those duplicates
-        # marks two rows "played" downstream and corrupts keyed list
-        # reconciliation on navigation. Prefer the deepest depth with a full
-        # distinct set.
+        # Ranks must show distinct first moves: transient reports can echo
+        # one rank's PV into another at the same depth. Prefer the deepest
+        # depth with a full distinct set.
         lines = None
         for depth in sorted(complete, reverse=True):
             ranked = [iterations[depth][rank] for rank in range(1, count + 1)]

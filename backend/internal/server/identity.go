@@ -67,14 +67,10 @@ func (s *Server) cachedSF(r engine.EvaluationRequest) (*engine.EvaluationRespons
 
 func (s *Server) cachedSFFrom(src cacheSource, r engine.EvaluationRequest) (*engine.EvaluationResponse, bool) {
 	// Superset reuse: a stored 5-line search serves a 2-line request by
-	// slicing, so compatible budgets never recompute. Native exact identity
-	// always wins; larger-lines variants are tried in increasing order. The
-	// legacy node-budget policy has no compatible v2 timed-policy equivalent,
-	// even at 750ms / two candidates. Timed reuse is approximate: a fixed
-	// time budget spread over more lines is thinner per line than a dedicated
-	// smaller search. Provenance must stay native (ActualSettings and
-	// SearchPolicy report the stored search) so the client can slice without
-	// relabelling; see TestLookupCompatibleSettingsPreserveActualProvenance.
+	// slicing, so compatible budgets never recompute. Exact identity wins;
+	// larger-lines variants are tried in increasing order. Provenance stays
+	// native (ActualSettings and SearchPolicy report the stored search) so
+	// the client can slice without relabelling.
 	for _, candidate := range sfSupersetCandidates(r) {
 		if value, ok := s.lookupSFCandidateFrom(src, candidate, r.Settings); ok {
 			return value, true
@@ -309,10 +305,8 @@ func (s *Server) handleEvalLookup(ctx context.Context, input *LookupInput) (*Loo
 	results := []LookupResult{}
 	// Two phases: resolve every request first (validation only, collecting
 	// the identities to fetch), then serve all hits from one prefetched
-	// snapshot. Same validation, same per-index results and logs as the old
-	// per-entry loop — one bulk read instead of N point reads. Prefixes are
-	// pure slices of the shared line; the derived triples feed the unchanged
-	// resolve paths.
+	// snapshot. Prefixes are pure slices of the shared line; the derived
+	// triples feed the unchanged resolve paths.
 	type resolved struct {
 		query   LookupRequest
 		sfReq   engine.EvaluationRequest

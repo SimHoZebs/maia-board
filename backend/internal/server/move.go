@@ -34,20 +34,16 @@ type MoveInput struct {
 }
 
 // MoveOutput carries the Maia reply plus the cache header. The header stays
-// empty for sampled (temperature != 0) replies, exactly like the old mux:
-// only hit/miss are ever emitted.
+// empty for sampled (temperature != 0) replies; only hit/miss are emitted.
 type MoveOutput struct {
 	Cache string `header:"X-Eval-Cache"`
 	Body  engine.MoveResponse
 }
 
-// /move serves live game replies; /move/analysis serves retrospective Maia
-// analysis with the same payload shape. Separate endpoints keep the
-// endpoint-implied lane mapping exact (Play vs Focus). This split is
-// load-bearing, not cosmetic: every user move fires a live reply plus its
-// move feedback concurrently, and one depth-1 latest-wins lane would
-// supersede the queued waiter and surface 409 on the live reply. Keep play
-// and analysis on separate lanes (Play queues ahead of Focus) — do not merge.
+// /move serves live replies (Play), /move/analysis retrospective analysis
+// (Focus), same payload. Separate lanes are load-bearing: a shared depth-1
+// lane would supersede the live reply when feedback fires concurrently.
+// Do not merge.
 func (s *Server) handleMovePlay(ctx context.Context, input *MoveInput) (*MoveOutput, error) {
 	return s.serveMove(ctx, &input.Body, sched.PriorityPlay)
 }
@@ -55,11 +51,8 @@ func (s *Server) handleMoveFocus(ctx context.Context, input *MoveInput) (*MoveOu
 	return s.serveMove(ctx, &input.Body, sched.PriorityFocus)
 }
 
-// serveMove runs one Maia inference through the shared executor. The lane
-// is endpoint-implied: /move → Play (live game replies, latency-critical),
-// /move/analysis → Focus (retrospective analysis). Lanes queue on the shared
-// slot with Play priority instead of superseding each other; same-lane
-// arrivals stay latest-wins.
+// serveMove runs one Maia inference through the shared executor on the
+// endpoint's lane.
 //
 // ctx is the request context: it drives the admission wait (a disconnect
 // dequeues), while execution stays detached so a granted op still validates
@@ -79,11 +72,6 @@ func (s *Server) serveMove(ctx context.Context, request *MoveRequest, prio sched
 			return nil, err
 		}
 	}
-	// Perf spans: validate_us covers request validation, exec_ms covers the
-	// cache→admission→inference→store path, and wait_ms is the admission
-	// queue wait inside exec_ms (-1 when admission was never reached:
-	// validation error or cache hit). exec_ms - wait_ms ~= engine
-	// inference + store on misses.
 	validateMicros, execMillis, waitMillis := int64(-1), int64(-1), int64(-1)
 	defer func() {
 		log.Printf("move status=%d lane=%s plies=%d model=%s degraded=%t duration_ms=%d validate_us=%d exec_ms=%d wait_ms=%d",

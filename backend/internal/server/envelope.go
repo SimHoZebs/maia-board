@@ -2,13 +2,6 @@
 // error mapping, batch orchestration, and cache read/write-through. Engine
 // admission and process lifecycle live in internal/engine, persistence in
 // internal/store.
-//
-// Routing is Chi with Huma operations (see api.go for the topology).
-// Request bodies are decoded and schema-validated by Huma: malformed JSON
-// is a 400, unknown fields or missing required keys are a 422, oversized
-// bodies are a 413. Domain validation (chess rules, Elo ranges, identities)
-// stays in the hand-written validate functions and answers 400 with our
-// machine-readable code in errors[0].message.
 package server
 
 import (
@@ -22,8 +15,7 @@ import (
 
 // engineFailure maps engine/scheduler failures to the HTTP status, our
 // machine-readable code, and the human message shared by the live inference
-// endpoints (/move, /move/analysis, /evaluate). Statuses and codes are the
-// pre-Huma contract; only the envelope changed. Retry-After for 503/429 is
+// endpoints (/move, /move/analysis, /evaluate). Retry-After for 503/429 is
 // applied by the retryAfter middleware in server.go, not here.
 func engineFailure(err error, engineUnavailable string) (status int, code, message string) {
 	if reqErr, ok := errors.AsType[*apierror.RequestError](err); ok {

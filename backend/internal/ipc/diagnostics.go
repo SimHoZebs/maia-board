@@ -1,6 +1,5 @@
-// Package engine owns Maia/Stockfish process lifecycle, admission, engine
-// request/response types, and engine-value validation. Go remains the HTTP
-// boundary; Python adapters perform history-aware chess validation.
+// Package ipc owns the worker-process boundary: line-bounded stdio
+// transport and stderr diagnostics.
 package ipc
 
 import (

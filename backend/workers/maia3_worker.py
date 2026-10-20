@@ -73,8 +73,7 @@ def split_score_moves(engine, policy_self, policy_oppo, value_self, value_oppo):
     missing = [uci for uci in order if uci not in wdl_by_uci]
     if missing:
         raise RuntimeError("engine returned incomplete split candidates")
-    # Restore policy Elos so the next request starts from a known state
-    # (every request resets them anyway) and keep the policy-phase selection.
+    # Restore policy Elos for the next request.
     engine.cmd_setoption(f"setoption name SelfElo value {policy_self}")
     engine.cmd_setoption(f"setoption name OppoElo value {policy_oppo}")
     joined = [{"move": policy_moves[i]["move"], "policy": policy_by_uci[uci], "wdl": wdl_by_uci[uci]}
@@ -132,8 +131,7 @@ def _torch_split_score_moves(engine, policy_self, policy_oppo, value_self, value
                 _, candidate_value_logits, _ = engine.model(candidate_tokens, candidate_self_elos, candidate_oppo_elos)
             for item, value_logits in zip(top_moves, candidate_value_logits):
                 item["wdl"] = invert_wdl(wdl_from_value_logits(value_logits))
-            # Restore policy Elos so subsequent calls start from a known state
-            # (every request resets them anyway).
+            # Restore policy Elos for the next request.
             engine.cmd_setoption(f"setoption name SelfElo value {policy_self}")
             engine.cmd_setoption(f"setoption name OppoElo value {policy_oppo}")
     return move, top_moves
@@ -158,7 +156,7 @@ def predict(engine, request):
         raise InvalidRequest("invalid_position", "invalid temperature")
     if board.is_game_over():
         raise InvalidRequest("game_over", "position has no playable moves")
-    # Preserve the pinned engine's option parsing and full history rebuilding.
+    # Use the engine's own option parsing and full-history position rebuild.
     engine.cmd_setoption(f"setoption name SelfElo value {policy_self}")
     engine.cmd_setoption(f"setoption name OppoElo value {policy_oppo}")
     engine.cmd_setoption("setoption name MultiPV value 5")

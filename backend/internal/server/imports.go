@@ -24,15 +24,14 @@ import (
 // approach the 4 MiB body cap; pagination stays client-side.
 const maxImportGames = 100
 
-// importSourcePattern gates the server-owned source stamp: `lichess:<gameId>`
-// only. Anything else is a client bug, rejected before it reaches the store.
+// importSourcePattern accepts `lichess:<gameId>` only; anything else is
+// rejected before the store.
 var importSourcePattern = regexp.MustCompile(`^lichess:[A-Za-z0-9]{4,16}$`)
 
-// importOpponentPattern gates opponent display names: printable text, no
-// control characters, bounded so rows stay list-shaped.
+// importOpponentPattern accepts printable display names, 1-64 chars.
 var importOpponentPattern = regexp.MustCompile(`^[^\x00-\x1f]{1,64}$`)
 
-// importSpeedValues gates the server-owned speed stamp to known Lichess pools.
+// importSpeedValues limits speed to known Lichess pools.
 var importSpeedValues = map[string]bool{
 	"ultrabullet": true, "bullet": true, "blitz": true, "rapid": true,
 	"classical": true, "correspondence": true, "unlimited": true,

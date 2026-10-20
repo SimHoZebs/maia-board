@@ -7,8 +7,7 @@ Reads one JSON request from stdin, writes one JSON response to stdout:
 
 matches holds every exact book hit along the line (ply 0 is the root and is
 included when named); the client derives the viewed position's deepest
-ancestor itself. book_flags[i] names the position after moves[i], mirroring
-the old client-side lookup it replaces.
+ancestor itself. book_flags[i] names the position after moves[i].
 
 The book is defined from the standard start only: custom-start lines get
 empty matches and all-false flags. A missing table degrades the same way
@@ -74,8 +73,7 @@ def lookup(request, table):
         raise InvalidRequest("invalid_position")
     flags = []
     matches = []
-    # The book is defined from the standard start only: custom-start lines
-    # still replay (illegal moves reject) but never match.
+    # The book is defined from the standard start only.
     standard = table is not None and epd_key(board) == STANDARD_START_EPD
     if standard:
         hit = table.get(epd_key(board))

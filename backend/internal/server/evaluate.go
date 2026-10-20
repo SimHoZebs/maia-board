@@ -63,10 +63,9 @@ func (s *Server) handleEvaluate(ctx context.Context, input *EvaluateInput) (*Eva
 		return nil, apiError(status, err.Code, err.Message)
 	}
 	validateMicros = time.Since(validateStart).Microseconds()
-	// /evaluate is a size-1 batch through the shared executor (lane Focus;
-	// any X-Priority header from older clients is ignored). The request
-	// context dequeues on disconnect; execCtx stays detached so a granted
-	// search still writes through after the client goes away.
+	// /evaluate runs one search on the Focus lane through the shared executor.
+	// The request context dequeues on disconnect; execCtx stays detached so
+	// a granted search still writes through after the client goes away.
 	execCtx := context.WithoutCancel(ctx)
 	execStart := time.Now()
 	live, hit, runErr := s.executeSF(ctx, execCtx, sched.PriorityFocus, 0, request, false)

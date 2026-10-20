@@ -83,25 +83,15 @@ type GamePayload struct {
 	Moves       []string `json:"moves"`
 	Result      string   `json:"result,omitempty"`
 	Current     bool     `json:"current,omitempty"`
-	// Source is server-owned like OwnerID: bulk import stamps
-	// `lichess:<gameId>` for dedupe; single saves stamp `local`.
-	Source string `json:"source,omitempty"`
-	// Opponent is server-owned: bulk import stamps the Lichess username,
-	// single saves stamp `Maia <elo>`; clients cannot set either.
-	Opponent string `json:"opponent,omitempty"`
-	// RatingDiff is server-owned like Opponent: bulk import stamps the
-	// user's Lichess ratingDiff; single saves must leave it empty.
-	RatingDiff *int `json:"rating_diff,omitempty"`
-	// TimeControl is server-owned like Opponent: bulk import stamps the
-	// canonical clock (`600+5`, `3d`, `-`); single saves must leave it
-	// empty (local play is unlimited).
+	// The remaining fields are server-owned (see GameRow): handlers stamp or
+	// clear them and ignore client values, so the store keeps one save path
+	// for legacy ('') and owned rows.
+	Source      string  `json:"source,omitempty"`
+	Opponent    string  `json:"opponent,omitempty"`
+	RatingDiff  *int    `json:"rating_diff,omitempty"`
 	TimeControl *string `json:"time_control,omitempty"`
-	// Clocks is server-owned like Opponent: bulk import stamps per-ply
-	// remaining centiseconds; single saves must leave it empty.
-	Clocks []int `json:"clocks,omitempty"`
-	// Speed is server-owned like Opponent: bulk import stamps the Lichess
-	// speed pool; single saves must leave it empty.
-	Speed *string `json:"speed,omitempty"`
+	Clocks      []int   `json:"clocks,omitempty"`
+	Speed       *string `json:"speed,omitempty"`
 	// OwnerID is server-owned: handlers overwrite it from the session. It
 	// stays in the payload so the store has one save path for legacy ('')
 	// and owned rows.

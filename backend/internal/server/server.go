@@ -26,10 +26,9 @@ type Server struct {
 	auth      *AuthService
 }
 
-// NewServer wires a Server; ReviewJobs starts empty (jobs are in-memory,
-// finished plies persist in the store). Auth is always wired here so
-// production enforces ownership; unit tests using bare &Server{} literals
-// stay in legacy open mode.
+// NewServer wires a Server; ReviewJobs starts empty (jobs are in-memory).
+// Auth is always wired here; bare &Server{} literals in unit tests stay in
+// open mode.
 func NewServer(pool *engine.EnginePool, evaluator *engine.Evaluator, gameStore *store.GameStore, lookup *openings.OpeningsLookup, staticDir string) *Server {
 	s := &Server{pool: pool, staticDir: staticDir, store: gameStore, evaluator: evaluator, openings: lookup}
 	if gameStore != nil {
@@ -63,25 +62,12 @@ func recoverJSON(next http.Handler) http.Handler {
 	})
 }
 
-// securityHeaders sets baseline hardening headers for the same-origin
-// static app and JSON API. It runs inside recoverJSON so panic-recovery
-// JSON errors carry the same headers, and it only sets headers the
-// handlers never override — existing Cache-Control logic is untouched.
-// No HSTS: TLS terminates at Traefik, not this server, so this server
-// must not emit Strict-Transport-Security.
-// CSP stays minimal (default-src 'self', plus data: for images and audio,
-// plus Lichess for the browser-side history download): frontend/index.html
-// has no inline scripts (single external module script; Vite build emits
-// hashed external assets under assets/), and same-origin API/SSE fall back
-// to default-src. img-src needs data: because chessground paints board squares
-// and pieces from embedded data: SVG backgrounds
-// (chessground.brown.css, chessground.cburnett.css); without it the board
-// renders as a blank peach square with no pieces. media-src needs data:
-// because Vite inlines the sub-4KB board-sound knocks as data: audio URLs;
-// without it the move/capture knocks are blocked and the board plays silent.
-// connect-src names lichess.org because the Account panel fetches public
-// game exports directly from the Lichess API; everything else stays
-// same-origin.
+// securityHeaders sets baseline hardening headers for the same-origin app
+// and JSON API. It runs inside recoverJSON and never overrides headers the
+// handlers set. No HSTS: TLS terminates at Traefik. CSP stays minimal:
+// img-src and media-src need data: (chessground paints from embedded SVG;
+// Vite inlines sub-4KB sound knocks as data: audio); connect-src names
+// lichess.org for the browser-side history download.
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")

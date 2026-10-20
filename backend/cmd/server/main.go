@@ -98,14 +98,10 @@ func main() {
 
 func workerCommand(python, workerPath, model, device string) []string {
 	args := []string{python, workerPath, "--model", model}
-	// "auto" defers to the pinned upstream default (cuda when torch sees a
-	// GPU, else cpu) with AMP on; explicit cpu keeps today's deterministic
-	// flags. AMP only engages on cuda (upstream autocast guard), so omitting
-	// --no-use-amp on the cuda path is what unlocks mixed precision.
-	// --local-files-only pairs with the checkpoints baked into the image
-	// (see backend/Dockerfile): workers never touch the Hugging Face Hub at
-	// runtime, so a Hub outage cannot block restarts or idle-timeout reloads.
-	// A missing cache fails fast with a clear error instead of hanging.
+	// "auto" defers to the upstream default (cuda when visible, else cpu)
+	// with AMP on cuda; explicit cpu disables it. --local-files-only pairs
+	// with the image-baked checkpoints, so restarts and reloads never touch
+	// the Hub.
 	if device != "auto" {
 		args = append(args, "--device", device)
 		if device == "cpu" {
@@ -115,9 +111,8 @@ func workerCommand(python, workerPath, model, device string) []string {
 	return append(args, "--multipv", "5", "--temperature", "0", "--use-uci-history", "--local-files-only")
 }
 
-// validDevice gates MAIA3_DEVICE: auto (upstream default), cpu, or
-// cuda with an optional index. Anything else fails fast at startup so a
-// typo never boots workers that immediately crash on torch .to(device).
+// validDevice gates MAIA3_DEVICE (auto, cpu, cuda[:N]); anything else
+// fails fast at startup.
 func validDevice(device string) bool {
 	if device == "auto" || device == "cpu" || device == "cuda" {
 		return true
@@ -138,8 +133,7 @@ func validDevice(device string) bool {
 }
 
 // parseWorkerCount parses MAIA3_*_WORKERS: replica processes per model.
-// Empty selects 1 (historical single worker); values below 1 fail fast so a
-// typo never boots a pool that admits work it cannot serve.
+// Empty selects 1; values below 1 fail fast.
 func parseWorkerCount(raw, name string) (int, error) {
 	if raw == "" {
 		return 1, nil
@@ -154,10 +148,8 @@ func parseWorkerCount(raw, name string) (int, error) {
 	return n, nil
 }
 
-// parseFallbackModel parses MAIA3_FALLBACK_MODEL: "5m" (default) keeps the
-// 79M→5M degraded fallback, "off" runs a single-model server where explicit
-// 5m requests are rejected and degraded responses are impossible. Anything
-// else fails fast so a typo never silently disables the safety net.
+// parseFallbackModel parses MAIA3_FALLBACK_MODEL: "5m" (default) or "off"
+// (single-model); anything else fails fast.
 func parseFallbackModel(raw string) (string, error) {
 	switch raw {
 	case "", "5m":
@@ -200,10 +192,8 @@ func idleReaperInterval(timeout time.Duration) time.Duration {
 	return interval
 }
 
-// startIdleReaper stops Maia workers that outlived their idle timeout,
-// freeing GPU memory until the next request cold-starts them. The sweep
-// never interrupts running or queued work; it only unloads truly idle
-// processes. Next inference pays a reload.
+// startIdleReaper unloads Maia workers idle past their timeout until the
+// next request cold-starts them.
 func startIdleReaper(pool *engine.EnginePool, timeout time.Duration) {
 	interval := idleReaperInterval(timeout)
 	log.Printf("maia idle unloader: timeout=%s interval=%s", timeout, interval)

@@ -38,9 +38,8 @@ func (s *Server) storeCache(hash, eng, key string, value any) {
 		log.Printf("evaluation cache encode failed: %v", err)
 		return
 	}
-	// Single strict entry on raw bytes: generic shape gate first, then the
-	// ownership + typed + semantic gate. No intermediate any document and no
-	// re-marshal.
+	// Single strict entry on raw bytes: generic shape gate, then the
+	// ownership + typed + semantic gate.
 	if evalcache.ValidCacheValueBytes(eng, key, encoded) != nil {
 		log.Printf("evaluation cache rejected engine=%s", eng)
 		return

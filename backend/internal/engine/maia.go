@@ -380,10 +380,9 @@ func (w *Worker) startLocked(ctx context.Context) error {
 		return fmt.Errorf("%w: empty command", ErrProtocol)
 	}
 	cmd := exec.Command(w.command[0], w.command[1:]...)
-	// HF_HUB_OFFLINE=1 is belt-and-suspenders next to --local-files-only:
-	// any Hugging Face Hub call inside the worker fails fast from cache
-	// instead of hanging on network, including local `go run` dev setups
-	// that lack the Dockerfile ENV.
+	// HF_HUB_OFFLINE=1 next to --local-files-only: any Hugging Face Hub call
+	// inside the worker fails fast from cache instead of hanging on network,
+	// including local `go run` setups that lack the Dockerfile ENV.
 	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1", "HF_HUB_OFFLINE=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stderr = ipc.NewWorkerDiagnostics(w.name)
@@ -480,17 +479,14 @@ func (w *Worker) close() {
 	w.setState(stateUnloaded)
 }
 
-// Close stops the worker process. The server's cross-package helper-process
-// tests use it for cleanup (internal/server/main_test.go persistentWorker);
-// the server process itself exits without closing idle workers.
+// Close stops the worker process. The server process itself exits without
+// closing idle workers.
 func (w *Worker) Close() { w.close() }
 
 // Idle reports whether no operation is running or queued on this worker.
 func (w *Worker) Idle() bool { return w.sched.Idle() }
 
-// SetWaitsForTest shrinks the startup/inference deadlines. Test seam for the
-// cross-package helper-process tests; production uses the constructor
-// defaults.
+// SetWaitsForTest shrinks the startup/inference deadlines.
 func (w *Worker) SetWaitsForTest(startWait, moveWait time.Duration) {
 	w.startWait, w.moveWait = startWait, moveWait
 }
@@ -506,16 +502,11 @@ func SanitizeError(value string) string {
 }
 
 // Pool is one inference responsibility carried out by N interchangeable
-// model processes. Replicas share a single multi-slot scheduler (one
-// priority queue, dedup map, and batch rotation cursor), so Play > Focus >
-// Batch ordering, same-key joins, and latest-wins semantics hold across
-// replicas exactly as they did for the historical single worker. The pool
-// implements Predictor, so EnginePool and all existing tests keep working:
-// production passes pools, tests keep passing fakes.
+// model processes sharing a single multi-slot scheduler, so ordering,
+// same-key joins, and latest-wins hold across replicas.
 //
 // Identity (cache/dedup keys) derives from the pool's model, never the
-// per-replica process name: replicas are fungible, and two replicas must
-// never treat the same deterministic work as different keys.
+// per-replica process name: replicas are fungible.
 type Pool struct {
 	model   string
 	workers []*Worker
@@ -524,9 +515,8 @@ type Pool struct {
 }
 
 // NewPool builds a responsibility pool of count identical model processes
-// from one base command. Count below 1 clamps to 1. A single replica keeps
-// the historical process name (the model); multiple replicas take
-// model-0, model-1, ... for diagnostics.
+// from one base command. Count below 1 clamps to 1. A single replica uses
+// the model name; more take model-0, model-1, ... for diagnostics.
 func NewPool(model string, baseCommand []string, count int) *Pool {
 	if count < 1 {
 		count = 1
@@ -786,8 +776,8 @@ func (p *EnginePool) SweepIdle(now time.Time) {
 // MaiaParallelism reports how many maia batch entries may run concurrently:
 // the summed replica counts of pool predictors, with non-pool predictors
 // (test fakes, standalone workers) counting as 1 and a disabled fallback
-// contributing 0. The batch drain spawns this many maia-lane workers so
-// extra replicas actually serve whole-line reviews instead of idling
+// contributing 0. The batch drain spawns this many maia workers so
+// extra replicas serve batch-review entries instead of idling
 // behind a single drain loop.
 func (p *EnginePool) MaiaParallelism() int {
 	total := 0

@@ -19,13 +19,8 @@ import (
 // reverse check (spec/lifecycle-manifest.json -> reverse.routes_file) can
 // parse them from this one file.
 //
-// Error contract: Huma's ErrorModel envelope
-// {title, status, detail, errors}. Our machine-readable code vocabulary
-// (engine_busy, superseded, invalid_fen, ...) rides in errors[0].message so
-// clients keep switching on codes while the envelope is Huma-native. Human
-// text rides in detail. Huma's own request errors (malformed JSON -> 400,
-// schema violations like unknown fields or missing required keys -> 422,
-// oversized bodies -> 413) carry no code and read as 'unknown' client-side.
+// Error contract: Huma's ErrorModel envelope; our machine-readable codes
+// ride in errors[0].message, human text in detail. Full contract in API.md.
 
 // apiError builds a Huma error carrying our code in errors[0].message.
 func apiError(status int, code, message string) error {

@@ -33,8 +33,8 @@ const (
 )
 
 // AuthService owns the user primitive: local users, Lichess linkage, and
-// bearer sessions. A nil *AuthService on Server means legacy open mode
-// (pre-user databases and unit tests); NewServer always wires one.
+// bearer sessions. A nil service means open mode (old databases without
+// users, and unit tests); NewServer always wires one.
 type AuthService struct {
 	store           *store.GameStore
 	ttl             time.Duration
@@ -105,8 +105,8 @@ func userFromCtx(ctx context.Context) (*store.User, bool) {
 	return user, ok && user != nil
 }
 
-// requireUser enforces authentication when the server runs with auth wired.
-// Legacy open mode (auth == nil, unit tests) returns ok=false without error.
+// requireUser enforces authentication when auth is wired; in open mode
+// (auth == nil) it returns nil without error.
 func (s *Server) requireUser(ctx context.Context) (*store.User, error) {
 	if !s.authEnabled() {
 		return nil, nil
@@ -145,12 +145,8 @@ func pkceChallenge(verifier string) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-// Auth request/response documents use plain Chi handlers (Huma cannot set
-// cookies), so shapes are unregistered JSON: User rows and
-// {authorization_url, state} maps.
-
-// The Huma JSON path cannot set cookies, so session issuance uses plain Chi
-// handlers mounted alongside the Huma ops. Shapes stay identical.
+// Session issuance uses plain Chi handlers (Huma cannot set cookies);
+// shapes mirror the Huma JSON path.
 func (s *Server) serveLocalLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeHumaError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
