@@ -1133,9 +1133,15 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
 }
 
 function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback {
+  // Display stays behind the feedback toggle, but cache-fill runs for every
+  // started game: the temperature-less foreground pair, bulk restore, and
+  // retry sweeps below all write through to evaluations_v2, so a later
+  // reload/open hits the server cache instead of recomputing. Display
+  // (qualities, verdict, best-line walk) keeps gating on `active`.
   const active = state.started && state.feedback;
+  const fetching = state.started;
   const version = useSyncExternalStore(
-    active ? coordinator.subscribe : subscribeNone,
+    fetching ? coordinator.subscribe : subscribeNone,
     coordinator.snapshot,
     coordinator.snapshot,
   );
@@ -1191,7 +1197,7 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   // Play lane) and bot analysis (POST /move/analysis → Focus lane) queue on
   // the shared slot with Play priority instead of superseding each other.
   useEffect(() => {
-    if (!active || tooLong || !pair.sfNodes.length) return;
+    if (!fetching || tooLong || !pair.sfNodes.length) return;
     coordinator.ensure(pair.sfNodes, settings, {
       priority: true,
       engines: ['sf'],
@@ -1205,7 +1211,7 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
       });
       ensureLane(coordinator, pair.sfNodes, scope.signal);
     }
-  }, [coordinator, active, tooLong, pair, settings, scope]);
+  }, [coordinator, fetching, tooLong, pair, settings, scope]);
   const nodes = useMemo(() => {
     const all = reviewNodes(timeline);
     const wanted = new Set<ReviewNode>();
@@ -1223,7 +1229,7 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   // through the same capped bucket as foreground failures below.
   const restoreBaseKey = `${lineKey}|${settingsKey}`;
   const restorePair = useRestorePair({
-    active,
+    active: fetching,
     nodes,
     settings,
     coordinator,
@@ -1248,7 +1254,8 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     lane: ReviewNode[];
     restore: boolean;
   } = useMemo(() => {
-    if (!active || tooLong) return { key: '', heal: '', sf: [], bot: [], lane: [], restore: false };
+    if (!fetching || tooLong)
+      return { key: '', heal: '', sf: [], bot: [], lane: [], restore: false };
     const sf = new Map<string, ReviewNode>();
     for (const node of [...pair.sfNodes, ...nodes]) sf.set(reviewKey('sf', node, settings), node);
     const bot = new Map<string, ReviewNode>();
@@ -1328,7 +1335,7 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     // version is a manual cache-invalidation counter for the coordinator store.
     // oxlint-disable-next-line exhaustive-deps
   }, [
-    active,
+    fetching,
     tooLong,
     pair,
     nodes,
@@ -1359,7 +1366,7 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   latestBucket.current = `${lineKey}|${settingsKey}`;
   const { key: retryErrorKey, heal: retryHealKey } = retryTargets;
   useEffect(() => {
-    if (!active || (!retryErrorKey && !retryHealKey) || scope.signal.aborted) {
+    if (!fetching || (!retryErrorKey && !retryHealKey) || scope.signal.aborted) {
       // Mount-restore sync: adopting a persisted job seeds state once.
       // oxlint-disable-next-line set-state-in-effect
       if (!retryErrorKey && !retryHealKey) setSustainedError(undefined);
@@ -1408,6 +1415,9 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     }, FOREGROUND_RETRY_MS);
     return () => clearTimeout(timer);
   }, [
+    fetching,
+    // Display toggle re-runs the sweep so enabling feedback after
+    // background retries exhausted gets fresh attempts, not a stale error.
     active,
     retryErrorKey,
     retryHealKey,
