@@ -32,8 +32,8 @@ export type BatchProgress = {
 };
 export type BatchSubmitted = { job_id: string; total: number; cached: number; pending: number };
 
-// Persisted batch identity: lets a reloaded tab reattach to its own running
-// job instead of showing Analyze again and submitting a duplicate.
+// Persisted batch reattach entry: lets a reloaded tab reattach to its own
+// running job instead of showing Analyze again and submitting a duplicate.
 // Single entry is enough for reload reattach: the latest submit is the job
 // this tab owns. keysHash binds the entry to the exact
 // content (line + engine settings); a settings change or different line never
@@ -302,14 +302,10 @@ export async function fetchBatchStatus(
 }
 
 // Streams live progress over the browser's native EventSource; the status
-// endpoint stays the ground truth. The stream is a pure optimization (fast
-// path): every tick restores through the shared lookup restore, and the
-// caller refetches status + restores on mount, focus, visibility-visible,
-// online, and stream error — so the app stays correct with the stream broken
-// or deleted. Resolves when a tick reports finished; rejects on stream error
-// (the caller then refetches status, which maps gone jobs to BatchGoneError,
-// and falls back to polling). A caller abort is the normal unsubscribe path
-// and resolves silently, never a failure.
+// endpoint stays the ground truth (a broken stream only costs speed).
+// Every tick restores through the shared lookup restore. Resolves when a
+// tick reports finished; rejects on stream error (caller refetches status);
+// caller abort resolves silently.
 //
 // Wire shape: the server frames every tick as `event: progress` with the
 // bare BatchProgress as `data` (no wrapper). Native EventSource dispatches

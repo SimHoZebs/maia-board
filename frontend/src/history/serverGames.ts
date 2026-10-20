@@ -3,7 +3,7 @@ import { normalizeClocks, normalizeSpeed, normalizeTimeControl } from '../shared
 // Canonical term per spec/GLOSSARY.md: this module is the gameClient
 // (durable game requests), never the engine transport (evaluationTransport).
 import { isRecord } from '../shared/guards';
-import { restoreGame } from './storage';
+import { parseStoredGame } from './storage';
 import {
   GamesCreateResponse as GameRowSchema,
   GamesListResponse as GamesListSchema,
@@ -87,7 +87,7 @@ export function toStoredGame(row: ServerGame): StoredGame | undefined {
     typeof row.opponent === 'string' && row.opponent.length > 0
       ? row.opponent
       : `Maia ${row.elo_maia}`;
-  const base = restoreGame({
+  const base = parseStoredGame({
     id: row.id,
     createdAt: row.created_at,
     moves: row.moves,
@@ -300,16 +300,16 @@ export type OutboxOp =
 //   }
 //   if (current && !seen.has(current.id)) ops.push({ op: 'save', game: current, current: true });
 //
-// Legacy outbox entries were validated with restoreOutboxOp and enqueued ahead
+// Legacy outbox entries were validated with decodeOutboxOp and enqueued ahead
 // of those imports. The live repository no longer reads any of those keys;
 // v2 documents carry their own pending queue.
 
-export function restoreOutboxOp(value: unknown): OutboxOp | undefined {
+export function decodeOutboxOp(value: unknown): OutboxOp | undefined {
   if (!isRecord(value)) return;
   const op = value;
   if (op.op === 'delete' && typeof op.id === 'string') return { op: 'delete', id: op.id };
   if (op.op === 'save' && typeof op.current === 'boolean') {
-    const game = restoreGame(op.game);
+    const game = parseStoredGame(op.game);
     if (game) return { op: 'save', game, current: op.current };
   }
 }

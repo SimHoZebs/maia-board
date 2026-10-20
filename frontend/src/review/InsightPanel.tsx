@@ -86,9 +86,7 @@ export function MoveAnalysis({
   const focus = ply - 1;
   const hasMove = focus >= 0;
   // Two candidate lists: the display Elo's human-population list on the
-  // left, the objective source on the right. Each list judges the displayed
-  // move with "(played)" marking from its before-position; at the root the
-  // current position's lists describe the position.
+  // left, the objective source on the right.
   const response = hasMove ? review.bot : review.botCurrent;
   const node = review.nodes[hasMove ? focus : ply];
   const candidates = hasMove

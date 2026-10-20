@@ -35,7 +35,7 @@ function firePlayRequest(
     return;
   }
   if (running && running.id === request.id) return;
-  // Supersede frees the coordinator slot now; the replacement fires below.
+  // Supersede frees the coordinator now; the replacement fires below.
   if (running) coordinator.abortPlayMove();
   const record: PlayFiringIdentity = { id: request.id };
   flight.current = record;

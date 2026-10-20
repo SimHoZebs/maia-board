@@ -30,7 +30,7 @@ import { verdictInputsForPly, type VerdictFacts, type VerdictInputs } from '../t
 // - FENs + outcome → verdictInputsForPly → describeMove
 // Note overrides only cover caller-supplied text (material preview) and the
 // NOTE_RULES priority order — never a threshold.
-export type RarityLaneKnob = {
+export type RarityRoleKnob = {
   mode: 'top' | 'listed' | 'unlisted' | 'unknown';
   topProb: number;
   prob: number;
@@ -63,22 +63,22 @@ export type LabState = {
   line1Cp: number;
   line2Cp: number;
   singleLine: boolean;
-  // Raw bot lanes. Each lane builds a two-entry policy list (top + played)
+  // Raw bot roles. Each role builds a two-entry policy list (top + played)
   // so botRarity computes the real band from prob/topProb.
-  ownLane: RarityLaneKnob;
-  lane2400: RarityLaneKnob;
-  // Rarity of the best reply in the own lane: 'same' reuses the played move,
+  ownRole: RarityRoleKnob;
+  role2400: RarityRoleKnob;
+  // Rarity of the best reply in the own role: 'same' reuses the played move,
   // 'tiny' lists bestUci at 3% (Rare + under the 5% leg), 'unlisted' leaves
   // it out of the top 5. Feeds the hard-to-avoid head.
   bestKind: 'same' | 'tiny' | 'unlisted';
-  // Sociology lane.
+  // Sociology role.
   inBook: boolean;
   bookEco: string;
   bookName: string;
   noveltyName: string;
   noveltyEco: string;
   noveltyOn: boolean;
-  // Notes lane. Material has no auto source (the caller supplies the
+  // Notes role. Material has no auto source (the caller supplies the
   // best-line preview), so empty text means off.
   materialNote: string;
   pawnMode: NoteMode;
@@ -107,8 +107,8 @@ export const DEFAULT_STATE: LabState = {
   line1Cp: 100,
   line2Cp: 60,
   singleLine: false,
-  ownLane: { mode: 'top', topProb: 0.4, prob: 0.4 },
-  lane2400: { mode: 'unknown', topProb: 0.4, prob: 0.4 },
+  ownRole: { mode: 'top', topProb: 0.4, prob: 0.4 },
+  role2400: { mode: 'unknown', topProb: 0.4, prob: 0.4 },
   bestKind: 'same',
   inBook: false,
   bookEco: 'C50',
@@ -131,18 +131,18 @@ export const DEFAULT_STATE: LabState = {
 const OTHER_UCI = 'a2a3';
 const OTHER_UCI_2 = 'g1f3';
 
-function laneResponse(
-  lane: RarityLaneKnob,
+function roleResponse(
+  role: RarityRoleKnob,
   playedUci: string,
   extra: { move: string; prob: number }[] = [],
 ): Pick<MoveResponse, 'top_moves' | 'degraded'> {
-  if (lane.mode === 'unknown') return { top_moves: [], degraded: true };
+  if (role.mode === 'unknown') return { top_moves: [], degraded: true };
   // wdl is unused by botRarity; a neutral triple keeps the TopMove shape.
   const neutral = { wdl: [0.2, 0.6, 0.2] as [number, number, number] };
   const top_moves = [
-    { move: lane.mode === 'top' ? playedUci : OTHER_UCI, prob: lane.topProb, ...neutral },
+    { move: role.mode === 'top' ? playedUci : OTHER_UCI, prob: role.topProb, ...neutral },
   ];
-  if (lane.mode === 'listed') top_moves.push({ move: playedUci, prob: lane.prob, ...neutral });
+  if (role.mode === 'listed') top_moves.push({ move: playedUci, prob: role.prob, ...neutral });
   for (const entry of extra) {
     if (!top_moves.some(candidate => candidate.move === entry.move))
       top_moves.push({ ...entry, ...neutral });
@@ -199,9 +199,9 @@ export function buildLabVerdict(state: LabState): LabVerdict {
   // Bot lanes through the real band math.
   const bestUci = state.bestUci.trim() ? state.bestUci.trim() : state.playedUci;
   const bestExtra = state.bestKind === 'tiny' ? [{ move: bestUci, prob: 0.03 }] : [];
-  const ownResponse = laneResponse(state.ownLane, state.playedUci, bestExtra);
+  const ownResponse = roleResponse(state.ownRole, state.playedUci, bestExtra);
   const rarity = botRarity(ownResponse, state.playedUci);
-  const rarity2400 = botRarity(laneResponse(state.lane2400, state.playedUci), state.playedUci);
+  const rarity2400 = botRarity(roleResponse(state.role2400, state.playedUci), state.playedUci);
   const bestRarity =
     state.bestKind === 'same'
       ? botRarity(ownResponse, state.playedUci)
@@ -365,8 +365,8 @@ export const PRESETS: LabPreset[] = [
       afterScore: { kind: 'cp', value: 50, winningSide: 'white' },
       line1Cp: 120,
       line2Cp: -100,
-      ownLane: { mode: 'unlisted', topProb: 0.4, prob: 0.4 },
-      lane2400: { mode: 'listed', topProb: 0.4, prob: 0.03 },
+      ownRole: { mode: 'unlisted', topProb: 0.4, prob: 0.4 },
+      role2400: { mode: 'listed', topProb: 0.4, prob: 0.03 },
     },
   },
   {
@@ -381,8 +381,8 @@ export const PRESETS: LabPreset[] = [
       afterScore: { kind: 'cp', value: 50, winningSide: 'white' },
       line1Cp: 200,
       line2Cp: -200,
-      ownLane: { mode: 'unlisted', topProb: 0.4, prob: 0.4 },
-      lane2400: { mode: 'unlisted', topProb: 0.4, prob: 0.4 },
+      ownRole: { mode: 'unlisted', topProb: 0.4, prob: 0.4 },
+      role2400: { mode: 'unlisted', topProb: 0.4, prob: 0.4 },
     },
   },
   {
@@ -428,8 +428,8 @@ export const PRESETS: LabPreset[] = [
       afterScore: { kind: 'cp', value: 50, winningSide: 'white' },
       line1Cp: 120,
       line2Cp: -100,
-      ownLane: { mode: 'listed', topProb: 0.35, prob: 0.15 },
-      lane2400: { mode: 'top', topProb: 0.35, prob: 0.35 },
+      ownRole: { mode: 'listed', topProb: 0.35, prob: 0.15 },
+      role2400: { mode: 'top', topProb: 0.35, prob: 0.35 },
       noveltyOn: true,
     },
   },

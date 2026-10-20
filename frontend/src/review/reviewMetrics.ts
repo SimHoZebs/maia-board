@@ -66,14 +66,9 @@ export type EngineGrade = {
   // negative. Agreement carries no annotation.
   maiaLoss?: number | null;
 };
-// Additive bot difficulty axis, measured against the top move rather than
-// 100%: r = prob(played) / prob(top). A 13% move under a 15% top (r = 0.87)
-// is the same band as the top itself, while a 12% rank-1 in a wide opening
-// is still Expected. Bands are r >= 3/5 (0.6) Expected, r >= 1/3 Uncommon,
-// else Rare: Qe3-like 9.5% under a 32% top (r ~= 0.30) reads Rare against
-// the majority, while f3-like 14.9% under a 34% top (r ~= 0.44) stays
-// Uncommon. Unlisted (outside the bot's top 5) is Absent by
-// construction; missing or degraded bot data is Unknown and renders nothing.
+// Additive bot difficulty: r = prob(played)/prob(top). Bands: r>=0.6
+// Expected, r>=1/3 Uncommon, else Rare. Unlisted is Absent; missing or
+// degraded data is Unknown and renders nothing.
 export type Rarity = {
   label: 'Expected' | 'Uncommon' | 'Rare' | 'Absent' | 'Unknown';
   r: number | null;
@@ -100,14 +95,9 @@ export function botRarity(
     topProb,
   };
 }
-// The verdict carries only the quality × rarity synthesis as a short head
-// ("A sharp find.", "A common mistake."). Grades, scores,
-// probabilities, and best lines already live in the badges, charts, and
-// candidate lists, so restating them here is repetition. Praise
-// (Excellent/Great) meets findability (a critical move nobody's model
-// expects is an exceptional find); negative grades meet popularity (a
-// blunder the model saw coming is a common blunder). The candidate lists
-// below carry the bot percentages; the verdict never repeats them.
+// The verdict carries only the quality × rarity synthesis ("A sharp find.").
+// Grades, scores, and lines already live in badges, charts, and candidate
+// lists. Praise meets findability; negative grades meet popularity.
 // Praise gating lives in effectiveQuality, not reviewMove (which stays pure
 // engine so memo/cache keys never go stale on bot changes). It translates
 // engine facts into displayed judgments:
@@ -262,15 +252,9 @@ function rarityVerdict(
   if (holds) return `A rarely played choice that holds.`;
   return hardToAvoid(bestRarity) ?? `A rare ${negativeNoun(quality)}.`;
 }
-// A mistake whose avoidance was itself a rare find at the player's own
-// level: the best move sat under 5% (Rare) or outside the bot's top choices
-// (Absent), so the error was hard to avoid. Qualified to the player's pool:
-// with a second (2400) rarity lane in play, the bare phrase would read as
-// universal — the "anyone" upgrade lives in the planned best2400Rarity fact.
+// A mistake whose avoidance was itself a rare find at the player's level.
 // Expected/Uncommon/Unknown best moves leave the standard wording alone.
-// Verdict-only: badges still read pure loss. Both Absent and Rare-tiny share
-// one short sentence; the "This line …" second sentence plus its clickable
-// PV carries the concrete consequence.
+// Verdict-only: badges still read pure loss.
 function hardToAvoid(bestRarity: Rarity | null | undefined): string | null {
   if (
     !bestRarity ||
@@ -331,25 +315,15 @@ function fuseEveryLevel(
   return `A rare ${noun} at every level.`;
 }
 // Decision list for the move verdict. Array order IS the priority: the
-// first matching rule wins, so reordering rules reorders the verdict. Each
-// rule owns its match and its wording together — add a condition by adding
-// one entry, never by editing scattered if-chains. Standalone rules render
-// alone with no novelty prefix and no second sentence; when none matches,
-// the quality × rarity synthesis below takes a novelty prefix and at most
-// one note rule. Returns null when there is nothing additive to say
-// (unreviewed, off-book without bot data, or pre-first-move); the badges
-// and charts already carry the grades.
-// materialNote is the best-line 3-ply swing supplied by the caller
-// (Mistake/Blunder only). pawnNote is the positional fallback when the
-// material window is silent (Blunder/Mistake/Inaccuracy only). positiveNote
-// is the mirror for praise grades (Best/Great/Excellent/Good only): the
-// single strongest why, picked by theory.ts from its own ordered
-// candidates. pinClaim is raw pin pressure for the concessive path
-// (Blunder/Mistake with a material note, Allowed mate): describeMove fuses
-// it with the opponent's reply, and it never renders alone on a negative.
-// Neither note ever rescues a quiet verdict: notes append to
-// the rarity synthesis only, except pin-allowed-mate which replaces the
-// synthesis the way other specific facts outrank sociology.
+// first matching rule wins. Each rule owns its match and wording together.
+// Standalone rules render alone; otherwise the quality × rarity synthesis
+// takes a novelty prefix and at most one note rule. Returns null when there
+// is nothing additive to say; badges and charts already carry the grades.
+// materialNote is the best-line swing (Mistake/Blunder); pawnNote the
+// positional fallback (Blunder/Mistake/Inaccuracy); positiveNote the mirror
+// for praise grades; pinClaim is raw pin pressure for the concessive path.
+// Notes append to the rarity synthesis only, except pin-allowed-mate which
+// replaces it the way specific facts outrank sociology.
 export type OpeningRef = { eco: string; name: string };
 export type VerdictArgs = {
   san: string;

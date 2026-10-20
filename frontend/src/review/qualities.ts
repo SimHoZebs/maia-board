@@ -15,13 +15,13 @@ import {
 } from './reviewMetrics';
 
 export type QualityMemoEntry = {
-  posKey: string;
+  stableKey: string;
   fen: string;
   move: string;
   before?: Evaluation;
   after?: Evaluation;
   needsPending: boolean;
-  quality?: EngineGrade;
+  grade?: EngineGrade;
   // Objective inputs compare by value, not reference: providers rebuild
   // point objects per lookup while the numbers stay identical, and the
   // grade derives from the numbers alone. (SF evaluations above compare by
@@ -33,26 +33,22 @@ export type QualityMemoEntry = {
 };
 export type UnifiedMemo = {
   scope: string;
-  verdicts: (QualityMemoEntry | undefined)[];
-  qualities: (EngineGrade | undefined)[];
+  entries: (QualityMemoEntry | undefined)[];
+  grades: (EngineGrade | undefined)[];
 };
 
 // Objective lane: node-indexed provider points for the active source, plus
-// the pending set and key builder for its fetches. The loop never names a
-// model: the 2400 points feed the verdict footnote baseline and the rarity
-// axis, while the badge loss reads Stockfish. The after-position handling
-// below is provider-neutral (an opponent-relative expectation inverts the
-// same way for every source; terminal outcomes synthesize from game facts).
+// the pending set and key builder for its fetches. Handling below is
+// provider-neutral.
 export type ObjectiveLane = {
   points: (ObjectivePoint | undefined)[];
   pending: Set<string>;
   keyFor: (node: ReviewNode) => string;
 };
 
-// Single quality loop for review + play. Callers supply scope (game/user for
-// play, constant for review), per-node cache keys, and an activity predicate
-// (all plies for review, user side only for play). Memo reuse is stable
-// content (posKey + fen + move + eval identity + pending), never memory IDs.
+// Single quality loop for review + play. Callers supply scope, per-node
+// cache keys, an activity predicate, and pending sets. Memo keys combine
+// stableKey + fen + move + eval identity.
 export function computeQualities(args: {
   scope: string;
   moves: string[];
@@ -64,12 +60,12 @@ export function computeQualities(args: {
   prev: UnifiedMemo | null;
   stats?: { reviews: number };
   objective?: ObjectiveLane;
-}): { qualities: (EngineGrade | undefined)[]; memo: UnifiedMemo } {
+}): { grades: (EngineGrade | undefined)[]; memo: UnifiedMemo } {
   const { scope, moves, nodes, evaluations, keyFor, active, pending, prev, stats, objective } =
     args;
   const sameScope = prev?.scope === scope;
-  let allReused = !!prev && sameScope && prev.qualities.length === moves.length;
-  const verdicts = moves.map((move, index): QualityMemoEntry | undefined => {
+  let allReused = !!prev && sameScope && prev.grades.length === moves.length;
+  const entries = moves.map((move, index): QualityMemoEntry | undefined => {
     const node = nodes[index],
       next = nodes[index + 1];
     if (!node || !next || !active(node, index)) return;
@@ -85,15 +81,15 @@ export function computeQualities(args: {
       (beforeMissing || afterMissing) &&
       (!beforeMissing || pending.has(keyFor(node))) &&
       (!afterMissing || pending.has(keyFor(next)));
-    const old = sameScope ? prev!.verdicts[index] : undefined;
-    const posKey = stablePositionKey(node);
+    const old = sameScope ? prev!.entries[index] : undefined;
+    const stableKey = stablePositionKey(node);
     const objectiveInput = objectiveInputFor(objective, node, next, index);
     const objectivePending = objectiveInput
       ? objectiveInput.grade.beforePending || objectiveInput.grade.afterPending
       : false;
     if (
       old &&
-      old.posKey === posKey &&
+      old.stableKey === stableKey &&
       old.fen === node.fen &&
       old.move === move &&
       old.before === before &&
@@ -107,28 +103,28 @@ export function computeQualities(args: {
       return old;
     allReused = false;
     if (before && after && stats) stats.reviews++;
-    const quality =
+    const grade =
       before && after
         ? reviewMove(before, after, new Chess(node.fen), move, objectiveInput?.grade ?? undefined)
         : needsPending
           ? { label: 'Unreviewed' as const, accuracy: null, loss: null }
           : undefined;
     return {
-      posKey,
+      stableKey,
       fen: node.fen,
       move,
       before,
       after,
       needsPending,
-      quality,
+      grade,
       objectiveTop: objectiveInput?.grade.top ?? null,
       objectiveExpected: objectiveInput?.grade.expected ?? null,
       objectiveAfterExpected: objectiveInput?.grade.afterExpected ?? null,
       objectivePending,
     };
   });
-  const qualities = allReused ? prev!.qualities : verdicts.map(verdict => verdict?.quality);
-  return { qualities, memo: { scope, verdicts, qualities } };
+  const grades = allReused ? prev!.grades : entries.map(entry => entry?.grade);
+  return { grades, memo: { scope, entries, grades } };
 }
 
 // One move's objective input: the before-position point plus the
@@ -174,7 +170,7 @@ export function computeLineQualities(args: {
   prev: UnifiedMemo | null;
   stats?: { reviews: number };
   objective?: ObjectiveLane;
-}): { qualities: (EngineGrade | undefined)[]; memo: UnifiedMemo } {
+}): { grades: (EngineGrade | undefined)[]; memo: UnifiedMemo } {
   const {
     scope,
     moves,

@@ -564,10 +564,8 @@ function deriveTimeline(
   timelineBuilds++;
   const game = new Chess(initialFen);
   const normalized = game.fen();
-  // Prefix row identity is shared with retained timelines, including branches
-  // and takebacks. The scan is bounded by 64 lines and allocates no prefixes.
-  // Identity is stable content (initialFen + moves prefix), never memory IDs,
-  // so evicted lines rebuild identical rows and restore evaluations by key.
+  // Prefix rows are shared with retained timelines, including branches and
+  // takebacks. The scan is bounded by 64 lines and allocates no prefixes.
   let shared: Timeline | undefined;
   let sharedPly = -1;
   for (const candidate of timelineCache.values()) {

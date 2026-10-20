@@ -8,7 +8,7 @@ import {
   PRESETS,
   type LabState,
   type NoteMode,
-  type RarityLaneKnob,
+  type RarityRoleKnob,
   type ScoreKnob,
 } from './verdictLabModel';
 import './verdict-lab.css';
@@ -81,14 +81,14 @@ function ScoreKnobs({
   );
 }
 
-function LaneKnobs({
+function RoleKnobs({
   title,
   value,
   onChange,
 }: {
   title: string;
-  value: RarityLaneKnob;
-  onChange: (next: RarityLaneKnob) => void;
+  value: RarityRoleKnob;
+  onChange: (next: RarityRoleKnob) => void;
 }) {
   return (
     <fieldset className="vlab-group">
@@ -97,7 +97,7 @@ function LaneKnobs({
         <select
           value={value.mode}
           onChange={event =>
-            onChange({ ...value, mode: event.target.value as RarityLaneKnob['mode'] })
+            onChange({ ...value, mode: event.target.value as RarityRoleKnob['mode'] })
           }
         >
           <option value="top">top move</option>
@@ -355,15 +355,15 @@ export function VerdictLab() {
             <section className="lab-row" aria-label="Bot rarity">
               <h2>Bot → rarity (real botRarity)</h2>
               <div className="vlab-fields">
-                <LaneKnobs
-                  title="Own Elo lane"
-                  value={state.ownLane}
-                  onChange={ownLane => set({ ownLane })}
+                <RoleKnobs
+                  title="Own Elo role"
+                  value={state.ownRole}
+                  onChange={ownRole => set({ ownRole })}
                 />
-                <LaneKnobs
-                  title="2400 lane"
-                  value={state.lane2400}
-                  onChange={lane2400 => set({ lane2400 })}
+                <RoleKnobs
+                  title="2400 role"
+                  value={state.role2400}
+                  onChange={role2400 => set({ role2400 })}
                 />
                 <Field label="best reply">
                   <select

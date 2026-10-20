@@ -16,7 +16,7 @@ import {
 } from './batchReview';
 import type {
   Engine,
-  LineScope,
+  AbortScope,
   ReviewCoordinator,
   ReviewNode,
   SettingsInput,
@@ -25,37 +25,26 @@ import { restoreLookup } from './useLookupRestore';
 
 export type ServerBatchProgress = { total: number; done: number; failed: number; running: boolean };
 
-// Server-batch client: submit(nodes, scope) + progress UI. Nothing cancels:
-// a scope change, unmount, deactivation, or game delete only drops local
-// references while server jobs drain on their own, and every late
-// EventSource/poll/restore callback is ignored by a single lineKey guard.
-// Backgrounding never aborts: live ticks ride the browser's native
-// EventSource as a pure optimization, while the status endpoint is the
-// ground truth — status + restore refetch on mount, focus, visibility-visible,
-// online, and stream error, so a broken or deleted stream only costs speed.
-// The submitted job id + content hash persist in localStorage so a reload
-// reattaches to the still-running server job instead of showing Analyze
-// again. A settings change or different line never reattaches (hash/lineKey
-// mismatch). Concurrent submits coexist; over-cap 429s wait once per
-// Retry-After inside submitBatch, then surface engine-busy.
+// Server-batch client: submit + progress UI. Nothing cancels: scope
+// changes, unmounts, and game deletes only drop local references while
+// server jobs drain; late callbacks are ignored via the scope-key guard, and
+// backgrounding never aborts. EventSource ticks are a pure optimization
+// over status ground truth. Job id + content hash persist in localStorage
+// so a reload reattaches to the still-running job; a settings change or
+// different line never reattaches.
 export function useServerBatch(args: {
   active: boolean;
   nodes: ReviewNode[];
   settings: SettingsInput;
   engines?: Engine[];
   // Objective lane: extra per-node entries the active source needs beyond
-  // Stockfish, hashed and tracked exactly like the rest of the batch.
-  // Module-singleton identity expected; rides a ref like settings.
+  // Stockfish, hashed and tracked like the rest of the batch.
   objectiveLane?: SettingsInput | null;
   coordinator: ReviewCoordinator;
-  scope: LineScope | null;
+  scope: AbortScope | null;
   auto?: boolean;
   fetcher?: typeof fetch;
-  // Focus-first restore: ReviewNode .ply values to settle before the
-  // rest of the line when restoring batch progress via the single lookup
-  // restore. The existing 2s throttle below and the store's cache check still
-  // apply (no duplicate storm). Rides a ref so an inline literal cannot
-  // resubmit.
+  // Focus-first restore: node plies to settle before the rest of the line.
   priorityPlies?: readonly number[];
 }): {
   progress: ServerBatchProgress | null;
@@ -75,11 +64,9 @@ export function useServerBatch(args: {
   settingsRef.current = settings;
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
-  // engines arrives as an inline literal at the call sites: mirror it into a
-  // ref like nodes/settings/scope. Otherwise `start` (and the auto-start
-  // effect below, which depends on it) gets a new identity every render and
-  // re-submits forever: start() → setProgress → render → new array → start().
-  // That is React error #185 the moment auto && active (play + feedback on).
+  // engines arrives as an inline literal at the call sites: mirror it into
+  // a ref like nodes/settings/scope, or start() gets a new identity every
+  // render and re-submits forever.
   const enginesRef = useRef(engines);
   enginesRef.current = engines;
   const objectiveLaneRef = useRef(args.objectiveLane);
@@ -115,7 +102,7 @@ export function useServerBatch(args: {
   const start = useCallback(() => {
     const current = scopeRef.current;
     if (!active || !current) return;
-    const submittedKey = current.lineKey;
+    const submittedKey = current.scopeKey;
     const batchItems = buildBatchItems(
       nodesRef.current,
       settingsRef.current,
@@ -139,7 +126,7 @@ export function useServerBatch(args: {
         // cancels: drop optimism we still own so the new line never inherits
         // a running count with no job behind it. The orphan drains on the
         // server and vanishes by absence.
-        if (scopeRef.current?.lineKey !== submittedKey) {
+        if (scopeRef.current?.scopeKey !== submittedKey) {
           if (!jobIdRef.current && !jobScopeRef.current) setProgress(null);
           return;
         }
@@ -153,7 +140,7 @@ export function useServerBatch(args: {
           total: batchItems.length,
         });
       } catch (submitError) {
-        if (scopeRef.current?.lineKey !== submittedKey) return;
+        if (scopeRef.current?.scopeKey !== submittedKey) return;
         setError(
           submitError instanceof Error ? submitError.message : 'Review batch failed to start.',
         );
@@ -167,7 +154,7 @@ export function useServerBatch(args: {
     start();
   }, [coordinator, start]);
 
-  const scopeKey = scope?.lineKey ?? null;
+  const scopeKey = scope?.scopeKey ?? null;
   // Single definition of "the persisted job owns this mount": the stored
   // entry names this exact line and its content hash matches what this line
   // submits now. Returns the entry plus the matching items so adopters reuse
@@ -242,8 +229,8 @@ export function useServerBatch(args: {
     void (async () => {
       try {
         const status = await fetchBatchStatus(stored.jobId, fetcher);
-        if (cancelled || scopeRef.current?.lineKey !== scopeKey || jobIdRef.current) {
-          if (cancelled || scopeRef.current?.lineKey !== scopeKey) clearOwnedOptimism();
+        if (cancelled || scopeRef.current?.scopeKey !== scopeKey || jobIdRef.current) {
+          if (cancelled || scopeRef.current?.scopeKey !== scopeKey) clearOwnedOptimism();
           return;
         }
         // Torn-read guard: another tab may have replaced the single shared
@@ -273,8 +260,8 @@ export function useServerBatch(args: {
         if (errors.size) coordinator.replaceFailures(new Set(), errors);
         if (status.finished) clearPersistedBatch(stored.jobId);
       } catch (reattachError) {
-        if (cancelled || scopeRef.current?.lineKey !== scopeKey || jobIdRef.current) {
-          if (cancelled || scopeRef.current?.lineKey !== scopeKey) clearOwnedOptimism();
+        if (cancelled || scopeRef.current?.scopeKey !== scopeKey || jobIdRef.current) {
+          if (cancelled || scopeRef.current?.scopeKey !== scopeKey) clearOwnedOptimism();
           return;
         }
         if (reattachError instanceof BatchGoneError) clearPersistedBatch(stored.jobId);
@@ -324,14 +311,13 @@ export function useServerBatch(args: {
   }, [active, jobId, jobScopeKey]);
   /* oxlint-enable set-state-in-effect */
 
-  // Track progress by EventSource live ticks (fast path) with the status
-  // endpoint as ground truth, falling back to polls; restore values through
-  // the single shared lookup restore (the same operation the bulk restore runs).
-  // Guarded by one lineKey check: late events for a superseded scope are dropped.
+  // Track progress by EventSource ticks against status ground truth,
+  // restoring through the shared lookup restore. One scope-key guard drops
+  // late events for superseded scopes.
   useEffect(() => {
     if (!active || !jobId || !jobScopeKey) return;
     const submittedKey = jobScopeKey;
-    const stale = () => scopeRef.current?.lineKey !== submittedKey;
+    const stale = () => scopeRef.current?.scopeKey !== submittedKey;
     let stopped = false;
     let restoreTimer: ReturnType<typeof setTimeout> | undefined;
     let lastRestore = 0;
@@ -458,14 +444,10 @@ export function useServerBatch(args: {
         if (!stopped && !stale()) void restoreNow();
       } catch {
         if (stopped || stale() || restoreController.signal.aborted) return;
-        // The stream is a pure optimization: refetch ground truth first (a
-        // gone job surfaces here via the status 404), then poll.
         void refreshFromStatus();
         void poll();
       }
     })();
-    // Status is the truth: resume signals refetch it (apply restores), not
-    // just the lookup. Guarded for non-browser/test envs.
     const onResume = () => {
       void refreshFromStatus();
     };

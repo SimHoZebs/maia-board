@@ -45,11 +45,9 @@ export type ReviewSettings = {
   valueUserElo?: number;
 };
 export type Engine = 'sf' | 'maia';
-// Objective grading lane: bot 2400/2400 on the strong model. This is the
-// "Stockfish seat" for retrospective grades (Option 1): negative labels
-// derive from its WDL loss while the adjustable display bot owns rarity and
-// wording. A frozen singleton so batch hashes and effect identities never
-// churn; reviewKey already disambiguates it from display-bot rows by Elo.
+// Objective grading lane: bot 2400/2400 on 79m. A frozen singleton so batch
+// hashes and effect identities never churn; reviewKey already disambiguates
+// it from display-bot rows by Elo.
 export const GRADING_BOT_SETTINGS: ReviewSettings = Object.freeze({
   botElo: 2400,
   userElo: 2400,
@@ -69,14 +67,9 @@ export type Job = {
   fast?: boolean;
 };
 
-// Fast-then-refine derivation for Stockfish first paint. The bar + verdict
-// need only rank-1, so focus/current nodes fetch a 250ms MPV1 first, then
-// refine to the full requested MPV1 time budget in the background.
-// Same depth as requested; lines=1 always. Distinct settingsHash keys (time
-// differs), so fast and full cache separately — the display layer falls back
-// to fast when full is missing. Returns undefined when there is no useful
-// fast path: legacy omission (no stockfish) or an already-minimal 250ms
-// budget where a second fetch would only add latency.
+// Fast-then-refine for first paint: focus/current nodes fetch rank-1 at
+// 250ms first (a separate settingsHash key), then refine in the background.
+// Returns undefined when there is no useful fast path.
 export function fastStockfishSettings(settings?: StockfishSettings): StockfishSettings | undefined {
   if (!settings) return undefined;
   if (settings.time_ms <= 250) return undefined;
@@ -169,8 +162,7 @@ export function reviewKey(engine: Engine, node: ReviewNode, settings: ReviewSett
 }
 
 // Line-oriented bulk wire: the full line ships once per POST, entries carry
-// only ply. Client keys stay prefix-based locally (reviewKey/posId via
-// prefixOf). Server derives cache identity from (fen, initial_fen, moves).
+// only ply.
 export type BatchLine = { initial_fen: string; moves: string[] };
 export function batchLineFor(timeline: {
   initialFen: string;
@@ -407,8 +399,6 @@ export async function fetchEvaluation(
 ): Promise<StockfishResult> {
   let response: Response;
   let body: unknown;
-  // /evaluate and /evaluations/lookup share the same position identity,
-  // derived server-side from (fen, initial_fen, moves).
   const sfWire = { fen: node.fen, initial_fen: node.initialFen, moves: prefixOf(node) };
   try {
     ({ response, body } = await fetchJsonWithBusyRetry(
@@ -508,14 +498,10 @@ export class EvaluationStore {
     const fast = fastReviewSettings(settings);
     return fast ? this.result('sf', node, fast) : undefined;
   }
-  // Single restore path: cache-fill + visible-pair-first live here and
-  // nowhere else. Jobs for the given plies (ReviewNode .ply values, e.g.
-  // focus/current) lead the first /evaluations/lookup chunk; the remainder
-  // follows in line order within the same chunk limits. Pure reorder — no
-  // filtering, no new fetches, no chunk-limit change; the cache check below
-  // dedupes already-settled rows so a focus-first call never double-fetches.
-  // The coordinator keeps only the live foreground pump and delegates here
-  // for settled rows; there is no second two-phase focus path.
+  // Single restore path: focus/current plies lead the first lookup chunk
+  // (visible-pair-first), the remainder follows in line order. Pure reorder;
+  // the cache check below dedupes settled rows so focus-first never
+  // double-fetches.
   async restore(
     nodes: ReviewNode[],
     settings: SettingsInput,

@@ -35,7 +35,7 @@ import { outcomeEvaluation } from '../review/outcomeEvaluation';
 import { HistorySyncStore } from '../history/syncStore';
 import type { RepositorySnapshot } from '../history/gameRepository';
 import { currentPosition, initialState, reducer, snapshotOf } from './index';
-import { KEYS, restoreGame } from '../history/storage';
+import { KEYS, parseStoredGame } from '../history/storage';
 
 beforeEach(() => {
   const data = new Map<string, string>();
@@ -498,7 +498,7 @@ describe('legacy storage and analysis', () => {
     expect(state.saved).toEqual([]);
     expect(state.analysis.initialFen).toBe(START_FEN);
     expect(state.inputs.fen).toBe('invalid');
-    expect(restoreGame({ moves: 'not an array' })).toBeUndefined();
+    expect(parseStoredGame({ moves: 'not an array' })).toBeUndefined();
   });
   it('round-trips custom-start PGN with history and black to move', () => {
     const fen = '4k3/8/8/8/8/8/4P3/4K3 b - - 0 12';
@@ -523,17 +523,17 @@ describe('server sync', () => {
     moves,
     settings: defaultSettings,
   });
-  it('preserves live request identity and historical cursor on same-tip hydration', () => {
+  it('preserves live request identity and historical cursor on same-tip sync', () => {
     const live = reducer(started(), { type: 'move', from: 'e2', to: 'e4' });
     const viewing = reducer(live, { type: 'view', ply: 0 });
     const { userColor, model, botElo, userElo, temperature } = viewing.play.settings;
-    const hydratedGame = {
+    const syncedGame = {
       ...viewing.play,
       settings: { temperature, model, userElo, botElo, userColor },
     };
     const next = reducer(viewing, {
       type: 'sync',
-      saved: [hydratedGame],
+      saved: [syncedGame],
       currentId: viewing.play.id,
       pending: [],
       total: 1,
@@ -545,15 +545,15 @@ describe('server sync', () => {
       request: live.request!,
       error: new Error('offline'),
     });
-    const hydrated = reducer(failed, {
+    const synced = reducer(failed, {
       type: 'sync',
       saved: [{ ...failed.play }],
       currentId: failed.play.id,
       pending: [],
       total: 1,
     });
-    expect(hydrated.request).toBeNull();
-    expect(hydrated.error).toBe(failed.error);
+    expect(synced.request).toBeNull();
+    expect(synced.error).toBe(failed.error);
   });
   it('adopts the server current game and requeues a bot turn', () => {
     const state = reducer(initialState(), {
@@ -1000,7 +1000,7 @@ describe('review qualities incremental', () => {
 
   it('computes settled verdicts with one review per settled ply', () => {
     const stats: ReviewQualitiesStats = { reviews: 0 };
-    const { qualities } = run(
+    const { grades } = run(
       italianMoves,
       italianNodes,
       byNodes(italianEvals),
@@ -1009,9 +1009,9 @@ describe('review qualities incremental', () => {
       stats,
     );
     expect(stats).toEqual({ reviews: 5 });
-    expect(qualities).toHaveLength(5);
-    expect(qualities[0]?.label).toBe('Top');
-    expect(qualities[4]).toBeDefined();
+    expect(grades).toHaveLength(5);
+    expect(grades[0]?.label).toBe('Top');
+    expect(grades[4]).toBeDefined();
   });
 
   it('reuses everything on an identical rerun', () => {
@@ -1026,7 +1026,7 @@ describe('review qualities incremental', () => {
       stats,
     );
     expect(stats).toEqual({ reviews: 0 });
-    expect(second.qualities).toBe(first.qualities);
+    expect(second.grades).toBe(first.grades);
   });
 
   it('settle arrival recomputes only the changed plies', () => {
@@ -1038,14 +1038,14 @@ describe('review qualities incremental', () => {
     const afterNode = nodes[3];
     const pending = new Set([reviewKey('sf', afterNode, settings)]);
     const first = run(moves, nodes, byNodes(partial), null, pending);
-    expect(first.qualities[0]?.label).toBe('Top');
-    expect(first.qualities[2]?.label).toBe('Unreviewed');
+    expect(first.grades[0]?.label).toBe('Top');
+    expect(first.grades[2]?.label).toBe('Unreviewed');
     const stats: ReviewQualitiesStats = { reviews: 0 };
     const second = run(moves, nodes, byNodes(italianEvals), first.memo, new Set(), stats);
     expect(stats).toEqual({ reviews: 1 });
-    expect(second.qualities[0]).toBe(first.qualities[0]);
-    expect(second.qualities[2]).toBeDefined();
-    expect(second.qualities[2]?.label).not.toBe('Unreviewed');
+    expect(second.grades[0]).toBe(first.grades[0]);
+    expect(second.grades[2]).toBeDefined();
+    expect(second.grades[2]?.label).not.toBe('Unreviewed');
   });
 
   it('neighbor sharing only one foreground endpoint never flashes pending', () => {
@@ -1056,8 +1056,8 @@ describe('review qualities incremental', () => {
     const key = (node: ReviewNode) => reviewKey('sf', node, settings);
     const foreground = new Set([key(nodes[0]), key(nodes[1])]);
     const cold = run(moves, nodes, () => undefined, null, foreground);
-    expect(cold.qualities[0]?.label).toBe('Unreviewed');
-    expect(cold.qualities[1]).toBeUndefined();
+    expect(cold.grades[0]?.label).toBe('Unreviewed');
+    expect(cold.grades[1]).toBeUndefined();
     const settled = run(
       moves,
       nodes,
@@ -1065,8 +1065,8 @@ describe('review qualities incremental', () => {
       null,
       new Set(),
     );
-    expect(settled.qualities[0]?.label).not.toBe('Unreviewed');
-    expect(settled.qualities[1]).toBeUndefined();
+    expect(settled.grades[0]?.label).not.toBe('Unreviewed');
+    expect(settled.grades[1]).toBeUndefined();
   });
 
   it('matches a fresh compute exactly across build, settle, append, and takeback', () => {
@@ -1082,7 +1082,7 @@ describe('review qualities incremental', () => {
         settingsForNode: () => settings,
         pending: new Set(),
         prev: null,
-      }).qualities;
+      }).grades;
     };
     let prev: ReviewQualitiesMemo | null = null;
     const steps = [
@@ -1096,7 +1096,7 @@ describe('review qualities incremental', () => {
       if (index === 3) store.delete(JSON.stringify(['e2e4', 'e7e5']));
       const nodes = testNodes(START_FEN, moves);
       const next = run(moves, nodes, lookup, prev);
-      expect(next.qualities).toEqual(fresh(moves));
+      expect(next.grades).toEqual(fresh(moves));
       prev = next.memo;
     }
   });
@@ -1109,7 +1109,7 @@ describe('review qualities incremental', () => {
     const stats: ReviewQualitiesStats = { reviews: 0 };
     const second = run(moves, nodes, byNodes(italianEvals), first.memo, new Set(), stats);
     expect(stats).toEqual({ reviews: 0 });
-    expect(second.qualities).toBe(first.qualities);
+    expect(second.grades).toBe(first.grades);
     const clone = (node: ReviewNode) => {
       const found = byNodes(italianEvals)(node);
       return (
@@ -1121,6 +1121,6 @@ describe('review qualities incremental', () => {
     };
     const third = run(moves, nodes, clone, first.memo, new Set(), stats);
     expect(stats.reviews).toBeGreaterThan(0);
-    expect(third.qualities).toEqual(first.qualities);
+    expect(third.grades).toEqual(first.grades);
   });
 });

@@ -12,12 +12,8 @@ import {
 // cache reads return), never the normal path.
 const MAX_CONCURRENT_RESTORES = 3;
 
-// Shared imperative restore: batch progress and lookup restore are the same
-// operation observed two ways. Both call through here to the coordinator's
-// single restore entry (store-owned cache-fill + visible-pair-first); only
-// the caller's timing differs (loadKey effect below vs 2s-coalesced progress
-// ticks in useServerBatch). Batch-specific bits ride as caller-passed keys:
-// engines + priorityPlies select the wanted set, nothing branches here.
+// Shared imperative restore: batch progress ticks and lookup restore both
+// call the coordinator's single restore entry; only timing differs.
 export function restoreLookup(
   coordinator: ReviewCoordinator,
   nodes: ReviewNode[],
@@ -34,15 +30,12 @@ export function restoreLookup(
   );
 }
 
-// Bulk cache restore, shared by useReviewPipeline (both rooms) and the batch
-// progress restore path: settle settled rows through the lookup path even when
-// no batch runs. A newer loadKey (line content, settings, explicit retry)
-// starts a new restore WITHOUT aborting the previous one: lookup rows are
-// content-keyed, so a landing stale line can only settle rows the new line
-// still wants (play lines grow by append; the shared store merges
-// everything). Aborts happen only on unmount, on deactivation, or past the
-// concurrency cap. nodes/settings ride refs so object identities rebuilt by
-// a parent render cannot refire a key. Backgrounding never aborts.
+// Bulk cache restore for pipeline rooms and batch progress. A newer loadKey
+// starts a new restore WITHOUT aborting the previous one: rows are
+// content-keyed and play lines grow by append, so a stale landing can only
+// settle rows the new line still wants. Aborts happen only on unmount,
+// deactivation, or past the concurrency cap. nodes/settings ride refs so
+// rebuilt identities cannot refire a key. Backgrounding never aborts.
 export function useLookupRestore(args: {
   active: boolean;
   nodes: ReviewNode[];
@@ -50,12 +43,8 @@ export function useLookupRestore(args: {
   coordinator: ReviewCoordinator;
   loadKey: string;
   onSettled?: (error: string | undefined) => void;
-  // Focus-first restore: ReviewNode .ply values (e.g. focus/current) to settle
-  // before the rest of the line. When provided, the single store restore
-  // orders those jobs first in the lookup chunks; the store's existing cache
-  // check dedupes, so no duplicate fetch storm occurs. Omitted keeps the
-  // single full-line restore. Rides a ref like nodes/settings so an inline
-  // literal cannot resubmit every render.
+  // Focus-first restore: node plies to settle before the rest of the line.
+  // Rides a ref so an inline literal cannot resubmit every render.
   priorityPlies?: readonly number[];
   engines?: Engine[];
 }): void {
@@ -78,7 +67,7 @@ export function useLookupRestore(args: {
   // reactivation starts its own lookup below.
   useEffect(() => {
     if (active) return;
-    // Snapshot iteration: aborted flights delete their entries.
+    // Copy iteration: aborted flights delete their entries.
     // oxlint-disable-next-line no-useless-spread
     for (const [key, controller] of [...restoreFlights.current]) {
       restoreFlights.current.delete(key);

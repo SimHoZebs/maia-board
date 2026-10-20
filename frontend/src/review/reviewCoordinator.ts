@@ -51,16 +51,16 @@ export function subscribeNone(): () => void {
   return () => undefined;
 }
 
-// Abort scope: one lineKey owns its foreground work. Batch jobs are never
+// Abort scope: one scope key owns its foreground work. Batch jobs are never
 // cancelled: scope change only drops local optimism.
-// lineKey = hash(initialFen + moves). A line change or unmount aborts the
-// previous scope's controller (foreground signal). Backgrounding never aborts.
-export type LineScope = { lineKey: string; controller: AbortController; signal: AbortSignal };
-export function createLineScope(lineKey: string): LineScope {
+// A line change or unmount aborts the previous scope's controller
+// (foreground signal). Backgrounding never aborts.
+export type AbortScope = { scopeKey: string; controller: AbortController; signal: AbortSignal };
+export function createAbortScope(scopeKey: string): AbortScope {
   const controller = new AbortController();
-  return { lineKey, controller, signal: controller.signal };
+  return { scopeKey, controller, signal: controller.signal };
 }
-export function cancelScope(scope: LineScope): void {
+export function cancelScope(scope: AbortScope): void {
   scope.controller.abort();
 }
 
@@ -227,7 +227,7 @@ export class ReviewCoordinator {
       // place (Map.set preserves insertion order); failures clear so the
       // job runs again. Settled rows prune so the queue never accumulates
       // dead keys. Flight work continues either way (non-preemptive server
-      // slot).
+      // scheduler).
       for (const job of desired) {
         this.failures.delete(job.key);
         if (this.store.peek(job.engine, job.key)) {
@@ -280,11 +280,8 @@ export class ReviewCoordinator {
         return this.restore(nodes, settings, signal, wanted, priorityPlies);
     }
   }
-  // Single restore entry: settled rows come from the store's one restore
-  // path (cache-fill + visible-pair-first ordering inside it). The
-  // coordinator adds only foreground pending accounting around that call —
-  // no second two-phase focus path, no job building here. The live
-  // foreground pump above stays the coordinator's only fetch ownership.
+  // Single restore entry: settled rows come from the store's restore path;
+  // the coordinator adds only foreground pending accounting.
   async restore(
     nodes: ReviewNode[],
     settings: SettingsInput,

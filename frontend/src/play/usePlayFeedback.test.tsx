@@ -469,9 +469,9 @@ describe('settled badges only use labels the badge can render', () => {
       pending: new Set(),
       prev: null,
     });
-    expect(raw.qualities[0]?.label).toBe('Holds');
+    expect(raw.grades[0]?.label).toBe('Holds');
     const qualities = translateReviewQualities({
-      grades: raw.qualities,
+      grades: raw.grades,
       nodes,
       botResults: [undefined, undefined],
       rarities: [undefined, undefined],

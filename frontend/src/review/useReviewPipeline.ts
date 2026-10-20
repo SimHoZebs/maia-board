@@ -34,7 +34,7 @@ import {
 } from '../objective/index';
 import { trueCandidateDelta } from '../objective/winrate';
 import type { ObjectiveLane } from './qualities';
-import { useLineScope } from './useLineScope';
+import { useAbortScope } from './useAbortScope';
 import { useLookupRestore } from './useLookupRestore';
 import { useServerBatch } from './useServerBatch';
 import { computeLineQualities, type UnifiedMemo } from './qualities';
@@ -55,15 +55,10 @@ import { useObjectiveBestLine } from './useObjectiveBestLine';
 import { shouldWalkMaia } from '../theory/bestLineSource';
 import { playedCapture } from '../theory/material';
 
-// Configuration expressing room differences, not architecture. One pipeline
-// owns coordinator + scope + restore + grading + translation for both rooms;
-// the room selects:
-// - target set: analysis grades the whole line viewed-first; play grades the
-//   newest pair plus user-side-only activity.
-// - eagerness: play fetches foreground on move + 3x2s retry + sweeps all
-//   user-side moves on reconnect; analysis debounces + waits for batch.
-// The room is static per mount (each adapter passes a literal), so branching
-// rooms below never reorder hooks within a lifetime.
+// One pipeline for both rooms; the room selects target set (analysis:
+// whole line viewed-first; play: newest pair, user-side-only) and eagerness
+// (play fetches on move + retries; analysis debounces + waits for batch).
+// Static per mount.
 export type PipelineRoom = 'analysis' | 'play';
 
 export type RecordStatus = { state: 'checking' | 'fresh' | 'none' };
@@ -90,8 +85,7 @@ export function gameIdentityFor(
 }
 export type ReviewQualitiesMemo = UnifiedMemo;
 export type ReviewQualitiesStats = { reviews: number };
-// Kept for existing tests/callers: delegates to the single shared helper so
-// computeQualities retains one call site in qualities.ts.
+// Wrapper kept for existing callers; delegates to the single shared helper.
 export function computeReviewQualities(args: {
   line: { moves: string[] };
   nodes: ReviewNode[];
@@ -101,7 +95,7 @@ export function computeReviewQualities(args: {
   prev: ReviewQualitiesMemo | null;
   stats?: ReviewQualitiesStats;
   objective?: ObjectiveLane;
-}): { qualities: (EngineGrade | undefined)[]; memo: ReviewQualitiesMemo } {
+}): { grades: (EngineGrade | undefined)[]; memo: ReviewQualitiesMemo } {
   const { line, nodes, evaluations, settingsForNode, pending, prev, stats, objective } = args;
   return computeLineQualities({
     scope: '',
@@ -177,7 +171,7 @@ export function wantedPlayPair(
   userColor: 'white' | 'black',
 ): { sfNodes: ReviewNode[]; botNode: ReviewNode | null } {
   // No moves yet means nothing to grade: the first move's own pair fetch
-  // covers the root, so starting empty keeps the lane free for the bot's reply.
+  // covers the root, so starting empty keeps the Play lane free for the bot's reply.
   if (nodes.length < 2) return { sfNodes: [], botNode: null };
   const after = nodes[nodes.length - 1];
   const before = nodes[nodes.length - 2];
@@ -190,14 +184,12 @@ export function wantedPlayPair(
 const FOREGROUND_RETRY_MS = 2000;
 const FOREGROUND_RETRY_ATTEMPTS = 3;
 
-// Sustained-failure surface: returning the string is enough — the caller
-// (today workspaces.tsx PlayWorkspace reads only .qualities) decides display
-// later. No new UI panels are built here; {active,qualities} stays compatible
-// via the optional `error` field.
+// Sustained-failure surface: the caller decides display; {active,qualities}
+// stays compatible via the optional `error` field.
 export const PLAY_RETRY_EXHAUSTED_MESSAGE = 'Move feedback unavailable — reviews kept failing.';
 
-// Pure offline/retry helpers (wantedPlayPair precedent): DOM access stays
-// injected/guarded so vitest's node env (no window) covers them without jsdom.
+// Pure offline/retry helpers (DOM access stays injected/guarded for
+// node-env tests).
 export function isOfflineValue(onLine: unknown): boolean {
   return onLine === false;
 }
@@ -229,9 +221,7 @@ export function playExhaustedError(hasErrors: boolean, attemptCount: number): st
 // Nodes that need a heal sweep: no settled row, no recorded failure, and no
 // pending/restoring flight. Server-superseded (409) work lands here: it
 // records no failure and the bulk restore only serves cached rows, so
-// without this the position blanks until something re-requests it. Outcome
-// nodes never fetch and stay excluded by callers' filters via the outcome
-// check here. Pure for tests (wantedPlayPair precedent).
+// without this the position blanks until something re-requests it.
 export function unsettledReviewNodes(
   nodes: ReviewNode[],
   ctx: {
@@ -298,7 +288,7 @@ export function computePlayQualities(args: {
   // effectiveQuality — returning the raw array when nothing is Critical
   // would leak engine-only labels (Top/Holds) the badge has no glyph for,
   // rendering as an empty gray box.
-  const qualities: (Quality | undefined)[] = sf.qualities.map((grade, index) => {
+  const qualities: (Quality | undefined)[] = sf.grades.map((grade, index) => {
     if (grade?.label !== 'Critical') return effectiveQuality(grade, undefined);
     const node = nodes[index];
     const move = timeline.moves[index];
@@ -310,7 +300,7 @@ export function computePlayQualities(args: {
     }
     return effectiveQuality(grade, botRarity(bot, move));
   });
-  return { qualities, memo: sf.memo, grades: sf.qualities };
+  return { qualities, memo: sf.memo, grades: sf.grades };
 }
 
 // Shared restore pair: one wiring for both rooms — the display restore plus
@@ -388,9 +378,9 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     () => lineKeyFor(state.analysis.initialFen, moves),
     [state.analysis.initialFen, moves],
   );
-  // One abort scope per line (shared hook). Batch jobs are never cancelled:
+  // One abort scope (shared hook). Batch jobs are never cancelled:
   // scope change only drops local optimism. Backgrounding never aborts.
-  const scope = useLineScope(lineKey);
+  const scope = useAbortScope(lineKey);
   // lineKey covers initialFen+moves with stable string identity.
   // oxlint-disable-next-line exhaustive-deps
   const timeline = useMemo(() => buildTimeline(state.analysis.initialFen, moves), [lineKey]);
@@ -400,13 +390,9 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     state.analysisSettings.model,
     state.stockfish,
   ]);
-  // Display lane: policy at the selected Elo, values at 2400-vs-2400 so the
-  // left move list shows what X would play with 2400-level winrates.
-  // settingsHash/evaluationRequest normalize explicit-equal values away, so
-  // a 2400 selection dedups with the grading lane.
+  // Display lane: policy at the selected Elo, values at 2400-vs-2400.
   const settings: ReviewSettings = useMemo(
     () => ({
-      // settingsKey covers botElo/model/stockfish with stable string identity.
       // oxlint-disable-next-line exhaustive-deps
       botElo: state.analysisSettings.botElo,
       userElo: state.analysisSettings.botElo,
@@ -557,8 +543,7 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     currentNode,
   ]);
 
-  // Target set (analysis): the whole line, viewed-first. Focus-first
-  // restore: visible pair settles in the first lookup chunk.
+  // Target set (analysis): the whole line, viewed-first.
   const restoreKey = `${lineKey}|${combinedKey}`;
   const priorityPlies = focusNode ? [focusPly, currentPly] : [currentPly];
   const restorePair = useRestorePair({
@@ -612,10 +597,8 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     [nodes, evaluations, version, coordinator],
   );
   const objectivePoints = useMemo(() => lanePoints(objectiveRows, nodes), [objectiveRows, nodes]);
-  // Candidate lists for the panel: the focus position's list judges the
-  // displayed move (with "(played)" marking), the current position's list
-  // describes the root. Same provider seam as the points above, so the list
-  // always shows the objective source — never the display Elo.
+  // Candidate lists: the focus list judges the displayed move, the current
+  // list describes the root — always the objective source, never display Elo.
   const objectiveCandidates = useMemo(
     () => ({
       focus: focusNode ? candidatesFor(objectiveRows[focusPly], focusNode) : undefined,
@@ -763,10 +746,9 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     [objectivePoints, settingsForNode, objectivePendingForGrades],
   );
   const previous = useRef<ReviewQualitiesMemo | null>(null);
-  // Memo cache without an effect: the ref carries the last computed memo into
-  // the next computation synchronously, so reuse never lags one commit
-  // behind. Worst case (abandoned concurrent render) is a recompute — keys
-  // are stable content, so correctness never depends on the cache.
+  // Memo cache without an effect: the ref carries the last computed memo
+  // into the next computation synchronously, so reuse never lags one commit
+  // behind.
   const computed = useMemo(() => {
     const result = computeReviewQualities({
       line: timeline,
@@ -815,7 +797,7 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
   const qualities = useMemo(
     () =>
       translateReviewQualities({
-        grades: computed.qualities,
+        grades: computed.grades,
         nodes,
         botResults,
         rarities,
@@ -832,7 +814,7 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     // version is a manual cache-invalidation counter for the coordinator store.
     // oxlint-disable-next-line exhaustive-deps
     [
-      computed.qualities,
+      computed.grades,
       rarities,
       rarity2400,
       sfGap,
@@ -904,18 +886,12 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
         ? playedCapture(nodes[focusPly]?.fen ?? '', timeline.moves[focusPly] ?? '')
         : null,
   });
-  // Mainline display qualities for the original-line continuation rendered
-  // under an explored branch. MovesPanel draws that continuation from the
-  // mainline while review.qualities aligns with the branch timeline, so
-  // without this the badges those moves showed on the mainline vanish on
-  // branching. Position-keyed coordinator results make it a cache-read-only
-  // second pass (no fetches, no memo retention); skipped on mainlines.
-  // Mainline memo carried across coordinator bumps, mirroring `previous`
-  // above: reuse is content-keyed (posKey + fen + move + eval identity), so
-  // settled prefix verdicts skip `reviewMove` while late-landing rows still
-  // recompute. Without this the unchanged mainline regrades fully on every
-  // branch-settle bump. Separate ref from the branch timeline: the node sets
-  // differ, so sharing would only ever miss.
+  // Mainline display qualities for the continuation rendered under an
+  // explored branch: without this the badges those moves showed on the
+  // mainline vanish on branching. Position-keyed results make it a
+  // cache-read-only second pass (no fetches); separate ref from the branch
+  // timeline since node sets differ. Without it the unchanged mainline
+  // regrades fully on every bump.
   const mainlinePrevious = useRef<ReviewQualitiesMemo | null>(null);
   const mainlineQualities = useMemo(() => {
     if (state.analysis.branchFromPly === null) {
@@ -955,7 +931,7 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     });
     mainlinePrevious.current = mainGrades.memo;
     return translateReviewQualities({
-      grades: mainGrades.qualities,
+      grades: mainGrades.grades,
       nodes: mainNodes,
       botResults: mainBotResults,
       rarities: mainRarities,
@@ -974,7 +950,7 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     coordinator,
   ]);
   // Coverage is completeness (badges + sentences), not badge readiness:
-  // badges fast-path, but progress stays partial until both bot lanes land
+  // badges fast-path, but progress stays partial until both bot roles land
   // for every non-outcome node: the display bot for the sentence, objective
   // points for the badge. Exact full SF only — fast provisional rows never
   // count toward completeness (the objective-point check additionally
@@ -1080,16 +1056,10 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     // bestLineSource.ts): InsightPanel renders the selected source through
     // bestLinePreview.
     objectiveBestLine,
-    // Objective lane (provider points per position): the bar, graphs, and
-    // score copy read this; move grades already derive from it. The
-    // display-bot results above stay on the selected Elo for rarity and
-    // wording; Stockfish evaluations stay for mate, praise, and the
-    // best-line veto.
+    // Objective lane (provider points per position): bar, graphs, and
+    // score copy read this; move grades already derive from it.
     objective: objectivePoints,
     objectiveError: (node: ReviewNode | undefined) => laneError(coordinator, node),
-    // Objective candidate lists for the panel: the focus list judges the
-    // displayed move, the current list describes the root. Always the
-    // objective source, never the display Elo.
     objectiveCandidates,
     // True game-shift deltas by candidate UCI for the viewed before-position
     // (focus, else current at the root): bar-vs-bar including the opponent
@@ -1100,7 +1070,7 @@ function useAnalysisRoom(state: State, coordinator: ReviewCoordinator) {
     // Raw engine grades (Critical/Top/Holds intact) for the verdict's
     // only-move fact. Badges and text read the translated `qualities`; this
     // never reaches display directly.
-    engineGrades: computed.qualities,
+    engineGrades: computed.grades,
     current: evaluations[currentPly],
     focus: evaluations[focusPly],
     focusPly,
@@ -1183,11 +1153,10 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   // pair's in-flight fetches on each move. Abort only on game change or
   // unmount; takebacks reuse the same game id and content-keyed rows, so
   // their flights stay safe to land.
-  const scope = useLineScope(gameId);
+  const scope = useAbortScope(gameId);
   const allNodes = useMemo(() => reviewNodes(timeline), [timeline]);
   // Target set (play): the only foreground work play ever issues is the
-  // newest move's endpoints. Outcome and over-long nodes are skipped inside
-  // the coordinator's job filter, exactly like the analysis focus fetch.
+  // newest move's endpoints.
   const pair = useMemo(() => wantedPlayPair(allNodes, userColor), [allNodes, userColor]);
   const tooLong = timeline.moves.length > 256;
   // Eagerness (play): foreground fetch on move. Requests serve FIFO and
@@ -1195,7 +1164,7 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
   // server batch is out of this path entirely — no per-ply submit, no
   // cancel/resubmit churn, no 409 races with ourselves. Play (POST /move →
   // Play lane) and bot analysis (POST /move/analysis → Focus lane) queue on
-  // the shared slot with Play priority instead of superseding each other.
+  // the shared scheduler with Play priority instead of superseding each other.
   useEffect(() => {
     if (!fetching || tooLong || !pair.sfNodes.length) return;
     coordinator.ensure(pair.sfNodes, settings, {
@@ -1487,9 +1456,7 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     // oxlint-disable-next-line exhaustive-deps
     [fullNodes, evaluations, settings, version, coordinator],
   );
-  // Same effect-free memo cache as the analysis room: synchronous
-  // carry-forward, content-keyed so a speculative cache can only cost a
-  // recompute.
+  // Same effect-free memo cache as the analysis room.
   // sfPending/botPending are render-fresh sets; version is the invalidation signal.
   /* oxlint-disable exhaustive-deps */
   const computed = useMemo(() => {

@@ -5,13 +5,13 @@ import {
   deleteRemote,
   fetchGames,
   mergeSync,
-  restoreOutboxOp,
+  decodeOutboxOp,
   saveRemote,
   toStoredGame,
   type FetchLike,
   type OutboxOp,
 } from './serverGames';
-import { KEYS, loadSaved, readStorage, restoreGame, writeStorage } from './storage';
+import { KEYS, loadSaved, readStorage, parseStoredGame, writeStorage } from './storage';
 
 export const REPOSITORY_KEY = 'maia-board.games.v2';
 // Single lock name for repository writes and history sync. Cooperating tabs
@@ -87,13 +87,13 @@ export function readGameRepository(repositoryRaw?: string | null): DurableGames 
     Array.isArray(stored.pending)
   ) {
     const games = stored.games.flatMap(value => {
-      const game = restoreGame(value);
+      const game = parseStoredGame(value);
       if (game) return [game];
       recover(value);
       return [];
     });
     const pending = stored.pending.flatMap(value => {
-      const op = restoreOutboxOp(value);
+      const op = decodeOutboxOp(value);
       if (op && isRecord(value) && typeof value.version === 'string')
         return [{ ...op, version: value.version }];
       recover(value);
@@ -114,7 +114,7 @@ export function readGameRepository(repositoryRaw?: string | null): DurableGames 
   }
   if (stored !== undefined) recover(stored);
   const games = loadSaved();
-  const current = restoreGame(readStorage(KEYS.current)) ?? null;
+  const current = parseStoredGame(readStorage(KEYS.current)) ?? null;
   const merged = mergeSync(
     current ? [current, ...games.filter(g => g.id !== current.id)] : games,
     current?.id ?? null,
@@ -138,7 +138,7 @@ export class GameRepository {
     try {
       this.expectedRaw = localStorage.getItem(REPOSITORY_KEY);
     } catch {
-      /* persist exposes the failure */
+      /* persistDocument exposes the failure */
     }
     this.value = {
       ...readGameRepository(this.expectedRaw),
@@ -165,7 +165,7 @@ export class GameRepository {
     this.value = { ...this.value, ...changes };
     this.emit();
   }
-  private persist() {
+  private persistDocument() {
     // Cooperating tabs serialize compare-and-write under the single
     // repository lock. Conflicts never overwrite another tab's document;
     // local legal play remains available in memory. The document is read
@@ -202,7 +202,7 @@ export class GameRepository {
   }
   save(game: StoredGame, current: boolean) {
     this.epoch++;
-    // Per-id last-save-wins: only the newest snapshot per game needs
+    // Per-id last-save-wins: only the newest op per game needs
     // transmission, so earlier saves for this id collapse. Deletes stay
     // ordered in place; the current marker ORs across the collapsed saves.
     current ||= this.value.pending.some(
@@ -217,7 +217,7 @@ export class GameRepository {
       currentId: current ? game.id : this.value.currentId,
       pending,
     });
-    this.persist();
+    this.persistDocument();
     if (this.active) void this.flush();
   }
   // Abort-scope hook for the lineKey owner: deleting a game
@@ -229,7 +229,7 @@ export class GameRepository {
   delete(id: string) {
     this.epoch++;
     this.cancelScope(id);
-    // Snapshot iteration: listeners unsubscribe during dispatch.
+    // Copy iteration: listeners unsubscribe during dispatch.
     // oxlint-disable-next-line no-useless-spread
     for (const listener of [...gameDeleteListeners]) {
       try {
@@ -243,7 +243,7 @@ export class GameRepository {
       currentId: this.value.currentId === id ? null : this.value.currentId,
       pending: [...this.value.pending, { op: 'delete', id, version: version() }],
     });
-    this.persist();
+    this.persistDocument();
     if (this.active) void this.flush();
   }
   exportPending = () =>
@@ -267,7 +267,7 @@ export class GameRepository {
       failedVersion: null,
       error: '',
     });
-    this.persist();
+    this.persistDocument();
     if (this.active) void this.flush();
   }
   flush = (): Promise<void> => {
@@ -275,7 +275,7 @@ export class GameRepository {
     const controller = new AbortController();
     this.flushController = controller;
     // Crash safety: each op is persisted before transmit by awaiting the
-    // persist chain directly. The single repository lock is held only across
+    // persistDocument chain directly. The single repository lock is held only across
     // one op's write+transmit+in-memory acknowledge, so cooperating tabs
     // serialize remote mutations without starving each other's queued writes;
     // the acknowledgement itself persists through the normal queue after the
@@ -289,7 +289,7 @@ export class GameRepository {
       this.update({ pending: this.value.pending.filter(entry => entry.version !== op.version) });
     };
     const task = (async () => {
-      this.persist();
+      this.persistDocument();
       await this.writes;
       try {
         while (
@@ -303,7 +303,7 @@ export class GameRepository {
             await navigator.locks.request(REPOSITORY_KEY, () => transmit(op));
           else await transmit(op);
           if (controller.signal.aborted) return;
-          this.persist();
+          this.persistDocument();
           await this.writes;
         }
         if (!controller.signal.aborted) this.update({ error: '', failedVersion: null });
@@ -371,7 +371,7 @@ export class GameRepository {
             : list.next_offset,
         error: this.value.pending.length ? this.value.error : '',
       });
-      this.persist();
+      this.persistDocument();
       await this.writes;
     } catch (error) {
       if (isUnauthorized(error)) notifyUnauthorized();

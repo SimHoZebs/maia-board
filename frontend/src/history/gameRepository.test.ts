@@ -288,7 +288,7 @@ it('refuses a competing tab write while retaining exportable local play', async 
   expect(fetcher).not.toHaveBeenCalled();
 });
 
-it('cancels page hydration and deferred lifecycle work on cleanup', async () => {
+it('cancels page sync and deferred lifecycle work on cleanup', async () => {
   const fetcher = vi.fn();
   const repo = new GameRepository(fetcher);
   const stop = repo.start();

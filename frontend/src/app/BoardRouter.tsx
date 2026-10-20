@@ -309,16 +309,10 @@ export function BoardRouter() {
     ) : (
       <LoginGate session={session} onLogin={name => sessionStore.login(name)} />
     );
-  // Invariant: every destination change dispatches its mode at the event
-  // (tab taps, NotFound links, popstate, the review/unload/saved navigations
-  // above, and the pre-mount canonicalization in main.tsx). No new <Navigate>
-  // may appear in these routes without one: location moving alone leaves the
-  // reducer behind with nothing left to correct it — and a correcting effect
-  // would flail against the eager dispatches (duplicate engine POSTs, see the
-  // mode-ownership notes). The "*" route renders NotFound instead of
-  // navigating: its links dispatch their mode at the click event, the same
-  // ownership as DestinationNav above and MobileMenu in workspaces.tsx — keep
-  // all three branches identical and report any drift.
+  // Invariant: every destination change dispatches its mode at the event.
+  // Location moving alone leaves the reducer behind with nothing to correct
+  // it. The "*" route renders NotFound instead of navigating for the same
+  // reason: its links dispatch their mode at click.
   return (
     <Routes>
       <Route

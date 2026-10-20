@@ -134,7 +134,7 @@ describe('account client', () => {
     expect(seen[0]).toMatchObject({ provider: 'lichess', username: 'bob' });
   });
 
-  it('sums refreshed backfills across chunks', async () => {
+  it('sums refreshed imports across chunks', async () => {
     const fetchImpl = (async () =>
       jsonResponse({ saved: [], errors: {}, skipped: 100, refreshed: 3 })) as typeof fetch;
     const result = await bulkImport(

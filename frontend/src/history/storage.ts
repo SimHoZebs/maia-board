@@ -31,7 +31,7 @@ export const KEYS = {
 export function readStorage<T>(key: string): T | undefined {
   // Quarantined JSON boundary: JSON.parse() returns `any`, which flows into
   // the generic without an assertion. Every caller validates downstream —
-  // restoreGame (saved/current games), normalizeSettings (settings),
+  // parseStoredGame (saved/current games), normalizeSettings (settings),
   // normalizeStockfishSettings / === true checks (state.ts), and key-specific
   // narrowing (useBotBoard.ts) — so no `as` cast is needed or allowed here.
   try {
@@ -68,7 +68,7 @@ function toSettingsInput(value: unknown): Partial<Settings> | undefined {
   if (typeof temperature === 'number') input.temperature = temperature;
   return input;
 }
-export function restoreGame(value: unknown): StoredGame | undefined {
+export function parseStoredGame(value: unknown): StoredGame | undefined {
   if (!isRecord(value)) return;
   const {
     id,
@@ -116,7 +116,7 @@ export function restoreGame(value: unknown): StoredGame | undefined {
 export function loadSaved(): StoredGame[] {
   const raw = readStorage<unknown>(KEYS.saved);
   return Array.isArray(raw)
-    ? raw.map(restoreGame).filter((game): game is StoredGame => !!game)
+    ? raw.map(parseStoredGame).filter((game): game is StoredGame => !!game)
     : [];
 }
 export function loadSettings(): Settings {

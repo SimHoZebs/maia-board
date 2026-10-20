@@ -3,7 +3,7 @@ import { botExpected, deltaBaseline, formatWinrateDelta } from '../objective/win
 import type { ObjectiveCandidates } from './reviewMetrics';
 
 // One row of the Key moves card: a single UCI with the roles it fulfills plus
-// the cross-lane numbers behind it. Roles drive the chips; the numbers drive
+// the cross-source numbers behind it. Roles drive the chips; the numbers drive
 // the three columns (2400 share, true win delta, your-Elo share).
 export type KeyMoveRole = 'sf-best' | 'best-2400' | 'likely-2400' | 'played';
 export type KeyMove = {
@@ -90,10 +90,10 @@ export function formatKeyDelta(
 // backbone, the Stockfish best floating above it only when 2400 doesn't
 // list it, the played move appended when listed nowhere. Same UCIs merge
 // into one row carrying every role it fulfills; display-only runners-up
-// stay out (their only reading would be the You share). The display lane
+// stay out (their only reading would be the You share). The display source
 // still feeds per-row You shares and value expectations. Expectations for
-// the prospective fallback prefer the objective lane, then the display lane
-// (both are 2400-valued).
+// the prospective fallback prefer the objective source, then the display
+// source (both are 2400-valued).
 export function buildKeyMoves(args: {
   sfBest: string | null;
   objective?: ObjectiveCandidates | undefined;

@@ -49,13 +49,13 @@ it('a different board or played move invalidates a verdict even when evaluation 
   expect(run(first, original.memo).stats.reviews).toBe(0);
   const differentMove = run(buildTimeline(START_FEN, ['d2d4']), original.memo);
   expect(differentMove.stats.reviews).toBe(1);
-  expect(differentMove.qualities[0]).not.toBe(original.qualities[0]);
+  expect(differentMove.grades[0]).not.toBe(original.grades[0]);
   const differentBoard = run(
     buildTimeline(START_FEN.replace('RNBQKBNR', 'RNB1KBNR'), ['e2e4']),
     original.memo,
   );
   expect(differentBoard.stats.reviews).toBe(1);
-  expect(differentBoard.qualities[0]).not.toBe(original.qualities[0]);
+  expect(differentBoard.grades[0]).not.toBe(original.grades[0]);
 });
 it('pins bot settings only on its own-game mainline positions with moves available', () => {
   expect(isBotPosition({ turn: 'black', outcome: null }, 'white', true)).toBe(true);
@@ -182,9 +182,9 @@ it('grades badges from Stockfish with 2400 footnotes and holds the spinner while
       objective: laneFor(rows, pending),
     });
   const settled = run(gradingBot, new Set());
-  expect(settled.qualities[0]?.label).toBe('Holds');
-  expect(settled.qualities[0]?.maiaLoss).toBeCloseTo(20, 9);
-  expect(settled.qualities[1]?.label).toBe('Top');
+  expect(settled.grades[0]?.label).toBe('Holds');
+  expect(settled.grades[0]?.maiaLoss).toBeCloseTo(20, 9);
+  expect(settled.grades[1]?.label).toBe('Top');
   // Memo reuses the settled verdicts when nothing changes.
   const reused = computeReviewQualities({
     line: timeline,
@@ -195,17 +195,15 @@ it('grades badges from Stockfish with 2400 footnotes and holds the spinner while
     prev: settled.memo,
     objective: laneFor(gradingBot, new Set()),
   });
-  expect(reused.qualities[0]).toBe(settled.qualities[0]);
+  expect(reused.grades[0]).toBe(settled.grades[0]);
   // Missing before-position with its grading key pending: spinner, not SF fallback.
   const waiting = run(
     [undefined, gradingBot[1], gradingBot[2]],
     new Set([laneKey(nodes[0], () => settings)]),
   );
   expect(laneKey(nodes[0], () => settings)).toBe(gradingBotKey(nodes[0]));
-  expect(waiting.qualities[0]?.label).toBe('Unreviewed');
-  expect(waiting.qualities[1]?.label).toBe('Top');
+  expect(waiting.grades[0]?.label).toBe('Unreviewed');
+  expect(waiting.grades[1]?.label).toBe('Top');
   // Same miss without pending: legacy SF fallback (flat pair -> Holds).
-  expect(run([undefined, gradingBot[1], gradingBot[2]], new Set()).qualities[0]?.label).toBe(
-    'Holds',
-  );
+  expect(run([undefined, gradingBot[1], gradingBot[2]], new Set()).grades[0]?.label).toBe('Holds');
 });

@@ -15,7 +15,7 @@ import {
 } from '../review/reviewCoordinator';
 import { evaluationRequest } from './evaluationStore';
 import { toStoredGame } from '../history/serverGames';
-import { KEYS, restoreGame } from '../history/storage';
+import { KEYS, parseStoredGame } from '../history/storage';
 import { requestBodyText, testNodes } from '../shared/testUtils';
 beforeEach(() => {
   const values = new Map<string, string>();
@@ -89,7 +89,7 @@ it('restores and validates browser settings and legacy temperature', () => {
   expect(normalizeSettings({ eloMaia: 1800, eloUser: 1700 }).userElo).toBe(1700);
   expect(normalizeSettings({ botElo: 1400, eloMaia: 1800 }).botElo).toBe(1400);
   // Saved games stored under the old keys restore with their ratings intact.
-  const legacy = restoreGame({
+  const legacy = parseStoredGame({
     id: 'legacy',
     createdAt: '2026-09-11T00:00:00Z',
     moves: [],
