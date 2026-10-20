@@ -120,4 +120,4 @@ Upstream: [Maia3](https://github.com/CSSLab/maia3/tree/1e13597c42d4858b7cfd7cfda
 [chess.js](https://github.com/jhlywa/chess.js),
 [Chessground](https://github.com/lichess-org/chessground). Stockfish
 redistribution inputs are in [`backend/STOCKFISH.md`](backend/STOCKFISH.md).
-HTTP routes are in [`backend/API.md`](backend/API.md).
+HTTP routes are in [`spec/openapi.yaml`](spec/openapi.yaml).

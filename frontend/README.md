@@ -6,7 +6,7 @@ game-history rules. `ChessBoard.tsx` adapts Chessground (owns board DOM;
 React owns surrounding UI).
 
 Product behavior is in the [root README](../README.md). Wire shapes are in
-[backend/API.md](../backend/API.md); terminology, lanes, and limits in
+[spec/openapi.yaml](../spec/openapi.yaml); terminology, lanes, and limits in
 [spec/GLOSSARY.md](../spec/GLOSSARY.md).
 
 ## Commands
@@ -81,7 +81,7 @@ queued. Late replies checked against the active request before store.
 
 Restore uses bounded `POST /evaluations/lookup` chunks (see
 [limits](../spec/GLOSSARY.md#limits) and
-[API](../backend/API.md#post-evaluationslookup)). Missing/invalid rows stay misses. Restore never starts whole-line
+[spec](../spec/openapi.yaml#post-evaluationslookup)). Missing/invalid rows stay misses. Restore never starts whole-line
 inference; foreground analysis + explicit batch generate results. Terminal
 scoring comes from timeline outcomes (`outcomeEvaluation.ts`). Batch progress uses native EventSource as
 optimization; status endpoint is ground truth. Status + restore refetch on

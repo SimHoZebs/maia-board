@@ -14,13 +14,14 @@ import (
 // This file owns the HTTP boundary topology: the Chi router, the Huma API
 // with every operation's OpenAPI registration, and the shared error shape.
 // Handler implementations live with their domains (move.go, evaluate.go,
-// games.go, evaluations.go, identity.go, reviews.go, openings.go); every
-// huma.Operation Path literal lives HERE so the lifecycle manifest's
-// reverse check (spec/lifecycle-manifest.json -> reverse.routes_file) can
-// parse them from this one file.
+// games.go, evaluations.go, identity.go, reviews.go, openings.go, auth.go,
+// imports.go); every huma.Operation Path literal lives HERE so the lifecycle
+// manifest's reverse check (spec/lifecycle-manifest.json -> reverse.routes_file)
+// can parse them from this one file.
 //
 // Error contract: Huma's ErrorModel envelope; our machine-readable codes
-// ride in errors[0].message, human text in detail. Full contract in API.md.
+// ride in errors[0].message, human text in detail. Route contracts live in
+// the generated spec (spec/openapi.yaml).
 
 // apiError builds a Huma error carrying our code in errors[0].message.
 func apiError(status int, code, message string) error {
@@ -56,17 +57,11 @@ func (s *Server) Handler() http.Handler {
 	api := newAPI(r)
 	s.registerOps(r, api)
 
-	// Session endpoints use plain Chi (Huma cannot set cookies).
-	// Auth anchors: auth/local-login, auth/logout, auth/me, auth/lichess-start, auth/lichess-callback, imports/status.
-	r.Post("/auth/local", s.serveLocalLogin)
-	r.Post("/auth/logout", s.serveLogout)
-	r.Get("/me", s.serveMe)
-	r.Get("/auth/lichess/start", s.serveLichessStart)
-	r.Post("/auth/lichess/start", s.serveLichessStart)
-	r.Get("/auth/lichess/callback", s.serveLichessCallback)
-	r.Post("/auth/lichess/callback", s.serveLichessCallback)
+	// POST /imports/games stays hand-rolled Chi: its 200-vs-400-with-body
+	// contract (the frontend branches on 400, account.ts) is not
+	// Huma-modelable without changing the wire shape. Its spec entry is
+	// declared in code below so the generated document stays complete.
 	r.Post("/imports/games", s.serveBulkImport)
-	r.Get("/imports/status", s.serveImportStatus)
 
 	// SPA fallback: any other unmatched path serves the frontend shell.
 	r.NotFound(s.frontend)
@@ -199,9 +194,121 @@ func (s *Server) registerOps(r chi.Router, api huma.API) {
 		Summary:       "Engine pool health",
 		DefaultStatus: http.StatusOK,
 	}, s.handleHealth)
+	huma.Register(api, huma.Operation{
+		OperationID:   "auth-local",
+		Method:        http.MethodPost,
+		Path:          "/auth/local",
+		Summary:       "Create a local session account",
+		DefaultStatus: http.StatusOK,
+		MaxBodyBytes:  64 * 1024,
+		Errors:        []int{400, 502, 503},
+	}, s.serveLocalLogin)
+	huma.Register(api, huma.Operation{
+		OperationID:   "auth-logout",
+		Method:        http.MethodPost,
+		Path:          "/auth/logout",
+		Summary:       "Revoke the session",
+		DefaultStatus: http.StatusNoContent,
+	}, s.serveLogout)
+	huma.Register(api, huma.Operation{
+		OperationID:   "me",
+		Method:        http.MethodGet,
+		Path:          "/me",
+		Summary:       "Current session user",
+		DefaultStatus: http.StatusOK,
+		Errors:        []int{401, 503},
+	}, s.serveMe)
+	huma.Register(api, huma.Operation{
+		OperationID:   "lichess-start",
+		Method:        http.MethodGet,
+		Path:          "/auth/lichess/start",
+		Summary:       "Begin Lichess OAuth (PKCE S256, scope preference:read)",
+		DefaultStatus: http.StatusOK,
+		Errors:        []int{400, 501, 502, 503},
+	}, s.serveLichessStart)
+	huma.Register(api, huma.Operation{
+		OperationID:   "lichess-start-post",
+		Method:        http.MethodPost,
+		Path:          "/auth/lichess/start",
+		Summary:       "Begin Lichess OAuth (JSON leg)",
+		DefaultStatus: http.StatusOK,
+		Errors:        []int{400, 501, 502, 503},
+	}, s.serveLichessStart)
+	huma.Register(api, huma.Operation{
+		OperationID:   "lichess-callback",
+		Method:        http.MethodGet,
+		Path:          "/auth/lichess/callback",
+		Summary:       "Lichess OAuth browser leg (302 back into the app)",
+		DefaultStatus: http.StatusFound,
+		Errors:        []int{400, 502, 503},
+	}, s.serveLichessCallbackGet)
+	huma.Register(api, huma.Operation{
+		OperationID:   "lichess-callback-post",
+		Method:        http.MethodPost,
+		Path:          "/auth/lichess/callback",
+		Summary:       "Lichess OAuth code exchange (JSON leg)",
+		DefaultStatus: http.StatusOK,
+		MaxBodyBytes:  64 * 1024,
+		Errors:        []int{400, 502, 503},
+	}, s.serveLichessCallbackPost)
+	huma.Register(api, huma.Operation{
+		OperationID:   "imports-status",
+		Method:        http.MethodGet,
+		Path:          "/imports/status",
+		Summary:       "Newest Lichess import run plus owned total",
+		DefaultStatus: http.StatusOK,
+		Errors:        []int{401, 502},
+	}, s.serveImportStatus)
 
 	// The SSE progress stream stays hand-rolled on Chi: Huma's SSE helper
-	// cannot answer pre-stream 404s, and the framing (named progress events
-	// plus :ping heartbeats the client ignores) is load-bearing.
+	// commits 200 OK before invoking the handler, so pre-stream 404s (unknown
+	// id), 401s, and no-flusher 502s cannot survive migration; after commit,
+	// errors would have to become events, rewriting the frontend contract.
+	// The stream's spec entry is declared here in code (not hand-edited yaml)
+	// so re-dumps stay complete.
 	r.Get("/reviews/{id}/events", s.reviews.reviewEvents)
+	api.OpenAPI().Paths["/reviews/{id}/events"] = &huma.PathItem{
+		Get: &huma.Operation{
+			OperationID: "reviews-events",
+			Summary:     "Batch progress stream (fast-path; poll is ground truth)",
+			Parameters: []*huma.Param{{
+				Name:        "id",
+				In:          "path",
+				Description: "Batch job id",
+				Required:    true,
+				Schema:      &huma.Schema{Type: huma.TypeString},
+			}},
+			Responses: map[string]*huma.Response{
+				"200": {
+					Description: "event: progress ticks with the bare batch status JSON, starting with a snapshot. No replay buffer; Last-Event-ID ignored; counters are cumulative so the latest tick supersedes earlier ones. Heartbeat :ping every 15 s; ends when finished is true.",
+					Content: map[string]*huma.MediaType{
+						"text/event-stream": {
+							Schema: &huma.Schema{Ref: "#/components/schemas/BatchProgress"},
+						},
+					},
+				},
+				"404": {Description: "Unknown or evicted job id"},
+			},
+		},
+	}
+	// POST /imports/games stays hand-rolled Chi for the same completeness
+	// reason: its 200-vs-400-with-body shape is declared here.
+	api.OpenAPI().Paths["/imports/games"] = &huma.PathItem{
+		Post: &huma.Operation{
+			OperationID:   "imports-games",
+			Summary:       "Bulk Lichess history append (max 100 entries, 4 MiB)",
+			DefaultStatus: http.StatusOK,
+			Parameters:    []*huma.Param{},
+			Responses: map[string]*huma.Response{
+				"200": {
+					Description: "200 even when all rows skip (already up to date); 400 when nothing saved and real errors exist",
+					Content: map[string]*huma.MediaType{
+						"application/json": {},
+					},
+				},
+				"400": {Description: "invalid_request (empty or >100 entries, unknown provider), invalid_source, invalid_opponent, invalid_rating_diff, per-index codes in errors map"},
+				"401": {Description: "Unauthenticated"},
+			},
+		},
+	}
 }

@@ -92,5 +92,17 @@ for (const l of man.limits) {
   for (const f of files) check(coveredFiles.has(f), `reverse workers: ${f} exists but has no manifest entry`);
 }
 
+// 3c. spec: every manifest route cover appears in the generated spec, so a
+// route that is registered but missing from spec/openapi.yaml fails loudly
+// instead of drifting silently (plain-Chi paths included: they are declared
+// in code in registerOps).
+{
+  const spec = read('spec/openapi.yaml');
+  for (const r of man.routes) {
+    for (const p of r.covers) check(spec.includes(`\n  ${p}:`), `spec: manifest cover ${p} missing from spec/openapi.yaml`);
+  }
+}
+
+
 console.log(`\nlifecycle-sync: ${fail === 0 ? 'PASS' : 'FAIL'} (${pass} checks, ${fail} failures)`);
 process.exit(fail === 0 ? 0 : 1);

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -180,19 +181,22 @@ func (s *Server) serveBulkImport(w http.ResponseWriter, r *http.Request) {
 // serveImportStatus summarizes the account's history lifecycle: the newest
 // import run per provider plus the owned game total. The panel renders from
 // this instead of presenting an eternal blank form.
-func (s *Server) serveImportStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeHumaError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
-		return
-	}
+type importStatusOutput struct {
+	Body importStatusBody
+}
+
+type importStatusBody struct {
+	Last  *store.ImportRun `json:"last"`
+	Total int              `json:"total"`
+}
+
+func (s *Server) serveImportStatus(ctx context.Context, _ *struct{}) (*importStatusOutput, error) {
 	if s.store == nil {
-		writeHumaError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
-		return
+		return nil, apiError(http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
 	}
-	user, authErr := s.requireUser(r.Context())
+	user, authErr := s.requireUser(ctx)
 	if authErr != nil {
-		writeHumaError(w, http.StatusUnauthorized, "unauthenticated", "login is required")
-		return
+		return nil, authErr
 	}
 	ownerID := ""
 	if user != nil {
@@ -200,18 +204,17 @@ func (s *Server) serveImportStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	_, total, err := s.store.ListForUser(1, ownerID)
 	if err != nil {
-		writeHumaError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
-		return
+		return nil, apiError(http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
 	}
 	last, err := s.store.LastImportRun(ownerID, "lichess")
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		writeHumaError(w, http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
-		return
+		return nil, apiError(http.StatusBadGateway, "engine_unavailable", "game history is unavailable")
 	}
-	w.Header().Set("Content-Type", "application/json")
-	if err != nil {
-		_ = json.NewEncoder(w).Encode(map[string]any{"last": nil, "total": total})
-		return
+	out := &importStatusOutput{}
+	out.Body.Total = total
+	if err == nil {
+		run := last
+		out.Body.Last = &run
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"last": last, "total": total})
+	return out, nil
 }

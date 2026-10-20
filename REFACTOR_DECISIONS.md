@@ -27,7 +27,7 @@ Status: `Pending` | `Accepted` | `Rejected` | `Needs-doc`.
 ## Settled architecture (pointers, not contracts)
 
 Normative facts live in [spec/GLOSSARY.md](spec/GLOSSARY.md) (lanes, cache,
-limits, terms) and [backend/API.md](backend/API.md) (routes, errors). History
+limits, terms) and [spec/openapi.yaml](spec/openapi.yaml) (routes, errors). History
 stays here; the queue above tracks what is still open.
 
 ## Accepted (one line each)

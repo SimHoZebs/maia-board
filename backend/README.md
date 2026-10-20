@@ -30,7 +30,7 @@ Migrations run at store open. Browser pending writes belong to the
 frontend persistence layer.
 
 `POST /move`, `/move/analysis`, `/evaluate` can reuse stored evaluations.
-`X-Eval-Cache: hit|miss` (contract in [`API.md`](API.md#envelope-and-limits)).
+`X-Eval-Cache: hit|miss` (contract in [`spec/openapi.yaml`](../spec/openapi.yaml), `info.description`).
 Only deterministic Maia requests participate; sampled play moves and
 degraded fallbacks are not persisted. Invalid cached rows fall through to
 inference. Eviction drops old writes past the v2 row cap in

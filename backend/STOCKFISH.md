@@ -2,7 +2,7 @@
 
 `POST /evaluate` runs native Stockfish 19 through a Python helper. Go owns
 the admission slot and cancellation. Route contract is in
-[API.md](API.md#post-evaluate); terms and limits in
+[spec/openapi.yaml](../spec/openapi.yaml) (operationId `evaluate`); terms and limits in
 [../spec/GLOSSARY.md](../spec/GLOSSARY.md).
 The helper runs persistent (`--serve`): one warm interpreter + one warm
 engine per admission slot.
@@ -102,7 +102,7 @@ behind an in-flight Batch search. Helper spawns its engine once per slot
 (version-checked, configured at startup); 128 MiB hash persists per slot.
 Concurrent evaluations on one slot get `503 engine_busy` + `Retry-After: 1`;
 no queue for single evaluations (whole games go through `POST /reviews` in
-[API.md](API.md)). Whole op timeout 8 s tied to HTTP cancellation. Go starts
+[spec/openapi.yaml](../spec/openapi.yaml)). Whole op timeout 8 s tied to HTTP cancellation. Go starts
 a separate process group; python-chess starts Stockfish with `setpgrp=False`
 so both share it. Dead engine respawns once and retries; other failures
 (timeout, unreachable helper, unusable output) kill the helper's group; next
@@ -111,7 +111,8 @@ timeout. Each slot stays held for the search; batch applies the budget per
 position. Pipe waits cap at 1 s. Cleanup also kills survivors after a
 wrapper crash and reaps adopted members when the server is PID 1.
 
-Errors use the [`API.md`](API.md#envelope-and-limits) envelope; `Code`
+Errors use the [OpenAPI spec](../spec/openapi.yaml) (`info.description`
+documents the envelope); `Code`
 below rides in `errors[0].message`:
 
 | HTTP | Code                 | Meaning                                                  |
