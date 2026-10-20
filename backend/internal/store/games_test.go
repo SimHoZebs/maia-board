@@ -69,7 +69,7 @@ func TestGameStoreSaveGetList(t *testing.T) {
 	if _, _, err := store.Save(gameFixture("b", "e2e4", "e7e5")); err != nil {
 		t.Fatal(err)
 	}
-	games, total, err := store.List(200)
+	games, total, err := store.ListForUser(200, "")
 	if err != nil || total != 2 || len(games) != 2 {
 		t.Fatalf("list = %d/%d, err = %v", len(games), total, err)
 	}
@@ -125,7 +125,7 @@ func TestGameStoreUnchangedSavePreservesOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	games, _, err := store.List(200)
+	games, _, err := store.ListForUser(200, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestGameStoreUnchangedSavePreservesOrder(t *testing.T) {
 	if _, _, err := store.Save(changed); err != nil {
 		t.Fatal(err)
 	}
-	games, _, err = store.List(200)
+	games, _, err = store.ListForUser(200, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -110,7 +110,7 @@ func ValidOwnedCacheValue(hash, engine, key string, encoded []byte) bool {
 	}
 	switch engine {
 	case "sf":
-		// Nil settings decode to the legacy timed policy, mirroring the nil
+		// Nil settings decode to the default timed policy, mirroring the nil
 		// (*StockfishSettings).Policy/Validate receiver behavior.
 		var settings *StockfishSettings
 		if len(identity.Settings) > 0 {

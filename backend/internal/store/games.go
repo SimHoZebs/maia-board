@@ -30,7 +30,7 @@ type GameRow struct {
 	Source string `json:"source,omitempty"`
 	// Opponent names the other side: a Lichess username for imports, Maia
 	// plus Elo for engine games. Never empty on rows written after the
-	// strict-source migration (legacy rows were backfilled).
+	// strict-source migration; older rows carry the 'Unknown' default.
 	Opponent string `json:"opponent,omitempty"`
 	// RatingDiff is the user's Lichess rating change for this game
 	// (players.<color>.ratingDiff). Nil when unknown: local games and
@@ -54,7 +54,7 @@ type GameRow struct {
 	// imported before clocks were requested. Server-trusted like Opponent:
 	// bulk import stamps it, single saves leave it empty.
 	Clocks []int `json:"clocks,omitempty"`
-	// OwnerID scopes the row to one user. Empty means a legacy pre-user row.
+	// OwnerID scopes the row to one user. Empty means an unowned row.
 	OwnerID string `json:"owner_id,omitempty"`
 }
 
@@ -71,7 +71,7 @@ type GamePayload struct {
 	Current     bool     `json:"current,omitempty"`
 	// The remaining fields are server-owned (see GameRow): handlers stamp or
 	// clear them and ignore client values, so the store keeps one save path
-	// for legacy ('') and owned rows.
+	// for unowned ('') and owned rows.
 	Source      string  `json:"source,omitempty"`
 	Opponent    string  `json:"opponent,omitempty"`
 	RatingDiff  *int    `json:"rating_diff,omitempty"`
@@ -79,7 +79,7 @@ type GamePayload struct {
 	Clocks      []int   `json:"clocks,omitempty"`
 	Speed       *string `json:"speed,omitempty"`
 	// OwnerID is server-owned: handlers overwrite it from the session. It
-	// stays in the payload so the store has one save path for legacy ('')
+	// stays in the payload so the store has one save path for unowned ('')
 	// and owned rows.
 	OwnerID string `json:"owner_id,omitempty"`
 }
@@ -296,7 +296,7 @@ func (s *GameStore) Save(payload GamePayload) (GameRow, bool, error) {
 			return saveResult{}, err
 		default:
 			// Ownership is load-bearing: one user must not overwrite another's
-			// row (including legacy '' rows) by reusing its id.
+			// row (including unowned '' rows) by reusing its id.
 			if storedOwner != payload.OwnerID {
 				return saveResult{}, ErrOwnerMismatch
 			}
@@ -466,12 +466,8 @@ func (s *GameStore) GetForUser(id, ownerID string) (GameRow, error) {
 	return game, nil
 }
 
-func (s *GameStore) List(limit int, offsets ...int) ([]GameRow, int, error) {
-	return s.ListForUser(limit, "", offsets...)
-}
-
-// ListForUser scopes history to one owner. Empty ownerID preserves the
-// legacy global view (pre-user rows plus unscoped tests).
+// ListForUser scopes history to one owner. Empty ownerID matches unowned
+// rows (and unscoped test fixtures).
 func (s *GameStore) ListForUser(limit int, ownerID string, offsets ...int) ([]GameRow, int, error) {
 	offset := 0
 	if len(offsets) > 0 {

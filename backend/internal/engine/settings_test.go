@@ -66,7 +66,7 @@ func TestEngineSettingsValidation(t *testing.T) {
 		t.Fatal(settings.Policy())
 	}
 	if (*StockfishSettings)(nil).Policy() != SearchPolicy {
-		t.Fatal("legacy policy changed")
+		t.Fatal("default policy changed")
 	}
 }
 

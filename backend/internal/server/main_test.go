@@ -452,7 +452,7 @@ func TestMoveCacheGuards(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Degraded legacy rows are never served as hits.
+	// Degraded old-format rows are never served as hits.
 	seed("aa01", `{"move":"e2e4","top_moves":[],"wdl":[0.2,0.3,0.5],"model_used":"79m","degraded":true}`)
 	w := post(base + `}`)
 	if w.Code != http.StatusOK || w.Header().Get("X-Eval-Cache") != "miss" || live.calls != 1 {

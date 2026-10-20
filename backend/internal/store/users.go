@@ -235,11 +235,6 @@ func (s *GameStore) ConsumeOAuthState(state string) (OAuthState, error) {
 	return pending, nil
 }
 
-// CountUnowned reports how many pre-user rows await adoption.
-func (s *GameStore) CountUnowned() (int, error) {
-	return countRows(s.db, `SELECT COUNT(*) FROM games WHERE owner_id = ''`)
-}
-
 // UpdateOpponentIfEmpty fills a missing opponent name on an imported row.
 // Never touches updated_at: a refresh must not churn recency.
 func (s *GameStore) UpdateOpponentIfEmpty(ownerID, source, opponent string) (bool, error) {
@@ -330,30 +325,6 @@ func (s *GameStore) UpdateClocksIfEmpty(ownerID, source string, clocks []int) (b
 		return false, err
 	}
 	return count > 0, nil
-}
-
-// AdoptLegacyGames claims every unowned (pre-user) game row for ownerID.
-// It is idempotent: a second caller adopts nothing. No current-game marker
-// is carried: unscoped saves never set one.
-func (s *GameStore) AdoptLegacyGames(ownerID string) (adopted int, err error) {
-	if ownerID == "" {
-		return 0, nil
-	}
-	res, err := withTx(s.db, func(tx *sql.Tx) (int, error) {
-		result, err := tx.Exec(`UPDATE games SET owner_id = ? WHERE owner_id = ''`, ownerID)
-		if err != nil {
-			return 0, err
-		}
-		count, err := result.RowsAffected()
-		if err != nil {
-			return 0, err
-		}
-		return int(count), nil
-	})
-	if err != nil {
-		return 0, err
-	}
-	return res, nil
 }
 func (s *GameStore) SetUserCurrent(userID, gameID string) error {
 	_, err := s.db.Exec(`INSERT INTO user_current (user_id, game_id) VALUES (?, ?)

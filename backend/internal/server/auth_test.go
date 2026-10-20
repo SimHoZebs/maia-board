@@ -70,7 +70,6 @@ func TestAuthGatesAndOwnership(t *testing.T) {
 		{http.MethodPost, "/evaluations/lookup", `{"line":{"initial_fen":"` + startFEN + `","moves":[]},"requests":[{"engine":"sf","fen":"` + startFEN + `","ply":0}]}`},
 		{http.MethodPost, "/reviews", `{"line":{"initial_fen":"` + startFEN + `","moves":[]},"requests":[{"engine":"maia","fen":"` + startFEN + `","ply":0,"elo_maia":1600,"elo_user":1600,"model":"79m"}]}`},
 		{http.MethodPost, "/imports/games", `{"games":[]}`},
-		{http.MethodPost, "/imports/adopt", ""},
 	} {
 		if w := authed(t, s, tc.method, tc.path, tc.body, ""); w.Code != http.StatusUnauthorized && !(tc.path == "/imports/games" && w.Code == http.StatusUnauthorized) {
 			t.Fatalf("%s %s: status %d, want 401", tc.method, tc.path, w.Code)
@@ -126,49 +125,6 @@ func TestAuthGatesAndOwnership(t *testing.T) {
 	}
 }
 
-func TestAdoptEndpoint(t *testing.T) {
-	s := authedServer(t)
-	if w := authed(t, s, http.MethodPost, "/imports/adopt", "", ""); w.Code != http.StatusUnauthorized {
-		t.Fatalf("anon adopt: %d", w.Code)
-	}
-	if w := authed(t, s, http.MethodGet, "/imports/adopt", "", ""); w.Code != http.StatusUnauthorized {
-		t.Fatalf("anon adopt count: %d", w.Code)
-	}
-	// Legacy row written before auth existed (direct store save, no owner).
-	maia, user := 1600, 1400
-	if _, _, err := s.store.Save(store.GamePayload{ID: "legacy", UserColor: "white", EloMaia: &maia, EloUser: &user, Model: "79m", Moves: []string{"e2e4"}, Source: "local", Opponent: "Maia 1600"}); err != nil {
-		t.Fatal(err)
-	}
-	alice, aliceToken := loginAs(t, s, "Alice")
-	if w := authed(t, s, http.MethodGet, "/games", "", aliceToken); w.Code != http.StatusOK {
-		t.Fatalf("alice list: %d", w.Code)
-	}
-	w := authed(t, s, http.MethodPost, "/imports/adopt", "", aliceToken)
-	if w.Code != http.StatusOK {
-		t.Fatalf("adopt: %d %s", w.Code, w.Body)
-	}
-	var result struct {
-		Adopted int `json:"adopted"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || result.Adopted != 1 {
-		t.Fatalf("adopt body: %s err=%v", w.Body, err)
-	}
-	if w := authed(t, s, http.MethodGet, "/games/legacy", "", aliceToken); w.Code != http.StatusOK {
-		t.Fatalf("adopted row unreadable: %d %s", w.Code, w.Body)
-	}
-	w = authed(t, s, http.MethodGet, "/imports/adopt", "", aliceToken)
-	if w.Code != http.StatusOK {
-		t.Fatalf("adopt count: %d %s", w.Code, w.Body)
-	}
-	var count struct {
-		Unowned int `json:"unowned"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &count); err != nil || count.Unowned != 0 {
-		t.Fatalf("adopt count body: %s err=%v", w.Body, err)
-	}
-	_ = alice
-}
-
 func TestImportDedupeAndStatus(t *testing.T) {
 	s := authedServer(t)
 	_, token := loginAs(t, s, "Importer")
@@ -194,7 +150,7 @@ func TestImportDedupeAndStatus(t *testing.T) {
 		t.Fatalf("opponent not stamped: %+v", first.Saved[0])
 	}
 	// Re-importing a fully-named row is a clean skip (opponent backfill
-	// only fires for legacy rows predating names; strict imports always
+	// only fires for pre-name rows; strict imports always
 	// carry a name, so there is nothing to refresh here).
 	w = authed(t, s, http.MethodPost, "/imports/games", `{"provider":"lichess","username":"bob","games":[`+entryNamed("lichess:bbb22222", "foe-two")+`]}`, token)
 	if w.Code != http.StatusOK {

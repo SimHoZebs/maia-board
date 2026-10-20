@@ -91,8 +91,7 @@ func TestImportRunsAndSources(t *testing.T) {
 	if _, _, err := store.Save(empty); err == nil {
 		t.Fatal("expected empty opponent to fail")
 	}
-	// Backfill is a no-op safety for already-named rows (legacy empties
-	// are fixed once on open by backfillLegacyRows).
+	// Backfill is a no-op safety for already-named rows.
 	updated, err = store.UpdateOpponentIfEmpty(user.ID, "lichess:noname1", "found-foe")
 	if err != nil || updated {
 		t.Fatalf("overwrite protection: updated=%t err=%v", updated, err)
@@ -155,43 +154,6 @@ func TestImportRunsAndSources(t *testing.T) {
 	}
 	if _, err := store.LastImportRun(user.ID, "other"); err == nil {
 		t.Fatal("expected no run for unknown provider")
-	}
-}
-
-func TestAdoptLegacyGames(t *testing.T) {
-	store := testStore(t)
-	if _, _, err := store.Save(gameFixture("legacy", "e2e4")); err != nil {
-		t.Fatal(err)
-	}
-	marker := gameFixture("current", "d2d4")
-	marker.Current = true
-	if _, _, err := store.Save(marker); err != nil {
-		t.Fatal(err)
-	}
-	alice, err := store.CreateLocalUser("Alice")
-	if err != nil {
-		t.Fatal(err)
-	}
-	adopted, err := store.AdoptLegacyGames(alice.ID)
-	if err != nil || adopted != 2 {
-		t.Fatalf("adopted=%d err=%v", adopted, err)
-	}
-	if _, err := store.GetForUser("legacy", alice.ID); err != nil {
-		t.Fatalf("adopted row unreadable: %v", err)
-	}
-	if id := store.CurrentIDForUser(alice.ID); id != "" {
-		t.Fatalf("unscoped marker leaked into adoption: %q", id)
-	}
-	if unowned, err := store.CountUnowned(); err != nil || unowned != 0 {
-		t.Fatalf("unowned=%d err=%v", unowned, err)
-	}
-	bob, err := store.CreateLocalUser("Bob")
-	if err != nil {
-		t.Fatal(err)
-	}
-	adopted, err = store.AdoptLegacyGames(bob.ID)
-	if err != nil || adopted != 0 {
-		t.Fatalf("second adopt=%d err=%v", adopted, err)
 	}
 }
 

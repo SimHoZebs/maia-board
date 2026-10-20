@@ -2,62 +2,19 @@ package store
 
 import "database/sql"
 
-// Backfill + trigger enforcement for the strict-constraint migration.
+// Trigger enforcement for the strict-constraint migration.
 //
 // Fresh databases get CHECKs from the CREATE TABLE statements. Existing
 // databases already have tables without those CHECKs (SQLite cannot ADD a
-// CHECK to a live table), so this file does two things on every open:
-//  1. backfills legacy sentinel empties to real values (`''` -> `local`,
-//     missing opponent names, `''` display names, upper-case Lichess names);
-//  2. installs BEFORE INSERT/UPDATE triggers that reject the same invalid
-//     rows the fresh-table CHECKs reject, so old and new databases behave
-//     identically going forward.
+// CHECK to a live table), so this file installs BEFORE INSERT/UPDATE
+// triggers that reject the same invalid rows the fresh-table CHECKs reject,
+// so old and new databases behave identically going forward.
 //
 // Trigger messages mirror the Go validation codes so failures read clearly
 // in logs and tests.
 
 func ensureStrictConstraints(db *sql.DB) error {
-	if err := backfillLegacyRows(db); err != nil {
-		return err
-	}
 	return ensureDbTriggers(db)
-}
-
-func backfillLegacyRows(db *sql.DB) error {
-	// Display names: empty becomes the documented fallback.
-	if _, err := db.Exec(`UPDATE users SET display_name = 'Player' WHERE display_name = ''`); err != nil {
-		return err
-	}
-	// Over-long display names predate the 40-char cap: trim them.
-	if _, err := db.Exec(`UPDATE users SET display_name = substr(display_name, 1, 40) WHERE length(display_name) > 40`); err != nil {
-		return err
-	}
-	// Lichess linkage: empty strings become NULL (UNIQUE allows many NULLs,
-	// but '' would collide and fail the length CHECK).
-	if _, err := db.Exec(`UPDATE users SET lichess_username = NULL WHERE lichess_username = ''`); err != nil {
-		return err
-	}
-	if _, err := db.Exec(`UPDATE users SET lichess_id = NULL WHERE lichess_id = ''`); err != nil {
-		return err
-	}
-	// Canonical lowercase for the dedupe column; display_name keeps case.
-	if _, err := db.Exec(`UPDATE users SET lichess_username = lower(lichess_username) WHERE lichess_username IS NOT NULL AND lichess_username <> lower(lichess_username)`); err != nil {
-		return err
-	}
-	// Games: lichess rows missing a name predate name stamping. 'Unknown'
-	// is the ADD COLUMN default for pre-migration tables; treat it like ''.
-	if _, err := db.Exec(`UPDATE games SET opponent = 'Lichess' WHERE (opponent IS NULL OR opponent = '' OR opponent = 'Unknown') AND source LIKE 'lichess:%'`); err != nil {
-		return err
-	}
-	// Games: local rows missing a name get the engine stamp.
-	if _, err := db.Exec(`UPDATE games SET opponent = 'Maia ' || elo_maia WHERE (opponent IS NULL OR opponent = '' OR opponent = 'Unknown')`); err != nil {
-		return err
-	}
-	// Games: empty source means a local engine game.
-	if _, err := db.Exec(`UPDATE games SET source = 'local' WHERE source IS NULL OR source = ''`); err != nil {
-		return err
-	}
-	return nil
 }
 
 func ensureDbTriggers(db *sql.DB) error {

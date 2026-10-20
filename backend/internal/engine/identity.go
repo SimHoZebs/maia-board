@@ -33,7 +33,7 @@ func MaiaIdentity(r MaiaRequest, model string) evalcache.Identity {
 	i.Revision, i.SelfElo, i.OppoElo, i.Model = maiaRevision, r.SelfElo, r.OppoElo, model
 	// Split rows (value Elos differing from policy Elos) get ValueRev 2 and
 	// explicit value coordinates; equal-or-omitted values normalize to the
-	// legacy ValueRev-1 key so 2400/2400 display rows dedup with the grading
+	// ValueRev-1 key so 2400/2400 display rows dedup with the grading
 	// lane and existing cache rows keep hitting.
 	if (r.ValueSelfElo != nil && *r.ValueSelfElo != r.SelfElo) ||
 		(r.ValueOppoElo != nil && *r.ValueOppoElo != r.OppoElo) {

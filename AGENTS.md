@@ -43,7 +43,7 @@ Query live logs and traffic first; do not guess from code.
 | Queue pressure (batch caps)   | `review-batch busy`            | `unfinished, sf_queue, large_queue, small_queue` (429 only)                                                                                                |
 | Openings                      | `openings`                     | `status, plies, duration_ms`                                                                                                                               |
 | Auth login / logout / Lichess | `auth`                         | `status, action=local-login\|logout\|lichess-start\|lichess-callback, user, lichess`                                                                       |
-| Bulk history import           | `import-save`                  | `status, user, saved, failed, skipped, new, refreshed, adopted, duration_ms`                                                                               |
+| Bulk history import           | `import-save`                  | `status, user, saved, failed, skipped, new, refreshed, duration_ms`                                                                                        |
 
 `wait_ms` is admission wait inside `exec_ms` (-1 when admission never
 reached). On misses `exec_ms - wait_ms` ~= inference + store. Queue signals:

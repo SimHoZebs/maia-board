@@ -64,9 +64,9 @@ func NewGameStore(path string) (*GameStore, error) {
 }
 
 // initSchema creates and migrates every table in open order. The order is
-// load-bearing: the owner/source index drop runs before the legacy backfill
-// (see ensureGameOwnerColumn), and the strict triggers install last so the
-// backfill itself is not rejected.
+// load-bearing: the owner/source index drop (see ensureGameOwnerColumn)
+// runs before the strict triggers install, so the triggers never see the
+// stale predicate.
 func initSchema(db *sql.DB) error {
 	if err := ensureGamesBaseTable(db); err != nil {
 		return err

@@ -25,7 +25,7 @@ to `-`. Both sides to move supported.
 
 Send the full available history, including for earlier positions.
 Repetition and search depend on it. Custom-start FEN cannot reconstruct
-earlier repetitions. Threads and memory are fixed by the legacy policy
+earlier repetitions. Threads and memory are fixed by the default policy
 below; the binary path comes from server config.
 
 Optional `settings`:
@@ -38,7 +38,7 @@ Optional `settings`:
 required when settings supplied. Depth 0 has no depth target. Explicit
 search stops at the first reached time/depth limit. Policy id is
 `sf19-ms{time_ms}-mpv{lines}-d{depth}-t4-h128-v3`. Omitting settings keeps
-the legacy policy below.
+the default policy below.
 
 Settings page stores Stockfish prefs in this browser (initially 750 ms, 2
 lines, depth 0). Prefs join position-cache and completed-analysis identity.
@@ -82,7 +82,7 @@ move does not end the current position, so the helper uses
 existing-position repetition/clock checks, not `claim_draw=True`.
 Fivefold/75-move also covered by python-chess outcome check.
 
-`lines` holds up to the requested ranked root moves (2 legacy), distinct
+`lines` holds up to the requested ranked root moves (2 default), distinct
 first moves. `best_move`/`score` come from line 1. Depths are the engine's
 reported depths; top-level depth is the minimum across lines. The helper
 keeps the deepest iteration with exact scores for all requested lines,
@@ -90,7 +90,7 @@ drops bounds-only/incomplete iterations, and errors when none is complete.
 
 ## Resource and failure behavior
 
-Legacy policy: 4 threads, 128 MiB hash, `MultiPV=2`, `Limit(nodes=100000,
+Default policy: 4 threads, 128 MiB hash, `MultiPV=2`, `Limit(nodes=100000,
 time=0.75)`. Position validation adds time beyond the search clock. Depth is
 observed, never a target. Wall-clock limit means results vary under load.
 

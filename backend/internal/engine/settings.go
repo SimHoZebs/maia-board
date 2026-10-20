@@ -35,7 +35,7 @@ func (s *StockfishSettings) Validate() *apierror.RequestError {
 }
 
 // Policy names the search budget for cache identity and provenance. Nil
-// settings mean the legacy timed default.
+// settings mean the default timed policy.
 func (s *StockfishSettings) Policy() string {
 	if s == nil {
 		return SearchPolicy

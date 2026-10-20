@@ -57,7 +57,7 @@ func (s *Server) Handler() http.Handler {
 	s.registerOps(r, api)
 
 	// Session endpoints use plain Chi (Huma cannot set cookies).
-	// Auth anchors: auth/local-login, auth/logout, auth/me, auth/lichess-start, auth/lichess-callback, imports/adopt, imports/status.
+	// Auth anchors: auth/local-login, auth/logout, auth/me, auth/lichess-start, auth/lichess-callback, imports/status.
 	r.Post("/auth/local", s.serveLocalLogin)
 	r.Post("/auth/logout", s.serveLogout)
 	r.Get("/me", s.serveMe)
@@ -67,8 +67,6 @@ func (s *Server) Handler() http.Handler {
 	r.Post("/auth/lichess/callback", s.serveLichessCallback)
 	r.Post("/imports/games", s.serveBulkImport)
 	r.Get("/imports/status", s.serveImportStatus)
-	r.Get("/imports/adopt", s.serveAdoptCount)
-	r.Post("/imports/adopt", s.serveAdopt)
 
 	// SPA fallback: any other unmatched path serves the frontend shell.
 	r.NotFound(s.frontend)

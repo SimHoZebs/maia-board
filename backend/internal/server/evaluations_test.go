@@ -11,8 +11,7 @@ import (
 
 // Cache fixtures are inserted directly. Public PUT is intentionally
 // disabled. Unknown evaluation paths fall through to the frontend shell
-// (404 without a build present): they address nothing since the debug
-// per-hash GET was removed and the legacy table was dropped.
+// (404 without a build present): no per-hash GET or PUT route exists.
 func TestLegacyEvaluationIdsAreGone(t *testing.T) {
 	s := &Server{store: testStore(t)}
 	w := serve(s, "GET", "/evaluations/abc123", "")

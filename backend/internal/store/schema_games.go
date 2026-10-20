@@ -25,15 +25,7 @@ func ensureGamesBaseTable(db *sql.DB) error {
 	if _, err := db.Exec(schema); err != nil {
 		return err
 	}
-	// The legacy evaluations table is disposable cache, not user data: drop
-	// it once on open. Misses recompute through the engine endpoints.
-	if _, err := db.Exec(`DROP TABLE IF EXISTS evaluations`); err != nil {
-		return err
-	}
-	// The legacy meta KV table held the pre-user global current-game marker.
-	// Per-user markers live in user_current now; drop it once on open.
-	_, err := db.Exec(`DROP TABLE IF EXISTS meta`)
-	return err
+	return nil
 }
 
 func migrateGameSchema(db *sql.DB) error {
@@ -104,11 +96,8 @@ func ensureGameOwnerColumn(db *sql.DB) error {
 	// External imports dedupe per owner: re-running the same Lichess import
 	// skips rows instead of duplicating them. Only `lichess:<id>` rows
 	// participate; local games carry `local` and never collide.
-	// DROP first: pre-strict DBs already have this name with the old
-	// `WHERE source <> ''` predicate, and CREATE IF NOT EXISTS would keep
-	// the stale index live — then backfilling 26x (owner, local) collides
-	// and NewGameStore fails open. The drop runs before backfill via
-	// initSchema order (ensureGameOwnerColumn -> ensureStrictConstraints).
+	// DROP first: pre-strict DBs already have this name with a wider
+	// predicate, and CREATE IF NOT EXISTS would keep the stale index live.
 	if _, err := db.Exec(`DROP INDEX IF EXISTS idx_games_owner_source`); err != nil {
 		return err
 	}

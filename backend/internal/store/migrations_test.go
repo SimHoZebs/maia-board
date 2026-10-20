@@ -31,8 +31,8 @@ func TestTemperatureMigrationAndRoundtrip(t *testing.T) {
 	if err != nil || old.Temperature != 0 || old.Result != "" || old.RatingDiff != nil {
 		t.Fatalf("old game: %+v %v", old, err)
 	}
-	if old.Source != "local" || old.Opponent != "Maia 1600" {
-		t.Fatalf("legacy backfill: %+v", old)
+	if old.Source != "local" || old.Opponent != "Unknown" {
+		t.Fatalf("migrated columns: %+v", old)
 	}
 	elo := 1600
 	payload := GamePayload{ID: "new", UserColor: "white", EloMaia: &elo, EloUser: &elo, Model: "79m", Moves: []string{}, Temperature: .7, Source: "local", Opponent: "Maia 1600"}
@@ -56,18 +56,17 @@ func TestTemperatureMigrationAndRoundtrip(t *testing.T) {
 	if err != nil || got.Result != "resigned" || len(got.Moves) != 1 {
 		t.Fatalf("resigned roundtrip: %+v %v", got, err)
 	}
-	rows, _, err := store.List(10)
+	rows, _, err := store.ListForUser(10, "")
 	if err != nil || len(rows) != 2 {
 		t.Fatal("list after migration", err)
 	}
 }
 
-// Regression for the prod crash loop (07ba03e): pre-strict DBs carry the
-// old `WHERE source <> ”` unique index under the same name. CREATE IF NOT
-// EXISTS kept the stale predicate live, so backfilling N empty-source rows
-// for one owner to `local` collided on row 2 and NewGameStore failed open.
-// The fix drops the index before recreating it with `LIKE 'lichess:%'`.
-func TestStaleOwnerSourceIndexDoesNotBlockLocalBackfill(t *testing.T) {
+// Regression for the prod crash loop (07ba03e): pre-strict DBs carry a
+// wider unique index under the same name. CREATE IF NOT EXISTS would keep
+// the stale predicate live, so the index is dropped and recreated with
+// `LIKE 'lichess:%'` on open.
+func TestStaleOwnerSourceIndexReplaced(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "games.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -98,11 +97,8 @@ func TestStaleOwnerSourceIndexDoesNotBlockLocalBackfill(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Source != "local" {
-			t.Fatalf("row %s source = %q, want local", id, got.Source)
-		}
-		if got.Opponent == "" {
-			t.Fatalf("row %s opponent still empty", id)
+		if got.Source != "" || got.Opponent != "" {
+			t.Fatalf("row %s was rewritten: %+v", id, got)
 		}
 	}
 	var indexSQL string

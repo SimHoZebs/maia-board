@@ -276,20 +276,6 @@ History summary: newest Lichess run plus owned total.
 {"last": null, "total": 0}
 ```
 
-## POST /imports/adopt
-
-One-time migration for pre-user history: unowned rows become the caller's.
-No current-game marker carried. Idempotent.
-
-```json
-// GET /imports/adopt → 200 (read-only count for the claim gate)
-{"unowned": 12}
-// POST /imports/adopt → 200 (claims rows)
-{"adopted": 12}
-```
-
-- Errors: `401 unauthenticated`.
-
 ## GET /healthz
 
 Liveness plus Maia worker state. `GET` only.
