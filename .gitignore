@@ -3,3 +3,6 @@ test-results/
 backend/server
 # Crash dumps (e.g. frontend/core.*) are local diagnostics, never committed.
 core.*
+
+# Python bytecode (e.g. from syntax checks) is never committed.
+__pycache__/
