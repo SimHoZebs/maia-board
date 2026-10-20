@@ -430,24 +430,25 @@ export function candidateSan(fen: string, uci: string): string {
   }
 }
 
-// One replay owns the displayed position and the API's history, including custom starts.
+// One timeline owns the displayed position and the API's history, including
+// custom starts. The stored initialFen is already normalized at load; the
+// timeline's normalized root is the canonical identity (no extra FEN parse).
 export function analysisLine(
   analysis: Analysis,
   at = analysis.index,
 ): Position & { initialFen: string } {
-  const initialFen = new Chess(analysis.initialFen).fen();
   const moves =
     analysis.branchFromPly === null
       ? analysis.moves
       : [...analysis.moves.slice(0, analysis.branchFromPly), ...analysis.branchMoves];
-  const timeline = buildTimeline(initialFen, moves);
+  const timeline = buildTimeline(analysis.initialFen, moves);
   const clamped = Math.max(0, Math.min(at, moves.length));
   return {
     fen: timeline.rows[clamped].fen,
     moves: moves.slice(0, clamped),
     sanMoves: timeline.rows.slice(1, clamped + 1).map(row => row.san),
     lastMove: timeline.rows[clamped].lastMove,
-    initialFen,
+    initialFen: timeline.initialFen,
   };
 }
 export function analysisLength(analysis: Analysis): number {
@@ -475,7 +476,7 @@ export function isResigned(game: Pick<StoredGame, 'result'>): boolean {
 export function storedGameResult(game: StoredGame): string {
   if (isResigned(game))
     return `${sideName(oppositeColor(game.settings.userColor))} wins · resignation`;
-  return gameResult(replay(game.moves));
+  return resultTextForOutcome(tipRow(buildTimeline(START_FEN, game.moves)).outcome);
 }
 // Losing-king marker for game-over boards: scan the displayed FEN for the
 // given side's king. Invalid FEN or a missing king yields undefined so
@@ -488,21 +489,28 @@ export function findKingSquare(game: Chess, color: 'w' | 'b'): Square | null {
   }
   return null;
 }
+const KING_SQUARE_CACHE_LIMIT = 512;
+const kingSquareCache = new Map<string, Key | undefined>();
 export function kingSquare(fen: string, color: SideColor): Key | undefined {
-  let game: Chess;
+  const key = `${fen}|${color}`;
+  if (kingSquareCache.has(key)) return kingSquareCache.get(key);
+  let result: Key | undefined;
   try {
-    game = new Chess(fen);
+    const found = findKingSquare(new Chess(fen), color === 'white' ? 'w' : 'b');
+    result = found ? parseKey(found) : undefined;
   } catch {
-    return undefined;
+    result = undefined;
   }
-  const found = findKingSquare(game, color === 'white' ? 'w' : 'b');
-  return found ? parseKey(found) : undefined;
+  kingSquareCache.set(key, result);
+  if (kingSquareCache.size > KING_SQUARE_CACHE_LIMIT)
+    kingSquareCache.delete(kingSquareCache.keys().next().value!);
+  return result;
 }
 // score_moves evaluates _history_after_move, then invert_wdl restores the choosing side.
 // https://github.com/CSSLab/maia3/blob/1e13597c42d4858b7cfd7cfdae01e297263364b2/maia3/uci.py
 export function absoluteWdl(fen: string, wdl: MoveResponse['wdl']) {
   const [loss, draw, win] = wdl;
-  return new Chess(fen).turn() === 'w' ? [win, draw, loss] : [loss, draw, win];
+  return turnFromFen(fen) === 'white' ? [win, draw, loss] : [loss, draw, win];
 }
 
 // One history-aware walk owns the position facts for every ply.
@@ -512,6 +520,9 @@ export type TimelineRow = {
   san: string;
   fen: string;
   turn: 'white' | 'black';
+  // Side to move in check. Computed once during the derivation walk
+  // (game.inCheck()), so render loops read it instead of parsing the FEN.
+  check: boolean;
   outcome: DomainOutcome | null;
   lastMove: [Key, Key] | undefined;
 };
@@ -583,6 +594,7 @@ function deriveTimeline(
       san: '',
       fen: game.fen(),
       turn: game.turn() === 'w' ? 'white' : 'black',
+      check: game.inCheck(),
       outcome: outcome(game),
       lastMove: undefined,
     },
@@ -599,6 +611,7 @@ function deriveTimeline(
       san: applied.san,
       fen: game.fen(),
       turn: game.turn() === 'w' ? 'white' : 'black',
+      check: game.inCheck(),
       outcome: outcome(game),
       lastMove: [applied.from, applied.to],
     });
@@ -642,6 +655,54 @@ export function tipRow(timeline: Timeline): TimelineRow {
   }
   return cached;
 }
+// Alias for the REFACTOR rowAt/tip/materialAt trio: the tip row owns the
+// live outcome/turn/check without a replay.
+export function tip(timeline: Timeline): TimelineRow {
+  return tipRow(timeline);
+}
+
+// Side to move straight from the FEN turn field. Position-only and total
+// (no history input), so render loops read this instead of parsing a Chess
+// instance for the turn.
+export function turnFromFen(fen: string): 'white' | 'black' | undefined {
+  const token = fen.split(' ')[1];
+  if (token === 'w') return 'white';
+  if (token === 'b') return 'black';
+  return undefined;
+}
+
+export type MaterialScore = { white: number; black: number; diff: number };
+const MATERIAL_VALUES: Record<string, number> = { p: 1, n: 3, b: 3, r: 5, q: 9 };
+// FEN piece-placement scan (kings excluded, diff White-relative). Matches
+// materialFromFen exactly without a Chess parse.
+function materialFromFenString(fen: string): MaterialScore {
+  let white = 0;
+  let black = 0;
+  const placement = fen.split(' ')[0] ?? '';
+  for (const char of placement) {
+    if (char === '/' || (char >= '1' && char <= '8')) continue;
+    const lower = char.toLowerCase();
+    if (lower === 'k') continue;
+    const value = MATERIAL_VALUES[lower];
+    if (value === undefined) continue;
+    if (char === lower) black += value;
+    else white += value;
+  }
+  return { white, black, diff: white - black };
+}
+// Memoized material per timeline (keyed by the lineKey-owned timeline
+// identity): one FEN-string scan per row on first use, then O(1) reads while
+// scrubbing. Never constructs a Chess instance.
+const materialMemo = new WeakMap<Timeline, MaterialScore[]>();
+export function materialAt(timeline: Timeline, ply: number): MaterialScore {
+  let cached = materialMemo.get(timeline);
+  if (!cached) {
+    cached = timeline.rows.map(row => materialFromFenString(row.fen));
+    materialMemo.set(timeline, cached);
+  }
+  const clamped = Math.max(0, Math.min(ply, cached.length - 1));
+  return cached[clamped] ?? { white: 0, black: 0, diff: 0 };
+}
 
 // Length of the legal prefix of a possibly-untrusted move list. One plain
 // legality walk, no history evaluation: callers narrow corrupt lines before
@@ -678,7 +739,7 @@ export function lineRecord(moves: string[], initialFen = START_FEN): LineRecord 
     moves,
     sanMoves: timeline.rows.slice(1).map(row => row.san),
     lastMove: end.lastMove ? [...end.lastMove] : undefined,
-    terminal: outcomeEvaluation(end.outcome) ?? null,
+    terminal: outcomeEvaluation(end.outcome),
   };
 }
 
@@ -719,12 +780,17 @@ export function terminalFlags(initialFen: string, moves: string[]): boolean[] {
   return buildTimeline(initialFen, moves).rows.map(row => row.outcome !== null);
 }
 
-// Result text without a replay: checkmate is position-only (safe from a
-// FEN parse); draw-vs-unfinished is history-aware and comes solely from the
-// memoized terminal — never from a FEN-parsed isDraw()/isGameOver(), which
-// miss threefold repetition. Mirrors gameResult() exactly.
-export function resultTextForTip(tipFen: string, terminal: Evaluation | null): string {
-  const game = new Chess(tipFen);
-  if (game.isCheckmate()) return game.turn() === 'w' ? 'Black wins' : 'White wins';
+// Result text without a replay: the memoized timeline outcome owns both
+// branches — checkmate names its winner, any other terminal is a draw.
+// Mirrors gameResult() exactly; never parses a FEN (FEN-parsed
+// isDraw()/isGameOver() miss threefold repetition).
+export function resultTextForOutcome(outcome: DomainOutcome | null): string {
+  if (!outcome) return 'Unfinished';
+  if (outcome.kind === 'checkmate') return outcome.winner === 'white' ? 'White wins' : 'Black wins';
+  return 'Draw';
+}
+export function resultTextForTip(_tipFen: string, terminal: Evaluation | null): string {
+  if (terminal?.terminal === 'white_win') return 'White wins';
+  if (terminal?.terminal === 'black_win') return 'Black wins';
   return terminal ? 'Draw' : 'Unfinished';
 }

@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import type { DrawBrushes, DrawShape } from '@lichess-org/chessground/draw';
 import { ChartLine, Menu, RotateCw, Plus, Undo2, Flag } from 'lucide-react';
 import { NavLink } from 'react-router';
-import { Chess } from 'chess.js';
 import { ChessBoard } from '../board/ChessBoard';
 import { Button, IconButton } from '../components';
 import { AnalysisActions, AnalysisControls, PlayControls, type Props } from './Controls';
@@ -11,32 +10,33 @@ import { InsightPanel, MoveNavBar, MovesPanel, ObjectiveBar } from './ReadPanels
 import { Dialog } from './Dialog';
 import {
   analysisLength,
+  buildTimeline,
   formatClock,
-  gameResult,
-  lineRecord,
   LOW_TIME_CENTISECONDS,
+  materialAt,
   oppositeColor,
   parseKey,
   remainingAt,
-  replay,
   resolveBoardOrientation,
-  resultTextForTip,
+  resultTextForOutcome,
+  rowAt,
   sideName,
   START_FEN,
   storedGameResult,
+  tipRow,
   type LinePlayer,
 } from '../shared/domain';
 import type { BoardPosition, BoardTransition } from '../board/ChessBoard';
-import { toGroundColor } from '../board/board-colors';
-import { currentPosition } from '../state/index';
 import { usePlayFeedback } from '../play/usePlayFeedback';
-import { useAccountName } from '../history/session';
+import { plyOrNull } from '../shared/explicit';
+import { accountDisplayName, useAccountName } from '../history/session';
 import { useReview } from '../review/useReview';
 import {
   losingKingBadge,
   losingKingShapes,
   reviewBrushes,
   reviewShapes,
+  type ArrowSource,
   type SquareBadge,
 } from '../review/reviewArrows';
 import { buildReviewBrushes } from '../settings/arrowSettings';
@@ -49,7 +49,6 @@ import {
   capturedLabel,
   buildCapturePrefix,
   captureAt,
-  materialFromFen,
   materialLeadFor,
   type CapturedPiece,
 } from '../theory/material';
@@ -344,15 +343,15 @@ export function PlayWorkspace({ state, dispatch }: Props) {
   const moveFeedback = usePlayFeedback(state);
   // Identity for the player strips: the signed-in display name, falling back
   // to 'You' before login and in unit tests (no session provider there).
-  const you = useAccountName() ?? 'You';
+  const you = accountDisplayName(useAccountName());
   const ply = state.viewedPly ?? state.play.moves.length;
-  const position = currentPosition(state);
-  const game = new Chess(position.fen);
-  // Memoized once-per-line derivation: fen/SAN/turn/history-aware terminality.
-  const playLine = lineRecord(state.play.moves);
-  // Position-only live game for turn display. Terminality always comes from
-  // the history-aware memoized record (FEN parses miss repetition draws).
-  const live = playLine ? new Chess(playLine.fen) : replay(state.play.moves);
+  // Once-per-line timeline: tip + viewed rows are O(1) cached reads, never
+  // per-render replays. The viewed position addresses the full-line timeline
+  // directly, so scrubbing never builds prefix timelines.
+  const playTimeline = buildTimeline(START_FEN, state.play.moves);
+  const playTip = tipRow(playTimeline);
+  const viewedRow = rowAt(playTimeline, ply);
+  const position = { fen: viewedRow.fen, lastMove: viewedRow.lastMove };
   const ready = state.started;
   const orientation = resolveBoardOrientation(
     state.boardOrientation,
@@ -360,11 +359,11 @@ export function PlayWorkspace({ state, dispatch }: Props) {
     state.flipped,
   );
   const historic = state.viewedPly !== null;
-  const userTurn = toGroundColor(live.turn()) === settings.userColor;
+  const userTurn = playTip.turn === settings.userColor;
   const resigned = ready && state.play.result === 'resigned';
-  const boardOver = ready && (playLine ? playLine.terminal !== null : live.isGameOver());
-  const tipOver = playLine ? playLine.terminal !== null : live.isGameOver();
-  const viewedOver = (position.terminal ?? null) !== null;
+  const boardOver = ready && playTip.outcome !== null;
+  const tipOver = playTip.outcome !== null;
+  const viewedOver = viewedRow.outcome !== null;
   const enabled =
     ready &&
     !state.promotion &&
@@ -374,7 +373,10 @@ export function PlayWorkspace({ state, dispatch }: Props) {
     !historic &&
     !request &&
     userTurn;
-  const full = { sanMoves: playLine ? playLine.sanMoves : live.history() };
+  // SAN list is a cheap projection over the cached once-per-line timeline
+  // (rows already materialize SAN; this only re-slices references), so no
+  // memo is needed — the React Compiler owns caching here.
+  const full = { sanMoves: playTimeline.rows.slice(1).map(row => row.san) };
   const { bookFlags: playBookFlags } = useLineOpenings(state.play.moves, START_FEN, ply);
   // Narrow-boundary reset keys: new content deserves a fresh render attempt
   // instead of a stale panel fallback. Each workspace keys only its own
@@ -398,14 +400,13 @@ export function PlayWorkspace({ state, dispatch }: Props) {
     [state.play.moves],
   );
   const playCaptures = captureAt(playCapturePrefix, displayedPly);
-  const playDiff = materialFromFen(position.fen).diff;
+  const playDiff = materialAt(playTimeline, displayedPly).diff;
   const userLabel = `${you} (${settings.userElo})`;
   const botLabel = `Maia (${settings.botElo})`;
   const strip = (color: 'white' | 'black') => {
-    const shownGame = historic ? game : live;
-    const shownOver =
-      (historic ? (position.terminal ?? null) : (playLine?.terminal ?? null)) !== null;
-    const active = !resigned && toGroundColor(shownGame.turn()) === color && !shownOver;
+    const shownTurn = historic ? viewedRow.turn : playTip.turn;
+    const shownOver = (historic ? viewedRow.outcome : playTip.outcome) !== null;
+    const active = !resigned && shownTurn === color && !shownOver;
     const isActive = active && ready;
     const label = color === settings.userColor ? userLabel : botLabel;
     // Remaining time at the displayed ply for resumed imports (local games
@@ -450,16 +451,17 @@ export function PlayWorkspace({ state, dispatch }: Props) {
   // dialog open over the result overlay, and avoids a stale `true` reopening
   // the dialog on the next game.
   if (over && confirmResign) setConfirmResign(false);
-  const winner = resigned
-    ? oppositeColor(settings.userColor)
-    : over && live.isCheckmate()
-      ? oppositeColor(toGroundColor(live.turn()))
-      : null;
+  const winner =
+    resigned || !over
+      ? resigned
+        ? oppositeColor(settings.userColor)
+        : null
+      : playTip.outcome?.kind === 'checkmate'
+        ? oppositeColor(playTip.turn)
+        : null;
   const resultText = resigned
     ? storedGameResult(state.play)
-    : playLine
-      ? resultTextForTip(playLine.fen, playLine.terminal)
-      : gameResult(live);
+    : resultTextForOutcome(playTip.outcome);
   // Flag on the losing king: resignation marks the player's own king at the
   // tip; checkmate marks the side to move in the displayed position. Historic
   // views show no flag so browsing earlier plies never flags a king that had
@@ -471,18 +473,12 @@ export function PlayWorkspace({ state, dispatch }: Props) {
   const loser = useMemo<'white' | 'black' | null>(() => {
     if (resigned && !historic) return settings.userColor;
     if (!ready) return null;
-    try {
-      const g = new Chess(position.fen);
-      if (g.isCheckmate()) return toGroundColor(g.turn());
-    } catch {
-      return null;
-    }
-    return null;
-  }, [resigned, historic, settings.userColor, ready, position.fen]);
+    return viewedRow.outcome?.kind === 'checkmate' ? viewedRow.turn : null;
+  }, [resigned, historic, settings.userColor, ready, viewedRow]);
   // Standalone play flag via the shared losing-king helper: identical badge
   // construction as the analysis mated-king flag, so resign and checkmate
   // clear through the same path on new game.
-  const playShapes = useMemo(() => losingKingShapes(position.fen, loser), [position.fen, loser]);
+  const playShapes = useMemo(() => losingKingShapes(viewedRow.fen, loser), [viewedRow.fen, loser]);
   const mobileBar = useMobileBar();
   const tools = (
     <>
@@ -624,10 +620,15 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   const review = useReview(state);
   const ply = state.analysis.index;
   // Displayed position is an O(1) lookup into the review timeline built once
-  // per line in useReview. The fallback covers a transient out-of-range index
-  // the way a clamped slice would.
-  const position = review.nodes[ply] ?? review.nodes[review.nodes.length - 1];
-  const game = new Chess(position.fen);
+  // per line in useReview. A transient out-of-range index falls back to the
+  // tip by name — never a silent undefined. Plain indexing (not plyAt) keeps
+  // the value compiler-visible for the memoized badge below; the explicit
+  // bounds check is the failure guard, and node arrays are dense by
+  // construction so in-range reads never miss.
+  const position =
+    ply >= 0 && ply < review.nodes.length
+      ? review.nodes[ply]
+      : review.nodes[review.nodes.length - 1];
   const ready = state.analysisLoaded;
   // Auto means the reviewed side faces the viewer: the player's own color
   // for reviewed games, otherwise the side to move in the starting position.
@@ -663,37 +664,50 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
   // either basis: same engine as Stockfish, same color, wider shaft.
   const pastArrows = state.arrowBasis === 'past';
   const before = ply - 1;
-  const arrowMoves = pastArrows
+  // Eval-bar point for the viewed position. Null reads as empty bar, never
+  // a silent undefined.
+  const barPoint = plyOrNull(review.objective, ply, 'bar objective');
+  // Arrow endpoints: null means no arrow (tip has no next, missing rows have
+  // no candidate). Node reads are bounds-checked; row reads are lenient —
+  // a missing row blanks its arrow instead of failing the board.
+  const viewedArrowNode = plyOrNull(review.nodes, ply, 'arrow nodes');
+  const nextArrowNode = plyOrNull(review.nodes, ply + 1, 'arrow nodes');
+  const beforeArrowPoint =
+    before >= 0 ? plyOrNull(review.objective, before, 'arrow objective') : null;
+  const atPlyArrowPoint = plyOrNull(review.objective, ply, 'arrow objective');
+  const firstTopMove = (row: { top_moves: { move: string }[] } | null): string | null => {
+    if (row === null || row.top_moves.length === 0) return null;
+    return row.top_moves[0].move;
+  };
+  const arrowMoves: Record<ArrowSource, string | null> = pastArrows
     ? {
-        actual: ply > 0 ? (review.nodes[ply]?.uci ?? undefined) : undefined,
-        bot: ply > 0 ? review.bot?.top_moves[0]?.move : undefined,
-        objective: ply > 0 ? (review.objective[before]?.top ?? undefined) : undefined,
-        stockfish: ply > 0 ? (review.focus?.best_move ?? undefined) : undefined,
-        next: review.current?.best_move ?? undefined,
+        actual: ply > 0 && viewedArrowNode !== null ? viewedArrowNode.uci : null,
+        bot: ply > 0 ? firstTopMove(review.bot) : null,
+        objective: beforeArrowPoint === null ? null : beforeArrowPoint.top,
+        stockfish: ply > 0 && review.focus !== null ? review.focus.best_move : null,
+        next: review.current === null ? null : review.current.best_move,
       }
     : {
-        actual: review.nodes[ply + 1]?.uci ?? undefined,
-        bot: review.botCurrent?.top_moves[0]?.move,
-        objective: review.objective[ply]?.top ?? undefined,
-        stockfish: review.current?.best_move ?? undefined,
-        next: review.current?.best_move ?? undefined,
+        actual: nextArrowNode === null ? null : nextArrowNode.uci,
+        bot: firstTopMove(review.botCurrent),
+        objective: atPlyArrowPoint === null ? null : atPlyArrowPoint.top,
+        stockfish: review.current === null ? null : review.current.best_move,
+        next: review.current === null ? null : review.current.best_move,
       };
-  const playedQuality = ready && ply > 0 ? review.qualities[ply - 1] : undefined;
-  const playedUci = ready && ply > 0 ? review.nodes[ply]?.uci : undefined;
-  const badgeSquare = playedUci === undefined ? undefined : parseKey(playedUci.slice(2, 4));
+  const playedQuality =
+    ready && ply > 0 ? plyOrNull(review.qualities, ply - 1, 'badge qualities') : null;
+  const playedUci = ready && ply > 0 && viewedArrowNode !== null ? viewedArrowNode.uci : null;
+  const badgeSquare = playedUci === null ? null : (parseKey(playedUci.slice(2, 4)) ?? null);
+  const playedLabel = playedQuality === null ? null : playedQuality.label;
   const badgeGlyph: SquareBadge['glyph'] =
-    playedQuality?.label === 'Allowed mate'
-      ? '💀'
-      : playedQuality?.label === 'Blunder'
-        ? '??'
-        : '?';
+    playedLabel === 'Allowed mate' ? '💀' : playedLabel === 'Blunder' ? '??' : '?';
   const badge =
-    playedQuality &&
+    playedQuality !== null &&
     (playedQuality.label === 'Allowed mate' ||
       playedQuality.label === 'Blunder' ||
       playedQuality.label === 'Mistake') &&
-    playedUci &&
-    badgeSquare !== undefined
+    playedUci !== null &&
+    badgeSquare !== null
       ? { square: badgeSquare, glyph: badgeGlyph }
       : null;
   // Flag on the mated king when the displayed analysis position is checkmate.
@@ -737,10 +751,10 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
     [review.timeline],
   );
   const analysisCaptures = captureAt(analysisCapturePrefix, ply);
-  const analysisDiff = materialFromFen(position.fen).diff;
+  const analysisDiff = materialAt(review.timeline, ply).diff;
   // Identity for the player strips: the signed-in display name, falling
   // back to 'You' before login and in unit tests (same as the play room).
-  const you = useAccountName() ?? 'You';
+  const you = accountDisplayName(useAccountName());
   // Reviewed-game identity for the strips: your name + Elo on your color,
   // the opponent's name + Elo on the other. Imported PGNs carry their own
   // roster in the White/Black (/WhiteElo/BlackElo) headers. Ad-hoc lines
@@ -769,7 +783,7 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
       : null;
   const strip = (color: 'white' | 'black') => {
     const shownOver = viewedOver;
-    const active = toGroundColor(game.turn()) === color && !shownOver;
+    const active = position.turn === color && !shownOver;
     const isActive = active && ready;
     const label = analysisNames?.[color] ?? sideName(color);
     // Remaining time at the viewed ply for reviewed imports (ad-hoc lines
@@ -824,16 +838,16 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
                       key={`${insightResetKey}|wdl|${review.tooLong ? 1 : 0}`}
                       label="Bot evaluation"
                       turn={position.turn}
-                      expected={review.objective[ply]?.expected ?? null}
-                      wdl={review.objective[ply]?.wdl ?? null}
+                      expected={barPoint === null ? null : barPoint.expected}
+                      wdl={barPoint === null ? null : (barPoint.wdl ?? null)}
                       mate={
-                        review.current && review.current.score.type === 'mate'
+                        review.current !== null && review.current.score.type === 'mate'
                           ? review.current.score
                           : null
                       }
                       outcome={position.outcome}
                       orientation={orientation}
-                      failed={!!review.objectiveError(position)}
+                      failed={review.objectiveError(position).state === 'failed'}
                     />
                   </div>
                   <div className="eval-slot eval-slot-right">
@@ -841,15 +855,15 @@ export function AnalysisWorkspace({ state, dispatch }: Props) {
                       key={`${insightResetKey}|sf|${review.tooLong ? 1 : 0}`}
                       label="Stockfish evaluation"
                       turn={position.turn}
-                      score={review.current?.score ?? null}
+                      score={review.current === null ? null : review.current.score}
                       mate={
-                        review.current && review.current.score.type === 'mate'
+                        review.current !== null && review.current.score.type === 'mate'
                           ? review.current.score
                           : null
                       }
                       outcome={position.outcome}
                       orientation={orientation}
-                      failed={!!review.currentError}
+                      failed={review.currentError !== undefined}
                     />
                   </div>
                 </>
