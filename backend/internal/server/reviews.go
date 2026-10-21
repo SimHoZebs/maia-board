@@ -374,6 +374,13 @@ func countMisses(entries []*batchEntry) (sf, large, small int) {
 func (js *ReviewJobs) capTallies() (unfinished, sf, large, small int) {
 	js.mu.Lock()
 	defer js.mu.Unlock()
+	return js.capTalliesLocked()
+}
+
+// capTalliesLocked is capTallies for callers already holding js.mu
+// (Go mutexes are not reentrant, so the submit path cannot call capTallies
+// while holding the lock). It takes each job.mu briefly, same as capTallies.
+func (js *ReviewJobs) capTalliesLocked() (unfinished, sf, large, small int) {
 	for _, job := range js.jobs {
 		job.mu.Lock()
 		if job.finished {
@@ -589,20 +596,7 @@ func (js *ReviewJobs) handleSubmit(ctx context.Context, input *SubmitInput) (*Su
 		}
 		newSF, newLarge, newSmall := countMisses(entries)
 		js.mu.Lock()
-		unfinished, sf, large, small := 0, 0, 0, 0
-		for _, job := range js.jobs {
-			job.mu.Lock()
-			if job.finished {
-				job.mu.Unlock()
-				continue
-			}
-			unfinished++
-			sfJob, largeJob, smallJob := countMisses(job.entries)
-			sf += sfJob
-			large += largeJob
-			small += smallJob
-			job.mu.Unlock()
-		}
+		unfinished, sf, large, small := js.capTalliesLocked()
 		if overCap(unfinished, sf, large, small, newSF, newLarge, newSmall) {
 			js.mu.Unlock()
 			if attempt == 0 {
