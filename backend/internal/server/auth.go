@@ -48,6 +48,11 @@ type AuthService struct {
 // NewAuthService wires sessions over gameStore. Lichess OAuth reads
 // LICHESS_CLIENT_ID / LICHESS_CLIENT_SECRET / LICHESS_REDIRECT_URI so the
 // self-hosted deployment configures exactly one Lichess app registration.
+// LICHESS_REDIRECT_URI accepts a comma-separated allowlist when the app is
+// reachable at more than one origin (e.g. a public domain plus a Tailscale
+// hostname); the first entry is the default when redirect_uri is omitted.
+// Every entry must also be registered as a redirect URI on the Lichess
+// OAuth app, otherwise Lichess refuses the login at the token step.
 func NewAuthService(gameStore *store.GameStore, ttl time.Duration) *AuthService {
 	if ttl <= 0 {
 		ttl = DefaultSessionTTL
@@ -258,11 +263,43 @@ func (s *Server) serveMe(ctx context.Context, input *meInput) (*meOutput, error)
 	return out, nil
 }
 
+// allowedRedirects parses LICHESS_REDIRECT_URI as a comma-separated
+// allowlist. Single-value deployments keep working unchanged; surrounding
+// whitespace is ignored and duplicates collapse.
+func (a *AuthService) allowedRedirects() []string {
+	if a == nil {
+		return nil
+	}
+	parts := strings.Split(a.lichessRedirect, ",")
+	out := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		if _, dup := seen[trimmed]; dup {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
 func (s *Server) validRedirectURI(candidate string) bool {
 	if candidate == "/auth/lichess/callback" {
 		return true
 	}
-	return candidate != "" && candidate == s.auth.lichessRedirect
+	if candidate == "" {
+		return false
+	}
+	for _, allowed := range s.auth.allowedRedirects() {
+		if candidate == allowed {
+			return true
+		}
+	}
+	return false
 }
 
 type lichessStartInput struct {
@@ -289,13 +326,15 @@ func (s *Server) serveLichessStart(ctx context.Context, input *lichessStartInput
 	}
 	redirectURI := input.RedirectURI
 	if redirectURI == "" {
-		redirectURI = s.auth.lichessRedirect
+		if allowed := s.auth.allowedRedirects(); len(allowed) > 0 {
+			redirectURI = allowed[0]
+		}
 	}
 	if redirectURI == "" {
 		return nil, apiError(http.StatusBadRequest, "invalid_request", "redirect_uri is required")
 	}
 	if !s.validRedirectURI(redirectURI) {
-		return nil, apiError(http.StatusBadRequest, "invalid_request", "redirect_uri is not allowed")
+		return nil, apiError(http.StatusBadRequest, "invalid_request", "redirect_uri is not allowed; open the app at one of its configured addresses (LICHESS_REDIRECT_URI) instead")
 	}
 	state, err := newStateToken()
 	if err != nil {

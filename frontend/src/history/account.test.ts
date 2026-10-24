@@ -95,12 +95,54 @@ describe('account client', () => {
           authorization_url: 'https://evil.example/oauth?x=1',
           state: 's',
         })) as typeof fetch;
-      await expect(startLichessLogin(evil)).rejects.toThrow('Lichess login failed to start.');
+      await expect(startLichessLogin(evil)).rejects.toThrow(
+        'not https://lichess.org. Not continuing for safety.',
+      );
       expect(assigned).toEqual([]);
       const malformed = (async () =>
         jsonResponse({ authorization_url: '/relative/path', state: 's' })) as typeof fetch;
-      await expect(startLichessLogin(malformed)).rejects.toThrow('Lichess login failed to start.');
+      await expect(startLichessLogin(malformed)).rejects.toThrow('invalid login URL');
       expect(assigned).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('explains start failures with status and server detail', async () => {
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'http://100.114.220.62:18080',
+        assign: () => {},
+      },
+    });
+    try {
+      const redirectMismatch = (async () =>
+        jsonResponse(
+          {
+            title: 'Bad Request',
+            status: 400,
+            detail:
+              'redirect_uri is not allowed; open the app at one of its configured addresses (LICHESS_REDIRECT_URI) instead',
+            errors: [{ message: 'invalid_request' }],
+          },
+          400,
+        )) as typeof fetch;
+      await expect(startLichessLogin(redirectMismatch)).rejects.toThrow(
+        'not allowed for Lichess login. Open the app at one of its configured addresses',
+      );
+      const unavailable = (async () =>
+        jsonResponse(
+          { title: 'Unavailable', status: 503, detail: 'down', errors: [] },
+          503,
+        )) as typeof fetch;
+      await expect(startLichessLogin(unavailable)).rejects.toThrow('Accounts are not enabled');
+      const failing = (async () => jsonResponse({}, 500)) as typeof fetch;
+      await expect(startLichessLogin(failing)).rejects.toThrow('HTTP 500');
+      await expect(
+        startLichessLogin(async () => {
+          throw new TypeError('fetch failed');
+        }),
+      ).rejects.toThrow('Cannot reach the game server');
     } finally {
       vi.unstubAllGlobals();
     }

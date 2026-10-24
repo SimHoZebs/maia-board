@@ -360,6 +360,51 @@ func TestLichessStartRedirectValidation(t *testing.T) {
 	}
 }
 
+func TestLichessStartMultipleRedirects(t *testing.T) {
+	s := authedServer(t)
+	s.auth.lichessID = "test-client"
+	s.auth.lichessRedirect = "https://app.example.com/auth/lichess/callback, http://debian-server.goby-paradise.ts.net:18080/auth/lichess/callback"
+
+	good := []string{
+		"https://app.example.com/auth/lichess/callback",
+		"http://debian-server.goby-paradise.ts.net:18080/auth/lichess/callback",
+		"",
+	}
+	for _, candidate := range good {
+		path := "/auth/lichess/start"
+		if candidate != "" {
+			path += "?redirect_uri=" + url.QueryEscape(candidate)
+		}
+		w := authed(t, s, http.MethodGet, path, "", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("allowed redirect_uri %q: status %d body %s, want 200", candidate, w.Code, w.Body)
+		}
+		var body struct {
+			AuthorizationURL string `json:"authorization_url"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("allowed redirect_uri %q: decode %v (%s)", candidate, err, w.Body)
+		}
+		parsed, err := url.Parse(body.AuthorizationURL)
+		if err != nil || parsed.Scheme != "https" || parsed.Host != "lichess.org" {
+			t.Fatalf("allowed redirect_uri %q: authorization_url = %q", candidate, body.AuthorizationURL)
+		}
+		got := parsed.Query().Get("redirect_uri")
+		want := candidate
+		if want == "" {
+			want = "https://app.example.com/auth/lichess/callback"
+		}
+		if got != want {
+			t.Fatalf("allowed redirect_uri %q: oauth redirect_uri = %q, want %q", candidate, got, want)
+		}
+	}
+
+	evil := "https://other.example/auth/lichess/callback"
+	if w := authed(t, s, http.MethodGet, "/auth/lichess/start?redirect_uri="+url.QueryEscape(evil), "", ""); w.Code != http.StatusBadRequest || humaCode(t, w) != "invalid_request" {
+		t.Fatalf("evil redirect_uri %q: status %d body %s, want 400 invalid_request", evil, w.Code, w.Body)
+	}
+}
+
 func TestReviewOwnership(t *testing.T) {
 	s := authedServer(t)
 	alice, aliceToken := loginAs(t, s, "Alice")

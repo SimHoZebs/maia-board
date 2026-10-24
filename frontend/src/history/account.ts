@@ -111,28 +111,79 @@ export function lichessStartUrl(redirectUri: string): string {
   return `/auth/lichess/start?redirect_uri=${encodeURIComponent(redirectUri)}`;
 }
 
+// Huma error envelope: human text in detail, machine code in errors[0].message.
+function humaError(body: unknown): { code?: string; detail?: string } {
+  if (typeof body !== 'object' || body === null) return {};
+  const record = body as Record<string, unknown>;
+  const detail = typeof record.detail === 'string' ? record.detail : undefined;
+  let code: string | undefined;
+  if (Array.isArray(record.errors) && record.errors.length > 0) {
+    const first = record.errors[0] as Record<string, unknown> | undefined;
+    if (first !== undefined && typeof first.message === 'string') code = first.message;
+  }
+  return { code, detail };
+}
+
 // Full Lichess login leg: ask our server for its authorization URL, then
 // leave to Lichess. Navigating to /auth/lichess/start directly only prints
 // its JSON; this helper follows the URL it names.
 export async function startLichessLogin(fetchImpl: FetchLike = fetch): Promise<void> {
+  const redirectUri = `${window.location.origin}/auth/lichess/callback`;
   let response: Response;
   try {
-    response = await fetchImpl(lichessStartUrl(`${window.location.origin}/auth/lichess/callback`), {
+    response = await fetchImpl(lichessStartUrl(redirectUri), {
       credentials: 'include',
     });
   } catch {
-    throw new AccountError('server_unreachable', 'The game server could not be reached.');
+    throw new AccountError(
+      'server_unreachable',
+      'Cannot reach the game server. Check your connection and retry.',
+    );
   }
-  const body = (await response.json().catch(() => null)) as { authorization_url?: unknown } | null;
+  const body = (await response.json().catch(() => null)) as {
+    authorization_url?: unknown;
+    detail?: unknown;
+    errors?: unknown;
+  } | null;
+  if (!response.ok) {
+    const { code, detail } = humaError(body);
+    const errorCode = code ?? 'unknown';
+    if (response.status === 501 || errorCode === 'oauth_unconfigured') {
+      throw new AccountError(
+        'oauth_unconfigured',
+        'Lichess login is not configured on this server. Set LICHESS_CLIENT_ID (and LICHESS_REDIRECT_URI) and restart the server.',
+        response.status,
+      );
+    }
+    if (response.status === 503 || errorCode === 'auth_disabled') {
+      throw new AccountError(
+        'auth_disabled',
+        `Accounts are not enabled on this server (HTTP 503${detail ? `: ${detail}` : ''}). Retry later.`,
+        response.status,
+      );
+    }
+    if (errorCode === 'invalid_request' && detail?.includes('redirect_uri')) {
+      throw new AccountError(
+        'invalid_request',
+        `This page address (${redirectUri}) is not allowed for Lichess login. Open the app at one of its configured addresses (LICHESS_REDIRECT_URI) and retry. (server: ${detail})`,
+        response.status,
+      );
+    }
+    throw new AccountError(
+      errorCode,
+      `Lichess login failed to start (HTTP ${response.status}${errorCode !== 'unknown' ? ` ${errorCode}` : ''}${detail ? `: ${detail}` : ''}). Retry, or continue with a local name.`,
+      response.status,
+    );
+  }
   // Null body (unreadable JSON) and non-string URLs are both start failures —
   // named separately so a missing field never reads as a transport error.
   const authorizationUrl = body === null ? null : body.authorization_url;
-  if (!response.ok || typeof authorizationUrl !== 'string') {
+  if (typeof authorizationUrl !== 'string') {
     throw new AccountError(
       'unknown',
-      response.status === 501
-        ? 'Lichess login is not configured on this server.'
-        : 'Lichess login failed to start.',
+      body === null
+        ? 'The login server returned unreadable data. Retry.'
+        : 'The login server returned an incomplete response (missing authorization_url). Retry.',
       response.status,
     );
   }
@@ -140,10 +191,18 @@ export async function startLichessLogin(fetchImpl: FetchLike = fetch): Promise<v
   try {
     target = new URL(authorizationUrl);
   } catch {
-    throw new AccountError('unknown', 'Lichess login failed to start.', response.status);
+    throw new AccountError(
+      'unknown',
+      'The login server returned an invalid login URL. Not continuing.',
+      response.status,
+    );
   }
   if (target.origin !== 'https://lichess.org') {
-    throw new AccountError('unknown', 'Lichess login failed to start.', response.status);
+    throw new AccountError(
+      'unknown',
+      `Refusing Lichess login: the server returned a login URL for ${target.origin}, not https://lichess.org. Not continuing for safety.`,
+      response.status,
+    );
   }
   window.location.assign(authorizationUrl);
 }
