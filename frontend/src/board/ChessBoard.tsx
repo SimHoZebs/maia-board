@@ -1,4 +1,4 @@
-import { useLayoutEffect, useReducer, useRef } from 'react';
+import { useLayoutEffect, useMemo, useReducer, useRef } from 'react';
 import { Chess, type Square } from 'chess.js';
 import { Chessground } from '@lichess-org/chessground';
 import type { Api } from '@lichess-org/chessground/api';
@@ -157,8 +157,16 @@ export function ChessBoard({
   };
   // Parsed highlight halves: null means no highlight (root, or an entry
   // that never parses) — the chessground undefined lives only in the set
-  // call above.
-  const parsedLastMove = lastMove === null ? null : parseKeyList(lastMove);
+  // call above. Memoized on the joined string so eval-driven parent
+  // re-renders keep array identity and never retrigger the sync effect
+  // (which calls cancelMove and would drop a Chessground-held selection).
+  const parsedLastMove = useMemo(
+    () => (lastMove === null ? null : parseKeyList(lastMove)),
+    // parseKeyList is a stable local pure helper over parseKey; lastMove
+    // is the only input that can change the output.
+    // oxlint-disable-next-line exhaustive-deps
+    [lastMove],
+  );
   useLayoutEffect(() => {
     const ground = api.current!;
     // The board may have moved since the last measurement (layout shifts from
