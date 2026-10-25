@@ -405,6 +405,42 @@ func TestLichessStartMultipleRedirects(t *testing.T) {
 	}
 }
 
+func TestMeReturnsSessionUser(t *testing.T) {
+	s := authedServer(t)
+	user, token := loginAs(t, s, "MeCheck")
+	// Cookie leg (what browsers send).
+	if w := authed(t, s, http.MethodGet, "/me", "", token); w.Code != http.StatusOK {
+		t.Fatalf("cookie /me: status %d body %s, want 200", w.Code, w.Body)
+	} else {
+		var got store.User
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.ID != user.ID {
+			t.Fatalf("cookie /me body: %s err=%v, want id %s", w.Body, err, user.ID)
+		}
+	}
+	// Bearer fallback leg.
+	req := httptest.NewRequest(http.MethodGet, "/me", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("bearer /me: status %d body %s, want 200", w.Code, w.Body)
+	}
+	// No token and bogus token stay 401.
+	if w := authed(t, s, http.MethodGet, "/me", "", ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous /me: status %d, want 401", w.Code)
+	}
+	if w := authed(t, s, http.MethodGet, "/me", "", "no-such-session"); w.Code != http.StatusUnauthorized {
+		t.Fatalf("bogus /me: status %d, want 401", w.Code)
+	}
+	// Revoked sessions fail closed.
+	if w := authed(t, s, http.MethodPost, "/auth/logout", "", token); w.Code != http.StatusNoContent {
+		t.Fatalf("logout: status %d", w.Code)
+	}
+	if w := authed(t, s, http.MethodGet, "/me", "", token); w.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked /me: status %d, want 401", w.Code)
+	}
+}
+
 func TestReviewOwnership(t *testing.T) {
 	s := authedServer(t)
 	alice, aliceToken := loginAs(t, s, "Alice")

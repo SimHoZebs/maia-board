@@ -3077,7 +3077,8 @@ This operation does not require authentication
 ```shell
 # You can also use wget
 curl -X GET /me \
-  -H 'Accept: application/json'
+  -H 'Accept: application/json' \
+  -H 'Authorization: string'
 
 ```
 
@@ -3085,13 +3086,15 @@ curl -X GET /me \
 GET /me HTTP/1.1
 
 Accept: application/json
+Authorization: string
 
 ```
 
 ```javascript
 
 const headers = {
-  'Accept':'application/json'
+  'Accept':'application/json',
+  'Authorization':'string'
 };
 
 fetch('/me',
@@ -3113,7 +3116,8 @@ require 'rest-client'
 require 'json'
 
 headers = {
-  'Accept' => 'application/json'
+  'Accept' => 'application/json',
+  'Authorization' => 'string'
 }
 
 result = RestClient.get '/me',
@@ -3127,7 +3131,8 @@ p JSON.parse(result)
 ```python
 import requests
 headers = {
-  'Accept': 'application/json'
+  'Accept': 'application/json',
+  'Authorization': 'string'
 }
 
 r = requests.get('/me', headers = headers)
@@ -3143,6 +3148,7 @@ require 'vendor/autoload.php';
 
 $headers = array(
     'Accept' => 'application/json',
+    'Authorization' => 'string',
 );
 
 $client = new \GuzzleHttp\Client();
@@ -3196,6 +3202,7 @@ func main() {
 
     headers := map[string][]string{
         "Accept": []string{"application/json"},
+        "Authorization": []string{"string"},
     }
 
     data := bytes.NewBuffer([]byte{jsonReq})
@@ -3212,6 +3219,13 @@ func main() {
 `GET /me`
 
 *Current session user*
+
+<h3 id="me-parameters">Parameters</h3>
+
+|Name|In|Type|Required|Description|
+|---|---|---|---|---|
+|maia_board_session|cookie|string|false|none|
+|Authorization|header|string|false|none|
 
 > Example responses
 
@@ -3234,6 +3248,7 @@ func main() {
 |---|---|---|---|
 |200|[OK](https://tools.ietf.org/html/rfc7231#section-6.3.1)|OK|[User](#schemauser)|
 |401|[Unauthorized](https://tools.ietf.org/html/rfc7235#section-3.1)|Unauthorized|[ErrorModel](#schemaerrormodel)|
+|422|[Unprocessable Entity](https://tools.ietf.org/html/rfc2518#section-10.3)|Unprocessable Entity|[ErrorModel](#schemaerrormodel)|
 |500|[Internal Server Error](https://tools.ietf.org/html/rfc7231#section-6.6.1)|Internal Server Error|[ErrorModel](#schemaerrormodel)|
 |503|[Service Unavailable](https://tools.ietf.org/html/rfc7231#section-6.6.4)|Service Unavailable|[ErrorModel](#schemaerrormodel)|
 

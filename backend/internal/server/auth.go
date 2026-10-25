@@ -138,15 +138,18 @@ func clearedSessionCookie() http.Cookie {
 	return http.Cookie{Name: SessionCookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode}
 }
 
-// authTokenInput reads the session token the same way the middleware does:
+// AuthTokenInput reads the session token the same way the middleware does:
 // session cookie first, Bearer fallback. The cookie struct tag repeats
 // SessionCookieName literally (struct tags cannot reference constants).
-type authTokenInput struct {
+// The type name must be exported: Huma only descends into embedded structs
+// with exported names, and an unexported embedding silently drops the
+// cookie/header params (which broke /me with no test catching it).
+type AuthTokenInput struct {
 	SessionCookie string `cookie:"maia_board_session"`
 	Authorization string `header:"Authorization"`
 }
 
-func tokenFromInput(in authTokenInput) string {
+func tokenFromInput(in AuthTokenInput) string {
 	if in.SessionCookie != "" {
 		return in.SessionCookie
 	}
@@ -239,7 +242,7 @@ func pkceChallenge(verifier string) string {
 // serveMe re-reads the session row instead of trusting the middleware
 // identity, so a revoked token fails closed even mid-request.
 type meInput struct {
-	authTokenInput
+	AuthTokenInput
 }
 
 type meOutput struct {
@@ -250,7 +253,7 @@ func (s *Server) serveMe(ctx context.Context, input *meInput) (*meOutput, error)
 	if !s.authEnabled() {
 		return nil, apiError(http.StatusServiceUnavailable, "auth_disabled", "accounts are not enabled on this server")
 	}
-	token := tokenFromInput(input.authTokenInput)
+	token := tokenFromInput(input.AuthTokenInput)
 	if token == "" {
 		return nil, apiError(http.StatusUnauthorized, "unauthenticated", "login is required")
 	}
