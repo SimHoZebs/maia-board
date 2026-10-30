@@ -85,7 +85,7 @@ Restore uses bounded `POST /evaluations/lookup` chunks (see
 inference; foreground analysis + explicit batch generate results. Terminal
 scoring comes from timeline outcomes (`outcomeEvaluation.ts`). Batch progress uses native EventSource as
 optimization; status endpoint is ground truth. Status + restore refetch on
-mount, focus, visible, online, stream error. A broken stream costs speed
+mount, pageshow (bfcache), visible, online, stream error. A broken stream costs speed
 only.
 
 Server owns cache writes/repair. Frontend validates Stockfish policy before

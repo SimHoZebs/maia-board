@@ -19,6 +19,26 @@ import { restoreLookup } from './useLookupRestore';
 
 export type ServerBatchProgress = { total: number; done: number; failed: number; running: boolean };
 
+// Shared resume signal: online, bfcache pageshow, tab-visible. Initial
+// pageshow rides the mount refresh, so only persisted restores refetch here.
+// Window focus is noise. No-op outside browsers.
+export function subscribePageResume(listener: () => void): () => void {
+  if (typeof window === 'undefined') return () => undefined;
+  const onSignal = (event: Event) => {
+    if (event.type === 'visibilitychange' && document.visibilityState !== 'visible') return;
+    if (event.type === 'pageshow' && !(event as PageTransitionEvent).persisted) return;
+    listener();
+  };
+  window.addEventListener('online', onSignal);
+  window.addEventListener('pageshow', onSignal);
+  document.addEventListener('visibilitychange', onSignal);
+  return () => {
+    window.removeEventListener('online', onSignal);
+    window.removeEventListener('pageshow', onSignal);
+    document.removeEventListener('visibilitychange', onSignal);
+  };
+}
+
 // Server-batch client: submit + progress UI. Nothing cancels: scope-key
 // changes, unmounts, and game deletes only drop local references while
 // server jobs drain; late callbacks are ignored via the scope-key guard, and
@@ -458,31 +478,12 @@ export function useServerBatch(args: {
         void poll();
       }
     })();
-    const onResume = () => {
-      void refreshFromStatus();
-    };
-    const onVisible = () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible')
-        void refreshFromStatus();
-    };
-    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-      window.addEventListener('online', onResume);
-      window.addEventListener('focus', onResume);
-    }
-    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
-      document.addEventListener('visibilitychange', onVisible);
-    }
+    const unsubscribeResume = subscribePageResume(() => void refreshFromStatus());
     return () => {
       stopped = true;
       clearTimeout(restoreTimer);
       restoreController.abort();
-      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
-        window.removeEventListener('online', onResume);
-        window.removeEventListener('focus', onResume);
-      }
-      if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
-        document.removeEventListener('visibilitychange', onVisible);
-      }
+      unsubscribeResume();
     };
   }, [active, jobId, jobScopeKey, coordinator, fetcher]);
 

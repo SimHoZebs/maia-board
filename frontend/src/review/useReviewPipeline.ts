@@ -36,7 +36,7 @@ import { trueCandidateDelta } from '../objective/winrate';
 import { plyAt } from '../shared/explicit';
 import type { ObjectiveLane } from './qualities';
 import { useLookupRestore } from './useLookupRestore';
-import { useServerBatch } from './useServerBatch';
+import { useServerBatch, subscribePageResume } from './useServerBatch';
 import { computeLineQualities, type UnifiedMemo } from './qualities';
 import {
   alienUpgrade,
@@ -1477,30 +1477,31 @@ function usePlayRoom(state: State, coordinator: ReviewCoordinator): PlayFeedback
     settings,
     retryRestore,
   ]);
-  // Browser `online` resets the current line's bucket and retries once
+  // Page resume resets the current line's bucket and retries once
   // immediately — the reconnect sweep covers all user-side moves, not just
-  // the newest pair. Guarded for non-browser/test envs where window is undefined.
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
-    const onOnline = () => {
-      const bucket = latestBucket.current;
-      attempts.current.delete(bucket);
-      setSustainedError(null);
-      const targets = latestRetry.current;
-      if (!targets.key && !targets.heal) return;
-      const s = latestSettings.current;
-      if (targets.sf.length) coordinator.ensure(targets.sf, s, { priority: true, engines: ['sf'] });
-      if (targets.bot.length)
-        coordinator.ensure(targets.bot, s, {
-          priority: true,
-          engines: ['maia'],
-        });
-      if (targets.lane.length) ensureLane(coordinator, targets.lane);
-      if (targets.restore) retryRestore();
-    };
-    window.addEventListener('online', onOnline);
-    return () => window.removeEventListener('online', onOnline);
-  }, [coordinator, retryRestore]);
+  // the newest pair. One shared resume signal (online / bfcache pageshow /
+  // tab visible); guarded for non-browser/test envs inside the helper.
+  useEffect(
+    () =>
+      subscribePageResume(() => {
+        const bucket = latestBucket.current;
+        attempts.current.delete(bucket);
+        setSustainedError(null);
+        const targets = latestRetry.current;
+        if (!targets.key && !targets.heal) return;
+        const s = latestSettings.current;
+        if (targets.sf.length)
+          coordinator.ensure(targets.sf, s, { priority: true, engines: ['sf'] });
+        if (targets.bot.length)
+          coordinator.ensure(targets.bot, s, {
+            priority: true,
+            engines: ['maia'],
+          });
+        if (targets.lane.length) ensureLane(coordinator, targets.lane);
+        if (targets.restore) retryRestore();
+      }),
+    [coordinator, retryRestore],
+  );
   const previous = useRef<PlayQualitiesMemo | null>(null);
   const sfPending = coordinator.sfPendingKeys(),
     botPending = coordinator.botPendingKeys();
